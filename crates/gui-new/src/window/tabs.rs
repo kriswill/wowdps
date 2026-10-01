@@ -16,8 +16,8 @@
 
 use std::time::Duration;
 
+use super::field::Field;
 use gpui_kit::base::{Easing, Spring, Transition, spring, transition};
-use gpui_kit::component::input::Input;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     Context, Div, ElementId, Focusable as _, MouseButton, ScrollWheelEvent, SharedString,
@@ -252,17 +252,13 @@ fn filter_box(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> D
         })
         .child(glyph(Glyph::Search, w.z(w.size.icon), w.c(|t| t.ink_3)))
         .child(
-            div()
-                .id("row-filter")
-                .test_support()
+            Field::new("row-filter", &gui.filter, w)
+                .size(w.size.filter)
                 .key_context("Filter")
                 .w(w.z(text_w))
-                .text_size(w.z(w.size.filter))
                 .on_action(cx.listener(|this, _: &super::FilterDone, window, cx| {
                     this.filter_done(window, cx)
-                }))
-                // Kit pads its field by its size; the box is the inset here.
-                .child(Input::new(&gui.filter).appearance(false).px_0().py_0()),
+                })),
         )
         .when(clearing, |d| {
             d.child(

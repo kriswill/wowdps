@@ -14,8 +14,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{Sizable as _, Size};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, BoxShadow, Context, Div, ElementId, Entity, KeyBinding, MouseButton,
@@ -28,6 +27,7 @@ use wowdps_gui_logic::theme::SHADOW_SHEET;
 use wowdps_model::{Action, View};
 
 use super::chrome::{class_icon, hairline, kbd};
+use super::field::Field;
 use super::inspector::list::Keep;
 use super::paint::glyph;
 use super::top_bar::JUMP_WORDS;
@@ -47,8 +47,6 @@ const IN_GAP: f32 = 10.0;
 const IN_PAD_X: f32 = 14.0;
 const IN_H: f32 = 46.0;
 const IN_PX: f32 = 17.0;
-/// What Kit sets a sized field's text at, of its size (`input_text_size`).
-const KIT_TEXT: f32 = 0.875;
 /// The list (`.pal-list{max-height:430px;padding:4px 0 8px}`), a group's
 /// heading (`.pal-g{font-size:12.5px;padding:10px 14px 3px;font-weight:
 /// 600}`) and an item (`.pal-it{gap:10px;padding:6px 14px;font-size:15px}`,
@@ -284,13 +282,11 @@ pub fn view(gui: &Gui, w: &W, cx: &mut Context<Gui>) -> Option<AnyElement> {
         .gap(w.z(IN_GAP))
         .child(glyph(Glyph::Search, w.z(w.size.icon), w.c(|t| t.ink_3)))
         .child(
-            div()
-                .id("palette-input")
-                .test_support()
+            Field::new("palette-input", &pal.input, w)
+                .size(IN_PX)
                 .key_context("Palette")
                 .flex_1()
-                .min_w_0()
-                .text_size(w.z(IN_PX))
+                .h_full()
                 .on_action(
                     cx.listener(|this, PalStep(down): &PalStep, _, cx| {
                         this.palette_step(*down, cx)
@@ -298,15 +294,6 @@ pub fn view(gui: &Gui, w: &W, cx: &mut Context<Gui>) -> Option<AnyElement> {
                 )
                 .on_action(
                     cx.listener(|this, _: &PalClose, window, cx| this.close_palette(window, cx)),
-                )
-                // Kit sets a field's text at 0.875 of its size: 17 px is asked as
-                // its size over that.
-                .child(
-                    Input::new(&pal.input)
-                        .appearance(false)
-                        .with_size(Size::Size(w.z(IN_PX / KIT_TEXT)))
-                        .px_0()
-                        .py_0(),
                 ),
         );
     let body: AnyElement = if items.is_empty() {

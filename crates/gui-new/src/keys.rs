@@ -213,7 +213,7 @@ mod tests {
         });
     }
 
-    /// The meter's context holding a text field, as the window's view tabs
+    /// The meter's context holding the window's text field, as the view tabs
     /// hold the row filter.
     struct Field {
         focus: FocusHandle,
@@ -229,7 +229,11 @@ mod tests {
                 .key_context(METER)
                 .size_full()
                 .on_action(cx.listener(|this, Do(action): &Do, _, _| this.actions.push(*action)))
-                .child(gpui_kit::component::input::Input::new(&self.input))
+                .child(crate::window::field::Field::new(
+                    "field",
+                    &self.input,
+                    &crate::window::w::W::new(1.0, 300.0, cx),
+                ))
         }
     }
 

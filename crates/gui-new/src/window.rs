@@ -15,6 +15,7 @@
 mod cards;
 mod chrome;
 mod deaths;
+pub(crate) mod field;
 mod fight_head;
 mod history;
 mod home;
@@ -26,7 +27,7 @@ mod ribbon;
 mod table;
 mod tabs;
 mod top_bar;
-mod w;
+pub(crate) mod w;
 
 #[cfg(test)]
 mod shots;
