@@ -59,9 +59,17 @@ jobs:
         id: test
         run: nix develop -c cargo test --workspace --exclude wowdps-gui-new
 
+      # gui-new's real-text tests open a headless window, and GPUI's headless
+      # renderer wants a wgpu adapter even when nothing is captured. The
+      # runner has no GPU, and the shell's Vulkan loader would not look in
+      # the distro's /usr/share anyway, so they draw on Mesa's lavapipe from
+      # the flake's own nixpkgs — what `.#wowdps-gui-new`'s check phase uses.
       - name: cargo test (gui-new)
         id: test-gui-new
-        run: nix develop -c cargo test -p wowdps-gui-new
+        run: |
+          mesa=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa.out)
+          VK_DRIVER_FILES="$mesa/share/vulkan/icd.d/lvp_icd.x86_64.json" \
+            nix develop -c cargo test -p wowdps-gui-new
 
       - name: Fixture check (parser-independent golden totals)
         id: fixtures

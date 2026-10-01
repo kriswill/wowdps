@@ -197,8 +197,21 @@
             guiNewArgs
             // {
               cargoArtifacts = guiNewArtifacts;
-              # Unit tests only: nothing opens a display.
+              # Kit's click-through harness and the real-text headless
+              # context; nothing opens a display. The real-text tests open a
+              # headless window, and GPUI's headless renderer wants a wgpu
+              # adapter even when nothing is captured: in the sandbox, Mesa's
+              # lavapipe (software Vulkan). They shape text in the system UI
+              # face too, which the sandbox lacks: DejaVu Sans, one of GPUI's
+              # fallbacks, through a fontconfig file cosmic-text's fontdb
+              # reads. The render guard and the shots are ignored tests, run
+              # by hand.
               cargoTestExtraArgs = "-p wowdps-gui-new";
+              preCheck = lib.optionalString pkgs.stdenv.isLinux ''
+                export VK_DRIVER_FILES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.uname.processor}.json
+                export VK_ICD_FILENAMES=$VK_DRIVER_FILES
+                export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }}
+              '';
               postInstall = lib.optionalString pkgs.stdenv.isLinux ''
                 wrapProgram $out/bin/wowdps-gui-new \
                   --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath guiLibraries}
