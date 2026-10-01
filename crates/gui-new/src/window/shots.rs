@@ -438,3 +438,44 @@ fn window_shots() {
         }
     }
 }
+
+/// The chrome budget over a real log (the iced window's
+/// `the_chrome_budget_holds_on_the_log`): at 1440×900 the featured raid's
+/// first meter row starts no more than 290 px down, and 18 rows show
+/// without a scroll. `fight_head::tests::the_chrome_leaves_a_raid_its_rows`
+/// holds the same over a synthetic raid on every `cargo test`.
+#[test]
+#[ignore = "needs a wgpu adapter and $WOWDPS_SHOTS_LOG"]
+fn the_chrome_budget_holds_on_the_log() {
+    let input = Input::from_env();
+    if input.log.is_none() {
+        eprintln!("chrome budget: set WOWDPS_SHOTS_LOG to a combat log to measure over");
+        return;
+    }
+    let (_, w, h) = SIZES[0];
+    let mut cx = app();
+    let shot = open(&mut cx, &input, (w, h));
+    shot.settle(&mut cx);
+    let (list, players, row) = cx
+        .update_window(shot.window, |_, window, cx| {
+            window.render_frame(cx);
+            let list = window.find("meter-list").bounds();
+            let state = shot.session.read(cx).state();
+            let gui = shot.gui.read(cx);
+            let row = wowdps_gui_logic::theme::GOLD
+                .pitch
+                .row_of(gui.cfg.density());
+            (list, state.rows().len(), row)
+        })
+        .expect("the window");
+    let top = f32::from(list.origin.y);
+    let shown = (f32::from(list.size.height) / row).floor() as usize;
+    eprintln!(
+        "chrome budget: the first row starts {top:.1} px down; {shown} rows show of {players}"
+    );
+    assert!(top <= 290.0, "the first row starts {top} px down");
+    assert!(
+        shown >= 18_usize.min(players),
+        "{shown} rows show of {players}"
+    );
+}
