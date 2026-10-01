@@ -8,10 +8,12 @@ use wowdps_model::Class;
 mod color;
 mod defs;
 mod metrics;
+mod talent_tokens;
 
 pub use color::*;
 pub use defs::*;
 pub use metrics::*;
+pub use talent_tokens::*;
 
 // ---- the chrome -----------------------------------------------------------
 

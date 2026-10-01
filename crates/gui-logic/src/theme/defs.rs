@@ -7,6 +7,7 @@
 
 use super::color::Color;
 use super::metrics::{PITCHES, Pitches, SIZES, Sizes};
+use super::talent_tokens::{TALENTS_FROST, TALENTS_GOLD, TalentTokens};
 
 /// The window's surfaces and inks — the prototype's Tokens, one field each.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,6 +147,8 @@ pub struct Def {
     pub dark: bool,
     pub window: WindowTokens,
     pub overlay: OverlayTokens,
+    /// The talent viewer's tree and tooltip.
+    pub talents: TalentTokens,
     pub faces: Faces,
     /// The type scale.
     pub size: Sizes,
@@ -218,6 +221,7 @@ pub const GOLD: Def = Def {
         stat_card_edge: Color::rgba(1.0, 1.0, 1.0, 0.12),
         health_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
     },
+    talents: TALENTS_GOLD,
     faces: Faces {
         ui: crate::fonts::UI_FAMILY,
         title: crate::fonts::TITLE_FAMILY,
@@ -265,6 +269,7 @@ pub const FROST: Def = Def {
         hostile: GOLD.window.hostile,
     },
     overlay: GOLD.overlay,
+    talents: TALENTS_FROST,
     faces: GOLD.faces,
     size: SIZES,
     pitch: PITCHES,

@@ -33,6 +33,7 @@ pub mod spell_icons;
 pub mod surface;
 pub mod table;
 pub mod talent_art;
+pub mod talents;
 pub mod theme;
 pub mod timeline;
 pub mod tree;
