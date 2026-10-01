@@ -244,3 +244,12 @@ clipping stay the engine's. gui-new's `window/field.rs` is that field.
 Drawing a placeholder over an empty field instead goes wrong under IME
 composition (the text changes without a `Change` event), at a zoom (Kit's
 caret follows its `Rems(1.25)` line, not ours) and with long words.
+
+**An animation frame redraws the whole view.** GPUI's animation frame
+notifies the view that asked for it, and a window built as one root view
+rebuilds its whole tree each frame. gui-new's window idled at 5.7 % of a
+core (iced: 2.0 %) while an endless pulse ran on its live dot, about 28
+renders a second; three pulses per live pull brought it to 0.4 %. Keep
+every animation finite and keyed to what triggered it, settle to the
+static pixels, and give anything that must keep moving (the overlay's
+staleness radar) a timer at the slowest rate that still reads as motion.
