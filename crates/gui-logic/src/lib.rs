@@ -10,13 +10,13 @@
 
 pub mod axis;
 pub mod config;
-pub mod drill;
 pub mod deaths;
+pub mod drill;
 pub mod fight_head;
 pub mod fold;
 pub mod fonts;
-pub mod graph;
 pub mod glyph;
+pub mod graph;
 pub mod history;
 pub mod hypr;
 pub mod icons;
