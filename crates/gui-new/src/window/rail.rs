@@ -104,7 +104,7 @@ impl Gui {
             log_id: state.log_id(),
             watched: self.watched_row(cx),
             cards: &self.hist.store.earlier.cards,
-            owner: self.picked(cx).and_then(|p| Some((Some(p.name), p.class?))),
+            owner: self.played(cx).and_then(|p| Some((Some(p.name), p.class?))),
             tonight: self.tonight(),
         })
     }

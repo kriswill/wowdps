@@ -512,11 +512,32 @@ impl Gui {
         }
     }
 
-    /// Who the picker names: the character played last, as the store's
-    /// newest card names them (Home's answers, else the rail's pages) —
-    /// before the store has said, the owner of the pull on the stage, as
-    /// the owner marks find them.
+    /// Who the picker names: the character picked from its menu or Home's
+    /// chips (the config's `character`, Home's scope) once the window knows
+    /// them, else the character played last. (iced's picker names only the
+    /// latter, and read as stuck on a pick.)
     pub(crate) fn picked(&self, cx: &App) -> Option<CharPick> {
+        let pick = self
+            .cfg
+            .character
+            .as_deref()
+            .and_then(|guid| self.hist.known.iter().find(|c| c.guid == guid));
+        match pick {
+            Some(c) => Some(CharPick {
+                guid: c.guid.clone(),
+                name: c.name.clone(),
+                class: c.class,
+                spec: c.spec,
+            }),
+            None => self.played(cx),
+        }
+    }
+
+    /// Whose window it is, whatever is picked: the character played last,
+    /// as the store's newest card names them (Home's answers, else the
+    /// rail's pages) — before the store has said, the owner of the pull on
+    /// the stage, as the owner marks find them.
+    pub(crate) fn played(&self, cx: &App) -> Option<CharPick> {
         if let Some(c) = self.hist.owner() {
             return Some(CharPick {
                 guid: c.guid,

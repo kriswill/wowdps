@@ -1,24 +1,23 @@
 //! The character menu (`.menu`; the iced window's `nav::character_menu`),
-//! opened from the top bar's picker: the follow item, checked, a rule, then
-//! every character the window knows you play — icon, class-coloured name,
-//! when they last played — the one Home is scoped to lit. The follow item
-//! says what it does and changes nothing; a character scopes Home. Drawn
-//! at the window's root over a scrim that takes the press that closes it,
-//! hung from the picker it belongs to.
+//! opened from the top bar's picker: every character the window knows you
+//! play — icon, class-coloured name, when they last played — the one Home
+//! is scoped to lit, and, while one is picked, the follow item over them
+//! behind a rule. A character picks them (the picker names them) and
+//! scopes Home; the follow item lets the pick go. Drawn at the window's
+//! root over a scrim that takes the press that closes it, hung from the
+//! picker it belongs to.
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, Div, ElementId, MouseButton, SharedString, TestSupportExt as _, Window,
     div,
 };
-use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::home::{CharLine, FOLLOW, played_note};
 use wowdps_gui_logic::labels::display_name;
 use wowdps_gui_logic::theme::{AA_CONTRAST, SHADOW_MENU, class_text_on};
 
 use super::super::Gui;
 use super::super::chrome::{class_icon, hairline};
-use super::super::paint::glyph;
 use super::super::top_bar::PICKER_END;
 use super::super::w::{REGULAR, SEMIBOLD, W};
 use super::{BORDER, enter};
@@ -56,33 +55,40 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
     };
     let tonight = gui.tonight();
     let hide_realms = gui.cfg.hide_realms;
-    let follow = row(
-        FOLLOW.into(),
-        None,
-        false,
-        div()
-            .flex()
-            .items_center()
-            .gap(w.z(GAP))
-            .child(glyph(Glyph::Check, w.z(w.size.body), w.c(|t| t.ink)))
-            .child(w.text(FOLLOW, w.size.body, w.c(|t| t.ink), REGULAR)),
-        w,
-    )
-    .on_mouse_down(
-        MouseButton::Left,
-        cx.listener(|this, _, _, cx| {
-            cx.stop_propagation();
-            this.picker_follow(cx);
-        }),
-    );
     let mut list = div()
         .w(w.z(w.pitch.menu_w - 2.0 * BORDER))
         .flex()
         .flex_col()
-        .gap(w.z(ROW_GAP))
-        .child(follow)
-        // `.menu hr`: the follow item is ruled off from the characters.
-        .child(div().py(w.z(RULE_Y)).child(hairline(w)));
+        .gap(w.z(ROW_GAP));
+    // The follow item, only while a character is picked: the way back to
+    // the character played. With nothing picked the picker names them
+    // already, and the item had nothing to do.
+    if gui.cfg.character.is_some() {
+        let follow = row(
+            FOLLOW.into(),
+            None,
+            false,
+            div()
+                .flex()
+                .items_center()
+                .gap(w.z(GAP))
+                // The icons' slot, empty, so the words stand with the names.
+                .child(div().size(w.z(w.size.body)).flex_none())
+                .child(w.text(FOLLOW, w.size.body, w.c(|t| t.ink), REGULAR)),
+            w,
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.picker_follow(cx);
+            }),
+        );
+        list = list
+            .child(follow)
+            // `.menu hr`: the follow item is ruled off from the characters.
+            .child(div().py(w.z(RULE_Y)).child(hairline(w)));
+    }
     for c in &gui.hist.known {
         let on = selected.as_deref() == Some(c.guid.as_str());
         let guid = c.guid.clone();

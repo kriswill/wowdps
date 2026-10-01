@@ -4,7 +4,9 @@
 
 use gpui_kit::{AppContext as _, ElementId, TestAppContext};
 use wowdps_gui_logic::config::Config;
+use wowdps_gui_logic::home::CharLine;
 use wowdps_gui_logic::rail::Pull;
+use wowdps_model::{Class, Spec};
 use wowdps_proto::HistoryStatus;
 
 use super::super::Place;
@@ -79,6 +81,53 @@ fn a_scope_chip_is_remembered(cx: &mut TestAppContext) {
     });
     press(cx, &rig, "scope-all");
     assert_eq!(Config::load().character, None);
+}
+
+/// The picker names the pick — the menu's or a chip's, the second as the
+/// first — and, with none (All characters, or the follow item), the
+/// character played; whose window it is never moves.
+#[gpui_kit::test]
+fn the_picker_names_the_pick_else_the_character_played(cx: &mut TestAppContext) {
+    const ALT: &str = "Player-1168-0A1B2CFF";
+    let rig = home(cx);
+    rig.gui.update(cx, |g, _| {
+        g.hist.known.push(CharLine {
+            guid: ALT.into(),
+            name: "Alt-Realm-US".into(),
+            class: Some(Class::Mage),
+            spec: Some(Spec::Fire),
+            fights: 1,
+            last_utc_ms: 0,
+            last_local_ms: 0,
+        })
+    });
+    let shows = |cx: &mut TestAppContext| {
+        rig.gui.read_with(cx, |g, cx| {
+            let played = g.played(cx).map(|p| p.guid);
+            assert_eq!(played.as_deref(), Some(OWNER_GUID), "whose window it is");
+            g.picked(cx).map(|p| p.guid)
+        })
+    };
+    let menu_pick = |cx: &mut TestAppContext, row: &str| {
+        press(cx, &rig, "top-picker");
+        press(cx, &rig, ElementId::Name(format!("menu-{row}").into()));
+    };
+    assert_eq!(shows(cx).as_deref(), Some(OWNER_GUID), "nothing picked");
+    menu_pick(cx, ALT);
+    assert_eq!(shows(cx).as_deref(), Some(ALT));
+    press(
+        cx,
+        &rig,
+        ElementId::Name(format!("scope-{OWNER_GUID}").into()),
+    );
+    assert_eq!(shows(cx).as_deref(), Some(OWNER_GUID), "a chip picks too");
+    menu_pick(cx, ALT);
+    assert_eq!(shows(cx).as_deref(), Some(ALT), "a second pick moves it");
+    press(cx, &rig, "scope-all");
+    assert_eq!(shows(cx).as_deref(), Some(OWNER_GUID), "All characters");
+    menu_pick(cx, ALT);
+    menu_pick(cx, "follow");
+    assert_eq!(shows(cx).as_deref(), Some(OWNER_GUID), "the follow item");
 }
 
 #[gpui_kit::test]

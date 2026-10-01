@@ -163,7 +163,7 @@ impl Gui {
         self.cfg.chrome = name.clone();
         wowdps_gui_logic::config::Config::store(|c| c.chrome = name);
         let class = self
-            .picked(cx)
+            .played(cx)
             .and_then(|p| p.class)
             .or_else(|| self.cfg.character_class());
         let accent = match chrome {
@@ -179,10 +179,21 @@ impl Gui {
 
     // ---- the character menu ------------------------------------------------
 
-    /// The check item's press: it changes nothing — the window always
-    /// follows the character played — and says so.
+    /// The follow item's press (it stands only while a character is
+    /// picked): the pick let go, so the picker names the character played
+    /// again and Home, when it is up, every character — staying where the
+    /// window is, as All characters' chip does on Home. It says what
+    /// following means; the window's "you" never left it.
     pub(crate) fn picker_follow(&mut self, cx: &mut Context<Self>) {
         self.cards.picker = false;
+        if self.cfg.character.is_some() {
+            self.cfg.character = None;
+            wowdps_gui_logic::config::Config::store_character(None);
+        }
+        if let Some(home) = self.hist.store.home.as_mut() {
+            home.scope = None;
+        }
+        self.derive_home(cx);
         self.say(wowdps_gui_logic::home::FOLLOW_NOTE, cx);
     }
 

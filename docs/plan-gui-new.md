@@ -1080,6 +1080,16 @@ entity that phase 3's window opens; the window itself is not wired yet.
      builds it anew; a press on the rail did nothing. The grip lives in
      `scrollbar::Scroll` beside the list's handle, a press on the rail
      pages toward itself, and held, keeps paging.
+   - **The picker names the pick** (2026-10-01, the user's call; a
+     departure from iced and the prototype, where it always names the
+     character played last and a pick only scopes Home, which read as
+     stuck). It names the config's `character` (Home's scope) once the
+     window knows them, else the character played. The menu's follow item
+     stands only while a character is picked (with none it did nothing),
+     and a press on it lets the pick go (Home, when up, on every
+     character). The "you" marks, the class chrome and the rail's owner
+     still follow the character played (`Gui::played`). The cutover's
+     rewrite of CLAUDE.md says so.
 
 When spec §10's four criteria hold, one PR:
 

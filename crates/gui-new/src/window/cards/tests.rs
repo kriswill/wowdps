@@ -53,7 +53,7 @@ fn open(cx: &mut TestAppContext, rig: &Rig, menu: Menu) {
     .unwrap();
 }
 
-fn shown(cx: &mut TestAppContext, rig: &Rig, id: &'static str) -> bool {
+fn shown(cx: &mut TestAppContext, rig: &Rig, id: impl Into<ElementId>) -> bool {
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
         window.try_find(id).is_some()
@@ -214,22 +214,21 @@ fn known() -> Vec<CharLine> {
     ]
 }
 
-/// The character menu: its check item says what the window does and
-/// changes nothing; a character's row scopes Home to them, remembered;
-/// a press off the card closes it.
+/// The character menu: with nothing picked, only the characters; a
+/// character's row scopes Home to them, remembered and lit, and brings
+/// the follow item; the follow item lets the pick go, Home staying up on
+/// every character, and goes with it; a press off the card closes it.
 #[gpui_kit::test]
 fn the_character_menu_follows_and_scopes_home(cx: &mut TestAppContext) {
+    let follow = row_id(None);
     let rig = rig(cx, 1440., 900.);
     rig.gui.update(cx, |g, _| g.hist.known = known());
     open(cx, &rig, Menu::Picker);
     assert!(shown(cx, &rig, "picker-menu"));
-    press(cx, &rig, row_id(None));
-    rig.gui.read_with(cx, |g, _| {
-        assert!(!g.cards.picker, "the follow item closes the menu");
-        assert_eq!(g.place, Place::Fights, "and changes nothing");
-    });
-    assert_eq!(toast(cx, &rig).as_deref(), Some(FOLLOW_NOTE));
-    open(cx, &rig, Menu::Picker);
+    assert!(
+        !shown(cx, &rig, follow.clone()),
+        "nothing picked, nothing to follow back to"
+    );
     press(cx, &rig, row_id(Some("Player-1-B")));
     rig.gui.read_with(cx, |g, _| {
         assert!(!g.cards.picker);
@@ -245,8 +244,26 @@ fn the_character_menu_follows_and_scopes_home(cx: &mut TestAppContext) {
         })
         .unwrap();
     assert_eq!(lit, Some(true), "Home's scope is the lit row");
+    assert!(
+        shown(cx, &rig, follow.clone()),
+        "a pick brings the follow item"
+    );
     press(cx, &rig, "picker-scrim");
     rig.gui.read_with(cx, |g, _| assert!(!g.cards.picker));
+
+    open(cx, &rig, Menu::Picker);
+    press(cx, &rig, follow.clone());
+    rig.gui.read_with(cx, |g, _| {
+        assert!(!g.cards.picker, "the follow item closes the menu");
+        assert_eq!(g.cfg.character, None, "the pick let go");
+        assert_eq!(g.place, Place::Home, "where the window was");
+        let home = g.hist.store.home.as_ref().expect("Home is up");
+        assert_eq!(home.scope, None, "on every character");
+    });
+    assert_eq!(Config::load().character, None);
+    assert_eq!(toast(cx, &rig).as_deref(), Some(FOLLOW_NOTE));
+    open(cx, &rig, Menu::Picker);
+    assert!(!shown(cx, &rig, follow), "and the item goes");
 }
 
 /// The menu's names honour `hide_realms`.
