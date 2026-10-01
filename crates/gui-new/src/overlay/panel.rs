@@ -1175,7 +1175,7 @@ impl Overlay {
             .then(|| {
                 let label = match state.graph_mode() {
                     wowdps_model::GraphMode::Dps if state.screen != Screen::Compare => {
-                        wowdps_gui_logic::drill::rate_label(view)
+                        wowdps_gui_logic::labels::rate_label(view)
                     }
                     m => m.label(),
                 };

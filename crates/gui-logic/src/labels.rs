@@ -134,6 +134,77 @@ pub fn class_tag(class: Option<wowdps_model::Class>) -> &'static str {
     }
 }
 
+// ---- the window's words ----------------------------------------------------
+
+/// The window's views in the prototype's order (`VIEWS`): damage and
+/// healing, then the two a raid reads next — what was taken and who died —
+/// before the counts, and the enemies last. `View::ALL` (the TUI's, and the
+/// overlay's cycle) keeps its own order.
+pub const WINDOW_VIEWS: [wowdps_model::View; 8] = {
+    use wowdps_model::View;
+    [
+        View::Damage,
+        View::Healing,
+        View::Taken,
+        View::Deaths,
+        View::Interrupts,
+        View::CrowdControl,
+        View::Dispels,
+        View::EnemyTaken,
+    ]
+};
+
+/// A view's name in the window, in the prototype's sentence case and its
+/// words ("Crowd control", "Enemies"). The overlay keeps `view_name`'s.
+pub fn window_view_name(v: wowdps_model::View) -> &'static str {
+    use wowdps_model::View;
+    match v {
+        View::Damage => "Damage",
+        View::Healing => "Healing",
+        View::Taken => "Taken",
+        View::Deaths => "Deaths",
+        View::Interrupts => "Interrupts",
+        View::CrowdControl => "Crowd control",
+        View::Dispels => "Dispels",
+        View::EnemyTaken => "Enemies",
+    }
+}
+
+/// How a view words its per-second rate: `dps`, `hps`, or `dtps` for damage
+/// taken (R17). Count views never show one; they read `dps` here only
+/// because nothing asks them.
+pub fn rate_label(view: wowdps_model::View) -> &'static str {
+    use wowdps_model::View;
+    match view {
+        View::Healing => "hps",
+        View::Taken | View::EnemyTaken => "dtps",
+        _ => "dps",
+    }
+}
+
+/// `s` in sentence case: its first letter capital, every other letter
+/// lower — "KILL" → "Kill", "OVER +0:26" → "Over +0:26", "crowd control"
+/// → "Crowd control". The window's one case (the prototype's).
+pub fn sentence(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first
+            .to_uppercase()
+            .chain(chars.flat_map(char::to_lowercase))
+            .collect(),
+        None => String::new(),
+    }
+}
+
+/// "1 fight", "3 fights": a count and its noun, agreeing.
+pub fn plural(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("{n} {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

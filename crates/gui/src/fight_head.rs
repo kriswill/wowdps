@@ -30,18 +30,15 @@
 use iced::widget::{Row as Line, Space, button, column, container, row, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
-use wowdps_model::fmt::{commas, duration, key_tier};
-use wowdps_model::{
-    Class, Encounter, RaidTimeline, Role, Row, SegmentId, SegmentKind, Spec, View, difficulty_name,
-};
-use wowdps_proto::ClientState;
+use wowdps_model::fmt::duration;
 
 use crate::ellipsis::ellipsis;
 use crate::line_icons::LineIcon;
 use crate::nav::{self, Badge};
 use crate::theme::{self, pitch, size};
-use crate::view::{display_name, rate_label, window_view_name};
+use crate::view::display_name;
 use crate::window::{Gui, Message};
+use wowdps_gui_logic::labels::Tone;
 
 /// The you chip's spec disc, and the chip itself: the disc and the 3 px
 /// above and below it (iced draws the 1 px border inside that) — the
@@ -164,47 +161,6 @@ pub(crate) struct Head {
     pub night: Option<String>,
 }
 
-/// What the title line says before there is a fight.
-pub(crate) const WAITING: &str = "waiting for combat…";
-/// What it says while the history store answers for a stored pull.
-pub(crate) const READING: &str = "reading the stored pull…";
-/// What it says of a stored pull the store did not answer for.
-pub(crate) const GONE: &str = "not in the history store";
-
-/// The stat line: the view's figures, and the owner's chip. Both empty
-/// while the view's answer is on its way ([`Stats::pending`]).
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct Stats {
-    pub pairs: Vec<Pair>,
-    pub you: Option<You>,
-}
-
-/// One label and its value.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Pair {
-    pub label: String,
-    pub value: String,
-}
-
-/// The "you" chip: the owner as the chart knows them, and what the view
-/// says of them.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct You {
-    pub name: String,
-    pub class: Option<Class>,
-    pub spec: Option<Spec>,
-    /// "17th of 19 dps", "149,258 hps", "3 interrupts", "died", "survived".
-    pub words: String,
-    /// The figure after the words, in secondary ink: the rate beside a
-    /// place.
-    pub figure: Option<String>,
-    /// The owner has a row on this view for a press to select. On Deaths
-    /// ("survived") and a count view ("no interrupts") the chip speaks from
-    /// what another view said (`Seen`), and there is no row to go to: no
-    /// press, no tooltip, no hand.
-    pub selectable: bool,
-}
-
 impl Head {
     pub(crate) fn of(state: &Gui, stats: bool) -> Self {
         let app = state.fight();
@@ -228,7 +184,7 @@ impl Head {
             duration: name
                 .as_ref()
                 .map_or_else(String::new, |_| duration(app.duration_ms())),
-            stats: (stats && name.is_some()).then(|| Stats::of(state)),
+            stats: (stats && name.is_some()).then(|| stats_of(state)),
             title: name,
             meta: meta(app.segment_encounter()),
             badge: badge(Verdict {
@@ -409,9 +365,6 @@ pub(crate) fn rail_button_id() -> iced::widget::Id {
     iced::widget::Id::new("rail-button")
 }
 
-/// What the rail's button does, and the key that closes what it opens.
-const RAIL_TIP: &str = "Pulls (Esc closes)";
-
 /// One of the meta's words, in secondary ink on one line — in the face it
 /// is measured in.
 fn quiet(s: &str, px: f32) -> Element<'static, Message> {
@@ -422,10 +375,6 @@ fn quiet(s: &str, px: f32) -> Element<'static, Message> {
         .wrapping(text::Wrapping::None)
         .into()
 }
-
-/// The step buttons' tooltips: what they do, and the key that does it.
-pub(crate) const OLDER_TIP: &str = "Older pull ( [ )";
-pub(crate) const NEWER_TIP: &str = "Newer pull ( ] )";
 
 /// The stat line: the pairs, then the chip — at the line's far end in a
 /// wide window, right after the pairs in a tile (`.youchip{margin-left:0}`
@@ -577,463 +526,66 @@ fn you_chip(you: &You) -> Element<'static, Message> {
 }
 
 // ---- the words ---------------------------------------------------------------
+//
+// What the header says is gui-logic's (`fight_head`); this GUI colours it.
 
-/// "Heroic, 25 players": the encounter's difficulty as the game names it
-/// and how many were in it. Empty off a boss pull — trash, a visit's Σ, an
-/// arena — which has no ENCOUNTER_START to say it.
-pub(crate) fn meta(encounter: Option<Encounter>) -> String {
-    let Some(e) = encounter else {
-        return String::new();
-    };
-    let size = (e.group_size > 0).then(|| nav::plural(e.group_size as usize, "player"));
-    match (difficulty_name(e.difficulty), size) {
-        (Some(d), Some(s)) => format!("{d}, {s}"),
-        (Some(d), None) => d.to_string(),
-        (None, Some(s)) => s,
-        (None, None) => String::new(),
-    }
-}
+pub(crate) use wowdps_gui_logic::fight_head::{
+    GONE, NEWER_TIP, OLDER_TIP, Place, RAIL_TIP, READING, Seen, Stats, Verdict, WAITING, You, meta,
+    ordinal, outcome, pairs, player_chart, you,
+};
 
-/// What an outcome is worded from: the watched segment's verdict, and what
-/// kind of segment it is.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub(crate) struct Verdict {
-    pub live: bool,
-    pub kind: Option<SegmentKind>,
-    pub success: Option<bool>,
-    /// R13: an arena match, won or lost.
-    pub arena: bool,
-    /// R10: a keyed visit's (par, +2, +3) timers.
-    pub pars_ms: Option<(i64, i64, i64)>,
-    pub duration_ms: i64,
-    /// R16: how close a wipe came, when something said. The live meter's
-    /// snapshot does not carry it yet — a stored card does — so nothing
-    /// fills it here until the Wire step brings a pull's best health.
-    pub wipe_pct: Option<u16>,
-}
-
-impl Verdict {
-    pub(crate) fn of(app: &ClientState) -> Self {
-        Verdict {
-            live: app.is_live(),
-            kind: app.segment_kind(),
-            success: app.segment_success(),
-            arena: app.segment_arena(),
-            pars_ms: app.segment_pars_ms(),
-            duration_ms: app.duration_ms(),
-            wipe_pct: None,
-        }
-    }
-}
-
-/// The outcome badge (`.badge`): Live with its red dot; Kill, Win and
-/// "Timed +2" (the key's upgrade, R10) in green; "Wipe at 56%", Loss and
-/// "Over time" in red. `None` when there is nothing to say: trash, a
-/// raid visit's Σ, a pull the log cut off before its end.
+/// The outcome badge (`.badge`), its word [`outcome`]'s: Live with its red
+/// dot; a good word in green, a bad one in red. `None` when there is nothing
+/// to say.
 pub(crate) fn badge(v: Verdict) -> Option<Badge> {
-    if v.live {
-        return Some(Badge::live());
-    }
-    let good = v.success?;
-    let word = match (v.kind, good) {
-        (Some(SegmentKind::Overall), true) => match v.pars_ms {
-            Some(pars) => format!("Timed +{}", key_tier(v.duration_ms, pars)),
-            None => "Timed".to_string(),
-        },
-        (Some(SegmentKind::Overall), false) => "Over time".to_string(),
-        (_, true) if v.arena => "Win".to_string(),
-        (_, false) if v.arena => "Loss".to_string(),
-        (_, true) => "Kill".to_string(),
-        (_, false) => match v.wipe_pct {
-            Some(pct) => format!("Wipe at {pct}%"),
-            None => "Wipe".to_string(),
-        },
-    };
-    Some(Badge::new(
-        word,
-        if good { theme::GOOD } else { theme::BAD },
-    ))
-}
-
-impl Stats {
-    /// The line for the view on screen — or, while its answer is on its
-    /// way (asked for, not in; a stored pull still loading), nothing: the
-    /// rows in hand are another view's or a placeholder's, and a "Raid hps
-    /// 0" or a "survived" drawn from them would be the confident false
-    /// figure the line never shows. The line keeps its height.
-    fn of(state: &Gui) -> Self {
-        let app = state.fight();
-        if Self::pending(app) {
-            return Stats::default();
-        }
-        let rows = app.rows();
-        let seen = state.seen.of(app).and_then(|s| s.owner.as_ref());
-        let owner = state.owner_in(&rows);
-        let raid = app.raid();
-        // R25: when the owner died, as the raid timeline marks it.
-        let died_at = owner
-            .and_then(|i| rows.get(i))
-            .zip(raid)
-            .and_then(|(me, r)| r.deaths.iter().find(|d| d.guid == me.key))
-            .map(|d| d.at_ms);
-        let you = you(app.view, &rows, owner, seen, app.is_live(), died_at).map(|mut you| {
-            if !state.cfg.hide_realms {
-                return you;
-            }
-            you.name = display_name(&you.name).to_string();
-            you
-        });
-        Stats {
-            pairs: pairs(app.view, &rows, raid),
-            you,
-        }
-    }
-
-    /// The view's answer is not in yet.
-    fn pending(app: &ClientState) -> bool {
-        !app.view_answered() || loading(app)
-    }
-}
-
-/// The stat line's figures for `view`, folded from its rows — OUR side's:
-/// an arena's enemy team (R13) is on the chart, not in the fold — and,
-/// from the raid timeline (R25, v35), the deaths: their count on Damage and
-/// Enemies, and on Deaths the first one's time and the battle rezzes, as
-/// the prototype's `statLine()` has them. The timeline answers for the
-/// whole fight on every view, so the line says the same of it wherever
-/// the reader has been; without one (a card-only stored pull) it says less.
-pub(crate) fn pairs(view: View, rows: &[Row], raid: Option<&RaidTimeline>) -> Vec<Pair> {
-    let ours: Vec<&Row> = rows.iter().filter(|r| !r.enemy).collect();
-    let total: u64 = ours.iter().map(|r| r.amount).sum();
-    let extra: u64 = ours.iter().map(|r| r.extra).sum();
-    let rate: f64 = ours.iter().map(|r| r.per_sec).sum();
-    let pair = |label: &str, value: String| Pair {
-        label: label.to_string(),
-        value,
-    };
-    // The group's own deaths: an arena's other team (R13) dies in the
-    // timeline too, and is never counted as ours.
-    let dead: Option<Vec<&wowdps_model::RaidDeath>> =
-        raid.map(|r| r.deaths.iter().filter(|d| !d.enemy).collect());
-    let deaths = dead.as_ref().map(|d| pair("Deaths", d.len().to_string()));
-    let rate = pair(
-        &format!("Raid {}", rate_label(view)),
-        commas(rate.round() as u64),
-    );
-    match view {
-        View::Damage => [Some(rate), Some(pair("Damage", commas(total))), deaths]
-            .into_iter()
-            .flatten()
-            .collect(),
-        View::Healing => {
-            let mut line = vec![rate, pair("Healing", commas(total))];
-            let fold = Row {
-                amount: total,
-                extra,
-                ..Row::default()
-            };
-            if total + extra > 0 {
-                line.push(pair(
-                    "Overheal",
-                    format!("{:.1}%", crate::table::overheal_pct(&fold)),
-                ));
-            }
-            line
-        }
-        View::Taken => vec![
-            rate,
-            pair("Taken", commas(total)),
-            pair("Absorbed", commas(extra)),
-        ],
-        // "Raid dtps": what the enemies took, a second — the prototype's
-        // words beside "Damage to enemies".
-        View::EnemyTaken => [
-            Some(rate),
-            Some(pair("Damage to enemies", commas(total))),
-            deaths,
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
-        // The deaths in the order they happened: how many, when the first
-        // came, and how many a rez undid — or, with no timeline, the rows'
-        // count alone.
-        View::Deaths => match &dead {
-            Some(dead) if !dead.is_empty() => vec![
-                pair("Deaths", dead.len().to_string()),
-                pair(
-                    "First",
-                    duration(dead.iter().map(|d| d.at_ms).min().unwrap_or(0)),
-                ),
-                // Someone else raised them: a self-rez (Reincarnation) is
-                // no battle rez.
-                pair(
-                    "Battle rezzes",
-                    dead.iter()
-                        .filter(|d| d.battle_rezzed())
-                        .count()
-                        .to_string(),
-                ),
-            ],
-            _ => vec![pair("Deaths", commas(total))],
-        },
-        View::Interrupts | View::CrowdControl | View::Dispels => vec![
-            pair(window_view_name(view), commas(total)),
-            pair("Players", ours.len().to_string()),
-        ],
-    }
-}
-
-/// What the chip says of the owner on `view`, their row being `owner` of
-/// `rows`: on Damage their place among their own ROLE — a healer against
-/// healers, what the history store grades by — and their rate after it;
-/// on Healing and Taken the rate; on a count view the count and its noun
-/// ("3 interrupts"), or "no interrupts" when the window saw them in this
-/// fight (`seen`, their row on another view) and they have no row here;
-/// on Deaths "died 5:45" — when, from the raid timeline (`died_at`, R25),
-/// else "died" — or "died 3 times", or — seen, and not among the dead —
-/// "survived" once the fight is over and "alive" while it is `live`. `None`
-/// is no chip: the owner is not known to be in this fight, or — on the
-/// Enemies view — the rows are the enemies.
-pub(crate) fn you(
-    view: View,
-    rows: &[Row],
-    owner: Option<usize>,
-    seen: Option<&Row>,
-    live: bool,
-    died_at: Option<i64>,
-) -> Option<You> {
-    if view == View::EnemyTaken {
-        return None;
-    }
-    let me = owner.and_then(|i| rows.get(i));
-    // Selectable when it names a row on this chart; a chip made from what
-    // another view said has none to go to.
-    let chip = |r: &Row, words: String, figure: Option<String>| You {
-        name: r.label.clone(),
-        class: r.class,
-        spec: r.spec,
-        words,
-        figure,
-        selectable: me.is_some(),
-    };
-    match (view, me) {
-        (View::Deaths, Some(me)) => Some(chip(
-            me,
-            match (me.amount, died_at) {
-                (0 | 1, Some(at)) => format!("died {}", duration(at)),
-                (0 | 1, None) => "died".to_string(),
-                (n, _) => format!("died {n} times"),
-            },
-            None,
-        )),
-        (View::Deaths, None) => seen.map(|me| {
-            let words = if live { "alive" } else { "survived" };
-            chip(me, words.to_string(), None)
-        }),
-        (View::Interrupts | View::CrowdControl | View::Dispels, None) => {
-            seen.map(|me| chip(me, format!("no {}", count_noun(view, 0)), None))
-        }
-        (_, None) => None,
-        (View::Damage, Some(me)) => {
-            let place = Place::of(rows, me);
-            Some(chip(
-                me,
-                place.words(),
-                Some(commas(me.per_sec.round() as u64)),
-            ))
-        }
-        (View::Healing | View::Taken, Some(me)) => Some(chip(
-            me,
-            format!("{} {}", commas(me.per_sec.round() as u64), rate_label(view)),
-            None,
-        )),
-        (_, Some(me)) => Some(chip(
-            me,
-            format!("{} {}", commas(me.amount), count_noun(view, me.amount)),
-            None,
-        )),
-    }
-}
-
-/// Where a player stands among their own ROLE on a chart — a healer
-/// against healers, what the history store grades by: "17th of 19 dps".
-/// One reckoning for the chip and the inspector, so the two never
-/// disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Place {
-    pub place: usize,
-    pub of: usize,
-    /// "dps", "healers", "tank"; `None` when their spec (and so their
-    /// role) is not known, and the place is among everyone on our side.
-    pub noun: Option<&'static str>,
-}
-
-impl Place {
-    /// `me`'s place among our side's rows of their role on `rows`.
-    pub(crate) fn of(rows: &[Row], me: &Row) -> Self {
-        let role = me.spec.map(Spec::role);
-        // Everyone on our side who plays their role; with no spec known,
-        // everyone on our side.
-        let peers: Vec<&Row> = rows
-            .iter()
-            .filter(|r| !r.enemy && (role.is_none() || r.spec.map(Spec::role) == role))
-            .collect();
-        Place {
-            place: peers.iter().filter(|r| r.amount > me.amount).count() + 1,
-            of: peers.len(),
-            noun: role_noun(role, peers.len()),
-        }
-    }
-
-    /// "17th of 19 dps".
-    pub(crate) fn words(self) -> String {
-        format!("{} {}", ordinal(self.place), self.tail())
-    }
-
-    /// What follows the ordinal: "of 19 dps".
-    pub(crate) fn tail(self) -> String {
-        match self.noun {
-            Some(noun) => format!("of {} {noun}", self.of),
-            None => format!("of {}", self.of),
-        }
-    }
-}
-
-/// What a count view counts, agreeing with `n`: "interrupt(s)",
-/// "dispel(s)" — and "crowd control", which has no plural.
-fn count_noun(view: View, n: u64) -> &'static str {
-    match (view, n) {
-        (View::Interrupts, 1) => "interrupt",
-        (View::Interrupts, _) => "interrupts",
-        (View::Dispels, 1) => "dispel",
-        (View::Dispels, _) => "dispels",
-        _ => "crowd control",
-    }
-}
-
-/// A role as the chip counts `n` of its members: "dps", "healers",
-/// "tanks" — "healer" and "tank" when there is one.
-fn role_noun(role: Option<Role>, n: usize) -> Option<&'static str> {
-    role.map(|r| match (r, n) {
-        (Role::Dps, _) => "dps",
-        (Role::Healer, 1) => "healer",
-        (Role::Healer, _) => "healers",
-        (Role::Tank, 1) => "tank",
-        (Role::Tank, _) => "tanks",
+    let (word, tone) = outcome(v)?;
+    Some(match tone {
+        Tone::Live => Badge::live(),
+        Tone::Good => Badge::new(word, theme::GOOD),
+        Tone::Bad | Tone::None => Badge::new(word, theme::BAD),
     })
 }
 
-/// 1st, 2nd, 3rd, 4th … 11th, 12th, 13th … 21st, 22nd.
-pub(crate) fn ordinal(n: usize) -> String {
-    let suffix = match (n % 10, n % 100) {
-        (_, 11..=13) => "th",
-        (1, _) => "st",
-        (2, _) => "nd",
-        (3, _) => "rd",
-        _ => "th",
-    };
-    format!("{n}{suffix}")
-}
-
-/// A row label names the owner by one of their configured names: the
-/// "Name-Realm" whole, or a bare "Name" matching its name half — the way
-/// the daemon reads `history_characters`. Case aside.
-pub(crate) fn is_named(label: &str, name: &str) -> bool {
-    let (label, name) = (label.to_lowercase(), name.to_lowercase());
-    label == name
-        || label
-            .strip_prefix(&name)
-            .is_some_and(|rest| rest.starts_with('-'))
-}
-
-// ---- what other views said -------------------------------------------------
-
-/// What the window has seen of the watched fight on views other than the
-/// one on screen: the owner's row, as it last stood — what lets the Deaths
-/// view say "survived" and a count view "no interrupts" rather than
-/// nothing, since a snapshot carries its own view's rows only. Held for one
-/// fight, begun again with the next; never taken from a loading
-/// placeholder.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct Seen {
-    fight: Option<SegmentId>,
-    /// The owner's row as it last stood, on any view.
-    owner: Option<Row>,
-    /// Our side's rows as a player chart (Damage, Healing, Taken) last
-    /// listed them: who fought — what the command palette offers as the
-    /// pull's players on a view whose rows are not all of them (a count
-    /// view's, the enemies').
-    players: Vec<Row>,
-}
-
-impl Seen {
-    /// Take in what is on screen now; `owner` is the owner's row there.
-    pub(crate) fn observe(&mut self, app: &ClientState, owner: Option<&Row>) {
-        let Some(fight) = watched(app) else {
-            return;
-        };
-        if self.fight != Some(fight) {
-            *self = Seen {
-                fight: Some(fight),
-                ..Seen::default()
-            };
-        }
-        if loading(app) {
-            return;
-        }
-        if let Some(me) = owner {
-            self.owner = Some(me.clone());
-        }
-        if player_chart(app.view) && app.view_answered() {
-            self.players = app.rows().into_iter().filter(|r| !r.enemy).collect();
-        }
+/// The stat line for the view on screen — or, while its answer is on its
+/// way (asked for, not in; a stored pull still loading), nothing: the
+/// rows in hand are another view's or a placeholder's (`fight_head::
+/// pending`). The line keeps its height.
+fn stats_of(state: &Gui) -> Stats {
+    let app = state.fight();
+    if wowdps_gui_logic::fight_head::pending(app) {
+        return Stats::default();
     }
-
-    /// What was seen, when it is of the fight on screen.
-    fn of(&self, app: &ClientState) -> Option<&Seen> {
-        (self.fight.is_some() && watched(app) == self.fight).then_some(self)
-    }
-
-    /// The fight on screen's players, as a player chart last listed them:
-    /// its rows while it is one — and they are the fight's, not a pull's
-    /// the reader just left whose rows stand in while this one loads — else
-    /// what one said, none before one did.
-    pub(crate) fn players(&self, app: &ClientState) -> Vec<Row> {
-        if player_chart(app.view) && app.view_answered() && !loading(app) {
-            return app.rows().into_iter().filter(|r| !r.enemy).collect();
+    let rows = app.rows();
+    let seen = state.seen.of(app).and_then(Seen::owner);
+    let owner = state.owner_in(&rows);
+    let raid = app.raid();
+    // R25: when the owner died, as the raid timeline marks it.
+    let died_at = owner
+        .and_then(|i| rows.get(i))
+        .zip(raid)
+        .and_then(|(me, r)| r.deaths.iter().find(|d| d.guid == me.key))
+        .map(|d| d.at_ms);
+    let you = you(app.view, &rows, owner, seen, app.is_live(), died_at).map(|mut you| {
+        if !state.cfg.hide_realms {
+            return you;
         }
-        self.of(app).map(|s| s.players.clone()).unwrap_or_default()
+        you.name = display_name(&you.name).to_string();
+        you
+    });
+    Stats {
+        pairs: pairs(app.view, &rows, raid),
+        you,
     }
-}
-
-/// The fight on screen is still loading: what is in hand is a placeholder,
-/// or the pull before it.
-fn loading(app: &ClientState) -> bool {
-    app.status
-        .as_deref()
-        .is_some_and(wowdps_proto::is_loading_status)
-}
-
-/// A view whose rows are everyone who fought: what they dealt, healed or
-/// took. A count view's rows are only who counted; the enemies' are not
-/// players at all.
-pub(crate) fn player_chart(view: View) -> bool {
-    matches!(view, View::Damage | View::Healing | View::Taken)
-}
-
-/// The fight on screen, by the daemon's id for it: `None` before a
-/// snapshot describes one.
-fn watched(app: &ClientState) -> Option<SegmentId> {
-    app.segment_name()?;
-    app.entries().get(app.segment_index()).map(|e| e.id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::window::testkit::{self as tk, apply, simulator, simulator_as};
-    use wowdps_model::Action;
+    use wowdps_gui_logic::fight_head::is_named;
+    use wowdps_model::fmt::commas;
+    use wowdps_model::{Action, Encounter, Row, SegmentKind, Spec, View};
+    use wowdps_proto::ClientState;
 
     /// The header over the window's fight, with its stat line or without.
     fn view(state: &Gui, stats: bool) -> Element<'static, Message> {
@@ -1383,17 +935,17 @@ mod tests {
         let owner = state.rows().last().cloned().unwrap();
         seen.observe(&state, Some(&owner));
         let facts = seen.of(&state).expect("this fight's");
-        assert_eq!(facts.owner.as_ref(), Some(&owner));
+        assert_eq!(facts.owner(), Some(&owner));
         apply(&mut state, &mut mock, Action::SetView(View::Deaths));
         seen.observe(&state, None);
         let facts = seen.of(&state).unwrap();
-        assert_eq!(facts.owner.as_ref(), Some(&owner), "still seen");
+        assert_eq!(facts.owner(), Some(&owner), "still seen");
         // Another fight: what was seen was of the last one.
         apply(&mut state, &mut mock, Action::OlderSegment);
         assert!(seen.of(&state).is_none());
         seen.observe(&state, None);
         let facts = seen.of(&state).unwrap();
-        assert_eq!(facts.owner, None);
+        assert_eq!(facts.owner(), None);
     }
 
     /// The pull's players are its own: while the pull on screen loads, the
@@ -1739,13 +1291,13 @@ mod tests {
         let died = you(View::Deaths, &rows, Some(1), None, false, Some(345_500)).map(|y| y.words);
         assert_eq!(died.as_deref(), Some("died 5:45"));
         let (gui, _peer) = tk::gui_over(tk::raided(25));
-        let stats = Stats::of(&gui);
+        let stats = stats_of(&gui);
         let you = stats.you.expect("the owner's row is marked mine");
         assert_eq!(you.name, "Raider16-Realm-US");
         // On the Deaths view the chip finds the owner's death in the
         // timeline by their row's key, and says when.
         let (gui, _peer) = tk::gui_over(tk::raided_deaths(25));
-        let you = Stats::of(&gui).you.expect("the owner died");
+        let you = stats_of(&gui).you.expect("the owner died");
         assert_eq!(you.name, "Raider16-Realm-US");
         assert_eq!(you.words, "died 5:45");
     }

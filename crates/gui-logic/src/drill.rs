@@ -1,7 +1,7 @@
-//! A drill's words and the overlay drill's grid, free of any GUI: the rate
-//! a view is read in, the R17 mitigation line, a school's name, the
-//! ability drill's stat cards, a death recap's label and health, and the
-//! column widths the overlay's drill rows and their caption share.
+//! A drill's words and the overlay drill's grid, free of any GUI: whether
+//! a view counts, the R17 mitigation line, a school's name, the ability
+//! drill's stat cards, a death recap's label and health, and the column
+//! widths the overlay's drill rows and their caption share.
 
 use wowdps_model::fmt::{human, mitigation_line};
 use wowdps_model::{Row, View};
@@ -14,17 +14,6 @@ pub const OVERLAY_DRILL_COLS: (f32, f32, f32) = (40.0, 40.0, 48.0);
 
 /// R26: the fold caret's column on every line of a tree drill, px at zoom 1.
 pub const OVERLAY_CARET_W: f32 = 8.0;
-
-/// How a view words its per-second rate: `dps`, `hps`, or `dtps` for damage
-/// taken (R17). Count views never show one; they read `dps` here only
-/// because nothing asks them.
-pub fn rate_label(view: View) -> &'static str {
-    match view {
-        View::Healing => "hps",
-        View::Taken | View::EnemyTaken => "dtps",
-        _ => "dps",
-    }
-}
 
 /// A view whose rows count events rather than sum amounts: they cannot
 /// crit, and their total IS the count, so one column says it all.
@@ -195,6 +184,7 @@ pub fn whole_pct(part: u64, whole: u64) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::labels::rate_label;
 
     #[test]
     fn the_rate_label_follows_the_view() {

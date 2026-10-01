@@ -359,28 +359,7 @@ impl Badge {
     }
 }
 
-/// `s` in sentence case: its first letter capital, every other letter
-/// lower — "KILL" → "Kill", "OVER +0:26" → "Over +0:26", "crowd control"
-/// → "Crowd control". The window's one case (the prototype's).
-pub(crate) fn sentence(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(first) => first
-            .to_uppercase()
-            .chain(chars.flat_map(char::to_lowercase))
-            .collect(),
-        None => String::new(),
-    }
-}
-
-/// "1 fight", "3 fights": a count and its noun, agreeing.
-pub(crate) fn plural(n: usize, noun: &str) -> String {
-    if n == 1 {
-        format!("{n} {noun}")
-    } else {
-        format!("{n} {noun}s")
-    }
-}
+pub(crate) use wowdps_gui_logic::labels::{plural, sentence};
 
 /// A badge's frame around its word (`.badge{padding:1px 7px}`), the live
 /// dot's diameter, and the gap after the dot and before the detail.

@@ -45,6 +45,7 @@ use wowdps_model::fmt::{commas, duration};
 use wowdps_model::{LustWindow, RaidTimeline, View};
 
 use crate::deaths::Pick;
+#[cfg(test)]
 use crate::table::figure;
 use crate::theme;
 use crate::view::display_name;
@@ -130,10 +131,6 @@ const TIP_OFF_X: f32 = 12.0;
 const TIP_OFF_Y: f32 = 4.0;
 /// A one-line text box's height for its size: iced's default line height.
 const LINE: f32 = 1.3;
-/// The curve's rate is taken over this many of the daemon's 1 s buckets
-/// (the prototype's 10 s), fewer in a fight too short to show a shape.
-const STEP_BUCKETS: usize = 10;
-const MIN_POINTS: usize = 12;
 /// The tick labels' own room: the axis steps up from minutes when they
 /// would crowd it (the inspector's rule).
 const TICK_FIRST: f32 = 0.001;
@@ -209,26 +206,9 @@ impl Ribbon {
         hide_realms: bool,
         owner: Option<&str>,
     ) -> Self {
-        let bucket = i64::from(raid.bucket_ms.max(1));
-        // The fight's clock, or further when the series, a death or a lust
-        // runs past it — a visit's Σ is timed by its members' combat but
-        // drawn on the visit's wall clock.
-        let span = [
-            duration_ms,
-            raid.series.len() as i64 * bucket,
-            raid.deaths.iter().map(|d| d.at_ms).max().unwrap_or(0),
-            raid.lust
-                .iter()
-                .map(|w| w.at_ms + w.dur_ms)
-                .max()
-                .unwrap_or(0),
-        ]
-        .into_iter()
-        .max()
-        .unwrap_or(0)
-        .clamp(1, i64::from(u32::MAX));
+        let span = wowdps_gui_logic::ribbon::span_of(raid, duration_ms);
         let (step_ms, rate) = rates(&raid.series, raid.bucket_ms.max(1), span);
-        let word = format!("Raid {}", crate::view::rate_label(raid.view));
+        let word = wowdps_gui_logic::ribbon::word(raid);
         let skulls = raid
             .deaths
             .iter()
@@ -239,20 +219,10 @@ impl Ribbon {
                 } else {
                     d.name.clone()
                 };
-                // As the Deaths table words it: a cheat death "ran out".
-                let blow = crate::deaths::words(d, hide_realms).blow;
                 Skull {
                     at_ms: d.at_ms,
-                    pick: Pick {
-                        key: d.guid.clone(),
-                        label: d.name.clone(),
-                        index: d.index,
-                    },
-                    words: if d.enemy {
-                        format!("of the enemy team, died {}, {blow}", duration(d.at_ms))
-                    } else {
-                        format!("died {}, {blow}", duration(d.at_ms))
-                    },
+                    pick: Pick::of(d),
+                    words: wowdps_gui_logic::ribbon::skull_words(d, hide_realms),
                     name,
                     color: d.class.map_or(crate::view::CLASSLESS, theme::class_rgb),
                     text: d.class.map_or(theme::INK, theme::you_text),
@@ -279,7 +249,7 @@ impl Ribbon {
 
     /// "Raid dps, peak 10.7M".
     pub(crate) fn peak_words(&self) -> String {
-        format!("{}, peak {}", self.word, figure(self.peak().round() as u64))
+        wowdps_gui_logic::ribbon::peak_words(&self.word, self.peak())
     }
 
     /// The ribbon laid out: `narrow` is the window's own breakpoint.
@@ -303,36 +273,8 @@ impl Ribbon {
     }
 }
 
-/// The raid's rate from the series: 10 s at a time (`STEP_BUCKETS` of the
-/// live 1 s buckets, fewer in a short fight; a stored pull's coarse 10 s
-/// buckets one each), each over the buckets it holds — the last one may
-/// hold fewer — in amount per second. `(step_ms, rates)`.
-fn rates(series: &[u64], bucket_ms: u32, span_ms: i64) -> (u32, Vec<f64>) {
-    let buckets = (span_ms / i64::from(bucket_ms)).max(1) as usize;
-    let most = (STEP_BUCKETS * 1000 / bucket_ms.max(1) as usize).max(1);
-    let per = (buckets / MIN_POINTS).clamp(1, most);
-    let secs = f64::from(bucket_ms) / 1000.0;
-    let rate = series
-        .chunks(per)
-        .map(|c| c.iter().sum::<u64>() as f64 / (c.len() as f64 * secs))
-        .collect();
-    (bucket_ms * per as u32, rate)
-}
-
-/// The axis's ticks over `span_ms`, `w` wide: whole minutes, as the
-/// prototype's `axisTicks()` steps them — the inspector's wider steps when
-/// minutes would crowd the axis, and its finer ones only in a pull too
-/// short to hold two minutes, which would otherwise read no time at all.
-fn minute_ticks(span_ms: u32, w: f32) -> Vec<u32> {
-    let ticks = crate::inspector::ticks((0, span_ms), w);
-    let fine = ticks.get(1).is_some_and(|t| *t < MINUTE);
-    if !fine || span_ms < 2 * MINUTE {
-        return ticks;
-    }
-    (0..=span_ms).step_by(MINUTE as usize).collect()
-}
-
-const MINUTE: u32 = 60_000;
+use wowdps_gui_logic::axis::minute_ticks;
+use wowdps_gui_logic::ribbon::rates;
 
 /// The canvas: the ribbon and the breakpoint it is drawn at.
 struct Plot {

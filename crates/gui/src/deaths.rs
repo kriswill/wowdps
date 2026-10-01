@@ -20,26 +20,15 @@ use iced::widget::{column, container, mouse_area, row, scrollable, text};
 use iced::{Element, Length, Theme};
 
 use wowdps_model::fmt::{commas, duration};
-use wowdps_model::{RaidDeath, RaidTimeline, Row, View};
-use wowdps_proto::ClientState;
+use wowdps_model::{RaidDeath, RaidTimeline, View};
 
 use crate::theme::{self, DensityPitch, Look, size};
 use crate::view::{display_name, hover_style_in, row_style_in, scroll_clear};
 use crate::window::{Gui, Message, RowHover};
 
-/// What a death is, to open it: the player's meter key and label, and which
-/// of their death windows (R9's index) — the Deaths drill's own question.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Pick {
-    pub key: String,
-    pub label: String,
-    pub index: u32,
-}
-
-/// What a death with no damage in its recap says in the killing blow's
-/// place — a mechanic that removed the player without a hit. A note, not
-/// an ability: set in the faint ink.
-pub(crate) const NO_DAMAGE: &str = "No damage logged";
+// What a death is called, which the filter keeps and which one the
+// inspector recaps are gui-logic's (`deaths`); this GUI draws them.
+pub(crate) use wowdps_gui_logic::deaths::{ENEMY, Pick, before, drawn, is_mine, selected, words};
 
 /// The table's columns (`.v-deaths{--cols:46px minmax(0,150px) minmax(0,1fr)
 /// 74px 74px}`, and at 820 px and under `40px minmax(0,.8fr) minmax(0,1fr)`,
@@ -67,8 +56,6 @@ const DISC: f32 = 20.0;
 const WHO_GAP: f32 = 8.0;
 const KB_GAP: f32 = 6.0;
 const BLOW_PX: f32 = 14.0;
-/// The enemy team's word after a name (R13), in the source's size.
-const ENEMY: &str = "enemy";
 /// An empty list's words, inset like the prototype's `.empty`.
 const EMPTY_PAD: [f32; 2] = [20.0, 20.0];
 
@@ -202,22 +189,6 @@ impl Table {
         iced::widget::responsive(move |bounds| self.layout(narrow, bounds.height)).into()
     }
 
-    /// The total's words: the group's deaths, the battle rezzes that undid
-    /// some (a self-rez is none), and an arena's enemy deaths apart.
-    fn total_words(&self) -> String {
-        let ours: Vec<&RaidDeath> = self.all.iter().filter(|d| !d.enemy).collect();
-        let rezzes = ours.iter().filter(|d| d.battle_rezzed()).count();
-        let enemies = self.all.len() - ours.len();
-        let mut label = crate::nav::plural(ours.len(), "death");
-        if rezzes > 0 {
-            label = format!("{label}, {}", rez_words(rezzes));
-        }
-        if enemies > 0 {
-            label = format!("{label}, {}", crate::nav::plural(enemies, "enemy death"));
-        }
-        label
-    }
-
     fn layout(&self, narrow: bool, height: f32) -> Element<'static, Message> {
         let cols = columns(narrow);
         let lead = LEAD;
@@ -254,15 +225,7 @@ impl Table {
 
         let mut list = column![];
         if self.drawn.is_empty() {
-            let words = if self.all.is_empty() {
-                "Nobody died in this pull.".to_string()
-            } else {
-                format!(
-                    "No player matches \u{201c}{}\u{201d}. Filter by name, class, spec or role, \
-                     or press Esc to clear it.",
-                    self.filter
-                )
-            };
+            let words = wowdps_gui_logic::deaths::empty_words(!self.all.is_empty(), &self.filter);
             list = list.push(
                 container(text(words).size(size::BODY).color(theme::INK_2)).padding(EMPTY_PAD),
             );
@@ -291,7 +254,7 @@ impl Table {
                 narrow,
             },
             &[],
-            self.total_words(),
+            wowdps_gui_logic::deaths::total_words(&self.all),
             (lead + time_w + GAP - crate::table::TOTAL_INSET - crate::table::GAP).max(0.0),
             false,
         );
@@ -438,47 +401,6 @@ impl Table {
     }
 }
 
-/// "2 battle rezzes", "1 battle rez".
-fn rez_words(n: usize) -> String {
-    if n == 1 {
-        "1 battle rez".to_string()
-    } else {
-        format!("{n} battle rezzes")
-    }
-}
-
-/// A death in words: the killing blow and what follows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Words {
-    /// The killing blow ("Venom Rupture"), a cheat death's ("Purgatory ran
-    /// out") or the note that there was none ([`NO_DAMAGE`]).
-    pub blow: String,
-    /// `blow` is the note, not an ability.
-    pub note: bool,
-    /// Who dealt it: "Zul'jan", "self" for their own, "cheat death" for a
-    /// cheat death running out, nothing for a nil source or no damage.
-    pub source: String,
-    /// "rezzed 2:03", when a rez raised them.
-    pub rez: Option<String>,
-    /// A cheat death ran out (their own blow of 1 health or less): the
-    /// hit is the log's bookkeeping, and no figure is shown for it.
-    pub cheat: bool,
-}
-
-impl Words {
-    /// What follows the blow, as one run (the prototype's `.src`: `${src},
-    /// rezzed ${t}`): "Zul'jan, rezzed 2:03", "Zul'jan", "rezzed 4:25" —
-    /// `None` when neither is there.
-    pub(crate) fn after(&self) -> Option<String> {
-        match (self.source.is_empty(), &self.rez) {
-            (true, None) => None,
-            (false, None) => Some(self.source.clone()),
-            (true, Some(rez)) => Some(rez.clone()),
-            (false, Some(rez)) => Some(format!("{}, {rez}", self.source)),
-        }
-    }
-}
-
 /// The reader's own character's guid among `raid`'s deaths when the daemon
 /// marked none of them (`RaidDeath.mine`): its store off, or not yet
 /// published — found as [`Gui::owner_of`] finds the meter's "you" (the
@@ -486,126 +408,21 @@ impl Words {
 /// accent's name), so the skull, the table, the header and the meter agree
 /// on who the reader is. `None` when the daemon's marks stand.
 pub(crate) fn owner(state: &Gui, raid: &RaidTimeline) -> Option<String> {
-    if raid.deaths.iter().any(|d| d.mine) {
+    if wowdps_gui_logic::deaths::any_mine(raid) {
         return None;
     }
-    let rows: Vec<Row> = raid
-        .deaths
-        .iter()
-        .map(|d| Row {
-            key: d.guid.clone(),
-            label: d.name.clone(),
-            enemy: d.enemy,
-            ..Row::default()
-        })
-        .collect();
+    let rows = wowdps_gui_logic::deaths::owner_rows(raid);
     state
         .owner_of(&rows)
         .and_then(|i| rows.get(i))
         .map(|r| r.key.clone())
 }
 
-/// Is `d` the reader's own death — the daemon's mark, or the guid
-/// [`owner`] found — and never an arena enemy's?
-pub(crate) fn is_mine(d: &RaidDeath, owner: Option<&str>) -> bool {
-    !d.enemy && (d.mine || owner == Some(d.guid.as_str()))
-}
-
-/// A death's words: its killing blow, its source and its rez — "Venom
-/// Rupture" / "Zul'jan" / "rezzed 2:03". A blow the player dealt themselves
-/// for 1 health or less is a cheat death running out (Purgatory: the log
-/// writes its end as a self-kill), worded as the prototype words it —
-/// "Purgatory ran out", "cheat death"; any other of their own is "self"; a
-/// player source loses its realm when the options say so.
-pub(crate) fn words(d: &RaidDeath, hide_realms: bool) -> Words {
-    let own = !d.source.is_empty() && d.source == d.name;
-    let cheat = own && !d.blow.is_empty() && d.hit <= 1;
-    let (blow, note) = if d.blow.is_empty() {
-        (NO_DAMAGE.to_string(), true)
-    } else if cheat {
-        (format!("{} ran out", d.blow), false)
-    } else {
-        (d.blow.clone(), false)
-    };
-    let source = if cheat {
-        "cheat death".to_string()
-    } else if own {
-        "self".to_string()
-    } else if hide_realms {
-        display_name(&d.source).to_string()
-    } else {
-        d.source.clone()
-    };
-    Words {
-        blow,
-        note,
-        source,
-        rez: d
-            .rez
-            .as_ref()
-            .map(|r| format!("rezzed {}", duration(r.at_ms))),
-        cheat,
-    }
-}
-
-/// The deaths the filter keeps, by place in `raid.deaths` — matched as the
-/// meter's rows are, by name, class, spec or role.
-pub(crate) fn drawn(raid: &RaidTimeline, filter: &str) -> Vec<usize> {
-    let rows: Vec<Row> = raid
-        .deaths
-        .iter()
-        .map(|d| Row {
-            label: d.name.clone(),
-            class: d.class,
-            spec: d.spec,
-            ..Row::default()
-        })
-        .collect();
-    crate::view::filtered_indexed(rows, filter)
-        .into_iter()
-        .map(|(i, _)| i)
-        .collect()
-}
-
-/// The death the inspector recaps, by its place in `raid.deaths`: the
-/// drilled player's window the Deaths drill asked for, or answered with —
-/// their last, when it names none.
-pub(crate) fn selected(app: &ClientState, raid: &RaidTimeline) -> Option<usize> {
-    let key = &app.drill.as_ref()?.key;
-    let want = app.death_request().or_else(|| app.deaths().1);
-    match want {
-        Some(index) => raid
-            .deaths
-            .iter()
-            .position(|d| d.guid == *key && d.index == index),
-        None => raid.deaths.iter().rposition(|d| d.guid == *key),
-    }
-}
-
-/// "−4.25s": a recap event's time before the death (R9, v35 `offset_ms`) —
-/// in hundredths under ten seconds, where a raid's last events crowd (a
-/// ring of 32 can span half a second of heals and hits), in tenths under a
-/// minute ("−12.4s"), and "−1:05" a minute or more before; "0.00s" on the
-/// death's own moment.
-pub(crate) fn before(ms: i64) -> String {
-    let back = ms.unsigned_abs();
-    let secs = back as f64 / 1000.0;
-    // Under 5 ms it rounds to the death's own moment: no sign on a zero.
-    if back < 5 {
-        "0.00s".to_string()
-    } else if back < 10_000 {
-        format!("\u{2212}{secs:.2}s")
-    } else if back < 60_000 {
-        format!("\u{2212}{secs:.1}s")
-    } else {
-        format!("\u{2212}{}", duration(back as i64))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::window::testkit as tk;
+    use wowdps_gui_logic::deaths::{NO_DAMAGE, Words};
     use wowdps_model::{Class, Rez};
 
     fn death(guid: &str, at_ms: i64, index: u32) -> RaidDeath {
@@ -880,7 +697,10 @@ mod tests {
         if let Some(r) = table.all[0].rez.as_mut() {
             r.by = own;
         }
-        assert_eq!(table.total_words(), "6 deaths, 1 battle rez, 1 enemy death");
+        assert_eq!(
+            wowdps_gui_logic::deaths::total_words(&table.all),
+            "6 deaths, 1 battle rez, 1 enemy death"
+        );
         let mut ui = tk::wide(table.view(false));
         assert!(ui.find("enemy").is_ok());
     }

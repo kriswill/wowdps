@@ -25,7 +25,7 @@ use wowdps_model::{Class, Role, Row, Screen, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
-use crate::fold;
+
 use crate::line_icons::LineIcon;
 use crate::nav;
 use crate::rail;
@@ -252,51 +252,9 @@ pub(crate) fn filtered(rows: Vec<Row>, filter: &str) -> Vec<Row> {
         .collect()
 }
 
-/// Does this row answer to `needle` (already folded — see [`crate::fold`])?
-///
-/// Substring, so "prot" finds Protection and "resto" finds Restoration
-/// without an abbreviation table, and "protection" legitimately matches both
-/// Protection Warrior and Protection Paladin — the class name is how a
-/// reader narrows that, not a bug. A row whose class or spec R8 has not
-/// inferred yet answers to neither term; it is not matched by everything,
-/// and an empty filter still keeps it.
-///
-/// Every field goes through the SAME folding comparison, so an accented
-/// class or spec name folds exactly as a player name does and the two paths
-/// cannot drift.
-fn row_matches(r: &Row, needle: &[char]) -> bool {
-    fold::contains(&r.label, needle)
-        || r.class.is_some_and(|c| fold::contains(c.name(), needle))
-        || r.spec.is_some_and(|s| fold::contains(s.name(), needle))
-        || r.spec
-            .is_some_and(|s| fold::contains(s.role().name(), needle))
-}
-
-/// The same filter, keeping each row's position in the UNFILTERED list. The
-/// index is both the rank the row displays and the one a click sends back to
-/// `ClientState`, so it must survive filtering or a filtered click would
-/// drill into the wrong player.
-pub(crate) fn filtered_indexed(rows: Vec<Row>, filter: &str) -> Vec<(usize, Row)> {
-    // Folded ONCE per call, not once per row: this runs on every snapshot at
-    // 10 Hz over a whole raid's rows.
-    let needle = fold::fold(filter);
-    rows.into_iter()
-        .enumerate()
-        .filter(|(_, r)| needle.is_empty() || row_matches(r, &needle))
-        .collect()
-}
-
-/// The rows as DRAWN: filtered, then sorted by the chosen column, each with
-/// the index the daemon gave it — the index a click sends back and the
-/// rank a row keeps. Ranks and shares are never recomputed: sorting by crit
-/// asks a different question of the same chart, it does not make a new one.
-pub(crate) fn ordered(
-    rows: Vec<Row>,
-    filter: &str,
-    sort: Option<(table::Col, bool)>,
-) -> Vec<(usize, Row)> {
-    table::sorted(filtered_indexed(rows, filter), sort)
-}
+#[cfg(test)]
+pub(crate) use wowdps_gui_logic::table::filtered_indexed;
+pub(crate) use wowdps_gui_logic::table::ordered;
 
 // ---- the meter -------------------------------------------------------------
 
@@ -1151,7 +1109,8 @@ const HEAD_PAD: f32 = 8.0;
 /// and the gap after the lead-in.
 const TOTAL_LEAD: f32 = 8.0 + table::GAP;
 
-pub(crate) use wowdps_gui_logic::drill::{drill_mitigation_line, rate_label, school_name};
+pub(crate) use wowdps_gui_logic::drill::{drill_mitigation_line, school_name};
+pub(crate) use wowdps_gui_logic::labels::rate_label;
 pub(crate) use wowdps_model::fmt::mitigation_line;
 
 /// The live meter's heading line as its table draws it in a wide window
@@ -2101,35 +2060,7 @@ pub(crate) fn view_tabs_with(
 /// What a view a stored pull lacks says under the pointer.
 pub(crate) const NOT_STORED: &str = "The history store keeps no enemy damage";
 
-/// The window's views in the prototype's order (`VIEWS`): damage and
-/// healing, then the two a raid reads next — what was taken and who died —
-/// before the counts, and the enemies last. `View::ALL` (the TUI's, and the
-/// overlay's cycle) keeps its own order.
-pub(crate) const WINDOW_VIEWS: [View; 8] = [
-    View::Damage,
-    View::Healing,
-    View::Taken,
-    View::Deaths,
-    View::Interrupts,
-    View::CrowdControl,
-    View::Dispels,
-    View::EnemyTaken,
-];
-
-/// A view's name in the window, in the prototype's sentence case and its
-/// words ("Crowd control", "Enemies"). The overlay keeps `view_name`'s.
-pub(crate) fn window_view_name(v: View) -> &'static str {
-    match v {
-        View::Damage => "Damage",
-        View::Healing => "Healing",
-        View::Taken => "Taken",
-        View::Deaths => "Deaths",
-        View::Interrupts => "Interrupts",
-        View::CrowdControl => "Crowd control",
-        View::Dispels => "Dispels",
-        View::EnemyTaken => "Enemies",
-    }
-}
+pub(crate) use wowdps_gui_logic::labels::{WINDOW_VIEWS, window_view_name};
 #[cfg(test)]
 mod tests {
     use super::*;

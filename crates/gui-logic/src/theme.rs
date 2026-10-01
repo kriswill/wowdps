@@ -7,9 +7,11 @@ use wowdps_model::Class;
 
 mod color;
 mod defs;
+mod metrics;
 
 pub use color::*;
 pub use defs::*;
+pub use metrics::*;
 
 // ---- the chrome -----------------------------------------------------------
 
@@ -70,8 +72,8 @@ pub fn class_named(name: &str) -> Option<Class> {
 // ---- density --------------------------------------------------------------
 
 /// Two densities. `Comfortable` is the window default; `Compact` reproduces
-/// today's tighter metrics and is what the overlay would ask for. Their
-/// pitches are each GUI's (the iced GUI's `theme::DensityPitch`).
+/// today's tighter metrics and is what the overlay would ask for. What
+/// each measures is the theme's ([`Pitches::row_of`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Density {
     #[default]

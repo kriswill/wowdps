@@ -103,9 +103,6 @@ const STACK_GAP: f32 = 2.0;
 const TIP_OFF_X: f32 = 12.0;
 const TIP_OFF_Y: f32 = 6.0;
 const TIP_PLOT_Y: f32 = 14.0;
-/// A tick label needs about this much room; the axis steps up from
-/// minutes when minutes would crowd it.
-const TICK_MIN_PX: f32 = 40.0;
 /// A tick at the axis's very start stands from it (`.iaxis span:first-child
 /// {transform:none}`), one past 96 % of it back from it (`x>96 ?
 /// translateX(-100%)`); the rest are centred on their minute.
@@ -239,30 +236,7 @@ pub(crate) fn view<M: 'static>(plot: Plot<M>) -> Element<'static, M> {
         .into()
 }
 
-/// The axis ticks over `window`, `plot_w` pixels wide: whole minutes
-/// while they have the room ([`TICK_MIN_PX`] apart), else the next wider
-/// step — 2, 5, 10, 15, 30 minutes — and, zoomed into less than a few
-/// minutes, halves, quarters and on down to 5 s.
-pub(crate) fn ticks(window: (u32, u32), plot_w: f32) -> Vec<u32> {
-    const STEPS: [u32; 12] = [
-        5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000,
-        3_600_000, 7_200_000,
-    ];
-    let (lo, hi) = window;
-    let span = hi.saturating_sub(lo).max(1) as f32;
-    let step = STEPS
-        .iter()
-        .copied()
-        .find(|s| span / *s as f32 * TICK_MIN_PX <= plot_w.max(1.0))
-        .unwrap_or(7_200_000);
-    let mut out = Vec::new();
-    let mut t = lo.div_ceil(step) * step;
-    while t <= hi {
-        out.push(t);
-        t += step;
-    }
-    out
-}
+pub(crate) use wowdps_gui_logic::axis::ticks;
 
 /// A figure as the hover reads it: a rate whole with its commas, a
 /// running total short.

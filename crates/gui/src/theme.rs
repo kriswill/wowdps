@@ -100,18 +100,19 @@ pub(crate) const SELECTION: Color = c(gl::GOLD.window.selection);
 /// What a floating surface casts: a menu or a card (`.menu`, `0 20px 50px
 /// rgba(0,0,0,.6)`), so it reads as a layer over the window, not as more
 /// of it.
-pub(crate) const SHADOW_MENU: iced::Shadow = iced::Shadow {
-    color: Color::from_rgba(0.0, 0.0, 0.0, 0.6),
-    offset: iced::Vector::new(0.0, 20.0),
-    blur_radius: 50.0,
-};
+pub(crate) const SHADOW_MENU: iced::Shadow = shadow(gl::SHADOW_MENU);
 /// The modal sheet's deeper shadow (`.sheet`, `0 30px 70px
 /// rgba(0,0,0,.65)`).
-pub(crate) const SHADOW_SHEET: iced::Shadow = iced::Shadow {
-    color: Color::from_rgba(0.0, 0.0, 0.0, 0.65),
-    offset: iced::Vector::new(0.0, 30.0),
-    blur_radius: 70.0,
-};
+pub(crate) const SHADOW_SHEET: iced::Shadow = shadow(gl::SHADOW_SHEET);
+
+/// A gui-logic shadow as iced's.
+const fn shadow(s: gl::Shadow) -> iced::Shadow {
+    iced::Shadow {
+        color: c(s.color),
+        offset: iced::Vector::new(s.offset.0, s.offset.1),
+        blur_radius: s.blur,
+    }
+}
 
 // ---- the window's type ----------------------------------------------------
 
@@ -189,10 +190,10 @@ pub(crate) fn class_rgb(class: Class) -> Color {
 /// The owner's marks in their class colour (`.youchip`, `.youtag`): the
 /// chip's wash (13 %, 20 % under the pointer) and its edge (40 %), and the
 /// tag's edge (55 %) — `color-mix(in srgb, var(--you) N%, transparent)`.
-pub(crate) const YOU_WASH: f32 = 0.13;
-pub(crate) const YOU_WASH_HOVER: f32 = 0.20;
-pub(crate) const YOU_EDGE: f32 = 0.40;
-pub(crate) const YOU_TAG_EDGE: f32 = 0.55;
+pub(crate) const YOU_WASH: f32 = gl::YOU_WASH;
+pub(crate) const YOU_WASH_HOVER: f32 = gl::YOU_WASH_HOVER;
+pub(crate) const YOU_EDGE: f32 = gl::YOU_EDGE;
+pub(crate) const YOU_TAG_EDGE: f32 = gl::YOU_TAG_EDGE;
 
 /// A class colour drawn as TEXT: `Class::rgb` lifted toward white, 2 % at a
 /// time, until it clears [`AA_CONTRAST`] on [`SURFACE`] — the prototype's
@@ -492,76 +493,80 @@ pub(crate) fn accent_wash(a: Accent) -> Color {
 // 15 with their numbers at 14.5, labels 13.5 in gold-dim, axis ticks 11.5.
 // Window-only — the overlay names none of these (its sizes are literals it
 // multiplies by its own zoom), so the scale follows the prototype without
-// moving an overlay pixel.
+// moving an overlay pixel. The values are the theme's (`gl::Sizes`).
 pub(crate) mod size {
-    pub(crate) const ENCOUNTER: f32 = 27.0; // an encounter title, in Marcellus
-    pub(crate) const ENCOUNTER_NARROW: f32 = 22.0; // the same under `NARROW_WINDOW`
-    pub(crate) const TITLE: f32 = 17.0; // a screen title
-    pub(crate) const STAT: f32 = 16.0; // a value on the fight header's stat line (weight 500)
-    pub(crate) const NAME: f32 = 15.0; // a row's name
-    pub(crate) const PLACE: f32 = 15.0; // the top bar's places (weight 500)
-    pub(crate) const BODY: f32 = 14.5; // body text
-    pub(crate) const NUM: f32 = 14.5; // every numeric cell
-    pub(crate) const TAB: f32 = 14.5; // a view tab (weight 500)
-    pub(crate) const SMALL: f32 = 13.5; // captions, a roster's rank
-    pub(crate) const LABEL: f32 = 13.5; // column heads and stat labels, gold-dim
-    pub(crate) const MICRO: f32 = 13.0; // tags, chips, badges
-    pub(crate) const TINY: f32 = 12.0; // eyebrow notes, key hints
-    pub(crate) const KBD: f32 = 11.5; // a keycap on the `?` sheet (`kbd`, weight 500)
-    pub(crate) const SHEET_KEY: f32 = 14.0; // a line of the `?` sheet (`.sheet .k`)
-    pub(crate) const META: f32 = 15.0; // what follows a fight's title (`.fmeta`)
-    pub(crate) const META_NARROW: f32 = 14.0; // the same under `NARROW_WINDOW`
-    pub(crate) const STAT_NARROW: f32 = 15.0; // a stat line's value under `NARROW_WINDOW`
-    pub(crate) const CHIP: f32 = 14.0; // the "you" chip's words (`.youchip`)
-    pub(crate) const YOU_TAG: f32 = 11.5; // the owner row's "you" tag (`.youtag`, 600)
-    pub(crate) const FILTER: f32 = 14.0; // the row filter's text (`.filter input`)
-    pub(crate) const MARK: f32 = 18.0; // the top bar's wordmark, in Marcellus (`.mark`)
+    use wowdps_gui_logic::theme::GOLD;
+
+    pub(crate) const ENCOUNTER: f32 = GOLD.size.encounter; // an encounter title, in Marcellus
+    pub(crate) const ENCOUNTER_NARROW: f32 = GOLD.size.encounter_narrow; // the same under `NARROW_WINDOW`
+    pub(crate) const TITLE: f32 = GOLD.size.title; // a screen title
+    pub(crate) const STAT: f32 = GOLD.size.stat; // a value on the fight header's stat line (weight 500)
+    pub(crate) const NAME: f32 = GOLD.size.name; // a row's name
+    pub(crate) const PLACE: f32 = GOLD.size.place; // the top bar's places (weight 500)
+    pub(crate) const BODY: f32 = GOLD.size.body; // body text
+    pub(crate) const NUM: f32 = GOLD.size.num; // every numeric cell
+    pub(crate) const TAB: f32 = GOLD.size.tab; // a view tab (weight 500)
+    pub(crate) const SMALL: f32 = GOLD.size.small; // captions, a roster's rank
+    pub(crate) const LABEL: f32 = GOLD.size.label; // column heads and stat labels, gold-dim
+    pub(crate) const MICRO: f32 = GOLD.size.micro; // tags, chips, badges
+    pub(crate) const TINY: f32 = GOLD.size.tiny; // eyebrow notes, key hints
+    pub(crate) const KBD: f32 = GOLD.size.kbd; // a keycap on the `?` sheet (`kbd`, weight 500)
+    pub(crate) const SHEET_KEY: f32 = GOLD.size.sheet_key; // a line of the `?` sheet (`.sheet .k`)
+    pub(crate) const META: f32 = GOLD.size.meta; // what follows a fight's title (`.fmeta`)
+    pub(crate) const META_NARROW: f32 = GOLD.size.meta_narrow; // the same under `NARROW_WINDOW`
+    pub(crate) const STAT_NARROW: f32 = GOLD.size.stat_narrow; // a stat line's value under `NARROW_WINDOW`
+    pub(crate) const CHIP: f32 = GOLD.size.chip; // the "you" chip's words (`.youchip`)
+    pub(crate) const YOU_TAG: f32 = GOLD.size.you_tag; // the owner row's "you" tag (`.youtag`, 600)
+    pub(crate) const FILTER: f32 = GOLD.size.filter; // the row filter's text (`.filter input`)
+    pub(crate) const MARK: f32 = GOLD.size.mark; // the top bar's wordmark, in Marcellus (`.mark`)
     /// The frame's own size (`body`), what a piece that sets none of its
     /// own inherits: the meter total's label (`.ttotal`).
-    pub(crate) const FRAME: f32 = 14.0;
+    pub(crate) const FRAME: f32 = GOLD.size.frame;
     /// A top-bar icon button's glyph (`.ibtn svg`).
-    pub(crate) const ICON: f32 = 16.0;
+    pub(crate) const ICON: f32 = GOLD.size.icon;
     /// A view tab's line icon (`.vtab svg.i`), at [`super::TAB_ICON_ALPHA`].
-    pub(crate) const TAB_ICON: f32 = 15.0;
+    pub(crate) const TAB_ICON: f32 = GOLD.size.tab_icon;
     /// The live tab's dot (`.pulse`).
-    pub(crate) const DOT: f32 = 8.0;
+    pub(crate) const DOT: f32 = GOLD.size.dot;
 }
 
 /// The view tab icons' opacity (`.vtab svg.i{opacity:.85}`).
-pub(crate) const TAB_ICON_ALPHA: f32 = 0.85;
+pub(crate) const TAB_ICON_ALPHA: f32 = gl::TAB_ICON_ALPHA;
 
 /// The WINDOW widths the layout changes at: the prototype's `@container
 /// app (max-width: 820px)`, under which it lays out narrow, and `(max-width:
 /// 1180px)`, a tile, under which the rail and the chip's push go (`.youchip{
 /// margin-left:0}`). A piece that lays itself out by its own width
 /// (`responsive`) adds back what stands between it and the window's edges.
-pub(crate) const NARROW_WINDOW: f32 = 820.0;
-pub(crate) const TILE_WINDOW: f32 = 1180.0;
+pub(crate) const NARROW_WINDOW: f32 = gl::NARROW_WINDOW;
+pub(crate) const TILE_WINDOW: f32 = gl::TILE_WINDOW;
 
 /// The window's pitches, in logical pixels: a meter row (`.trow`), the
 /// pinned total (`.ttotal`), the top bar and its places (`.top`,
-/// `.place`), and a view tab (`.vtab`).
+/// `.place`), and a view tab (`.vtab`). The values are the theme's
+/// (`gl::Pitches`).
 pub(crate) mod pitch {
-    pub(crate) const ROW: f32 = 32.0;
-    pub(crate) const TOTAL: f32 = 33.0;
-    pub(crate) const TOP_BAR: f32 = 44.0;
-    pub(crate) const PLACE: f32 = 42.0;
-    pub(crate) const TAB: f32 = 37.0;
-    /// A meter row in the compact density.
-    pub(crate) const COMPACT_ROW: f32 = 26.0;
+    use wowdps_gui_logic::theme::GOLD;
+
+    #[cfg(test)]
+    pub(crate) const ROW: f32 = GOLD.pitch.row;
+    pub(crate) const TOTAL: f32 = GOLD.pitch.total;
+    pub(crate) const TOP_BAR: f32 = GOLD.pitch.top_bar;
+    pub(crate) const PLACE: f32 = GOLD.pitch.place;
+    pub(crate) const TAB: f32 = GOLD.pitch.tab;
     /// A top-bar icon button's square hit area (`.ibtn`).
-    pub(crate) const ICON_BUTTON: f32 = 30.0;
+    pub(crate) const ICON_BUTTON: f32 = GOLD.pitch.icon_button;
     /// The scrollbar's lane at a list's right edge (`view::scroll_clear`):
     /// the rows and the headings over them keep clear of it, and the live
     /// meter's total runs under it.
-    pub(crate) const SCROLL_LANE: f32 = 10.0;
+    pub(crate) const SCROLL_LANE: f32 = GOLD.pitch.scroll_lane;
     /// A menu's width: the prototype's `.menu{min-width:250px}` and ten
     /// more, room for a name with its realm beside its fight count.
-    pub(crate) const MENU_W: f32 = 260.0;
+    pub(crate) const MENU_W: f32 = GOLD.pitch.menu_w;
 }
 
-/// A [`Density`]'s pitches. The density is a name the config spells
-/// (gui-logic's); what it measures is this GUI's.
+/// A [`Density`]'s pitches. The density is a name the config spells and
+/// what it measures the theme's (`gl::Pitches::row_of`).
 pub(crate) trait DensityPitch {
     /// A meter row's pitch: the prototype's `.trow`, or a tighter one.
     fn row_h(self) -> f32;
@@ -570,17 +575,11 @@ pub(crate) trait DensityPitch {
 
 impl DensityPitch for Density {
     fn row_h(self) -> f32 {
-        match self {
-            Density::Comfortable => pitch::ROW,
-            Density::Compact => pitch::COMPACT_ROW,
-        }
+        gl::GOLD.pitch.row_of(self)
     }
 
     fn pad(self) -> f32 {
-        match self {
-            Density::Comfortable => 10.0,
-            Density::Compact => 6.0,
-        }
+        gl::GOLD.pitch.pad_of(self)
     }
 }
 

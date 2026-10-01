@@ -29,7 +29,6 @@ mod list;
 mod plot;
 pub(crate) mod stack;
 
-pub(crate) use plot::ticks;
 // R26's ability-tree lines, moved to gui-logic for gui-new to share.
 pub(crate) use wowdps_gui_logic::tree;
 

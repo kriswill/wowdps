@@ -6,6 +6,7 @@
 //! onto GPUI Kit's `Theme` and its own `Look`.
 
 use super::color::Color;
+use super::metrics::{PITCHES, Pitches, SIZES, Sizes};
 
 /// The window's surfaces and inks — the prototype's Tokens, one field each.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -54,6 +55,10 @@ pub struct WindowTokens {
     pub track: Color,
     /// A key's run against its timers: a shade brighter than `track`.
     pub par_track: Color,
+    /// A bar or a disc for a player whose class is not known yet.
+    pub classless: Color,
+    /// An enemy with no class: an Enemies row's bar and skull disc.
+    pub hostile: Color,
     /// A field's selected text.
     pub selection: Color,
 }
@@ -142,6 +147,10 @@ pub struct Def {
     pub window: WindowTokens,
     pub overlay: OverlayTokens,
     pub faces: Faces,
+    /// The type scale.
+    pub size: Sizes,
+    /// The row pitches.
+    pub pitch: Pitches,
     /// A control's corner radius (a chip's is a pill whatever this says).
     pub radius: f32,
 }
@@ -176,6 +185,8 @@ pub const GOLD: Def = Def {
         track: Color::rgba(1.0, 1.0, 1.0, 0.04),
         par_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
         selection: GOLD_TOKEN.alpha(0.3),
+        classless: Color::rgb(0.42, 0.44, 0.52),
+        hostile: Color::rgb(0.80, 0.30, 0.32),
     },
     overlay: OverlayTokens {
         panel: Color::hex(0x16161E),
@@ -213,6 +224,8 @@ pub const GOLD: Def = Def {
         overlay: "Noto Sans",
         overlay_num: "Noto Sans Mono",
     },
+    size: SIZES,
+    pitch: PITCHES,
     radius: 6.0,
 };
 
@@ -248,9 +261,13 @@ pub const FROST: Def = Def {
         track: Color::rgba(1.0, 1.0, 1.0, 0.04),
         par_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
         selection: FROST_TOKEN.alpha(0.3),
+        classless: GOLD.window.classless,
+        hostile: GOLD.window.hostile,
     },
     overlay: GOLD.overlay,
     faces: GOLD.faces,
+    size: SIZES,
+    pitch: PITCHES,
     radius: 6.0,
 };
 

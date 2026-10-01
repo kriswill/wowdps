@@ -418,41 +418,7 @@ impl iced::advanced::widget::Operation for FindRow {
     }
 }
 
-/// The owner's row among `rows` (our side's, never an enemy's), by the
-/// most certain thing that names it, over every row before a less certain
-/// one is asked: the locked character's `guid`, then one of `names` whole
-/// ("Name-Realm", case aside), then a bare name by its name half — and a
-/// bare name only when it names ONE row, since a namesake from another
-/// realm who out-ranks the owner would otherwise wear their tag, their
-/// chip and their chrome.
-pub(crate) fn owner_among(
-    rows: &[wowdps_model::Row],
-    guid: Option<&str>,
-    names: &[String],
-) -> Option<usize> {
-    let ours = || rows.iter().enumerate().filter(|(_, r)| !r.enemy);
-    if let Some(guid) = guid
-        && let Some((i, _)) = ours().find(|(_, r)| r.key == guid)
-    {
-        return Some(i);
-    }
-    if let Some((i, _)) = ours().find(|(_, r)| {
-        names
-            .iter()
-            .any(|n| r.label.to_lowercase() == n.to_lowercase())
-    }) {
-        return Some(i);
-    }
-    let mut bare = ours().filter(|(_, r)| {
-        names
-            .iter()
-            .any(|n| crate::fight_head::is_named(&r.label, n))
-    });
-    match (bare.next(), bare.next()) {
-        (Some((i, _)), None) => Some(i),
-        _ => None,
-    }
-}
+pub(crate) use wowdps_gui_logic::fight_head::owner_among;
 
 impl Gui {
     fn new(mut client: DaemonClient, cfg: Config) -> Self {

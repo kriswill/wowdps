@@ -552,7 +552,7 @@ pub fn drill(
     let focus = focus.map(|(ft, c)| (for_view(ft, app.view), c));
     let mode = app.graph_mode();
     let shown = app.drill_range();
-    let rate = wowdps_gui_logic::drill::rate_label(app.view);
+    let rate = wowdps_gui_logic::labels::rate_label(app.view);
     // The window always spans the PLAYER's timeline: the x-axis must not
     // reshape when drilling in or out of an ability.
     let span = t.buckets.len().max(1);
