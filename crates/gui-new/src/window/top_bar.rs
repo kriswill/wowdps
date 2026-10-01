@@ -49,7 +49,11 @@ const PILL_NAME_W: f32 = 200.0;
 const WHO_H: f32 = 30.0;
 const PICKER_NAME_W: f32 = 160.0;
 /// The live dot's pulse (`.pulse` in the prototype): a ring that swells
-/// off the dot and fades, once every 1.6 s.
+/// off the dot and fades, once every 1.6 s — a few times when a pull goes
+/// live, then the dot at rest. Every frame of it redraws the whole window,
+/// so an endless pulse cost an idle window 4 % of a core for as long as a
+/// log stayed open.
+const PULSES: u64 = 3;
 const PULSE: Duration = Duration::from_millis(1600);
 
 /// The jump box's placeholder: what the palette it opens searches.
@@ -67,6 +71,8 @@ pub struct Pill {
     pub live: bool,
     pub name: String,
     pub ms: i64,
+    /// The newest pull's id: a new live pull pulses afresh.
+    pub key: u64,
     /// It is on the stage now (`.live[aria-current]`).
     pub current: bool,
 }
@@ -95,6 +101,7 @@ impl Pill {
             };
             Pill {
                 live,
+                key: e.id.0,
                 name,
                 ms,
                 current: following && !home,
@@ -282,7 +289,7 @@ fn live_pill(
 ) -> impl IntoElement {
     let current = p.current;
     let mark = if p.live {
-        pulsing_dot(w, window, cx).into_any_element()
+        pulsing_dot(w, p.key, window, cx).into_any_element()
     } else {
         ring(w.z(w.size.dot), w.c(|t| t.ink_3)).into_any_element()
     };
@@ -331,18 +338,19 @@ fn live_pill(
 }
 
 /// The live dot with its pulse: a ring of the dot's colour swelling to
-/// twice its size and fading, forever — and under reduced motion, the dot
-/// alone, as the iced window draws it.
-fn pulsing_dot(w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl IntoElement {
+/// twice its size and fading, [`PULSES`] times for each new live pull —
+/// and at rest, or under reduced motion, the dot alone, as the iced window
+/// draws it.
+fn pulsing_dot(w: &W, key: u64, window: &mut Window, cx: &mut Context<Gui>) -> impl IntoElement {
     let bad = w.c(|t| t.bad);
     let d = w.z(w.size.dot);
     let pulse = Keyframes::try_new([Keyframe::new(0.0, 0.0), Keyframe::new(1.0, 1.0)])
         .ok()
         .map(|frames| {
             animate_keyframes(
-                "live-pulse",
+                gpui_kit::ElementId::NamedInteger("live-pulse".into(), key),
                 &frames,
-                Timing::new(PULSE).iterations(IterationCount::Infinite),
+                Timing::new(PULSE).iterations(IterationCount::Finite(PULSES)),
                 window,
                 cx,
             )
@@ -354,7 +362,8 @@ fn pulsing_dot(w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl IntoEl
         .relative()
         .size(d)
         .flex_none()
-        .when(pulse > 0.0, |el| {
+        // At rest the pulse sits at its last frame, 1.0: the dot alone.
+        .when(pulse > 0.0 && pulse < 1.0, |el| {
             let grow = 1.0 + pulse;
             el.child(
                 div()
