@@ -14,81 +14,30 @@ use crate::theme;
 use crate::window::Message;
 
 use super::{CharInk, NightPull, TrendPoint};
-// The charts' words and axis are gui-logic's; re-exported for the tests.
-pub(super) use wowdps_gui_logic::home::{axis, axis_label, best_label, day_labels, hollow};
+// The charts' words, axis and geometry are gui-logic's; re-exported for the
+// tests.
+pub(super) use wowdps_gui_logic::home::chart::{
+    self, AXIS_DROP, AXIS_PX, BEST_RING, BEST_RISE, CAP_OF_TYPE, DAY_FOOT, DAY_PX, GRID_END,
+    GRID_LABEL_X, GRID_X, GUIDE_END, GUIDE_FOOT, GUIDE_FOOT_WORDS, GUIDE_PX, GUIDE_TOP,
+    GUIDE_TOP_WORDS, GUIDE_X, MID_OF_TYPE, RANK_PX, RANK_RISE, SLOPE_H, SLOPE_LINE, SLOPE_MAX_W,
+    SLOPE_R, SLOPE_W, TREND_H, TREND_R, TREND_W, TrendAxis, type_scale,
+};
+pub(super) use wowdps_gui_logic::home::{axis_label, best_label, day_labels, hollow};
 
-/// The rank chart's box (`viewBox="0 0 300 140"`), and the widest it is
-/// drawn (`max-width:360px`).
-const SLOPE_W: f32 = 300.0;
-const SLOPE_H: f32 = 140.0;
-pub(super) const SLOPE_MAX_W: f32 = 360.0;
-/// Its two guides — the top of the role and the bottom — and where they
-/// run (`x1=18`, `x2=W-10`); its dots' first x and the room the last one
-/// leaves (`26 + i·(W−70)/(n−1)`); its dots and their labels.
-const GUIDE_TOP: f32 = 18.0;
-const GUIDE_FOOT: f32 = 26.0;
-const GUIDE_X: f32 = 18.0;
-const GUIDE_END: f32 = 10.0;
-const DOT_X: f32 = 26.0;
-const DOT_ROOM: f32 = 70.0;
-const SLOPE_R: f32 = 4.5;
-const SLOPE_LINE: f32 = 2.0;
-const GUIDE_PX: f32 = 10.5;
-const RANK_PX: f32 = 11.5;
-const RANK_RISE: f32 = 9.0;
-/// The guides' words: "top of the role" on its baseline 13 down the box,
-/// "bottom" 12 up from its foot (`y=13`, `y=H-12`), both ending at the
-/// guides' right end — and about how wide the top one runs back from it
-/// at its type size (65 of the box's 300 at 10.5 px), and a rank's half
-/// width ("17th" at 11.5 px): what tells a rank that would print over
-/// them ([`rank_under`]).
-const GUIDE_TOP_WORDS: f32 = 13.0;
-const GUIDE_FOOT_WORDS: f32 = 12.0;
-const GUIDE_WORDS_W: f32 = 66.0;
-const RANK_HALF_W: f32 = 12.0;
-/// A line of type's cap height, of its size: a rank under its dot hangs
-/// from its top, where one above stands on its baseline.
-const CAP_OF_TYPE: f32 = 0.7;
-/// Under this many pixels between two dots, only the first, the last, the
-/// highest and the lowest keep their rank above them: a crowded night's
-/// labels would print over each other.
-const LABEL_ROOM: f32 = 22.0;
+/// The pull a press at `p` lands on: the nearest dot within `chart::HIT`.
+fn hit(dots: &[(Point, String)], p: Point) -> Option<String> {
+    let dots: Vec<chart::Dot> = dots
+        .iter()
+        .map(|(at, id)| ((at.x, at.y), id.clone()))
+        .collect();
+    chart::hit(&dots, (p.x, p.y))
+}
 
-/// The throughput chart's box (`viewBox="0 0 420 170"`): its plot's foot
-/// and head room (`th − 22 − f·(th − 34)`), its gridlines' run and their
-/// labels' right edge, its dots' first x and the room the last leaves.
-const TREND_W: f32 = 420.0;
-const TREND_H: f32 = 170.0;
-const PLOT_FOOT: f32 = 22.0;
-const PLOT_ROOM: f32 = 34.0;
-const GRID_X: f32 = 40.0;
-const GRID_END: f32 = 6.0;
-const GRID_LABEL_X: f32 = 34.0;
-const TREND_X: f32 = 56.0;
-const TREND_ROOM: f32 = 80.0;
-const TREND_R: f32 = 5.0;
-const BEST_RING: f32 = 2.5;
-const BEST_RISE: f32 = 10.0;
-const AXIS_PX: f32 = 11.0;
-const DAY_PX: f32 = 10.5;
-const DAY_FOOT: f32 = 6.0;
-/// A gridline's figure stands on its line: its baseline this far under it
-/// (`y+4`).
-const AXIS_DROP: f32 = 4.0;
-
-/// How near a press must land to a dot to open its pull.
-const HIT: f32 = 8.0;
-
-/// A chart's words sit on their SVG baseline: this much of the type's size
-/// above it is where the middle of a lower-case line stands.
-const MID_OF_TYPE: f32 = 0.33;
-
-/// How much a chart's words are scaled at the box's scale `s`: with the
-/// box, as an SVG's are, but never below their own size — a panel of a
-/// three-column Home is narrower than the box, and 11 px axis figures at
-/// 0.7 of it are under what reads.
-fn type_scale(s: f32) -> f32 {
-    s.max(1.0)
+/// gui-logic's dots, as iced's points.
+fn points(dots: Vec<chart::Dot>) -> Vec<(Point, String)> {
+    dots.into_iter()
+        .map(|((x, y), id)| (Point::new(x, y), id))
+        .collect()
 }
 
 /// A word on a chart, its baseline at `at` as the SVG sets it, anchored
@@ -112,15 +61,6 @@ fn words(
         align_y: iced::alignment::Vertical::Center,
         ..canvas::Text::default()
     });
-}
-
-/// The pull a press at `p` lands on: the nearest dot within [`HIT`].
-fn hit(dots: &[(Point, String)], p: Point) -> Option<String> {
-    dots.iter()
-        .map(|(at, id)| (at.distance(p), id))
-        .filter(|(d, _)| *d <= HIT)
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, id)| id.clone())
 }
 
 fn press(
@@ -174,59 +114,22 @@ impl RankSlope {
             .height(Length::Fixed(w * SLOPE_H / SLOPE_W))
             .into()
     }
-
-    /// Where each pull's dot stands in a chart `w` wide. A night of one
-    /// pull stands it in the middle of the box: at the first dot's place
-    /// it would read as the start of a line that never came.
+    /// Where each pull's dot stands in a chart `w` wide (gui-logic's
+    /// `chart::slope_dots`).
     pub(super) fn dots(&self, w: f32) -> Vec<(Point, String)> {
-        let s = w / SLOPE_W;
-        let n = self.pulls.len();
-        let step = (SLOPE_W - DOT_ROOM) / n.saturating_sub(1).max(1) as f32;
-        let first = if n == 1 { SLOPE_W / 2.0 } else { DOT_X };
-        self.pulls
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                let f = p.standing.percentile();
-                let y = GUIDE_TOP + (1.0 - f) * (SLOPE_H - GUIDE_TOP - GUIDE_FOOT);
-                (
-                    Point::new((first + i as f32 * step) * s, y * s),
-                    p.fight_id.clone(),
-                )
-            })
-            .collect()
+        points(chart::slope_dots(&self.pulls, w))
     }
 
-    /// Which dots keep their rank above them: all of them, while there is
-    /// room between two; else the first, the last, the highest and the
-    /// lowest.
+    /// Which dots keep their rank above them (`chart::slope_labelled`).
     pub(super) fn labelled(&self, w: f32) -> Vec<bool> {
-        let n = self.pulls.len();
-        let gap = (SLOPE_W - DOT_ROOM) / n.saturating_sub(1).max(1) as f32 * w / SLOPE_W;
-        if gap >= LABEL_ROOM {
-            return vec![true; n];
-        }
-        let f = |i: usize| self.pulls.get(i).map_or(0.0, |p| p.standing.percentile());
-        let high = (0..n).max_by(|a, b| f(*a).total_cmp(&f(*b)));
-        let low = (0..n).min_by(|a, b| f(*a).total_cmp(&f(*b)));
-        (0..n)
-            .map(|i| i == 0 || i + 1 == n || Some(i) == high || Some(i) == low)
-            .collect()
+        chart::slope_labelled(&self.pulls, w)
     }
 }
 
-/// A rank printed above its dot at `at`, in a chart `w` wide, would print
-/// over the top guide's words: its dot within a line of type of their
-/// baseline, and within their reach from the guide's right end. It hangs
-/// under its dot instead — the night's best pull is the one that tops
-/// the role, and the one the words would otherwise break.
+/// A rank printed above its dot at `at` would print over the top guide's
+/// words, so it hangs under it (`chart::rank_under`).
 pub(super) fn rank_under(at: Point, w: f32) -> bool {
-    let s = w / SLOPE_W;
-    let ts = type_scale(s);
-    let baseline = at.y - RANK_RISE * s;
-    let near = baseline < GUIDE_TOP_WORDS * s + RANK_PX * ts;
-    let words_left = (SLOPE_W - GUIDE_END) * s - GUIDE_WORDS_W * ts;
-    near && at.x + RANK_HALF_W * ts > words_left
+    chart::rank_under((at.x, at.y), w)
 }
 
 impl canvas::Program<Message> for RankSlope {
@@ -346,26 +249,16 @@ impl canvas::Program<Message> for RankSlope {
 
 // ---- the week's key throughput ----------------------------------------------
 
-/// "Effective dps on keys": a dot per run in its character's colour, the
-/// runs in the order they were played, each character's best of the week
-/// ringed in legendary orange with its figure over it; the night named
-/// under the first run of each.
 pub(super) struct Trend {
     points: Vec<TrendPoint>,
-    lo: f64,
-    hi: f64,
-    ticks: Vec<f64>,
+    axis: TrendAxis,
 }
 
 impl Trend {
     pub(super) fn new(points: &[TrendPoint]) -> Self {
-        let values: Vec<f64> = points.iter().map(|p| p.value).collect();
-        let (lo, hi, ticks) = axis(&values);
         Self {
             points: points.to_vec(),
-            lo,
-            hi,
-            ticks,
+            axis: TrendAxis::of(points),
         }
     }
 
@@ -378,27 +271,11 @@ impl Trend {
     }
 
     fn y_of(&self, v: f64, s: f32) -> f32 {
-        let f = if self.hi > self.lo {
-            ((v - self.lo) / (self.hi - self.lo)) as f32
-        } else {
-            0.5
-        };
-        (TREND_H - PLOT_FOOT - f * (TREND_H - PLOT_ROOM)) * s
+        self.axis.y_of(v, s)
     }
 
     fn dots(&self, w: f32) -> Vec<(Point, String)> {
-        let s = w / TREND_W;
-        let step = (TREND_W - TREND_ROOM) / self.points.len().saturating_sub(1).max(1) as f32;
-        self.points
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                (
-                    Point::new((TREND_X + i as f32 * step) * s, self.y_of(p.value, s)),
-                    p.fight_id.clone(),
-                )
-            })
-            .collect()
+        points(self.axis.dots(&self.points, w))
     }
 }
 
@@ -437,7 +314,7 @@ impl canvas::Program<Message> for Trend {
         let s = w / TREND_W;
         let ts = type_scale(s);
         let rule = Stroke::default().with_width(1.0).with_color(theme::LINE);
-        for v in &self.ticks {
+        for v in &self.axis.ticks {
             let y = self.y_of(*v, s).round() + 0.5;
             frame.stroke(
                 &Path::line(

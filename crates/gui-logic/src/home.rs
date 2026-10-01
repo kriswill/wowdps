@@ -1146,6 +1146,9 @@ pub fn best_label(value: f64) -> String {
     )
 }
 
+/// The two charts as geometry.
+pub mod chart;
+
 /// Hand-made cards for the tests of every crate that draws Home.
 #[doc(hidden)]
 pub mod samples;
