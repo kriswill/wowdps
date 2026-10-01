@@ -13,6 +13,11 @@
 }:
 let
   cfg = config.services.wowdps;
+  # The GUIs the overlay supervisor may spawn, by config `gui_binary`.
+  guiPath = lib.filter (p: p != null) [
+    cfg.guiPackage
+    cfg.guiNewPackage
+  ];
 in
 {
   options.services.wowdps = {
@@ -33,6 +38,17 @@ in
         to whatever PATH the user session imported.
       '';
     };
+
+    guiNewPackage = lib.mkOption {
+      type = lib.types.nullOr lib.types.package;
+      default = null;
+      description = ''
+        Package providing `wowdps-gui-new` (the GUI on GPUI Kit, in
+        development), put on the service PATH beside `guiPackage` so that
+        config `gui_binary = "wowdps-gui-new"` reaches it. Null by default:
+        the overlay the daemon spawns stays `wowdps-gui` until cutover.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -44,7 +60,7 @@ in
       # there is no compositor for the overlay supervisor to spawn into.
       requisite = [ "graphical-session.target" ];
       wantedBy = [ "default.target" ];
-      path = lib.optional (cfg.guiPackage != null) cfg.guiPackage;
+      path = guiPath;
       serviceConfig = {
         # A clean exit (`wowdps stop`) stays down by design; use
         # `systemctl --user restart wowdps` to bring it back.

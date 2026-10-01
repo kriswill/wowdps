@@ -20,6 +20,11 @@
 }:
 let
   cfg = config.services.wowdps;
+  # The GUIs the overlay supervisor may spawn, by config `gui_binary`.
+  guiPath = lib.filter (p: p != null) [
+    cfg.guiPackage
+    cfg.guiNewPackage
+  ];
 in
 {
   options.services.wowdps = {
@@ -40,6 +45,17 @@ in
         to whatever PATH the user session imported.
       '';
     };
+
+    guiNewPackage = lib.mkOption {
+      type = lib.types.nullOr lib.types.package;
+      default = null;
+      description = ''
+        Package providing `wowdps-gui-new` (the GUI on GPUI Kit, in
+        development), put on the service PATH beside `guiPackage` so that
+        config `gui_binary = "wowdps-gui-new"` reaches it. Null by default:
+        the overlay the daemon spawns stays `wowdps-gui` until cutover.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -57,7 +73,7 @@ in
         # `systemctl --user restart wowdps` to bring it back.
         ExecStart = "${cfg.package}/bin/wowdps daemon --linger";
         Restart = "on-failure";
-        Environment = lib.optional (cfg.guiPackage != null) "PATH=${lib.makeBinPath [ cfg.guiPackage ]}";
+        Environment = lib.optional (guiPath != [ ]) "PATH=${lib.makeBinPath guiPath}";
       };
       Install.WantedBy = [ "default.target" ];
     };
