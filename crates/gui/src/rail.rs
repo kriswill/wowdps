@@ -43,6 +43,8 @@ use crate::line_icons::{LineIcon, line_icon};
 use crate::nav;
 use crate::theme::{self, size};
 use crate::window::Message;
+// A name as the window draws it: gui-logic's.
+pub(crate) use wowdps_gui_logic::labels::shown_name;
 
 /// The rail beside the stage (`.body{grid-template-columns:236px …}`) and
 /// the drawer it becomes (`.rail{width:280px}` under 1180 px).
@@ -1280,16 +1282,6 @@ pub(crate) fn drawer(
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
-}
-
-/// A name as the window draws it — the rail's tips, Home, the palette,
-/// the inspector: without its realm when the option says so.
-pub(crate) fn shown_name(name: &str, hide_realms: bool) -> String {
-    if hide_realms {
-        crate::view::display_name(name).to_string()
-    } else {
-        name.to_string()
-    }
 }
 
 /// A character's dot, saying under the pointer whose it is.

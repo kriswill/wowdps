@@ -508,24 +508,7 @@ fn meter_label(label: &str, enemies: bool) -> String {
     }
 }
 
-pub(crate) use wowdps_gui_logic::labels::{display_name, realmless};
-
-/// `rows` as the window draws them in a pane of mixed players and
-/// creatures: realms taken off every label when the option says so.
-pub(crate) fn realmless_rows(rows: &[Row], hide_realms: bool) -> Vec<Row> {
-    rows.iter()
-        .map(|r| {
-            if hide_realms {
-                Row {
-                    label: realmless(&r.label),
-                    ..r.clone()
-                }
-            } else {
-                r.clone()
-            }
-        })
-        .collect()
-}
+pub(crate) use wowdps_gui_logic::labels::{display_name, realmless, realmless_rows};
 
 pub(crate) use wowdps_gui_logic::table::enemy_split;
 

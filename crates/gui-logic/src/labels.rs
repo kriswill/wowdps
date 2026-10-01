@@ -3,7 +3,7 @@
 //! `view.rs`, which re-exports them; the colours a GUI draws them in stay
 //! its own (a verdict comes with a [`Tone`], not a colour).
 
-use wowdps_model::SegmentKind;
+use wowdps_model::{Row, SegmentKind};
 use wowdps_proto::ClientState;
 
 /// "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
@@ -30,6 +30,33 @@ pub fn realmless(label: &str) -> String {
         };
     }
     player_name(label).map_or_else(|| label.to_string(), str::to_string)
+}
+
+/// `rows` as the window draws them in a pane of mixed players and
+/// creatures: realms taken off every label when the option says so.
+pub fn realmless_rows(rows: &[Row], hide_realms: bool) -> Vec<Row> {
+    rows.iter()
+        .map(|r| {
+            if hide_realms {
+                Row {
+                    label: realmless(&r.label),
+                    ..r.clone()
+                }
+            } else {
+                r.clone()
+            }
+        })
+        .collect()
+}
+
+/// A name as the window draws it — the rail's tips, Home, the palette,
+/// the inspector: without its realm when the option says so.
+pub fn shown_name(name: &str, hide_realms: bool) -> String {
+    if hide_realms {
+        display_name(name).to_string()
+    } else {
+        name.to_string()
+    }
 }
 
 /// The name in a player label the log writes as "Name-Realm-Region" (the

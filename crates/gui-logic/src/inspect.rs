@@ -12,6 +12,7 @@ use wowdps_model::{Class, Row, Spec};
 
 pub mod curves;
 pub mod lanes;
+pub mod list;
 pub mod nums;
 pub mod plot;
 pub mod recap;
