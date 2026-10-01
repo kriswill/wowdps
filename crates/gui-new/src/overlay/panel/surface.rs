@@ -106,6 +106,7 @@ impl Overlay {
     /// The grip pressed (the header, the tab): a click or a drag, decided
     /// by how far it travels before it is let go.
     pub(super) fn grip_down(&mut self, at: Point<Pixels>) {
+        super::autos::trace(self.started, format_args!("grip pressed at {at:?}"));
         self.grip = Some(Grip {
             at,
             from: self.offset,
@@ -139,6 +140,10 @@ impl Overlay {
         let Some(grip) = self.grip.take() else {
             return;
         };
+        super::autos::trace(
+            self.started,
+            format_args!("grip released, moved={} offset={}", grip.moved, self.offset),
+        );
         if !grip.moved {
             self.toggle(cx);
             return;
@@ -215,6 +220,7 @@ impl Overlay {
     pub(super) fn set_daemon_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if self.daemon_visible != visible {
             self.daemon_visible = visible;
+            super::autos::trace(self.started, format_args!("daemon SetVisible({visible})"));
             cx.notify();
         }
     }
@@ -240,6 +246,7 @@ impl Overlay {
                         && o.game_visible != v
                     {
                         o.game_visible = v;
+                        super::autos::trace(o.started, format_args!("game workspace visible={v}"));
                         cx.notify();
                     }
                 });

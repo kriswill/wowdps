@@ -120,6 +120,10 @@ pub struct OverlayTokens {
     /// A stat card's fill and border (the ability drill's numbers).
     pub stat_card: Color,
     pub stat_card_edge: Color,
+    /// A list's scrollbar: its rail and its thumb (iced's TokyoNight
+    /// scroller, which the iced overlay's lists wore).
+    pub rail: Color,
+    pub thumb: Color,
     /// A recap line's health strip, under the health left.
     pub health_track: Color,
 }
@@ -220,6 +224,8 @@ pub const GOLD: Def = Def {
         stat_card: Color::rgba(1.0, 1.0, 1.0, 0.05),
         stat_card_edge: Color::rgba(1.0, 1.0, 1.0, 0.12),
         health_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
+        rail: Color::hex(0x303249),
+        thumb: Color::hex(0x494B6F),
     },
     talents: TALENTS_GOLD,
     faces: Faces {

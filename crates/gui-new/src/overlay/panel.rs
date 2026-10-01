@@ -89,6 +89,14 @@ pub struct Overlay {
     /// Hyprland's socket directory, when it is there to ask.
     hypr: Option<std::path::PathBuf>,
     _game: Option<gpui_kit::Task<()>>,
+    /// The body's list and the comparison's two tables, scrolled: their
+    /// scrollbars read and move them.
+    body_scroll: gpui_kit::ScrollHandle,
+    table_scroll: [gpui_kit::ScrollHandle; 2],
+    /// The debug aids still to run (`autos.rs`), and when the overlay
+    /// started, for their traces.
+    autos: autos::Autos,
+    started: Instant,
     /// The surface size last asked of the compositor.
     sized: Option<(u32, u32)>,
     /// Each graph's own state: the drill's, or a comparison's two.
@@ -116,6 +124,7 @@ impl Overlay {
         let subscriptions = vec![
             cx.observe(&session, |this, _, cx| {
                 this.open_newest(cx);
+                this.run_autos(cx);
                 this.sync_aux(cx);
                 cx.notify();
             }),
@@ -144,6 +153,14 @@ impl Overlay {
             graph_probe: None,
             spell_hover: None,
             sized: None,
+            autos: if cfg!(test) {
+                autos::Autos::default()
+            } else {
+                autos::Autos::from_env()
+            },
+            started: Instant::now(),
+            body_scroll: gpui_kit::ScrollHandle::new(),
+            table_scroll: Default::default(),
             offset: cfg_offset,
             grip: None,
             daemon_visible: true,
@@ -162,6 +179,9 @@ impl Overlay {
         };
         overlay.open_newest(cx);
         overlay.follow_game(cx);
+        if !cfg!(test) {
+            overlay.auto_toggle(cx);
+        }
         overlay
     }
 
@@ -395,6 +415,7 @@ impl Overlay {
     /// Expand or collapse, and size the surface for it.
     fn toggle(&mut self, cx: &mut Context<Self>) {
         self.expanded = !self.expanded;
+        autos::trace(self.started, format_args!("expanded={}", self.expanded));
         self.sync_aux(cx);
         cx.notify();
     }
@@ -756,14 +777,23 @@ impl Overlay {
                 .flex_col()
                 .gap(px(4.))
                 .child(
+                    // The list scrolls in its own lane, its scrollbar beside
+                    // it in the lane the list leaves on the right.
                     div()
-                        .id("body")
-                        .test_support()
+                        .relative()
                         .flex_1()
                         .min_h_0()
-                        .overflow_y_scroll()
-                        .pr(px(10.))
-                        .child(list),
+                        .child(
+                            div()
+                                .id("body")
+                                .test_support()
+                                .size_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.body_scroll)
+                                .pr(px(10.))
+                                .child(list),
+                        )
+                        .child(super::scrollbar::bar(ov, &self.body_scroll)),
                 )
                 .children(self.drill_graph(ov, cx))
                 .into_any_element()
@@ -1509,8 +1539,10 @@ fn tone_color(ov: &Ov, tone: Tone) -> gpui_kit::Hsla {
     }
 }
 
+mod autos;
 mod compare;
 mod surface;
+pub use autos::start_view;
 pub use surface::Reanchor;
 #[cfg(test)]
 pub(crate) mod tests;

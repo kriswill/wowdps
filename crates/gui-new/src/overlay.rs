@@ -17,6 +17,7 @@ mod instance;
 mod ov;
 pub(crate) mod panel;
 mod rows;
+mod scrollbar;
 mod strip;
 
 /// Open the overlay once its output is known. Wayland names its outputs
@@ -107,7 +108,12 @@ fn surface(
     if let (Some(name), None) = (output, display_id) {
         eprintln!("wowdps-gui-new: no output named {name}; the compositor chooses");
     }
-    let session = cx.new(|cx| crate::session::Session::running(client, cx));
+    // WOWDPS_OVERLAY_AUTOVIEW: start on that view, before the first Watch.
+    let mut state = wowdps_proto::ClientState::new();
+    if let Some(view) = panel::start_view() {
+        state.view = view;
+    }
+    let session = cx.new(|cx| crate::session::Session::running_with(Box::new(client), state, cx));
     let overlay = cx.new(|cx| panel::Overlay::new(session, cfg, Rc::new(split_link), cx));
     let current = Rc::new(Cell::new(Some(open_on(cx, output, display_id, &overlay)?)));
     // A tab dropped by another edge: the surface is recreated there — the

@@ -51,6 +51,21 @@ Typical capture:
 WOWDPS_OVERLAY_DEBUG=1 wowdps-gui --overlay 2>overlay-trace.log
 ```
 
+**gui-new's overlay** (`wowdps-gui-new --overlay`) reads the same
+variables, with the same meanings, plus one of its own:
+
+- `WOWDPS_OVERLAY_OUTPUT=<name>` opens it on that output, ahead of config
+  `monitor` and the game's monitor. Use it to put it on a headless output
+  for a screenshot.
+- Its `DEBUG` trace covers grip presses and releases (moved or not, and
+  the offset), expand and collapse, `SetVisible`, and the game
+  workspace's flips. It has no "ignored raw event" lines, since GPUI has
+  no such stream.
+
+To see what the surface asks of the compositor, run it with
+`WAYLAND_DEBUG=1`. That trace found the zero-length layer surface that
+GPUI turns into a viewport protocol error ("Size was <= 0").
+
 Reading the trace: `mouse ButtonPressed/Released` lines come from
 `iced::event::listen()`, which only yields events **ignored** by widgets — so
 a click that shows up raw is a click that *missed* every `mouse_area`, while a

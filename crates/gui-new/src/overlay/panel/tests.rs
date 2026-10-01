@@ -906,57 +906,95 @@ fn states() -> Vec<Shot> {
     ]
 }
 
+/// One state's picture: a fresh overlay over its fixture, reached as a
+/// user would reach it, motion settled, on the iced guard's backdrop.
+fn render(shot: &Shot) -> image::RgbaImage {
+    own_config();
+    let mut cx = testkit::headless();
+    cx.update(|cx| cx.set_reduce_motion(true));
+    cx.update(|cx| {
+        let faces = wowdps_gui_logic::fonts::FONTS
+            .iter()
+            .map(|b| std::borrow::Cow::Borrowed(*b))
+            .collect();
+        let _ = cx.text_system().add_fonts(faces);
+    });
+    let mut held = None;
+    let link = shot.link;
+    let (window, _) = testkit::open_headless(&mut cx, shot.at, |_, cx| {
+        let overlay = build(cx, link);
+        held = Some(overlay.clone());
+        cx.new(|_| Backdrop(overlay))
+    });
+    let overlay = held.expect("the overlay was built");
+    let session = cx.update(|cx| overlay.read(cx).session().clone());
+    let rig = Rig {
+        window,
+        overlay,
+        session,
+    };
+    (shot.reach)(&mut cx, &rig);
+    cx.run_until_parked();
+    cx.capture_screenshot(window).expect("a headless renderer")
+}
+
 /// The overlay's states as pictures, for review beside the iced guard's
-/// (`WOWDPS_GUARD_PNG` there, `WOWDPS_SHOTS_DIR` here). Run by hand:
-/// `WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui-new overlay_shots -- --ignored`.
+/// (`WOWDPS_GUARD_PNG` there, `WOWDPS_SHOTS_DIR` here), with the machine's
+/// art caches. Run by hand:
+/// `WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui-new overlay_shots -- --ignored`
+/// (`WOWDPS_SHOTS_ONLY=meter,drill` for some).
 #[test]
 #[ignore = "needs a wgpu adapter"]
 fn overlay_shots() {
     let dir = std::env::var_os("WOWDPS_SHOTS_DIR").map(std::path::PathBuf::from);
     let only = std::env::var("WOWDPS_SHOTS_ONLY").ok();
-    for Shot {
-        name,
-        link,
-        reach,
-        at,
-    } in states()
-    {
+    for shot in states() {
         if only
             .as_deref()
-            .is_some_and(|o| !o.split(',').any(|n| n == name))
+            .is_some_and(|o| !o.split(',').any(|n| n == shot.name))
         {
             continue;
         }
-        own_config();
-        let mut cx = testkit::headless();
-        cx.update(|cx| cx.set_reduce_motion(true));
-        cx.update(|cx| {
-            let faces = wowdps_gui_logic::fonts::FONTS
-                .iter()
-                .map(|b| std::borrow::Cow::Borrowed(*b))
-                .collect();
-            let _ = cx.text_system().add_fonts(faces);
-        });
-        let mut held = None;
-        let (window, _) = testkit::open_headless(&mut cx, at, |_, cx| {
-            let overlay = build(cx, link);
-            held = Some(overlay.clone());
-            cx.new(|_| Backdrop(overlay))
-        });
-        let overlay = held.expect("the overlay was built");
-        let session = cx.update(|cx| overlay.read(cx).session().clone());
-        let rig = Rig {
-            window,
-            overlay,
-            session,
-        };
-        reach(&mut cx, &rig);
-        cx.run_until_parked();
-        let shot = cx.capture_screenshot(window).expect("a headless renderer");
+        let pic = render(&shot);
         if let Some(dir) = &dir {
-            let path = dir.join(format!("overlay-{name}.png"));
-            shot.save(&path).expect("png written");
+            let path = dir.join(format!("overlay-{}.png", shot.name));
+            pic.save(&path).expect("png written");
             eprintln!("overlay_shots: {}", path.display());
         }
     }
+}
+
+/// The overlay's render guard (plan step 2.6): every state against its
+/// blessed picture in `snapshots/overlay/`, within `guard`'s tolerance.
+/// Rendered WITHOUT the art caches, as a machine without them draws, so
+/// the committed pictures hold no extracted game art; the faces are the
+/// machine's (Noto Sans), so run it where it was blessed. A picture with
+/// no state, or a state with no picture, fails. `WOWDPS_BLESS=1` blesses
+/// an intended change; `WOWDPS_GUARD_PNG=<dir>` saves what it saw.
+#[test]
+#[ignore = "needs a wgpu adapter"]
+fn overlay_render_guard() {
+    let states = states();
+    let mut failed = Vec::new();
+    for shot in &states {
+        crate::images::without_art(true);
+        let pic = render(shot);
+        crate::images::without_art(false);
+        if let Err(e) = crate::guard::check("overlay", shot.name, &pic) {
+            failed.push(e);
+        }
+    }
+    let blessed: Vec<String> = std::fs::read_dir(crate::guard::dir("overlay"))
+        .map(|d| {
+            d.filter_map(|e| e.ok()?.file_name().into_string().ok())
+                .filter_map(|n| n.strip_suffix(".png").map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    for name in blessed {
+        if !states.iter().any(|s| s.name == name) {
+            failed.push(format!("{name}: blessed, but no state draws it"));
+        }
+    }
+    assert!(failed.is_empty(), "overlay guard:\n{}", failed.join("\n"));
 }

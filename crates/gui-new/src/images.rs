@@ -31,14 +31,39 @@ pub fn make(tile: Rgba) -> Tile {
     Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]))
 }
 
+#[cfg(test)]
+thread_local! {
+    static NO_ART: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Draw no extracted game art on this thread, as a machine without the
+/// caches draws: the render guard's pictures are committed, and Blizzard's
+/// art never lands in the repository.
+#[cfg(test)]
+pub fn without_art(off: bool) {
+    NO_ART.with(|c| c.set(off));
+}
+
+/// Whether the caches may be read here.
+fn art_on() -> bool {
+    #[cfg(test)]
+    {
+        !NO_ART.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
+}
+
 fn class_icons() -> Option<&'static ClassIcons<Tile>> {
     static CACHE: OnceLock<Option<ClassIcons<Tile>>> = OnceLock::new();
-    CACHE.get_or_init(ClassIcons::open).as_ref()
+    art_on().then(|| CACHE.get_or_init(ClassIcons::open).as_ref())?
 }
 
 fn spell_icons() -> Option<&'static SpellIcons<Tile>> {
     static CACHE: OnceLock<Option<SpellIcons<Tile>>> = OnceLock::new();
-    CACHE.get_or_init(SpellIcons::open).as_ref()
+    art_on().then(|| CACHE.get_or_init(SpellIcons::open).as_ref())?
 }
 
 /// The class crest, or `None` without a cache.

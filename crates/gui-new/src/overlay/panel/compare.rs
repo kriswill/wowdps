@@ -359,13 +359,22 @@ impl Overlay {
             .flex_col()
             .gap(px(3.))
             .child(heading)
-            .child(
+            .child({
+                let [first, second] = &self.table_scroll;
+                let handle = if at == 0 { first } else { second };
                 div()
-                    .id(("compare-table", at))
+                    .relative()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .child(list),
-            )
+                    .child(
+                        div()
+                            .id(("compare-table", at))
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(handle)
+                            .child(list),
+                    )
+                    .child(super::super::scrollbar::bar(ov, handle))
+            })
     }
 }

@@ -433,6 +433,32 @@ Every step also ticks its `Message` variants off the checklist derived from
     over the curve, a hand over a marker, a resize arrow mid-drag.
   - **Gap:** iced draws a scrollbar on an overflowing list. gui-new does
     not yet, and step 2.6 adds one.
+- **2.2.** `overlay/panel/surface.rs` puts the overlay on its edge
+  strip. The surface spans the edge, anchored to the edge and both
+  neighbours. The content sits at the offset, and the input region is
+  exactly the content.
+  - **The grip** (header, tab) is a click or a drag beyond 5 px. A
+    window-wide listener follows the drag off the content. The offset is
+    remembered by itself.
+  - **A new edge.** Under Hyprland, a tab dropped near another edge
+    recreates the surface there (gui-logic `surface::nearest_edge`,
+    moved). The new surface opens before the old one goes.
+  - **Hidden** is a 1 px strip with an empty input region: the daemon's
+    `SetVisible` composed with `follow_game`.
+  - **Output and lifetime.** The output is chosen before the app starts
+    (`overlay::choose_output`: `WOWDPS_OVERLAY_OUTPUT`, `monitor`, the
+    game's monitor with the 30 s spawn wait). Closing the last surface
+    quits.
+  - **Finding: never ask for a zero length.** A zero length, which
+    layer-shell reads as "stretch", kills the connection. GPUI hands every
+    size to the surface's viewport, and a zero there is the protocol
+    error "Size was <= 0". The surface opens with the edge's real length:
+    Hyprland's `monitor_named`, which accounts for rotation and scale,
+    else GPUI's display bounds.
+  - **Verified** on a headless Hyprland output, with
+    `WOWDPS_OVERLAY_OUTPUT` and `WAYLAND_DEBUG=1`.
+  - **Still to do with the game running:** S1 (fullscreen compositing)
+    and S3's cost of a full-length transparent surface.
 - **2.5.** `overlay/panel/compare.rs` draws the pair from the same
   gui-logic `graph` model: two panes over one legend, one scale, the
   two-reading probe, an ability drilled on both sides, the "hit by"
@@ -443,6 +469,26 @@ Every step also ticks its `Message` variants off the checklist derived from
     grows to the zoomed `COMPARE_MIN` and gives the room back however the
     pair began or ended. Only a change is sent to the compositor.
   - The shot matches iced's to within a few pixels.
+- **2.6.** The overlay's render guard is `overlay_render_guard`. It
+  checks every state in `overlay_shots`' table (20, with live, arena,
+  every drill and the comparison) against `snapshots/overlay/<state>.png`,
+  within `guard`'s tolerance.
+  - **No game art.** The guard renders without the art caches
+    (`images::without_art`), as a machine without them draws, so the
+    committed pictures hold no extracted Blizzard art. The faces are the
+    machine's Noto Sans, so run it where it was blessed. A picture with
+    no state fails too.
+  - **The scrollbar.** iced's is a square 10 px rail with its thumb in
+    the list's lane. `overlay/scrollbar.rs` draws it over a
+    `ScrollHandle`, with a draggable thumb: on the body list and on both
+    comparison tables. Kit's thin, self-hiding bar was not the
+    overlay's.
+  - **Debug aids.** The `WOWDPS_OVERLAY_*` aids (`DEBUG`, `AUTOSEG`,
+    `AUTOVIEW`, `AUTODRILL`, `AUTOCOMPARE`, `AUTOTOGGLE`) work as iced's
+    do (`panel/autos.rs`). They were checked live on a headless output
+    over the real log.
+  - **Left for the raid week:** switching the dev machine to
+    `gui_binary = "wowdps-gui-new"`, which needs the user and the game.
 
 **Phase gate:** 2.6 merged. The raid week with gui-new's overlay as
 `gui_binary` runs IN PARALLEL with phase 3 — it gates phase 5, not the
