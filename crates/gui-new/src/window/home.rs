@@ -9,14 +9,20 @@
 //! characters, or one — never a lock: the config's `character` is only the
 //! scope Home opens on.
 
-use gpui_kit::prelude::*;
-use gpui_kit::{App, Context, div};
+mod charts;
+mod panels;
+
+#[cfg(test)]
+mod tests;
+
+pub use panels::view;
+
+use gpui_kit::{App, Context};
 use wowdps_gui_logic::config::Config;
 use wowdps_gui_logic::home::{derive, remember};
 use wowdps_gui_logic::rail::log_instances;
 
-use super::w::W;
-use super::{Gui, Place, chrome};
+use super::{Gui, Place};
 
 impl Gui {
     /// Open Home on the scope it opened on last, asking for its first page
@@ -77,22 +83,4 @@ impl Gui {
         remember(&mut self.hist.known, panels.characters.clone());
         self.hist.store.panels = panels;
     }
-}
-
-/// Home's seat: the whole body beside the rail.
-pub fn view(_gui: &mut Gui, w: &W, _cx: &mut Context<Gui>) -> impl IntoElement {
-    div()
-        .id("home")
-        .flex_1()
-        .min_w_0()
-        .p(w.z(24.))
-        .flex()
-        .flex_col()
-        .gap(w.z(8.))
-        .child(w.title_text("You, this week", w.size.encounter_narrow, w.c(|t| t.ink)))
-        .child(chrome::quiet(
-            w,
-            "Your week, from the history store.",
-            w.size.body,
-        ))
 }

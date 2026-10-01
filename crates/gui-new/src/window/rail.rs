@@ -27,6 +27,9 @@ use wowdps_proto::history::fight_id;
 use super::paint::{dot, glyph};
 use super::w::{MEDIUM, REGULAR, SEMIBOLD, W};
 use super::{Gui, Place};
+
+#[cfg(test)]
+pub(crate) mod tests;
 use crate::theme::hsla;
 
 /// The rail beside the stage (`.body{grid-template-columns:236px …}`) and
@@ -283,11 +286,6 @@ impl Gui {
     pub(crate) fn toggle_trash(&mut self, cx: &mut Context<Self>) {
         self.hist.rail.hide_trash = !self.hist.rail.hide_trash;
         cx.notify();
-    }
-
-    /// Is the rail a drawer, open, at this width?
-    pub(crate) fn drawer_open(&self, w: &W) -> bool {
-        self.cards.rail && w.fit() != super::w::Fit::Wide
     }
 
     /// Open the drawer on the pull the stage stands on.
@@ -737,7 +735,7 @@ fn pull_name(name: &str, size: f32, ink: gpui_kit::Hsla, w: &W) -> Div {
 }
 
 /// A row's lead glyph in its 16 px box.
-fn mark(m: Mark, w: &W) -> AnyElement {
+pub(crate) fn mark(m: Mark, w: &W) -> AnyElement {
     let glyph_el = match m {
         Mark::Good => glyph(Glyph::Check, w.z(MARK_ICON), w.c(|t| t.good)).into_any_element(),
         Mark::Bad => glyph(Glyph::Close, w.z(MARK_ICON), w.c(|t| t.bad)).into_any_element(),
