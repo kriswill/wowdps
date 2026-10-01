@@ -361,7 +361,8 @@ fn act_button(a: &Act, w: &W, cx: &Context<Gui>) -> AnyElement {
         .test_support()
         .aria_selected(a.pressed)
         .h(w.z(BTN_H))
-        .px(w.z(BTN_PAD_X))
+        // iced draws a button's border inside its padding; GPUI's is outside.
+        .px(w.z(BTN_PAD_X - 1.))
         .flex()
         .items_center()
         .gap(w.z(ACTS_GAP))

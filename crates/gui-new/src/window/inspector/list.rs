@@ -189,6 +189,15 @@ fn heads(l: &List, cols: &[Col], grid: Grid, w: &W, cx: &Context<Gui>) -> Div {
     line
 }
 
+/// A figure's ink (`.num` / `.num.faint`): the amount and the rate in ink,
+/// the rest in ink 2.
+fn cell_ink(c: Col, w: &W) -> gpui_kit::Hsla {
+    match c.rank() {
+        0 | 1 => w.c(|t| t.ink),
+        _ => w.c(|t| t.ink_2),
+    }
+}
+
 /// R26: a tree line — indented by depth, a caret where it folds (an empty
 /// slot of its width where it does not), then its words.
 #[allow(clippy::too_many_arguments)]
@@ -238,7 +247,11 @@ fn tree_line(
         .items_center()
         .gap(w.z(CARET_GAP))
         .min_w_0()
-        .child(div().w(w.z(INDENT * f32::from(ln.depth))).flex_none())
+        // iced's row spaces no void element: a top-level line has no indent
+        // and no gap before its caret.
+        .when(ln.depth > 0, |d| {
+            d.child(div().w(w.z(INDENT * f32::from(ln.depth))).flex_none())
+        })
         .child(caret)
         .child(spell_words(
             &ln.name,
@@ -287,7 +300,7 @@ fn line(
                 .flex_none()
                 .flex()
                 .justify_end()
-                .child(w.text(c.cell(r), NAME_PX, w.c(|t| t.ink), REGULAR)),
+                .child(w.text(c.cell(r), w.size.num, cell_ink(c, w), REGULAR)),
         );
     }
     let selected = l.selected == Some(i);
