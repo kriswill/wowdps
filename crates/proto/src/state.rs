@@ -635,10 +635,18 @@ impl ClientState {
     }
 
     /// v38: tell this state whether the daemon behind it answers a drill's
-    /// zoom window. A stored pull's says no: its state then never sends a
-    /// window, and the rows it shows are the whole pull.
-    pub fn set_drill_windows(&mut self, on: bool) {
+    /// zoom window. A stored pull's says no until its answer shows the
+    /// series tier (v39, `StoredFight::tier` 4): until then its state never
+    /// sends a window, and the rows it shows are the whole pull. A change
+    /// under a zoom already drawn re-asks with (or without) it.
+    pub fn set_drill_windows(&mut self, on: bool) -> Vec<ClientMsg> {
+        let was = self.drill_windowed();
         self.drill_windows = on;
+        if self.drill_windowed() != was && self.drill_range.is_some() {
+            vec![self.watch_msg()]
+        } else {
+            Vec::new()
+        }
     }
 
     /// v38: the window the drill's rows on show answer — the breakdown's

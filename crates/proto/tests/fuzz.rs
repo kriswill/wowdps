@@ -417,6 +417,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         label: "Time Warp".to_string(),
                     }],
                 }),
+                series: true,
             }),
         },
         // v26: the last answer tag with every row field distinct, so the

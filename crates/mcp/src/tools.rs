@@ -576,6 +576,21 @@ pub fn catalog() -> Vec<Tool> {
                     },
                     "view": view(),
                     "player": player("Drill into this player"),
+                    "from_secs": obj! {
+                        "type": Json::str("number"),
+                        "description": Json::str(
+                            "v39, with to_secs, view damage or healing and a player: a zoom \
+                             window in seconds from the fight's start — by_ability (and, on \
+                             damage, by_target) answer for just that stretch, per_sec over \
+                             it, echoed as `window`. Answered from the series tier, kept for \
+                             kills, keys and pinned fights while their details last; any \
+                             other fight is an error saying so (regrade_fights writes it).",
+                        ),
+                    },
+                    "to_secs": obj! {
+                        "type": Json::str("number"),
+                        "description": Json::str("The window's end, with from_secs."),
+                    },
                     "conditioned_on": obj! {
                         "type": Json::Arr(vec![Json::str("integer"), Json::str("string")]),
                         "description": Json::str(
@@ -1488,6 +1503,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         );
     }
     let death = arg_death(args)?;
+    let window = arg_window(args)?;
     // A key's member boss: name or 0-based index into the card's bosses[].
     // Validated against the card first so a miss names what exists; the
     // daemon parses the boss from the log and answers its own rows.
@@ -1548,8 +1564,17 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Some(guid)
         }
     };
-    let Some(f) =
-        bridge.stored_fight_boss(fight_id.clone(), view, drill.clone(), death, boss.clone())?
+    if window.is_some() && drill.is_none() {
+        return Err("from_secs/to_secs scope a player's drill: name the player".to_string());
+    }
+    let Some(f) = bridge.stored_fight_boss(
+        fight_id.clone(),
+        view,
+        drill.clone(),
+        death,
+        boss.clone(),
+        window,
+    )?
     else {
         return Err(if boss.is_some() {
             format!(
@@ -1666,6 +1691,30 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         // tier — absent when they cast no shield (and on a pre-5 record).
         if !f.shields.is_empty() {
             o.push(("shields".to_string(), shields_json(&f.shields)));
+        }
+        // v39: a window answers only where the store keeps the seconds;
+        // anywhere else the lists below would be the whole fight, so say so.
+        if let (Some((lo, hi)), Some(b)) = (window, &f.breakdown) {
+            if !matches!(view, View::Damage | View::Healing) {
+                return Err(format!(
+                    "from_secs/to_secs scope damage and healing drills only, not {}",
+                    view_name(view)
+                ));
+            }
+            if b.range.is_none() {
+                return Err(format!(
+                    "{fight_id}: no per-second abilities stored — the series tier is kept for \
+                     kills, keys and pinned fights while their details last (regrade_fights \
+                     writes it from the combat log)"
+                ));
+            }
+            o.push((
+                "window".to_string(),
+                obj! {
+                    "from_secs": Json::num(f64::from(lo) / 1000.0),
+                    "to_secs": Json::num(f64::from(hi) / 1000.0),
+                },
+            ));
         }
         match f.breakdown {
             Some(b) => {
@@ -3177,6 +3226,26 @@ fn arg_death(args: &Json) -> Result<Option<u32>, String> {
         Some(other) => Err(format!(
             "\"death\" must be a non-negative whole number (an index from the fight's `deaths` list), got {other:?}"
         )),
+    }
+}
+
+/// v39: `from_secs` / `to_secs`, a zoom window on a stored drill — both or
+/// neither, from before to, in seconds from the fight's start.
+fn arg_window(args: &Json) -> Result<Option<(u32, u32)>, String> {
+    let secs = |k: &str| -> Result<Option<f64>, String> {
+        match args.get(k) {
+            None | Some(Json::Null) => Ok(None),
+            Some(Json::Num(n)) if *n >= 0.0 && n.is_finite() => Ok(Some(*n)),
+            Some(other) => Err(format!(
+                "\"{k}\" must be a non-negative number of seconds, got {other:?}"
+            )),
+        }
+    };
+    match (secs("from_secs")?, secs("to_secs")?) {
+        (None, None) => Ok(None),
+        (Some(lo), Some(hi)) if hi > lo => Ok(Some(((lo * 1000.0) as u32, (hi * 1000.0) as u32))),
+        (Some(_), Some(_)) => Err("to_secs must be after from_secs".to_string()),
+        _ => Err("from_secs and to_secs go together".to_string()),
     }
 }
 
@@ -5039,6 +5108,55 @@ mod tests {
                 .and_then(Json::as_str)
                 .is_some_and(|n| n.contains("no spec id"))
         );
+    }
+
+    /// v39: a stored drill's window is both bounds or neither, from before
+    /// to, in seconds — and a window without a player is refused first.
+    #[test]
+    fn a_window_is_two_bounds_in_order() {
+        let args = |pairs: &[(&str, Json)]| {
+            Json::Obj(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.clone()))
+                    .collect(),
+            )
+        };
+        assert_eq!(arg_window(&args(&[])), Ok(None));
+        assert_eq!(
+            arg_window(&args(&[
+                ("from_secs", Json::num(1.5)),
+                ("to_secs", Json::num(9.0))
+            ])),
+            Ok(Some((1_500, 9_000)))
+        );
+        assert!(arg_window(&args(&[("from_secs", Json::num(3.0))])).is_err());
+        assert!(
+            arg_window(&args(&[
+                ("from_secs", Json::num(9.0)),
+                ("to_secs", Json::num(3.0))
+            ]))
+            .is_err()
+        );
+        assert!(
+            arg_window(&args(&[
+                ("from_secs", Json::str("x")),
+                ("to_secs", Json::num(3.0))
+            ]))
+            .is_err()
+        );
+        let mut bridge = Bridge::lazy();
+        let err = call(
+            &mut bridge,
+            "stored_fight",
+            &args(&[
+                ("fight_id", Json::str("x-1")),
+                ("from_secs", Json::num(0.0)),
+                ("to_secs", Json::num(5.0)),
+            ]),
+        )
+        .unwrap_err();
+        assert!(err.contains("name the player"), "{err}");
     }
 
     /// v31: a row's `guild` is the addon's word (null = never seen, "" =

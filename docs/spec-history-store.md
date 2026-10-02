@@ -238,13 +238,14 @@ per-second numbers are over that. The live row for the same visit runs the
 key clock while the visit is open, so the two can differ until the record is
 written; a regrade of such a record can therefore change its duration.
 
-Per fight, three files in two tiers:
+Per fight, up to four files in four tiers:
 
 | File | Tier | Contents | Size (20 players) |
 | --- | --- | --- | --- |
 | `fights/<id>.json` | card, always | identity, encounter, visit/key facts, `start_local_ms`, `tz_min`, `start_utc_ms`, `duration_ms`, `official_ms`, `pars_ms`, `success`, `aborted`, `build`, `project_id`, `log_version`, `owner`, `byte_range`, `pinned`, `best_pct`, `players[]`, `bosses[]` (keys) | ~400 B + 60 B per player |
 | `rows/<id>.json` | rows, always | the seven `View`s' meter rows (all players, no top-n), per-player death recaps (event and attacker rows), and — 1a step 2b — per-player `mitigation[]` (the R17 record, the by-ability list capped at 16 with a struct rollup for the rest, the by-attacker list) | measured 2026-09-03: median ~35 KB, p90 ~208 KB on a 25-player raid (a stored `Row` is ~265 B; recaps are most of it); 2b adds ~90 KB to the p90 file |
 | `details/<id>.json` | detail: written for kills and for wipes of at least `history_details_min_wipe_secs` (60 s; never for aborted fights); retention then keeps bests / pinned and caps the rest | per-player by-spell and by-target breakdowns for Damage and Healing, per-player damage and healing timelines (1 s buckets + marks) | 60–120 KB, ~10 KB per timeline on a 35 min key |
+| `series/<id>.bin` | series (v39): kills, keys and pinned fights, only while their details last | per player, every Damage and Healing ability and every enemy their damage landed on, second by second (amount, overkill or overheal, hits, crits) — what a stored drill's zoom window reads; BINARY (`proto::series`), the one tier sized by seconds × abilities × players, laid out so one player's block is read alone | measured 2026-10-01 on a 25-player Heroic night: 408 KB for a 7-minute kill (752 KB of details), 563 KB for a 10-minute one (865 KB) — about 55–65% of the details file |
 
 `players[]` on the card carries per player: `guid`, `name`, `class`, `spec`,
 `role` (1a step 1: the spec's group-finder role, written for readers that
@@ -263,7 +264,9 @@ body, tags}` reserved for item 4; no tool writes them yet, but the codec and
 the eviction rule exist from v1.
 
 Excluded on purpose: raw events, spell-of-a-spell timelines and spell target
-lists (derive by reopening the log while it exists), compare windows
+lists (derive by reopening the log while it exists; v39's series tier keeps
+each ability's and each target's per-second tallies, never an ability's
+targets), compare windows
 (computed from stored by-spell rows), anything about players not in the
 fight. `per_sec` and `pct` are stored as computed, not recomputed.
 
@@ -277,6 +280,7 @@ $XDG_DATA_HOME/wowdps/history/v1/
   fights/<fight_id>.json
   rows/<fight_id>.json
   details/<fight_id>.json
+  series/<fight_id>.bin
   loadouts/<hash>.json
   annotations/<fight_id>.ndjson
 ```
@@ -326,6 +330,17 @@ $XDG_DATA_HOME/wowdps/history/v1/
   shorter than `history_details_min_wipe_secs` never had details; a reader
   that finds none applies the same rule to the card to say "never written"
   rather than "demoted" (`stored_fight`'s error text does).
+- The series tier (v39) follows its fight's details: written with them for
+  a kill, a key (timed or not) or a pinned fight, unlinked when they are
+  demoted or evicted, and when the fight stops earning it (a wipe's pin let
+  go). Pinning a fight that earns it but has none — a wipe, or a fight
+  stored before the tier — queues a rewrite from its log, which writes it
+  while the log is still on disk; `regrade` backfills older kills the same
+  way. It is the one binary file in the store: JSON would be 1.3 MB for a
+  7-minute raid kill, and nothing reads it but a window — SQL keeps the
+  coarse series, and no fixed answer needs per-second abilities. Its head
+  carries a format byte; a file of another format reads as absent and the
+  pull answers its whole lists.
 - Unwritable directory or ENOSPC: the write fails soft, `Status` reports it,
   the daemon lives.
 

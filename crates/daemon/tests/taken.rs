@@ -511,6 +511,7 @@ fn the_stored_taken_rows_equal_the_live_snapshot_through_the_mock() {
         drill: Some(DURGAN.to_string()),
         death: None,
         boss: None,
+        range: None,
     });
     let [
         DaemonMsg::Fight {

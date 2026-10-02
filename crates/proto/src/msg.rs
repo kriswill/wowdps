@@ -15,7 +15,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 38;
+pub const PROTO_VERSION: u16 = 39;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -143,6 +143,13 @@ pub enum ClientMsg {
         /// 0-based index into the card's `bosses` — parsed from the log on
         /// demand and answered with the boss's own rows / breakdown.
         boss: Option<String>,
+        /// v39: a zoom window `[lo, hi)` in ms from the fight's start. A
+        /// Damage or Healing drill of a fight that keeps the series tier
+        /// (`StoredFight::series`) answers its abilities — and Damage's
+        /// targets — for that window, echoed on `Breakdown.range`, exactly
+        /// as a live drill does (v38); anywhere else the drill is whole and
+        /// the echo `None`.
+        range: Option<(u32, u32)>,
     },
     /// v20: protect (or release) a stored fight from retention.
     PinFight {
@@ -415,6 +422,13 @@ pub struct StoredFight {
     /// healing, else empty (a Damage view whose details were demoted). `None`
     /// on a card-only answer (tier 1), whose rows tier is gone.
     pub raid: Option<RaidTimeline>,
+    /// v39: the fight keeps the SERIES tier (`series/<id>.bin`: its
+    /// abilities and targets second by second — kills, keys and pinned
+    /// fights while their details last), so a Damage or Healing drill
+    /// answers a zoom window (`GetFight.range`, echoed on
+    /// `Breakdown.range`). False everywhere else: a zoom there is the
+    /// reader's own, and the lists stay the whole pull.
+    pub series: bool,
 }
 
 /// v25: one uptime cell with the TARGET it sits on (the cell's own `src`
@@ -2119,6 +2133,8 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
     // v35 (R25): the stored pull's raid timeline, rebuilt from what the
     // store keeps (recaps, coarse series and marks), trailing.
     wire::put_opt(buf, f.raid.as_ref(), put_raid);
+    // v39: the series tier is on disk: a drill answers a window.
+    wire::put_bool(buf, f.series);
 }
 
 /// v26: `ShieldRow` = u32 spell_id | string label | u64 applied | u64
@@ -2157,6 +2173,7 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
         uptime: rd.vec(get_stored_uptime)?,
         shields: rd.vec(get_shield_row)?,
         raid: rd.opt(get_raid)?,
+        series: rd.bool()?,
     })
 }
 
@@ -2321,6 +2338,7 @@ impl ClientMsg {
                 drill,
                 death,
                 boss,
+                range,
             } => {
                 wire::put_u32(&mut body, *req_id);
                 wire::put_str(&mut body, fight_id);
@@ -2328,6 +2346,7 @@ impl ClientMsg {
                 wire::put_opt(&mut body, drill.as_ref(), |b, d| wire::put_str(b, d));
                 wire::put_opt(&mut body, death.as_ref(), |b, d| wire::put_u32(b, *d));
                 put_opt_str(&mut body, boss.as_deref());
+                put_range(&mut body, *range);
                 T_GET_FIGHT
             }
             ClientMsg::PinFight {
@@ -2396,6 +2415,7 @@ impl ClientMsg {
                 drill: rd.opt(|r| r.string())?,
                 death: rd.opt(|r| r.u32())?,
                 boss: rd.opt(|r| r.string())?,
+                range: get_range(&mut rd)?,
             },
             T_PIN_FIGHT => ClientMsg::PinFight {
                 req_id: rd.u32()?,

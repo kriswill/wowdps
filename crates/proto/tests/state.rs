@@ -476,7 +476,7 @@ fn a_damage_drill_window_rides_the_watch_and_waits_for_its_echo() {
 
     // A stored pull's state: the zoom is the client's, the rows the pull's.
     let mut stored = on_meter();
-    stored.set_drill_windows(false);
+    let _ = stored.set_drill_windows(false);
     stored.apply(Action::Open);
     stored.on_msg(snapshot(
         SegmentRef::Live,

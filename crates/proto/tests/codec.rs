@@ -314,6 +314,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             drill: Some("Player-1-A".to_string()),
             death: None,
             boss: Some("Vexamus".to_string()),
+            range: Some((5_000, 9_000)),
         },
         ClientMsg::PinFight {
             req_id: 6,
@@ -848,6 +849,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 ],
                 // v35 (R25): the stored pull's raid timeline, every arm.
                 raid: Some(raid()),
+                // v39: the series tier is on disk.
+                series: true,
             }),
         },
         DaemonMsg::Fight {
@@ -1033,7 +1036,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 38, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 39, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1315,11 +1318,13 @@ fn golden_bytes_pin_the_encoding() {
         drill: None,
         death: None,
         boss: None,
+        range: None,
     };
     assert_eq!(
         hex(&get_fight.encode()),
-        // v28 (R9): the death index rides between drill and boss.
-        "100000000905000000 03000000782d31 05 00 00 00".replace(' ', "")
+        // v28 (R9): the death index rides between drill and boss; v39 the
+        // window after it (one presence byte, `None`).
+        "110000000905000000 03000000782d31 05 00 00 00 00".replace(' ', "")
     );
     let changed = DaemonMsg::HistoryChanged {
         fight_id: "x-1".to_string(),
@@ -1566,13 +1571,17 @@ fn golden_bytes_pin_the_encoding() {
                 uptime,
                 shields,
                 raid: None,
+                series: false,
             }),
         }
         .encode();
         // v35 put the raid timeline's presence byte behind all of them —
-        // `00` here, pinned on its own below — and it is cut off, so every
-        // tail these checks read ends where it did.
-        assert_eq!(frame.last(), Some(&0), "raid: None closes the frame");
+        // `00` here, pinned on its own below — and v39 the series flag
+        // after it; both are cut off, so every tail these checks read ends
+        // where it did.
+        assert_eq!(frame.last(), Some(&0), "series: false closes the frame");
+        frame.pop();
+        assert_eq!(frame.last(), Some(&0), "raid: None before it");
         frame.pop();
         frame
     };
@@ -1906,14 +1915,16 @@ fn golden_bytes_pin_the_encoding() {
                 uptime: Vec::new(),
                 shields: Vec::new(),
                 raid,
+                series: false,
             }),
         }
         .encode()
     };
     let (got, bare) = (hex(&fight(Some(small_raid))[4..]), hex(&fight(None)[4..]));
-    let head = bare.strip_suffix("00000000 00".replace(' ', "").as_str());
+    // v39: the series flag closes the frame after the raid.
+    let head = bare.strip_suffix("00000000 00 00".replace(' ', "").as_str());
     assert_eq!(
-        head.map(|h| format!("{h}00000000{tail}")),
+        head.map(|h| format!("{h}00000000{tail}00")),
         Some(got),
         "shields 0, then the raid"
     );

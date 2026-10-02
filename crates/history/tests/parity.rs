@@ -191,6 +191,7 @@ fn fetch_fight(
         drill: drill.map(str::to_string),
         death: None,
         boss: None,
+        range: None,
     });
     let deadline = Instant::now() + DEADLINE;
     while Instant::now() < deadline {

@@ -489,13 +489,16 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
         .stored_fight(&trash, View::Taken, Some(WARRIOR), None)
         .unwrap();
     let b = store.derived_fight(trash_fight, facts, View::Taken, Some(WARRIOR), None);
-    // A Trash fight stores no details tier (tier 2) while `derived_fight`
-    // always has the parse in hand (tier 3) — pre-existing; the Taken
-    // drill answers from the rows tier and is identical either way.
+    // A Trash fight stores no details tier (tier 2) and no series while
+    // `derived_fight` always has the parse in hand (tier 3, its seconds
+    // too) — pre-existing; the Taken drill answers from the rows tier and
+    // is identical either way.
     assert_eq!((a.tier, b.tier), (2, 3));
+    assert_eq!((a.series, b.series), (false, true));
     assert_eq!(
         StoredFight {
             tier: 3,
+            series: true,
             ..a.clone()
         },
         b

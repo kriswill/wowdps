@@ -296,11 +296,13 @@ impl Bridge {
         drill: Option<String>,
         death: Option<u32>,
     ) -> Result<Option<StoredFight>, String> {
-        self.stored_fight_boss(fight_id, view, drill, death, None)
+        self.stored_fight_boss(fight_id, view, drill, death, None, None)
     }
 
     /// `stored_fight` for one of a key's member bosses (name or index into
     /// the card's `bosses`), parsed from the log on demand.
+    /// v39: `range` is a zoom window in ms from the fight's start — a
+    /// Damage or Healing drill of a fight with the series tier answers it.
     pub fn stored_fight_boss(
         &mut self,
         fight_id: String,
@@ -308,6 +310,7 @@ impl Bridge {
         drill: Option<String>,
         death: Option<u32>,
         boss: Option<String>,
+        range: Option<(u32, u32)>,
     ) -> Result<Option<StoredFight>, String> {
         let req_id = self.next_req;
         self.next_req += 1;
@@ -319,6 +322,7 @@ impl Bridge {
             drill,
             death,
             boss,
+            range,
         });
         wait(client, |msg| match msg {
             DaemonMsg::Fight { req_id: got, fight } if got == req_id => Some(Ok(fight)),
