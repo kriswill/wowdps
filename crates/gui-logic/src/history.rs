@@ -270,12 +270,13 @@ impl Earlier {
 // ---- a stored pull on the stage ----------------------------------------------
 
 /// What a `GetFight` asks the store for: the view, whose drill, which of
-/// their deaths.
+/// their deaths, and (v39) the zoom window their lists answer.
 #[derive(Debug, Clone, PartialEq)]
 struct Want {
     view: View,
     drill: Option<String>,
     death: Option<u32>,
+    range: Option<(u32, u32)>,
 }
 
 /// A stored pull on the stage: its own `ClientState`, fed from `GetFight`.
@@ -327,7 +328,7 @@ impl Stored {
         let _ = state.set_follow(true);
         // v38: the store keeps no per-second abilities: a zoom here is the
         // graph's alone, and the lists stay the whole pull.
-        state.set_drill_windows(false);
+        let _ = state.set_drill_windows(false);
         state.view = if view.is_stored() { view } else { View::Damage };
         // The row is a placeholder until the card is known: the header reads
         // the answer's own, and the list holds only the pull's id.
@@ -386,14 +387,23 @@ impl Stored {
 
     /// What the pull's own state asked for, as the store answers it: its
     /// newest `Watch` of the meter becomes the `GetFight` for the same
-    /// view, drill and death window — now, or, while one is out, when that
+    /// view, drill, death window and zoom window — now, or, while one is out, when that
     /// one answers. A comparison's cursor has no stored answer and asks for
     /// nothing.
     pub fn route(&mut self, sent: Vec<ClientMsg>, next_id: &mut u32) -> Vec<ClientMsg> {
         let Some(want) = sent.into_iter().rev().find_map(|m| match m {
             ClientMsg::Watch(Cursor::Segment {
-                view, drill, death, ..
-            }) => Some(Want { view, drill, death }),
+                view,
+                drill,
+                death,
+                range,
+                ..
+            }) => Some(Want {
+                view,
+                drill,
+                death,
+                range,
+            }),
             _ => None,
         }) else {
             return Vec::new();
@@ -426,6 +436,7 @@ impl Stored {
             drill: want.drill.clone(),
             death: want.death,
             boss: None,
+            range: want.range,
         };
         self.pending = Some((req_id, Some(want)));
         vec![msg]
@@ -490,7 +501,10 @@ impl Stored {
         self.loadout = drill.zip(fight.loadout);
         let info = info_of(&fight.card);
         self.card = Some(fight.card);
-        let sent = self.state.on_msg(DaemonMsg::Snapshot {
+        // v39: a fight that keeps the series tier answers a zoom window as
+        // the live drill does; any other's zoom stays the graph's alone.
+        let mut sent = self.state.set_drill_windows(fight.series);
+        sent.extend(self.state.on_msg(DaemonMsg::Snapshot {
             seq: 0,
             segment: SegmentRef::Live,
             id: Some(segment_id(&self.fight_id)),
@@ -505,7 +519,7 @@ impl Stored {
             // v35 (R25): the store's rebuild of the pull's raid timeline —
             // the ribbon, the Deaths table and the stat line's deaths.
             raid: fight.raid,
-        });
+        }));
         self.route(sent, next_id)
     }
 
@@ -956,6 +970,84 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    /// v39: a stored kill keeps the series tier, so its zoom rides the
+    /// `GetFight` and the rows come back the window's, echoed — as a live
+    /// pull's do; a fight without the tier keeps its zoom the graph's own.
+    #[test]
+    fn a_stored_kill_answers_a_zoom_window() {
+        let mut mock = MockDaemon::fixture().with_history();
+        let pick = |mock: &MockDaemon, kill: bool| {
+            mock.history()
+                .cards()
+                .iter()
+                .find(|c| c.kind == FightKind::Encounter && (c.success == Some(true)) == kill)
+                .cloned()
+                .expect("a stored pull")
+        };
+        let run =
+            |mock: &mut MockDaemon, s: &mut Stored, mut asked: Vec<ClientMsg>, next: &mut u32| {
+                for _ in 0..6 {
+                    let mut replies = Vec::new();
+                    for m in std::mem::take(&mut asked) {
+                        for reply in mock.handle(m) {
+                            if let DaemonMsg::Fight { req_id, fight } = reply {
+                                replies.push((req_id, fight));
+                            }
+                        }
+                    }
+                    for (req_id, fight) in replies {
+                        asked.extend(s.absorb(req_id, fight, next));
+                    }
+                    if asked.is_empty() {
+                        break;
+                    }
+                }
+            };
+        let kill = pick(&mock, true);
+        let mut next = 10;
+        let (mut s, sent) = Stored::open(
+            kill.id.clone(),
+            Some(kill.clone()),
+            View::Damage,
+            None,
+            None,
+            &mut next,
+        );
+        run(&mut mock, &mut s, sent, &mut next);
+        let whole: u64 = s.state.breakdown().0.iter().map(|r| r.amount).sum();
+        assert!(whole > 0, "the kill's drill is in");
+        let zoom = s.state.set_drill_range(Some((0, 2_000)));
+        let routed = s.route(zoom, &mut next);
+        assert!(
+            matches!(
+                routed.as_slice(),
+                [ClientMsg::GetFight {
+                    range: Some((0, 2_000)),
+                    ..
+                }]
+            ),
+            "the zoom rides the GetFight: {routed:?}"
+        );
+        run(&mut mock, &mut s, routed, &mut next);
+        assert_eq!(s.state.drill_shown_range(), Some((0, 2_000)));
+        let scoped: u64 = s.state.breakdown().0.iter().map(|r| r.amount).sum();
+        assert!(scoped < whole, "{scoped} of {whole}");
+
+        // The short wipe keeps no series: the zoom asks the store nothing.
+        let wipe = pick(&mock, false);
+        let (mut w, sent) = Stored::open(
+            wipe.id.clone(),
+            Some(wipe),
+            View::Damage,
+            None,
+            None,
+            &mut next,
+        );
+        run(&mut mock, &mut w, sent, &mut next);
+        let zoom = w.state.set_drill_range(Some((0, 2_000)));
+        assert!(w.route(zoom, &mut next).is_empty(), "the graph's own zoom");
     }
 
     /// A held `j` asks for the player it lands on, not for every one it

@@ -178,10 +178,15 @@ impl MockDaemon {
                 death,
                 // The mock has no loader pool: a boss drill answers None.
                 boss: _,
+                range,
             } => {
-                let fight = self
-                    .history
-                    .stored_fight(&fight_id, view, drill.as_deref(), death);
+                let fight = self.history.stored_fight_ranged(
+                    &fight_id,
+                    view,
+                    drill.as_deref(),
+                    death,
+                    range,
+                );
                 out.push(DaemonMsg::Fight { req_id, fight });
             }
             ClientMsg::PinFight {

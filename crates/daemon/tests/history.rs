@@ -1784,6 +1784,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         drill: Some(guid.clone()),
         death: None,
         boss: None,
+        range: None,
     });
     let [
         DaemonMsg::Fight {
@@ -1809,6 +1810,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         drill: Some("Player-1168-0A1B2C03".to_string()),
         death: None,
         boss: None,
+        range: None,
     });
     let [
         DaemonMsg::Fight {
@@ -1910,6 +1912,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         drill: None,
         death: None,
         boss: None,
+        range: None,
     });
     assert!(matches!(
         out.as_slice(),
@@ -2529,6 +2532,7 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
         drill: None,
         death: None,
         boss: Some("vexamus".to_string()),
+        range: None,
     });
     let deadline = Instant::now() + DEADLINE;
     let mut answer = None;
@@ -2553,6 +2557,7 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
         drill: None,
         death: None,
         boss: Some("Nobody".to_string()),
+        range: None,
     });
     let deadline = Instant::now() + DEADLINE;
     let mut answer = None;
@@ -3422,4 +3427,127 @@ fn a_stored_fight_rebuilds_its_rezzes_as_live_has_them() {
             "{view:?}"
         );
     }
+}
+
+/// v39 end to end: pinning a wipe that earns details (here, a 30 s minimum)
+/// answers the pin at once, and the worker rewrites the fight from its log
+/// when its mailbox is idle — after which the stored drill answers a zoom
+/// window from the series tier.
+#[test]
+fn pinning_a_wipe_backfills_its_series_from_the_log() {
+    use wowdps_model::View;
+    use wowdps_proto::{FightSort, HistoryAnswer, HistoryQuery};
+    let tmp = Temp::new("seriespin");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::write(
+        logs.join("WoWCombatLog-072726.txt"),
+        std::fs::read_to_string(SAMPLE).unwrap(),
+    )
+    .unwrap();
+    let hist = tmp.join("history");
+    let mut opts = options(&tmp, SourceSpec::Dir(logs), hist.clone());
+    if let Some(h) = opts.history.as_mut() {
+        h.details_min_wipe_secs = 30;
+    }
+    let d = start(opts);
+    // The two pulls; the raid's Σ stays open on the tailed log.
+    wait_for_fights(&d.socket, 2);
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    let ask = |client: &mut DaemonClient, msg: ClientMsg, want: u32| {
+        client.send(&msg);
+        let deadline = Instant::now() + DEADLINE;
+        while Instant::now() < deadline {
+            for m in client.poll() {
+                match &m {
+                    DaemonMsg::History { req_id, .. } | DaemonMsg::Fight { req_id, .. }
+                        if *req_id == want =>
+                    {
+                        return m;
+                    }
+                    _ => {}
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("no answer to {want}");
+    };
+    let DaemonMsg::History {
+        answer: HistoryAnswer::Fights { cards, .. },
+        ..
+    } = ask(
+        &mut client,
+        ClientMsg::GetHistory {
+            req_id: 1,
+            query: HistoryQuery::Fights {
+                encounter: Some(3131),
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Newest,
+                limit: 1,
+                after_id: None,
+                role: None,
+            },
+        },
+        1,
+    )
+    else {
+        panic!("fights");
+    };
+    let wipe = cards.first().expect("the wipe's card").clone();
+    let guid = wipe.players[0].guid.clone();
+    let fight = |client: &mut DaemonClient, req_id: u32| {
+        let DaemonMsg::Fight { fight: Some(f), .. } = ask(
+            client,
+            ClientMsg::GetFight {
+                req_id,
+                fight_id: wipe.id.clone(),
+                view: View::Damage,
+                drill: Some(guid.clone()),
+                death: None,
+                boss: None,
+                range: Some((0, 10_000)),
+            },
+            req_id,
+        ) else {
+            panic!("the wipe");
+        };
+        f
+    };
+    assert!(!fight(&mut client, 2).series, "a wipe keeps none");
+    let pinned = ask(
+        &mut client,
+        ClientMsg::PinFight {
+            req_id: 3,
+            fight_id: wipe.id.clone(),
+            pinned: true,
+        },
+        3,
+    );
+    assert!(matches!(
+        pinned,
+        DaemonMsg::History {
+            answer: HistoryAnswer::Pinned { pinned: true, .. },
+            ..
+        }
+    ));
+    let deadline = Instant::now() + DEADLINE;
+    let mut f = fight(&mut client, 4);
+    let mut n = 5;
+    while !f.series && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+        f = fight(&mut client, n);
+        n += 1;
+    }
+    assert!(f.series, "the backfill wrote it");
+    let b = f.breakdown.expect("the wipe's details");
+    assert_eq!(b.range, Some((0, 10_000)), "the window answered");
+    assert!(
+        hist.join("series").read_dir().unwrap().count() >= 2,
+        "kill + wipe"
+    );
+    stop(d);
 }

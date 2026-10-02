@@ -8,6 +8,8 @@
 //! rather than in one frontend so mcp and gui read the same code.
 //! `history` is the on-disk record codec of the history store (roadmap
 //! item 1): the daemon writes these documents, the readers parse them.
+//! `series` is its one binary tier (v39): a fight's abilities second by
+//! second, what a stored pull's zoom window reads.
 //! `lua` reads the game's `SavedVariables/*.lua` — what the wowdps addon
 //! leaves behind (guild affiliations), the one thing the log never says.
 
@@ -16,6 +18,7 @@ pub mod history;
 pub mod json;
 pub mod lua;
 pub mod msg;
+pub mod series;
 pub mod state;
 pub mod talents;
 pub mod wire;

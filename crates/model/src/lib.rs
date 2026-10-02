@@ -7,6 +7,7 @@
 //! contract keep their existing paths.
 
 pub mod fmt;
+pub mod series;
 
 /// A meter view: what the rows are counting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

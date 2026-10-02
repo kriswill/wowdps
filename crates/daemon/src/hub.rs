@@ -410,6 +410,7 @@ fn handle(
                     drill,
                     death,
                     boss,
+                    range,
                 } => {
                     forward_history(
                         history,
@@ -422,6 +423,7 @@ fn handle(
                             drill,
                             death,
                             boss,
+                            range,
                         },
                     );
                 }

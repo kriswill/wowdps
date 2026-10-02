@@ -26,6 +26,7 @@ use std::time::{Duration, SystemTime};
 
 use wowdps_core::index::{self, SegmentMeta};
 use wowdps_core::meter::{Meter, Segment, SegmentKind, Visit};
+use wowdps_core::model::series::{snap, window_rows};
 use wowdps_core::model::{Role, RoleNightRow, Row, SegmentId, ShieldRow, Spec, View};
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
@@ -37,6 +38,7 @@ use wowdps_proto::history::{
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::{DeathWindow, HistoryStatus};
+use wowdps_proto::series::{self as series_tier, FightSeries, PlayerSeries};
 use wowdps_proto::{
     Breakdown, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight, StoredUptime,
     TrendBucket, TrendMeasure, TrendPoint,
@@ -154,6 +156,8 @@ pub struct DrillReq {
     pub guid: Option<String>,
     /// v28 (R9): which death window a Deaths drill describes.
     pub death: Option<u32>,
+    /// v39: a zoom window the drill's lists answer.
+    pub range: Option<(u32, u32)>,
 }
 
 pub enum HistoryReq {
@@ -198,6 +202,8 @@ pub enum HistoryReq {
         /// A key's member boss (name or index): parsed from the log on
         /// demand through the loader pool, answered when it lands.
         boss: Option<String>,
+        /// v39: a zoom window a Damage or Healing drill answers.
+        range: Option<(u32, u32)>,
     },
     Pin {
         session: u64,
@@ -419,6 +425,7 @@ pub fn spawn(
             logs: HashMap::new(),
             source,
             scans: VecDeque::new(),
+            backfill: VecDeque::new(),
             product: opts.addon_dir.clone(),
             addon: None,
             saved_variables: HashMap::new(),
@@ -441,7 +448,7 @@ pub fn spawn(
 /// scan, not the whole night's.
 fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<HistoryStatus>>) {
     loop {
-        let req = if w.scans.is_empty() {
+        let req = if w.scans.is_empty() && w.backfill.is_empty() {
             // Idle: wake now and then to notice a SavedVariables write —
             // the addon's guild data lands on logout, when no fight is
             // closing and no client need be asking.
@@ -459,7 +466,11 @@ fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<Hi
             match rx.try_recv() {
                 Ok(req) => Some(req),
                 Err(TryRecvError::Empty) => {
-                    w.scan_next();
+                    if w.scans.is_empty() {
+                        w.backfill_next();
+                    } else {
+                        w.scan_next();
+                    }
                     w.publish(&status);
                     continue;
                 }
@@ -499,6 +510,10 @@ struct Worker<B: Backend> {
     /// Files a sweep listed and `run` has yet to index-scan, with whether
     /// each is the tailed (live) log.
     scans: VecDeque<(PathBuf, bool)>,
+    /// v39: fights pinned without the series tier they now earn, waiting
+    /// for an idle mailbox to be rewritten from their logs — the pin is
+    /// answered at once, and the rescan never holds a read up.
+    backfill: VecDeque<String>,
     /// The game's product directory, when the source is inside an install.
     product: Option<PathBuf>,
     /// The addon's installed version after the start-up check.
@@ -585,11 +600,14 @@ impl<B: Backend> Worker<B> {
                 drill,
                 death,
                 boss,
+                range,
             } => {
                 if let Some(boss) = boss {
                     // Answered when the loader lands it; None right away when
                     // the card, the boss or its log cannot be found.
-                    if !self.drill_boss(session, req_id, &fight_id, &boss, view, drill, death) {
+                    if !self
+                        .drill_boss(session, req_id, &fight_id, &boss, view, drill, death, range)
+                    {
                         self.reply_to(
                             session,
                             DaemonMsg::Fight {
@@ -601,12 +619,13 @@ impl<B: Backend> Worker<B> {
                     self.dispatch();
                     return;
                 }
-                let fight = self.store.stored_fight_as(
+                let fight = self.store.stored_fight_in(
                     &self.reply.mine(),
                     &fight_id,
                     view,
                     drill.as_deref(),
                     death,
+                    range,
                 );
                 self.reply_to(session, DaemonMsg::Fight { req_id, fight });
             }
@@ -617,6 +636,16 @@ impl<B: Backend> Worker<B> {
                 pinned,
             } => {
                 let pinned = self.store.pin(&fight_id, pinned) && pinned;
+                // v39: a pinned fight earns the series tier; one stored without
+                // it (a wipe, or a fight older than the tier) is rewritten from
+                // its log, when the log is still on disk — once the mailbox is
+                // idle (`backfill_next`), never in this request's turn.
+                if pinned
+                    && self.store.wants_series_backfill(&fight_id)
+                    && !self.backfill.contains(&fight_id)
+                {
+                    self.backfill.push_back(fight_id.clone());
+                }
                 self.reply_to(
                     session,
                     DaemonMsg::History {
@@ -698,13 +727,14 @@ impl<B: Backend> Worker<B> {
                     let fight = result.ok().and_then(|meter| {
                         let fight = fight_from_import(&job, &meter)?;
                         let facts = self.facts(&fight.log.path);
-                        Some(self.store.derived_fight_as(
+                        Some(self.store.derived_fight_in(
                             &self.reply.mine(),
                             &fight,
                             facts,
                             drill.view,
                             drill.guid.as_deref(),
                             drill.death,
+                            drill.range,
                         ))
                     });
                     self.reply_to(
@@ -952,6 +982,7 @@ impl<B: Backend> Worker<B> {
         view: View,
         guid: Option<String>,
         death: Option<u32>,
+        range: Option<(u32, u32)>,
     ) -> bool {
         let Some(card) = self.store.card(fight_id).cloned() else {
             return false;
@@ -988,6 +1019,7 @@ impl<B: Backend> Worker<B> {
                 view,
                 guid,
                 death,
+                range,
             }),
         });
         true
@@ -1067,6 +1099,18 @@ impl<B: Backend> Worker<B> {
     }
 
     /// Index-scan the next swept file and queue what the store lacks.
+    /// v39: one pinned fight's rewrite from its log, when it still wants
+    /// the series tier (a pin let go since, or a regrade that got there
+    /// first, leaves nothing to do).
+    fn backfill_next(&mut self) {
+        if let Some(id) = self.backfill.pop_front()
+            && self.store.wants_series_backfill(&id)
+        {
+            self.regrade(Some(&id), None, None, None);
+            self.dispatch();
+        }
+    }
+
     fn scan_next(&mut self) {
         let Some((path, live)) = self.scans.pop_front() else {
             return;
@@ -1257,6 +1301,13 @@ fn fight_from_import(job: &ImportJob, meter: &Meter) -> Option<ClosedFight> {
 pub trait Backend {
     fn list(&self, dir: &str) -> Vec<String>;
     fn read(&self, dir: &str, name: &str) -> Option<Vec<u8>>;
+    /// v39: `len` bytes at `offset` — what the series tier's reader asks
+    /// for (its head, its index, one player's block). `None` past the end.
+    fn read_range(&self, dir: &str, name: &str, offset: u64, len: usize) -> Option<Vec<u8>> {
+        let all = self.read(dir, name)?;
+        let at = usize::try_from(offset).ok()?;
+        all.get(at..at.checked_add(len)?).map(<[u8]>::to_vec)
+    }
     fn exists(&self, dir: &str, name: &str) -> bool;
     fn write(&mut self, dir: &str, name: &str, bytes: &[u8]) -> io::Result<()>;
     fn remove(&mut self, dir: &str, name: &str) -> io::Result<()>;
@@ -1288,6 +1339,21 @@ impl Backend for DirBackend {
 
     fn read(&self, dir: &str, name: &str) -> Option<Vec<u8>> {
         std::fs::read(self.root.join(dir).join(name)).ok()
+    }
+
+    fn read_range(&self, dir: &str, name: &str, offset: u64, len: usize) -> Option<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = std::fs::File::open(self.root.join(dir).join(name)).ok()?;
+        // The length comes from the file's own index: never trust it past
+        // the file's end, so a torn file costs a `None`, not an allocation.
+        let size = f.metadata().ok()?.len();
+        if offset.checked_add(len as u64)? > size {
+            return None;
+        }
+        f.seek(SeekFrom::Start(offset)).ok()?;
+        let mut buf = vec![0u8; len];
+        f.read_exact(&mut buf).ok()?;
+        Some(buf)
     }
 
     fn exists(&self, dir: &str, name: &str) -> bool {
@@ -1456,6 +1522,17 @@ impl Retention {
             None => false,
         }
     }
+
+    /// v39: whether a fight keeps the SERIES tier — its abilities and
+    /// targets second by second, what lets a stored drill answer a zoom
+    /// window: a kill, a key (timed or not) or a pinned fight, and only
+    /// while it earns details (a window of lists the store no longer
+    /// keeps would answer nothing). A wipe gains it when it is pinned,
+    /// through a rewrite from its log; unpinned, it loses it again.
+    pub fn wants_series(&self, card: &FightCard) -> bool {
+        self.wants_details(card)
+            && (card.success == Some(true) || card.kind == FightKind::Key || card.pinned)
+    }
 }
 
 impl From<&HistoryOptions> for Retention {
@@ -1482,6 +1559,10 @@ pub struct Store<B: Backend> {
     /// `affiliations/<guid>.json`, by guid: what the wowdps addon last saw
     /// of each player (spec §9a). Joined onto cards when they are answered.
     affiliations: HashMap<String, Affiliation>,
+    /// v39: the fights whose `series/<id>.bin` is on disk, listed once at
+    /// open and kept with every write and removal — so retention never
+    /// stats a file per card to know.
+    series: HashSet<String>,
 }
 
 impl<B: Backend> Store<B> {
@@ -1514,6 +1595,7 @@ impl<B: Backend> Store<B> {
             for (dir, ext) in [
                 ("rows", "json"),
                 ("details", "json"),
+                ("series", "bin"),
                 ("annotations", "ndjson"),
             ] {
                 let from = format!("{old}.{ext}");
@@ -1552,6 +1634,12 @@ impl<B: Backend> Store<B> {
             })
             .map(|a| (a.guid.clone(), a))
             .collect();
+        // v39: which fights keep the series tier, by file name.
+        let series = backend
+            .list("series")
+            .into_iter()
+            .filter_map(|name| name.strip_suffix(".bin").map(str::to_string))
+            .collect();
         let mut store = Self {
             backend,
             cfg,
@@ -1559,6 +1647,7 @@ impl<B: Backend> Store<B> {
             last_error,
             corrupt,
             affiliations,
+            series,
         };
         // Cards stamped with the store-wide owner before ownership was
         // per-card (or before the addon named the alt) get their own.
@@ -1659,6 +1748,34 @@ impl<B: Backend> Store<B> {
 
     pub fn has_details(&self, id: &str) -> bool {
         self.backend.exists("details", &format!("{id}.json"))
+    }
+
+    /// v39: the fight keeps the series tier — a stored drill answers a
+    /// zoom window.
+    pub fn has_series(&self, id: &str) -> bool {
+        self.series.contains(id)
+    }
+
+    /// v39: one player's seconds off the series tier — the file's head, its
+    /// index and that player's block alone, never the rest of the raid.
+    pub fn player_series(&self, id: &str, guid: &str) -> Option<PlayerSeries> {
+        if !self.has_series(id) {
+            return None;
+        }
+        let name = format!("{id}.bin");
+        series_tier::read_player(
+            |at, len| self.backend.read_range("series", &name, at, len),
+            guid,
+        )
+    }
+
+    /// v39: a fight that earns the series tier but has none on disk — a
+    /// wipe just pinned, or a fight stored before the tier existed — and
+    /// so wants a rewrite from its log.
+    pub fn wants_series_backfill(&self, id: &str) -> bool {
+        self.card(id)
+            .is_some_and(|c| self.cfg.wants_series(c) && !self.has_series(id))
+            && self.has_details(id)
     }
 
     pub fn loadout(&self, hash: u64) -> Option<StoredLoadout> {
@@ -1783,6 +1900,23 @@ impl<B: Backend> Store<B> {
         if result.is_ok() && wants_details {
             result = write(&mut self.backend, "details", &id, doc.details.to_json());
         }
+        // v39: the series tier for the fights that keep it (a kill, a key, a
+        // pinned fight — the pin carried above); a rewrite whose verdict no
+        // longer earns it drops the old one.
+        let series_name = format!("{id}.bin");
+        if result.is_ok() && self.cfg.wants_series(&doc.card) {
+            result = self
+                .backend
+                .write("series", &series_name, &doc.series.encode());
+            if result.is_ok() {
+                self.series.insert(id.clone());
+            }
+        } else if result.is_ok() && self.series.contains(&id) {
+            result = self.backend.remove("series", &series_name);
+            if result.is_ok() {
+                self.series.remove(&id);
+            }
+        }
         for l in &doc.loadouts {
             let name = format!("{:016x}.json", l.hash);
             if result.is_ok() && !self.backend.exists("loadouts", &name) {
@@ -1815,11 +1949,18 @@ impl<B: Backend> Store<B> {
         };
         card.pinned = pinned;
         let doc = card.to_json().to_line();
+        let unwanted = !self.cfg.wants_series(card);
         match self
             .backend
             .write("fights", &format!("{id}.json"), doc.as_bytes())
         {
-            Ok(()) => true,
+            Ok(()) => {
+                // v39: an unpinned wipe's series goes with its pin.
+                if unwanted {
+                    self.drop_series(id);
+                }
+                true
+            }
             Err(e) => {
                 self.last_error = Some(format!("history write failed: {e}"));
                 false
@@ -2032,6 +2173,9 @@ impl<B: Backend> Store<B> {
         }
         for id in demote {
             let _ = self.backend.remove("details", &format!("{id}.json"));
+            // v39: a series outlives no details: a window of lists the
+            // store no longer keeps would answer nothing.
+            self.drop_series(&id);
         }
         evict.sort_unstable();
         for i in evict.into_iter().rev() {
@@ -2040,7 +2184,25 @@ impl<B: Backend> Store<B> {
                 for dir in ["details", "rows", "fights"] {
                     let _ = self.backend.remove(dir, &format!("{}.json", card.id));
                 }
+                self.drop_series(&card.id);
             }
+        }
+        // v39: and none outlives its reason — an unpinned wipe's goes.
+        let unwanted: Vec<String> = self
+            .series
+            .iter()
+            .filter(|id| self.card(id).is_none_or(|c| !self.cfg.wants_series(c)))
+            .cloned()
+            .collect();
+        for id in unwanted {
+            self.drop_series(&id);
+        }
+    }
+
+    /// v39: remove a fight's series tier, if it has one.
+    fn drop_series(&mut self, id: &str) {
+        if self.series.remove(id) {
+            let _ = self.backend.remove("series", &format!("{id}.bin"));
         }
     }
 
@@ -2623,7 +2785,35 @@ impl<B: Backend> Store<B> {
         drill: Option<&str>,
         death: Option<u32>,
     ) -> Option<StoredFight> {
+        self.stored_fight_in(mine, id, view, drill, death, None)
+    }
+
+    /// v39: [`Store::stored_fight`] with a zoom window: a Damage or Healing
+    /// drill of a fight that keeps the series tier answers its lists for
+    /// `range` (snapped out to whole seconds) as the live drill does.
+    pub fn stored_fight_ranged(
+        &self,
+        id: &str,
+        view: View,
+        drill: Option<&str>,
+        death: Option<u32>,
+        range: Option<(u32, u32)>,
+    ) -> Option<StoredFight> {
+        self.stored_fight_in(&self.mine(), id, view, drill, death, range)
+    }
+
+    /// [`Store::stored_fight_ranged`] with the account's characters resolved.
+    pub fn stored_fight_in(
+        &self,
+        mine: &Mine,
+        id: &str,
+        view: View,
+        drill: Option<&str>,
+        death: Option<u32>,
+        range: Option<(u32, u32)>,
+    ) -> Option<StoredFight> {
         let mut card = self.card(id)?.clone();
+        let series = self.has_series(id);
         self.join_guilds(&mut card);
         // The card alone is an answer: rows and details tiers can be gone
         // (retention demotes details, and rows only ever go with the card,
@@ -2642,9 +2832,11 @@ impl<B: Backend> Store<B> {
                 uptime: Vec::new(),
                 shields: Vec::new(),
                 raid: None,
+                series: false,
             });
         };
         let tier = if details.is_some() { 3 } else { 2 };
+        let series = series && details.is_some();
         let has_recap = drill.is_some_and(|g| rows_doc.recaps.iter().any(|r| r.guid == g));
         let loadout = drill.and_then(|guid| {
             let hash = card.players.iter().find(|p| p.guid == guid)?.loadout?;
@@ -2653,6 +2845,13 @@ impl<B: Backend> Store<B> {
         let mut rows = rows_doc.rows(view).to_vec();
         let mut breakdown =
             drill.and_then(|guid| drill_of(&rows_doc, details.as_ref(), view, guid, death));
+        // v39: a zoom window re-answers the lists from that player's seconds.
+        if let (Some(b), Some(guid), Some(range), true) = (breakdown.as_mut(), drill, range, series)
+            && view.windows_drill()
+            && let Some(p) = self.player_series(id, guid)
+        {
+            window_drill(b, &p, view, range);
+        }
         // v35 (R25): the pull's raid timeline, rebuilt from the tiers.
         let mut raid = stored_raid(&card, &rows_doc, details.as_ref(), view);
         // v35: whose rows are the reader's, said at answer time — never
@@ -2678,6 +2877,7 @@ impl<B: Backend> Store<B> {
             uptime,
             shields,
             raid: Some(raid),
+            series,
         })
     }
 
@@ -2706,6 +2906,23 @@ impl<B: Backend> Store<B> {
         drill: Option<&str>,
         death: Option<u32>,
     ) -> StoredFight {
+        self.derived_fight_in(mine, fight, facts, view, drill, death, None)
+    }
+
+    /// v39: [`Store::derived_fight_as`] with a zoom window — the series is
+    /// in hand (it was just parsed), so a Damage or Healing drill always
+    /// answers one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn derived_fight_in(
+        &self,
+        mine: &Mine,
+        fight: &ClosedFight,
+        facts: LogFacts,
+        view: View,
+        drill: Option<&str>,
+        death: Option<u32>,
+        range: Option<(u32, u32)>,
+    ) -> StoredFight {
         let id = fight_id(
             facts.id,
             fight.segment.start_ms,
@@ -2726,6 +2943,24 @@ impl<B: Backend> Store<B> {
         // back from its files — the two paths must agree byte for byte.
         let mut breakdown =
             drill.and_then(|guid| drill_of(&docs.rows, Some(&docs.details), view, guid, death));
+        // v39: and the same window over the same seconds — a player the
+        // series holds no block for had none: empty lists, the window
+        // echoed, as the stored path reads them (`series::read_player`).
+        if let (Some(b), Some(guid), Some(range)) = (breakdown.as_mut(), drill, range)
+            && view.windows_drill()
+        {
+            let none = PlayerSeries {
+                guid: guid.to_string(),
+                ..PlayerSeries::default()
+            };
+            let p = docs
+                .series
+                .players
+                .iter()
+                .find(|p| p.guid == guid)
+                .unwrap_or(&none);
+            window_drill(b, p, view, range);
+        }
         // v35 (R25): rebuilt from the same tiers the stored path reads back,
         // so the two agree here too.
         let mut raid = stored_raid(&docs.card, &docs.rows, Some(&docs.details), view);
@@ -2745,6 +2980,7 @@ impl<B: Backend> Store<B> {
             uptime,
             shields,
             raid: Some(raid),
+            series: true,
         }
     }
 
@@ -2817,6 +3053,8 @@ pub struct FightDocs {
     pub rows: FightRows,
     pub details: FightDetails,
     pub loadouts: Vec<StoredLoadout>,
+    /// v39: the series tier, written for the fights `wants_series` keeps.
+    pub series: FightSeries,
 }
 
 /// Derive every document from the segment — the same calls a snapshot
@@ -3140,6 +3378,24 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                 .collect::<Vec<_>>()
         })
         .collect();
+    // v39: the series tier — every friendly player's abilities on Damage
+    // and Healing and the enemies their damage landed on, second by
+    // second: what a stored drill windows, read through the same
+    // `Segment::series_rows` / `target_series_rows` a live window sums.
+    // Written only for the fights `Retention::wants_series` keeps.
+    let series = FightSeries {
+        players: players
+            .iter()
+            .filter(|p| !p.enemy)
+            .map(|p| PlayerSeries {
+                guid: p.guid.clone(),
+                damage: seg.series_rows(&p.guid, View::Damage),
+                heal: seg.series_rows(&p.guid, View::Healing),
+                targets: seg.target_series_rows(&p.guid),
+            })
+            .filter(|p| !p.is_empty())
+            .collect(),
+    };
     let details: Vec<PlayerDetail> = players
         .iter()
         .filter(|p| !p.enemy)
@@ -3224,6 +3480,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             players: details,
         },
         loadouts,
+        series,
     }
 }
 
@@ -3360,6 +3617,35 @@ fn drill_of(
         }),
         _ => None,
     }
+}
+
+/// v39: a stored Damage or Healing drill re-answered for a zoom window from
+/// the drilled player's seconds — the same rows the live meter folds
+/// (`Segment::series_rows`, `target_series_rows`) through the same
+/// `series::window_rows`, the window snapped out to whole seconds, so a
+/// stored pull's zoom answers what the live one did. The abilities always,
+/// the targets where the view keeps them a clock (`View::windows_targets`);
+/// the tree keeps its groups alone (`SpellTree::windowed`), and the window
+/// is echoed. Every row wears the class and spec the whole lists did.
+fn window_drill(b: &mut Breakdown, p: &PlayerSeries, view: View, range: (u32, u32)) {
+    let rows = match view {
+        View::Damage => &p.damage,
+        View::Healing => &p.heal,
+        _ => return,
+    };
+    let (class, spec) = b
+        .by_spell
+        .first()
+        .or(b.by_target.first())
+        .map_or((None, None), |r| (r.class, r.spec));
+    let w = snap((i64::from(range.0), i64::from(range.1)));
+    let secs = (w.1 - w.0).max(0) as f64 / 1000.0;
+    b.by_spell = window_rows(rows, Some(w), secs, class, spec);
+    if view.windows_targets() {
+        b.by_target = window_rows(&p.targets, Some(w), secs, class, spec);
+    }
+    b.tree = std::mem::take(&mut b.tree).windowed();
+    b.range = Some(range);
 }
 
 /// v35: mark a stored answer's rows `mine` — the meter's by guid, a drill's

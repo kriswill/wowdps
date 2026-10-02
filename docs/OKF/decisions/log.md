@@ -2,6 +2,12 @@
 
 ## 2026-10-01
 
+- **Creation** — [Stored Pulls Keep Their Seconds In A Binary Series Tier](a-series-tier-for-stored-windows.md):
+  v39 — a fourth, binary history tier of per-second abilities and targets for
+  kills, keys and pinned fights, read one player at a time, windowed through
+  the live drill's own function; measured sizes and the retention rule.
+- **Update** — [A Graph's Window Scopes The Drill](a-window-scopes-the-drill.md):
+  its stored-pull gap closed by the series tier.
 - **Creation** — [A Graph's Window Scopes The Drill, And The Inspector Widens](a-window-scopes-the-drill.md):
   v38 — a drag on a Damage or Healing drill's graph re-asks for its abilities
   (and Damage's targets) inside the window from the sparse series, every list

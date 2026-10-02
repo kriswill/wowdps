@@ -81,7 +81,8 @@ a narrow window, whose inspector is already pushed over everything.
 ## Consequences
 
 The list under a zoom answers the question the zoom asks, and says when it
-cannot. Healing's targets and Taken's lists are the two honest gaps; each
+cannot. Stored pulls gained their seconds in v39:
+[Stored Pulls Keep Their Seconds In A Binary Series Tier](a-series-tier-for-stored-windows.md). Healing's targets and Taken's lists are the two honest gaps; each
 would need a per-second series of its own (the memory R12's and R24's
 already spend), which this change declined to add. Every `wide-*` and
 `zoom` design shot renders over the Coiled Altar slice.[^shots] The binding
