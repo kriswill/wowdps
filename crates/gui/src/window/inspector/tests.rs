@@ -223,3 +223,164 @@ fn the_deaths_keys_stay_with_the_table_beside_the_recap(cx: &mut TestAppContext)
         }
     }
 }
+
+/// Dispatch the window-local `f`.
+fn widen_key(cx: &mut TestAppContext, rig: &Rig) {
+    cx.update_window(rig.window, |_, window, cx| {
+        window.dispatch_action(Box::new(crate::keys::Go(crate::keys::Gesture::Wide)), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+fn widened(cx: &mut TestAppContext, rig: &Rig) -> bool {
+    rig.gui.read_with(cx, |g, _| g.insp.wide)
+}
+
+/// The corner button widens the inspector over the stage under the tabs
+/// — the meter set aside, both lists side by side with no tabs between
+/// them, the graph taller — and narrows it back; `f` does the same, Esc
+/// narrows it before the chain leaves the pull, and a narrow window, whose
+/// inspector is pushed over everything already, has no button at all.
+#[gpui_kit::test]
+fn the_corner_button_widens_the_inspector_and_narrows_it(cx: &mut TestAppContext) {
+    let rig = tree_rig(cx, 1440., 900.);
+    let plot_h = |cx: &mut TestAppContext| {
+        rig.gui.read_with(cx, |g, _| {
+            g.insp_frame
+                .as_ref()
+                .and_then(|i| i.graph.as_ref())
+                .map(|g| g.plot_h)
+        })
+    };
+    let beside = plot_h(cx).expect("the Warlock's graph");
+    press(cx, &rig, "inspector-widen");
+    assert!(widened(cx, &rig));
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("meter-list").is_none(),
+            "the meter is set aside"
+        );
+        assert!(
+            window.try_find("tab-spell").is_none(),
+            "both lists, no tabs"
+        );
+        assert!(
+            window
+                .try_find(ElementId::NamedInteger("iline".into(), 0))
+                .is_some()
+        );
+        assert!(
+            window
+                .try_find(ElementId::NamedInteger("itarget".into(), 0))
+                .is_some()
+        );
+        let insp = window.find("inspector").bounds();
+        assert!(f32::from(insp.size.width) > 1000.0, "{insp:?}");
+    })
+    .unwrap();
+    assert!(
+        plot_h(cx).is_some_and(|h| h > beside),
+        "the graph stands taller"
+    );
+    // Tab walks the two lists rather than a tab strip.
+    let pane = |cx: &mut TestAppContext| {
+        rig.session
+            .read_with(cx, |s, _| s.state().drill.as_ref().map(|d| d.pane))
+    };
+    let before = pane(cx);
+    key(cx, &rig, Action::SwapPane);
+    assert_ne!(pane(cx), before, "Tab moved the keys to the other list");
+    // j still walks the players behind it.
+    let sel = |cx: &mut TestAppContext| rig.session.read_with(cx, |s, _| s.state().row_sel);
+    let row = sel(cx);
+    key(cx, &rig, Action::Down);
+    assert_ne!(sel(cx), row, "the meter's keys walk the players");
+    assert!(widened(cx, &rig), "and the inspector stays wide");
+
+    press(cx, &rig, "inspector-widen");
+    assert!(!widened(cx, &rig), "the button narrows it back");
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("meter-list").is_some(), "the meter is back");
+    })
+    .unwrap();
+    widen_key(cx, &rig);
+    assert!(widened(cx, &rig), "f widens");
+    key(cx, &rig, Action::Back);
+    assert!(!widened(cx, &rig), "Esc narrows before it leaves the pull");
+
+    let narrow = tree_rig(cx, 460., 900.);
+    key(cx, &narrow, Action::Open);
+    cx.update_window(narrow.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("inspector-widen").is_none());
+    })
+    .unwrap();
+    widen_key(cx, &narrow);
+    assert!(!widened(cx, &narrow), "f is nothing in a narrow window");
+}
+
+/// v38: a drag across the Damage graph scopes the ability list to the
+/// window — the daemon's answer, echoed, Σ inside the fight's, the
+/// heading naming the window — and a right press gives the fight back.
+#[gpui_kit::test]
+fn a_drag_on_the_graph_scopes_the_ability_list(cx: &mut TestAppContext) {
+    let rig = tree_rig(cx, 1440., 900.);
+    // The settled pixels: no zoom glide under the drag.
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let sum = |cx: &mut TestAppContext| {
+        rig.session.read_with(cx, |s, _| {
+            s.state()
+                .breakdown()
+                .0
+                .iter()
+                .map(|r| r.amount)
+                .sum::<u64>()
+        })
+    };
+    let whole = sum(cx);
+    assert!(whole > 0);
+    press(cx, &rig, "inspector-widen");
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        let b = window.find("inspector-plot").bounds();
+        let y = b.origin.y + gpui_kit::px(40.);
+        let x = |f: f32| b.origin.x + b.size.width * f;
+        window.drag(gpui_kit::point(x(0.45), y), gpui_kit::point(x(0.7), y), cx);
+    })
+    .unwrap();
+    settle(cx, &rig.session);
+    let (asked, shown) = rig.session.read_with(cx, |s, _| {
+        (s.state().drill_range(), s.state().drill_shown_range())
+    });
+    assert!(asked.is_some(), "the drag zoomed");
+    assert_eq!(shown, asked, "and the rows answer that window");
+    let scoped = sum(cx);
+    assert!(
+        scoped > 0 && scoped < whole,
+        "{scoped} of {whole} in {asked:?}"
+    );
+    let head = rig
+        .gui
+        .read_with(cx, |g, _| match g.insp_frame.as_ref().map(|i| &i.body) {
+            Some(model::Body::Split(parts)) => match &parts.0 {
+                model::Body::One(l) => l.head.clone(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        });
+    assert!(
+        head.starts_with("Ability, ") && head.contains('–'),
+        "{head}"
+    );
+
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        window.right_click("inspector-plot", cx);
+    })
+    .unwrap();
+    settle(cx, &rig.session);
+    assert_eq!(sum(cx), whole, "a right press gives the whole fight back");
+}

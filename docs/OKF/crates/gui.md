@@ -80,6 +80,8 @@ the ribbon and "you" off the daemon's `mine`
 [R25](../rulings/r25.md)), one column model for every row list
 ([One Table](../decisions/one-table-for-every-row-list.md)), the inspector
 beside the meter ([the Inspector decision](../decisions/inspector-beside-the-meter.md))
+(widened over the stage, its graph's window scoping its lists —
+[the Window decision](../decisions/a-window-scopes-the-drill.md))
 with [R26](../rulings/r26.md)'s ability tree and stacked graph
 ([the Ability Tree decision](../decisions/ability-tree-in-the-inspector.md)),
 Home derived from `Fights` answers ([decision](../decisions/home-derives-from-fights.md)),

@@ -40,4 +40,7 @@ in the store, that is a schema decision of its own — a new key, a
 `HISTORY_SCHEMA` bump and a DuckDB view — not a one-line widening of
 `VIEW_KEYS`.
 
+v38 carries the same window to Damage's and Healing's drills:
+[A Graph's Window Scopes The Drill](a-window-scopes-the-drill.md).
+
 [^contract]: CONTRACT.md — rulings table row R24 and the wire version table row 32

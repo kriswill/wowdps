@@ -6,7 +6,7 @@
 use gpui_kit::{PathBuilder, Window, fill, px};
 use wowdps_gui_logic::inspect::geometry::{
     self as geo, HATCH_ALPHA, HATCH_DASH, HATCH_EDGE, HATCH_PATCH_ALPHA, HATCH_PATCH_PAD,
-    HATCH_PATCH_RADIUS, HATCH_WORDS_Y, LINE, Label, PLOT_H, STRIPE_W,
+    HATCH_PATCH_RADIUS, HATCH_WORDS_Y, LINE, Label, STRIPE_W,
 };
 
 use super::Pen;
@@ -22,7 +22,7 @@ pub fn stripes(g: &geo::Plot<'_>, w: f32, pen: Pen, window: &mut Window) {
             continue;
         }
         let mut p = PathBuilder::stroke(pen.px(STRIPE_W));
-        for (a, b) in geo::stripes(x1, x2) {
+        for (a, b) in geo::stripes(x1, x2, g.plot_h) {
             p.move_to(pen.at(a.0, a.1));
             p.line_to(pen.at(b.0, b.1));
         }
@@ -32,7 +32,7 @@ pub fn stripes(g: &geo::Plot<'_>, w: f32, pen: Pen, window: &mut Window) {
         let mut edge =
             PathBuilder::stroke(pen.px(HATCH_EDGE)).dash_array(&HATCH_DASH.map(|v| px(v * pen.z)));
         edge.move_to(pen.at(x1, 0.0));
-        edge.line_to(pen.at(x1, PLOT_H));
+        edge.line_to(pen.at(x1, g.plot_h));
         if let Ok(path) = edge.build() {
             window.paint_path(path, hsla(pen.t.bad));
         }

@@ -245,6 +245,32 @@ fn menu(cx: &mut HeadlessAppContext, s: &Shot, menu: Menu) {
     });
 }
 
+/// The inspector widened, as its corner button does it.
+fn widen(cx: &mut HeadlessAppContext, s: &Shot) {
+    let _ = cx.update_window(s.window, |_, window, cx| window.render_frame(cx));
+    cx.update_entity(&s.gui, |g, cx| g.toggle_wide(cx));
+    s.settle(cx);
+}
+
+/// The drill's graph scrubbed to its middle third, as a drag across it
+/// asks, and the window's answer in.
+fn scrub(cx: &mut HeadlessAppContext, s: &Shot) {
+    let span = cx.update(|cx| {
+        s.gui
+            .read(cx)
+            .fight(cx)
+            .drill_timeline()
+            .map_or(0, |t| t.buckets.len() as u32 * t.bucket_ms)
+    });
+    if span == 0 {
+        return;
+    }
+    cx.update_entity(&s.gui, |g, cx| {
+        g.act(|st| st.set_drill_range(Some((span / 3, span * 2 / 3))), cx);
+    });
+    s.settle(cx);
+}
+
 /// Every state, by name, with its pose.
 fn states() -> Vec<(&'static str, Pose)> {
     /// The fight in `v`, as its tab shows it, the owner's row selected the
@@ -360,6 +386,51 @@ fn states() -> Vec<(&'static str, Pose)> {
             if let Some(pull) = pull {
                 stored(cx, s, pull);
             }
+        }),
+        // v38: the graph scrubbed to its middle third beside the meter —
+        // the abilities and targets are the window's, their headings and
+        // the graph's top line say so.
+        ("zoom", |cx, s| {
+            view(cx, s, wowdps_model::View::Damage);
+            scrub(cx, s);
+        }),
+        // The inspector widened over the stage (its corner button, `f`):
+        // the head on one line, a taller graph, both lists side by side.
+        ("wide-damage", |cx, s| {
+            view(cx, s, wowdps_model::View::Damage);
+            widen(cx, s);
+        }),
+        ("wide-zoom", |cx, s| {
+            view(cx, s, wowdps_model::View::Damage);
+            widen(cx, s);
+            scrub(cx, s);
+        }),
+        ("wide-healing", |cx, s| {
+            view(cx, s, wowdps_model::View::Healing);
+            widen(cx, s);
+        }),
+        ("wide-taken", |cx, s| {
+            view(cx, s, wowdps_model::View::Taken);
+            widen(cx, s);
+        }),
+        ("wide-deaths", |cx, s| {
+            view(cx, s, wowdps_model::View::Deaths);
+            widen(cx, s);
+        }),
+        // A pair widened: the owner pinned (`v`), the next row its partner.
+        ("wide-compare", |cx, s| {
+            view(cx, s, wowdps_model::View::Damage);
+            for action in [
+                wowdps_model::Action::PickCompare,
+                wowdps_model::Action::Down,
+            ] {
+                let _ = cx.update_window(s.window, |_, window, cx| {
+                    window.dispatch_action(Box::new(crate::keys::Do(action)), cx);
+                    window.render_frame(cx);
+                });
+                s.settle(cx);
+            }
+            widen(cx, s);
         }),
         // The command palette (Ctrl K) over the meter, nothing typed yet:
         // the recent pulls, the pull's players, the views and the screens.

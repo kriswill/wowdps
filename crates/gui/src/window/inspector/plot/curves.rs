@@ -9,8 +9,8 @@
 
 use gpui_kit::{App, PathBuilder, PathStyle, Pixels, Point, StrokeOptions, Window, fill, px};
 use wowdps_gui_logic::inspect::geometry::{
-    self as geo, AREA_ALPHA, CURVE_W, DASH, Face, GHOST_ALPHA, GHOST_W, HAIRLINE, PLOT_H,
-    STACK_GAP, TICK_PX, XHAIR_ALPHA,
+    self as geo, AREA_ALPHA, CURVE_W, DASH, Face, GHOST_ALPHA, GHOST_W, HAIRLINE, STACK_GAP,
+    TICK_PX, XHAIR_ALPHA,
 };
 use wowdps_gui_logic::inspect::plot::Ink;
 use wowdps_model::fmt::duration;
@@ -42,8 +42,8 @@ fn stroke(width: Pixels) -> PathBuilder {
 }
 
 /// Trace `pts` (after the pen is at the first) through gui-logic's spline.
-fn smooth(path: &mut PathBuilder, pts: &[(f32, f32)], pen: Pen) {
-    for [c1, c2, to] in geo::smooth(pts) {
+fn smooth(path: &mut PathBuilder, pts: &[(f32, f32)], plot_h: f32, pen: Pen) {
+    for [c1, c2, to] in geo::smooth(pts, plot_h) {
         path.cubic_bezier_to(pen.at(to.0, to.1), pen.at(c1.0, c1.1), pen.at(c2.0, c2.1));
     }
 }
@@ -60,16 +60,16 @@ pub fn bands(g: &geo::Plot<'_>, w: f32, top: f32, pen: Pen, window: &mut Window)
         };
         let mut area = PathBuilder::fill();
         area.move_to(at(pen, *first));
-        smooth(&mut area, &band.upper, pen);
+        smooth(&mut area, &band.upper, g.plot_h, pen);
         if band.lower.is_empty() {
-            area.line_to(pen.at(last.0, PLOT_H));
-            area.line_to(pen.at(first.0, PLOT_H));
+            area.line_to(pen.at(last.0, g.plot_h));
+            area.line_to(pen.at(first.0, g.plot_h));
         } else {
             let back: Vec<(f32, f32)> = band.lower.iter().rev().copied().collect();
             if let Some(b0) = back.first() {
                 area.line_to(at(pen, *b0));
             }
-            smooth(&mut area, &back, pen);
+            smooth(&mut area, &back, g.plot_h, pen);
         }
         area.close();
         if let Ok(path) = area.build() {
@@ -77,7 +77,7 @@ pub fn bands(g: &geo::Plot<'_>, w: f32, top: f32, pen: Pen, window: &mut Window)
         }
         let mut edge = stroke(pen.px(STACK_GAP));
         edge.move_to(at(pen, *first));
-        smooth(&mut edge, &band.upper, pen);
+        smooth(&mut edge, &band.upper, g.plot_h, pen);
         if let Ok(path) = edge.build() {
             window.paint_path(path, hsla(pen.t.surface));
         }
@@ -93,10 +93,10 @@ pub fn lines(g: &geo::Plot<'_>, w: f32, top: f32, pen: Pen, window: &mut Window)
         };
         if c.ink == Ink::Area {
             let mut area = PathBuilder::fill();
-            area.move_to(pen.at(first.0, PLOT_H));
+            area.move_to(pen.at(first.0, g.plot_h));
             area.line_to(at(pen, *first));
-            smooth(&mut area, &pts, pen);
-            area.line_to(pen.at(last.0, PLOT_H));
+            smooth(&mut area, &pts, g.plot_h, pen);
+            area.line_to(pen.at(last.0, g.plot_h));
             area.close();
             if let Ok(path) = area.build() {
                 window.paint_path(path, hsla(c.color.alpha(AREA_ALPHA)));
@@ -111,7 +111,7 @@ pub fn lines(g: &geo::Plot<'_>, w: f32, top: f32, pen: Pen, window: &mut Window)
             line = line.dash_array(&DASH.map(|v| px(v * pen.z)));
         }
         line.move_to(at(pen, *first));
-        smooth(&mut line, &pts, pen);
+        smooth(&mut line, &pts, g.plot_h, pen);
         if let Ok(path) = line.build() {
             window.paint_path(path, hsla(color));
         }
@@ -133,7 +133,7 @@ pub fn drag(
     cx: &mut App,
 ) {
     window.paint_quad(fill(
-        pen.rect(lo, 0.0, hi - lo, PLOT_H),
+        pen.rect(lo, 0.0, hi - lo, g.plot_h),
         hsla(pen.t.drag_fill),
     ));
     if still {
@@ -142,7 +142,7 @@ pub fn drag(
     let gold = pen.t.gold.alpha(XHAIR_ALPHA);
     for x in [lo, hi] {
         window.paint_quad(fill(
-            pen.rect(x - HAIRLINE / 2.0, 0.0, HAIRLINE, PLOT_H),
+            pen.rect(x - HAIRLINE / 2.0, 0.0, HAIRLINE, g.plot_h),
             hsla(gold),
         ));
     }
@@ -186,7 +186,7 @@ pub fn crosshair(
     let rule = |window: &mut Window, width: f32, alpha: f32| {
         let mut p = stroke(pen.px(width));
         p.move_to(pen.at(x, 0.0));
-        p.line_to(pen.at(x, PLOT_H));
+        p.line_to(pen.at(x, g.plot_h));
         if let Ok(path) = p.build() {
             window.paint_path(path, hsla(gold.alpha(alpha)));
         }

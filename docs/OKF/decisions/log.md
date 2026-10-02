@@ -2,6 +2,14 @@
 
 ## 2026-10-01
 
+- **Creation** — [A Graph's Window Scopes The Drill, And The Inspector Widens](a-window-scopes-the-drill.md):
+  v38 — a drag on a Damage or Healing drill's graph re-asks for its abilities
+  (and Damage's targets) inside the window from the sparse series, every list
+  saying whether it kept the window, the bump with no byte moved; and the
+  inspector's corner button (`f`) widening it over the stage.
+- **Update** — [An Inspector Beside The Meter](inspector-beside-the-meter.md),
+  [Enemy Taken Is A Live View](enemy-taken-is-a-live-view.md): link the v38
+  decision that grows them.
 - **Update** — [Rebuild The GUI On GPUI Kit, Beside The Iced One](gui-on-gpui.md):
   its outcome — parity and cost measured against iced, what the decision did
   not foresee, and the cutover (`e72791d`, `e6ff075`), merged as #71 on the

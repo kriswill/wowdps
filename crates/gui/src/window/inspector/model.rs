@@ -12,14 +12,15 @@ use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::inspect::curves::{
     RATE_BUCKET_MS, curve, dead_spans, peak_in, rate_bucket, span_of, stack_series, window_of,
 };
-use wowdps_gui_logic::inspect::list::Kind;
+use wowdps_gui_logic::inspect::geometry::PLOT_H;
+use wowdps_gui_logic::inspect::list::{Kind, Room};
 use wowdps_gui_logic::inspect::matrix::matrices;
 use wowdps_gui_logic::inspect::nums::{
     Num, Tally, mit_pieces, num, player_nums, plays, total_word,
 };
 use wowdps_gui_logic::inspect::plot::{Curve, Dead, Ink};
 use wowdps_gui_logic::inspect::recap::{Recap, died_words};
-use wowdps_gui_logic::inspect::{Roster, lanes, stack};
+use wowdps_gui_logic::inspect::{Roster, lanes, stack, wide};
 use wowdps_gui_logic::labels::{rate_label, realmless, realmless_rows, shown_name};
 use wowdps_gui_logic::table::{Col, figure};
 use wowdps_gui_logic::theme::{self as gl, AA_CONTRAST, WindowTokens};
@@ -62,6 +63,8 @@ pub enum Press {
     PickDeath(u32),
     /// A narrow window's pushed inspector, back to the meter.
     Uninspect,
+    /// The corner button: widened over the stage, or back beside the meter.
+    Widen,
     /// The ability list's heading: sort by this column.
     Sort(Col),
 }
@@ -103,6 +106,10 @@ pub struct InspState {
     pub scroll: crate::scrollbar::Scroll,
     /// A step moved the keys: bring their line into sight once laid out.
     pub reveal: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Widened over the stage under the tabs (the corner button, `f`) —
+    /// session-wide, and meaningless in a narrow window, whose inspector
+    /// is pushed over everything already.
+    pub wide: bool,
 }
 
 impl InspState {
@@ -170,6 +177,8 @@ pub struct Graph {
     pub total: bool,
     pub word: &'static str,
     pub range_to: RangeTo,
+    /// The plot's height: taller in a widened inspector.
+    pub plot_h: f32,
 }
 
 /// An opened ability's strip: the crumb and its numbers.
@@ -259,6 +268,8 @@ pub struct List {
     pub tree: Option<Vec<tree::Line>>,
     /// R26: the stack's hues by key, when the graph is stacked.
     pub hues: HashMap<String, gl::Color>,
+    /// How much room its figures have: which columns it shows.
+    pub room: Room,
 }
 
 /// What stands under the tabs.
@@ -268,6 +279,10 @@ pub enum Body {
     One(Box<List>),
     Recap(Recap),
     Pair(Box<(List, List)>),
+    /// A widened inspector's two panes side by side (or, on a stage too
+    /// narrow to split, one over the other): a drill's abilities and its
+    /// targets, a recap and its attackers. The first is the wider.
+    Split(Box<(Body, Body)>),
 }
 
 /// The inspector, as owned data.
@@ -286,6 +301,9 @@ pub struct Insp {
     /// The body is the last player's, held while this one's is on its way.
     pub stale: bool,
     pub note: Option<String>,
+    /// Widened over the stage: the head on one line, the numbers in one,
+    /// R21's matrices under the lists rather than behind a tab.
+    pub wide: bool,
 }
 
 /// The last player's body (`Held`): standing in, dimmed, while the next
@@ -300,6 +318,8 @@ pub struct Held {
     mit: Vec<(String, String, String)>,
     graph: Option<Graph>,
     body: Body,
+    /// Taken from a widened inspector: it stands in for one alone.
+    wide: bool,
 }
 
 impl Held {
@@ -321,26 +341,31 @@ impl Held {
             mit: insp.mit.clone(),
             graph: insp.graph.clone(),
             body: insp.body.clone(),
+            wide: insp.wide,
         })
     }
 
-    /// Still this snapshot's player, pane, view and mode.
-    pub fn current(&self, app: &ClientState) -> bool {
+    /// Still this snapshot's player, pane, view and mode, in the layout
+    /// (`wide`) on show.
+    pub fn current(&self, app: &ClientState, wide: bool) -> bool {
         app.drill
             .as_ref()
             .is_some_and(|d| d.key == self.key && d.pane == self.pane && d.spell.is_none())
             && app.view == self.view
             && app.graph_mode() == self.mode
             && app.snapshot_gen() == self.generation
+            && wide == self.wide
     }
 
-    /// May stand in for whoever is drilled now: the same pane, view and mode.
-    fn fits(&self, app: &ClientState) -> bool {
+    /// May stand in for whoever is drilled now: the same pane, view, mode
+    /// and layout.
+    fn fits(&self, app: &ClientState, wide: bool) -> bool {
         app.drill
             .as_ref()
             .is_some_and(|d| d.pane == self.pane && d.spell.is_none())
             && app.view == self.view
             && app.graph_mode() == self.mode
+            && wide == self.wide
     }
 }
 
@@ -359,6 +384,33 @@ pub struct Ctx<'a> {
     pub stored: bool,
     /// A stored pull answered without this player's breakdown.
     pub bare: bool,
+    /// How the inspector stands: a column beside the meter (or pushed),
+    /// or widened over the stage.
+    pub layout: Layout,
+}
+
+/// How the inspector stands, for its lists' columns and its panes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Layout {
+    /// Beside the meter, or pushed over a narrow stage: one list at a time
+    /// under its tabs, with `room` for its figures.
+    Column { room: Room },
+    /// Widened over a stage `stage` px wide (at zoom 1).
+    Wide { stage: f32 },
+}
+
+impl Layout {
+    pub fn wide(self) -> bool {
+        matches!(self, Layout::Wide { .. })
+    }
+
+    /// The room a drill's lists have.
+    fn room(self) -> Room {
+        match self {
+            Layout::Column { room } => room,
+            Layout::Wide { .. } => Room::Wide,
+        }
+    }
 }
 
 impl Ctx<'_> {
@@ -390,8 +442,19 @@ const BARE: &str = "The history store kept this pull's rows, not this player's b
 const NO_COMPARE_TIP: &str = "Comparing needs the pull's log: the store keeps no pair";
 
 impl Insp {
-    /// The inspector for what is on the stage.
+    /// The inspector for what is on the stage, laid out as it stands.
     pub fn of(cx: &Ctx) -> Self {
+        let mut insp = Self::build(cx);
+        insp.wide = cx.layout.wide();
+        if insp.wide
+            && let Some(g) = insp.graph.as_mut()
+        {
+            g.plot_h = wide::PLOT_H;
+        }
+        insp
+    }
+
+    fn build(cx: &Ctx) -> Self {
         let app = cx.app;
         let rows = app.rows();
         if app.screen == Screen::Compare {
@@ -430,6 +493,7 @@ impl Insp {
             body: Body::Nothing,
             stale: false,
             note: Some(words.to_string()),
+            wide: false,
         }
     }
 }
@@ -460,6 +524,42 @@ fn stack_act(stacked: bool, on_targets: bool) -> Act {
         press: Some(Press::ToggleStack),
         tip: "Stack the graph, or draw the total alone",
     }
+}
+
+/// v38: a list's heading under a zoom — what the drag did to its rows:
+/// "Ability, 0:42–1:13" when they are the window's (`windowed`: the
+/// daemon scopes this list on this view), "Target, whole fight" when the
+/// list keeps no clock of its own (Healing's targets, what hit a player)
+/// or the pull is a stored one. No zoom, no words.
+fn scoped(cx: &Ctx, head: &str, windowed: bool) -> String {
+    let Some((lo, hi)) = cx.app.drill_range() else {
+        return head.to_string();
+    };
+    match cx.app.drill_shown_range() {
+        Some(_) if windowed => format!("{head}, {}–{}", mmss(lo), mmss(hi)),
+        _ if cx.stored => format!("{head}, whole pull"),
+        _ => format!("{head}, whole fight"),
+    }
+}
+
+/// v38: a zoomed graph's top line says what the window's rows add up to —
+/// "0:42–1:13, 41,152 dps, right-click resets" — when the abilities are
+/// the window's.
+fn window_tail(graph: &mut Graph, app: &ClientState, by_spell: &[Row]) {
+    let Some((lo, hi)) = app.drill_shown_range() else {
+        return;
+    };
+    if !app.view.is_rate() || by_spell.is_empty() {
+        return;
+    }
+    let rate: f64 = by_spell.iter().map(|r| r.per_sec).sum();
+    graph.tail = Tail::Words(format!(
+        "{}–{}, {} {}, right-click resets",
+        mmss(lo),
+        mmss(hi),
+        commas(rate.round() as u64),
+        rate_label(app.view),
+    ));
 }
 
 /// A body on its way is no empty list: the lists wait for it.
@@ -520,6 +620,7 @@ fn graph_of(
         total: mode == GraphMode::Total,
         word,
         range_to,
+        plot_h: PLOT_H,
     }
 }
 
@@ -678,6 +779,7 @@ fn pane_list(
         side: SIDE,
         tree,
         hues,
+        room: cx.layout.room(),
     }
 }
 
@@ -831,6 +933,16 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             RangeTo::Drill,
         )
     });
+    // v38: a zoom's abilities are the window's, and the top line says what
+    // they (or the opened one) add up to.
+    let mut graph = graph;
+    if let Some(g) = graph.as_mut() {
+        let rows: Vec<Row> = match &spell {
+            Some(_) => spell_row.iter().cloned().collect(),
+            None => app.breakdown().0,
+        };
+        window_tail(g, app, &rows);
+    }
     let ability = spell.as_ref().map(|(_, label)| Ability {
         who: shown_name(&drill.label, hide),
         who_ink: Some(cx.name_ink(class)),
@@ -854,7 +966,8 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             spell.is_none() && !matrices(stacking, cells, base).is_empty()
         })
         .map(|(stacking, cells, base)| Stacks {
-            on: cx.st.stacks_open,
+            // Widened, the matrices stand under the lists, no tab to them.
+            on: cx.st.stacks_open && !cx.layout.wide(),
             stacking: stacking.to_vec(),
             cells: cells.to_vec(),
             base: base.to_vec(),
@@ -869,7 +982,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             targets,
             Kind::Targets,
             view,
-            "Target",
+            &scoped(cx, "Target", view.windows_targets()),
             Pane::Target,
             Lead::Person,
             Bar::Own,
@@ -885,14 +998,22 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         } else {
             ["Abilities", "Targets"]
         };
-        let up = drill.pane;
-        let l = match up {
-            Pane::Spell => pane_list(
+        let abilities = || {
+            pane_list(
                 cx,
                 realmless_rows(&by_spell, hide),
                 Kind::Abilities,
                 view,
-                "Ability",
+                // Widened, no tab names what hit them: the heading does.
+                &scoped(
+                    cx,
+                    if taken && cx.layout.wide() {
+                        "Hit by"
+                    } else {
+                        "Ability"
+                    },
+                    view.windows_drill(),
+                ),
                 Pane::Spell,
                 Lead::Spell,
                 bar,
@@ -903,26 +1024,49 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
                 } else {
                     LinePress::Nothing
                 },
-            ),
-            Pane::Target => pane_list(
+            )
+        };
+        let targets = || {
+            pane_list(
                 cx,
                 realmless_rows(&cx.st.roster.as_themselves(&by_target), hide),
                 Kind::Targets,
                 view,
-                if taken { "Attacker" } else { "Target" },
+                &scoped(
+                    cx,
+                    if taken { "Attacker" } else { "Target" },
+                    view.windows_targets(),
+                ),
                 Pane::Target,
                 Lead::Person,
                 Bar::Own,
                 LinePress::Nothing,
-            ),
+            )
         };
-        (Some((words, up)), Body::One(Box::new(l)))
+        let up = drill.pane;
+        if cx.layout.wide() {
+            // Widened: both panes at once, the keys' one lit — Tab moves
+            // them between the two.
+            let split = Body::Split(Box::new((
+                Body::One(Box::new(abilities())),
+                Body::One(Box::new(targets())),
+            )));
+            (None, split)
+        } else {
+            let l = match up {
+                Pane::Spell => abilities(),
+                Pane::Target => targets(),
+            };
+            (Some((words, up)), Body::One(Box::new(l)))
+        }
     };
     let body = answered(app, body);
-    let held =
-        cx.st.held.as_ref().filter(|h| {
-            app.drill_breakdown().is_none() && spell.is_none() && !cx.bare && h.fits(app)
-        });
+    let held = cx.st.held.as_ref().filter(|h| {
+        app.drill_breakdown().is_none()
+            && spell.is_none()
+            && !cx.bare
+            && h.fits(app, cx.layout.wide())
+    });
     let (mit, graph, body, stale) = match held {
         Some(h) => (h.mit.clone(), h.graph.clone(), h.body.clone(), true),
         None => (mit, graph, body, false),
@@ -935,6 +1079,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         cx.bare.then(|| BARE.to_string())
     };
     Insp {
+        wide: false,
         head,
         nums,
         acts,
@@ -1011,14 +1156,16 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         dropped: app.drill_breakdown().map_or(0, |b| b.deaths_dropped),
     });
     let up = drill.pane;
-    let body = match up {
-        Pane::Spell => Body::Recap(Recap {
+    let recap_body = || {
+        Body::Recap(Recap {
             rows: realmless_rows(&events, hide),
             who: shown_name(&drill.label, hide),
             yours: owner,
             class,
-        }),
-        Pane::Target => Body::One(Box::new(pane_list(
+        })
+    };
+    let attackers_body = || {
+        Body::One(Box::new(pane_list(
             cx,
             realmless_rows(&cx.st.roster.as_themselves(&attackers), hide),
             Kind::Targets,
@@ -1028,9 +1175,23 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             Lead::Person,
             Bar::Own,
             LinePress::Nothing,
-        ))),
+        )))
+    };
+    // Widened: the recap and who dealt it, side by side.
+    let (tabs, body) = if cx.layout.wide() {
+        (
+            None,
+            Body::Split(Box::new((recap_body(), attackers_body()))),
+        )
+    } else {
+        let body = match up {
+            Pane::Spell => recap_body(),
+            Pane::Target => attackers_body(),
+        };
+        (Some((["Recap", "Attackers"], up)), body)
     };
     Insp {
+        wide: false,
         head: Head {
             discs: vec![Disc::Player(class, spec)],
             name: vec![cx.piece(shown_name(&drill.label, hide), class)],
@@ -1043,7 +1204,7 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         ability: None,
         graph: None,
         stacks: None,
-        tabs: Some((["Recap", "Attackers"], up)),
+        tabs,
         body: answered(app, body),
         stale: false,
         note: if cx.bare {
@@ -1092,6 +1253,16 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             RangeTo::Drill,
         )
     });
+    // v33/v38: a zoom's attackers (or one attacker's abilities) are the
+    // window's, and the top line says what they add up to.
+    let mut graph = graph;
+    if let Some(g) = graph.as_mut() {
+        let rows: Vec<Row> = match &spell {
+            Some(_) => spell_row.iter().cloned().collect(),
+            None => attackers.clone(),
+        };
+        window_tail(g, app, &rows);
+    }
     let name = if hide {
         realmless(&drill.label)
     } else {
@@ -1108,7 +1279,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
                 abilities,
                 Kind::Abilities,
                 View::EnemyTaken,
-                "Ability",
+                &scoped(cx, "Ability", true),
                 Pane::Spell,
                 Lead::Spell,
                 Bar::Of(attacker_color),
@@ -1136,7 +1307,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
                 realmless_rows(&attackers, hide),
                 Kind::Targets,
                 View::EnemyTaken,
-                "Attacker",
+                &scoped(cx, "Attacker", true),
                 Pane::Target,
                 Lead::Person,
                 Bar::Own,
@@ -1145,6 +1316,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         ),
     };
     Insp {
+        wide: false,
         head: Head {
             discs: vec![Disc::Enemy],
             name: vec![NamePiece {
@@ -1337,6 +1509,10 @@ fn pair(cx: &Ctx, rows: &[Row]) -> Insp {
         side: SIDE_PAIR,
         tree: None,
         hues: HashMap::new(),
+        room: match cx.layout {
+            Layout::Wide { stage } => wide::pair_room(stage),
+            Layout::Column { .. } => Room::Normal,
+        },
     };
     let body = match sides {
         Some((a, b)) => Body::Pair(Box::new((
@@ -1346,6 +1522,7 @@ fn pair(cx: &Ctx, rows: &[Row]) -> Insp {
         None => Body::Nothing,
     };
     Insp {
+        wide: false,
         head,
         nums,
         acts,

@@ -2,6 +2,8 @@
 
 ## 2026-10-01
 
+- **Update** — [wowdps-gui](gui.md): the inspector widened over the stage and
+  its graph's window scoping its lists ([decision](../decisions/a-window-scopes-the-drill.md)).
 - **Update** — [wowdps-gui](gui.md): rewritten for the GPUI crate, which took
   this name at the cutover (merged as #71) — the `Session`, keys in
   contexts, one theme definition, the window's surfaces on their decisions,

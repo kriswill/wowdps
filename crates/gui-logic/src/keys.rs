@@ -306,6 +306,16 @@ pub const BINDINGS: &[Binding] = &[
         true,
         &[Surface::Drill],
     ),
+    // The window's own: the inspector widened over the whole stage under
+    // the tabs (wider lists side by side, a taller graph), or back beside
+    // the meter — its corner button's key.
+    b(
+        "f",
+        "widen the inspector, or narrow it",
+        "inspector",
+        true,
+        METERS,
+    ),
     b("t", "talents and gear", "inspector", true, NOT_TALENTS),
     // The window's own: the pull on the stage's stored card, pinned or let
     // go — what keeps it from retention — from anywhere on its stage.
@@ -413,13 +423,17 @@ pub struct Inert {
     pub pinnable: bool,
     /// The Deaths table holds the keys beside the inspector.
     pub deaths_table_beside: bool,
+    /// The window is narrow: its inspector is pushed over everything, and
+    /// there is no wider to widen it to.
+    pub narrow: bool,
 }
 
 /// The keys the `?` sheet dims: what the pull on the stage cannot answer
 /// on its surface — a stored pull keeps no comparison, no enemies' view
 /// and no ability's own curve — `p` where the store holds no card of it to
-/// pin, and Enter on the Deaths table beside the inspector, which hands
-/// the keyless recap nothing.
+/// pin, Enter on the Deaths table beside the inspector, which hands the
+/// keyless recap nothing, and `f` in a narrow window, whose inspector has
+/// nowhere wider to go.
 pub fn inert_keys(i: Inert) -> Vec<&'static str> {
     let mut keys = Vec::new();
     if i.covered {
@@ -436,6 +450,9 @@ pub fn inert_keys(i: Inert) -> Vec<&'static str> {
     }
     if i.deaths_table_beside && !keys.contains(&"enter") {
         keys.push("enter");
+    }
+    if i.narrow {
+        keys.push("f");
     }
     keys
 }
@@ -583,6 +600,11 @@ mod tests {
             ..pull
         };
         assert_eq!(inert_keys(beside), vec!["enter"]);
+        let narrow = Inert {
+            narrow: true,
+            ..pull
+        };
+        assert_eq!(inert_keys(narrow), vec!["f"], "nothing wider to widen to");
         let covered = Inert {
             covered: true,
             ..stored

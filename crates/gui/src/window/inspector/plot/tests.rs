@@ -57,6 +57,7 @@ fn input(name: &str) -> Input {
         lanes: s.lanes,
         total: s.total,
         word: s.word,
+        plot_h: wowdps_gui_logic::inspect::geometry::PLOT_H,
     }
 }
 

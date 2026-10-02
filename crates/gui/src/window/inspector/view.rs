@@ -11,11 +11,13 @@ use gpui_kit::{
     div, img,
 };
 use wowdps_gui_logic::drill::school_name;
+use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::inspect::nums::{Num, ability_nums};
+use wowdps_gui_logic::inspect::wide;
 use wowdps_gui_logic::theme as gl;
 use wowdps_model::Pane;
 
-use super::model::{Ability, Act, Body, Disc, Graph, Head, Insp, Press, Tail};
+use super::model::{Ability, Act, Body, Disc, Graph, Head, Insp, Layout, Press, Tail};
 use super::{list, recap};
 use crate::theme::hsla;
 use crate::window::Gui;
@@ -83,33 +85,56 @@ pub fn on(
     cx.listener(move |this, _, window, cx| this.insp_press(press.clone(), window, cx))
 }
 
-/// The inspector `width` wide (`None`: the whole stage, pushed).
+/// Where the inspector stands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Seat {
+    /// Beside the meter, this wide (at zoom 1).
+    Beside(f32),
+    /// Pushed over a narrow window's whole stage.
+    Pushed,
+    /// Widened over the stage under the view tabs.
+    Wide,
+}
+
+/// The inspector in its seat.
 pub fn view(
     insp: &Insp,
     gui: &Gui,
     w: &W,
-    pushed: bool,
+    seat: Seat,
     window: &mut Window,
     cx: &mut Context<Gui>,
 ) -> AnyElement {
     let fit = w.fit();
-    let narrow_list = gui.inspector_width(w) <= wowdps_gui_logic::inspect::NARROW_LIST;
+    let pushed = seat == Seat::Pushed;
+    // The corner button widens the inspector or narrows it back; a pushed
+    // one already has the whole stage.
+    let corner = (!pushed).then(|| widen_button(insp.wide, w, cx));
+    let per = if insp.wide {
+        wide::per_row(insp.nums.len())
+    } else {
+        per_row(fit)
+    };
     let mut col = div().w_full().flex().flex_col();
     if !insp.head.name.is_empty() {
         col = col
-            .child(head_block(insp, w, fit, pushed, cx))
+            .child(head_block(insp, w, per, pushed, corner, cx))
             .child(hairline(w));
-    } else if pushed {
+    } else if pushed || corner.is_some() {
         col = col.child(
             div()
                 .pt(w.z(HEAD_PAD.0))
                 .px(w.z(HEAD_PAD.1))
                 .pb(w.z(HEAD_PAD.2))
-                .child(back_button(w, cx)),
+                .flex()
+                .items_center()
+                .when(pushed, |d| d.child(back_button(w, cx)))
+                .child(div().flex_1())
+                .children(corner),
         );
     }
     if let Some(a) = &insp.ability {
-        col = col.child(section(ability_strip(a, w, fit, cx), w));
+        col = col.child(section(ability_strip(a, w, insp.wide, fit, cx), w));
     }
     if !insp.mit.is_empty() {
         col = col.child(veiled(section(mit_line(&insp.mit, w), w), insp.stale, w));
@@ -127,42 +152,33 @@ pub fn view(
         scroll: gpui_kit::ScrollHandle::clone(&gui.insp.scroll),
         pending: gui.insp.reveal.clone(),
     };
-    let body: AnyElement = match (&insp.stacks, &insp.body) {
-        (Some(s), _) if s.on => super::stack_matrix(s, w, cx),
-        (_, Body::Nothing) => div().into_any_element(),
-        (_, Body::One(l)) => list::view(l, narrow_list, &keep, w, cx).into_any_element(),
-        (_, Body::Recap(r)) => recap::view(r, fit, w, window, cx).into_any_element(),
-        (_, Body::Pair(pair)) => {
-            let (a, b) = pair.as_ref();
-            if fit == Fit::Wide {
-                div()
-                    .flex()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(list::view(a, false, &keep, w, cx)),
-                    )
-                    .child(crate::window::chrome::vrule(w))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(list::view(b, false, &keep, w, cx)),
-                    )
-                    .into_any_element()
-            } else {
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(list::view(a, narrow_list, &keep, w, cx))
-                    .child(hairline(w))
-                    .child(list::view(b, narrow_list, &keep, w, cx))
-                    .into_any_element()
-            }
-        }
+    let stage = match gui.inspector_layout(w) {
+        Layout::Wide { stage } => Some(stage),
+        Layout::Column { .. } => None,
+    };
+    let body: AnyElement = match &insp.stacks {
+        Some(s) if s.on => super::stack_matrix(s, w, cx),
+        _ => body_of(&insp.body, insp.wide, stage, &keep, w, window, cx),
     };
     col = col.child(veiled(div().child(body), insp.stale, w));
+    // Widened, R21's matrices stand under the lists rather than behind a
+    // tab of their own.
+    if insp.wide
+        && let Some(s) = &insp.stacks
+    {
+        col = col.child(hairline(w)).child(
+            div()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .px(w.z(SECTION_PAD.1))
+                        .pt(w.z(SECTION_PAD.0))
+                        .child(w.text("Stacks", TAB_PX, w.c(|t| t.gold_dim), MEDIUM)),
+                )
+                .child(super::stack_matrix(s, w, cx)),
+        );
+    }
     if let Some(note) = &insp.note {
         col = col.child(div().py(w.z(10.)).px(w.z(16.)).child(w.text(
             note.clone(),
@@ -187,6 +203,99 @@ pub fn view(
         )
         .child(crate::scrollbar::bar(w.scrollbar(), &gui.insp.scroll))
         .into_any_element()
+}
+
+/// What stands under the tabs: a list, a recap, a pair — side by side
+/// wherever they have the room (beside the meter in a wide window; always,
+/// widened) — or a widened inspector's two panes, side by side on a stage
+/// of `stage` px that has the room for both, else one over the other.
+fn body_of(
+    body: &Body,
+    widened: bool,
+    stage: Option<f32>,
+    keep: &list::Keep,
+    w: &W,
+    window: &mut Window,
+    cx: &mut Context<Gui>,
+) -> AnyElement {
+    let fit = w.fit();
+    match body {
+        Body::Nothing => div().into_any_element(),
+        Body::One(l) => list::view(l, keep, w, cx).into_any_element(),
+        // A widened recap reads as a wide window's.
+        Body::Recap(r) => {
+            recap::view(r, if widened { Fit::Wide } else { fit }, w, window, cx).into_any_element()
+        }
+        Body::Pair(pair) => {
+            let (a, b) = pair.as_ref();
+            if widened || fit == Fit::Wide {
+                beside(
+                    list::view(a, keep, w, cx).into_any_element(),
+                    list::view(b, keep, w, cx).into_any_element(),
+                    None,
+                    w,
+                )
+            } else {
+                over(
+                    list::view(a, keep, w, cx).into_any_element(),
+                    list::view(b, keep, w, cx).into_any_element(),
+                    w,
+                )
+            }
+        }
+        Body::Split(parts) => {
+            let (a, b) = parts.as_ref();
+            let a = body_of(a, widened, stage, keep, w, window, cx);
+            let b = body_of(b, widened, stage, keep, w, window, cx);
+            if stage.is_some_and(wide::split) {
+                beside(a, b, Some(wide::FIRST), w)
+            } else {
+                over(a, b, w)
+            }
+        }
+    }
+}
+
+/// Two panes side by side over a rule: halves, or the first `first` of the
+/// width.
+fn beside(a: AnyElement, b: AnyElement, first: Option<f32>, w: &W) -> AnyElement {
+    let left = match first {
+        Some(share) => div().w(gpui_kit::relative(share)).flex_none(),
+        None => div().flex_1(),
+    };
+    div()
+        .flex()
+        .child(left.min_w_0().child(a))
+        .child(crate::window::chrome::vrule(w))
+        .child(div().flex_1().min_w_0().child(b))
+        .into_any_element()
+}
+
+/// Two panes one over the other, a hairline between.
+fn over(a: AnyElement, b: AnyElement, w: &W) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .child(a)
+        .child(hairline(w))
+        .child(b)
+        .into_any_element()
+}
+
+/// The corner button: widen over the stage, or back beside the meter.
+fn widen_button(widened: bool, w: &W, cx: &Context<Gui>) -> AnyElement {
+    let (icon, words) = if widened {
+        (Glyph::Collapse, "Back beside the meter (f)")
+    } else {
+        (Glyph::Expand, "Widen over the stage (f)")
+    };
+    tip(
+        icon_button(w, "inspector-widen", icon, true)
+            .aria_selected(widened)
+            .on_mouse_down(MouseButton::Left, on(Press::Widen, cx)),
+        words,
+    )
+    .into_any_element()
 }
 
 /// A section: its content padded, a hairline under it.
@@ -230,7 +339,17 @@ fn back_button(w: &W, cx: &Context<Gui>) -> impl IntoElement {
     )
 }
 
-fn head_block(insp: &Insp, w: &W, fit: Fit, pushed: bool, cx: &Context<Gui>) -> AnyElement {
+/// The head: the disc, the name and the line under it, the numbers `per`
+/// to a line, the actions — beside the name when widened, under the
+/// numbers otherwise — and the corner button at the right of the name.
+fn head_block(
+    insp: &Insp,
+    w: &W,
+    per: usize,
+    pushed: bool,
+    corner: Option<AnyElement>,
+    cx: &Context<Gui>,
+) -> AnyElement {
     let h = &insp.head;
     let mut top = div().flex().items_center().gap(w.z(NAME_GAP));
     if pushed {
@@ -260,6 +379,17 @@ fn head_block(insp: &Insp, w: &W, fit: Fit, pushed: bool, cx: &Context<Gui>) -> 
                 )
             }),
     );
+    let acts = || {
+        div()
+            .flex()
+            .flex_wrap()
+            .gap(w.z(ACTS_GAP))
+            .children(insp.acts.iter().map(|a| act_button(a, w, cx)))
+    };
+    if insp.wide && !insp.acts.is_empty() {
+        top = top.child(acts().flex_none());
+    }
+    top = top.children(corner);
     let mut block = div()
         .id("inspector-head")
         .test_support()
@@ -271,16 +401,10 @@ fn head_block(insp: &Insp, w: &W, fit: Fit, pushed: bool, cx: &Context<Gui>) -> 
         .pb(w.z(HEAD_PAD.2))
         .child(top);
     if !insp.nums.is_empty() {
-        block = block.child(nums_grid(&insp.nums, per_row(fit), w));
+        block = block.child(nums_grid(&insp.nums, per, w));
     }
-    if !insp.acts.is_empty() {
-        block = block.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(w.z(ACTS_GAP))
-                .children(insp.acts.iter().map(|a| act_button(a, w, cx))),
-        );
+    if !insp.wide && !insp.acts.is_empty() {
+        block = block.child(acts());
     }
     block.into_any_element()
 }
@@ -457,7 +581,7 @@ fn swatch(color: gl::Color, dashed: bool, w: &W) -> Div {
 
 /// An opened ability's strip: back, whose, "▸", its icon, its name, its
 /// school; then its numbers.
-fn ability_strip(a: &Ability, w: &W, fit: Fit, cx: &Context<Gui>) -> Div {
+fn ability_strip(a: &Ability, w: &W, widened: bool, fit: Fit, cx: &Context<Gui>) -> Div {
     let mut crumb = div()
         .flex()
         .items_center()
@@ -499,11 +623,13 @@ fn ability_strip(a: &Ability, w: &W, fit: Fit, cx: &Context<Gui>) -> Div {
     }
     let mut strip = div().flex().flex_col().gap(w.z(STRIP_GAP)).child(crumb);
     if let Some(r) = &a.row {
-        strip = strip.child(nums_grid(
-            &ability_nums(r, a.view, a.tally),
-            per_row(fit),
-            w,
-        ));
+        let nums = ability_nums(r, a.view, a.tally);
+        let per = if widened {
+            wide::per_row(nums.len())
+        } else {
+            per_row(fit)
+        };
+        strip = strip.child(nums_grid(&nums, per, w));
     }
     strip
 }

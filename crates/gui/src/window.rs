@@ -106,6 +106,7 @@ use crate::keys::{self, Do, Gesture, Go, ZoomTo};
 use crate::session::{Linked, Session};
 use crate::talents::{Player, TalentEvent, TalentViewer};
 use crate::theme;
+use inspector::view::Seat;
 use top_bar::CharPick;
 use w::{Fit, REGULAR, W};
 
@@ -696,6 +697,11 @@ impl Gui {
             Gesture::Earlier => self.open_earlier(cx),
             Gesture::Filter => self.focus_filter(window, cx),
             Gesture::Pin => self.pin(cx),
+            Gesture::Wide => {
+                if self.place == Place::Fights {
+                    self.toggle_wide(cx);
+                }
+            }
         }
     }
 
@@ -812,7 +818,7 @@ impl Gui {
             .flex_col();
         let pushed = w.narrow() && self.fight(cx).inspecting();
         if pushed {
-            stage = stage.child(self.inspector_seat(w, None, window, cx));
+            stage = stage.child(self.inspector_seat(w, Seat::Pushed, window, cx));
         } else {
             let head = fight_head::Head::of(self, w, cx);
             stage = stage.child(fight_head::view(head, w, cx));
@@ -826,6 +832,23 @@ impl Gui {
                 ));
             }
             stage = stage.child(tabs::view(self, w, window, cx));
+            // Widened (the inspector's corner button, `f`): the whole width
+            // under the tabs is the inspector's, the meter set aside — its
+            // keys still walk the players.
+            if self.widened(w) {
+                return stage
+                    .child(
+                        div()
+                            .id("stage-body")
+                            .flex_1()
+                            .min_h_0()
+                            .w_full()
+                            .flex()
+                            .child(self.inspector_seat(w, Seat::Wide, window, cx)),
+                    )
+                    .children(self.footer(w, cx))
+                    .children(cards::toast(self, w, window, cx));
+            }
             let table = match deaths::Table::of(self, cx) {
                 Some(t) => deaths::view(t, self, w, cx).into_any_element(),
                 None => {
@@ -848,7 +871,7 @@ impl Gui {
             stage = stage.child(match beside {
                 Some(width) => body.child(chrome::vrule(w)).child(self.inspector_seat(
                     w,
-                    Some(width),
+                    Seat::Beside(width),
                     window,
                     cx,
                 )),
@@ -862,25 +885,29 @@ impl Gui {
     }
 
     /// The inspector's seat: the panel the grid gives it — 520 px wide,
-    /// 410 in a tile, the whole stage pushed — and the inspector in it.
+    /// 410 in a tile, the whole stage pushed, the whole width under the
+    /// tabs widened — and the inspector in it.
     fn inspector_seat(
         &self,
         w: &W,
-        width: Option<f32>,
+        seat: Seat,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let pushed = width.is_none();
+        let width = match seat {
+            Seat::Beside(width) => Some(width),
+            Seat::Pushed | Seat::Wide => None,
+        };
         let body = self
             .insp_frame
             .as_ref()
-            .map(|insp| inspector::view::view(insp, self, w, pushed, window, cx));
+            .map(|insp| inspector::view::view(insp, self, w, seat, window, cx));
         div()
             .id("inspector")
             .test_support()
             .h_full()
             .when_some(width, |d, width| d.w(w.z(width)).flex_none())
-            .when(width.is_none(), |d| d.flex_1())
+            .when(width.is_none(), |d| d.flex_1().min_w_0())
             .bg(w.c(|t| t.surface))
             .children(body)
     }
@@ -948,9 +975,14 @@ impl Render for Gui {
         // stand in while the next one's breakdown is on its way.
         self.insp_frame = (self.place == Place::Fights).then(|| self.insp(&w, cx));
         if let Some(insp) = &self.insp_frame {
+            let wide = insp.wide;
             let app = self.fight(cx);
             if app.drill_breakdown().is_some()
-                && self.insp.held.as_ref().is_none_or(|h| !h.current(app))
+                && self
+                    .insp
+                    .held
+                    .as_ref()
+                    .is_none_or(|h| !h.current(app, wide))
                 && let Some(held) = inspector::model::Held::of(insp, app)
             {
                 self.insp.held = Some(held);

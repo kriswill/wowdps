@@ -152,6 +152,10 @@ none. Keys on Home no longer reach the meter under it; a view key or a
 pull step leaves Home for the fight; `m` and the live tab end on the
 live meter, a pushed inspector's keys given back.
 
+A drag across its graph now scopes its lists (v38), and its corner button
+widens it over the stage: [A Graph's Window Scopes The Drill, And The
+Inspector Widens](a-window-scopes-the-drill.md).
+
 ## Consequences
 
 The drill screen, its two panes, the Taken cards and miss chips and the
