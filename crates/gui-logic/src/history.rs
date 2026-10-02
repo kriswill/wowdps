@@ -325,6 +325,9 @@ impl Stored {
     ) -> (Self, Vec<ClientMsg>) {
         let mut state = ClientState::new();
         let _ = state.set_follow(true);
+        // v38: the store keeps no per-second abilities: a zoom here is the
+        // graph's alone, and the lists stay the whole pull.
+        state.set_drill_windows(false);
         state.view = if view.is_stored() { view } else { View::Damage };
         // The row is a placeholder until the card is known: the header reads
         // the answer's own, and the list holds only the pull's id.

@@ -1095,8 +1095,10 @@ impl Engine {
                 series: with_series,
             } => {
                 let mut rows = seg.map(|s| s.rows(*view)).unwrap_or_default();
-                // v33 (R24): the window scopes the enemy drill's rows only.
-                let window = (*view == View::EnemyTaken)
+                // v33 (R24): the window scopes the enemy drill's rows; v38:
+                // and Damage's and Healing's, from their sparse series.
+                let window = view
+                    .windows_drill()
                     .then_some(*range)
                     .flatten()
                     .map(|(lo, hi)| (lo as i64, hi as i64));
@@ -1131,7 +1133,12 @@ impl Engine {
                     // client that stacks them, the graph's series — the
                     // tree's six largest entries, or an open Damage
                     // ability's six largest targets.
-                    let tree = s.spell_tree(key, *view);
+                    // v38: a window's rows carry the nesting alone — the
+                    // casts, parts, misses and uptime are whole-fight counts.
+                    let tree = match window {
+                        Some(_) => s.spell_tree(key, *view).windowed(),
+                        None => s.spell_tree(key, *view),
+                    };
                     let ability_series = match (*with_series, *spell) {
                         (true, None) => s.ability_series(key, *view, &by_spell, &tree, STACKED),
                         _ => Vec::new(),
@@ -1168,14 +1175,10 @@ impl Engine {
                             _ => None,
                         },
                         // v17: who the ability landed on, for any view.
-                        // R24: on the enemy view, the attacker's abilities on it.
-                        spell_targets: spell.map(|sk| {
-                            if *view == View::EnemyTaken {
-                                s.enemy_attacker_abilities(key, sk, window)
-                            } else {
-                                s.spell_targets(key, sk, *view)
-                            }
-                        }),
+                        // R24: on the enemy view, the attacker's abilities on
+                        // it; v38: a Damage window's, inside the window.
+                        spell_targets: spell
+                            .map(|sk| s.spell_targets_ranged(key, sk, *view, window)),
                         // v21 (R17): the drilled player's mitigation split,
                         // present iff the view is Taken. Pets fold onto the
                         // owner inside `mitigation` itself, like `rows`.
@@ -1249,11 +1252,12 @@ impl Engine {
                 view: *view,
                 a: Box::new(self.mine_side(compare_side(seg, a, *view, *range, *spell))),
                 b: Box::new(self.mine_side(compare_side(seg, b, *view, *range, *spell))),
-                // v29: the window is applied to the DAMAGE tables only (the
-                // sparse per-spell series R12 windows is damage's); another
-                // view's tables answer the whole fight, and the echo says so
-                // rather than pairing a zoomed graph with full-fight numbers.
-                range: (*view == View::Damage).then_some(*range).flatten(),
+                // v29: the window is applied where a sparse per-spell series
+                // stands behind the tables — Damage's (R12) and, v38,
+                // Healing's (R26); another view's tables answer the whole
+                // fight, and the echo says so rather than pairing a zoomed
+                // graph with full-fight numbers.
+                range: compare_windows(*view).then_some(*range).flatten(),
                 source: self.source_name.clone(),
                 status: status.or_else(|| self.status.clone()),
             },
@@ -1324,6 +1328,12 @@ pub fn wants_series(kind: ClientKind) -> bool {
     matches!(kind, ClientKind::Window)
 }
 
+/// v38: the views a comparison's `range` windows — the two with a sparse
+/// per-spell series behind their tables (R12's damage, R26's healing).
+fn compare_windows(view: View) -> bool {
+    matches!(view, View::Damage | View::Healing)
+}
+
 /// R12: one player's half of a comparison. A player who isn't in the segment
 /// (picked on a different fight, or simply idle) yields an empty side rather
 /// than an error — the pane draws a zeroed column and the pair survives.
@@ -1354,13 +1364,13 @@ fn compare_side(
     };
     // v12: a windowed comparison answers from the segment's sparse per-spell
     // series — total and tables wear the window's own numbers; the timeline
-    // stays whole (the graph zoom is the client's slice). That series is
-    // DAMAGE's, so v29 windows the damage comparison exactly as before and
-    // answers every other view whole — the snapshot's echoed `range` says
-    // which happened, so no renderer pairs a zoom with full-fight numbers.
-    let (total, spells) = match range.filter(|_| view == View::Damage) {
+    // stays whole (the graph zoom is the client's slice). Those series are
+    // DAMAGE's and (v38) HEALING's, so every other view answers whole — the
+    // snapshot's echoed `range` says which happened, so no renderer pairs a
+    // zoom with full-fight numbers.
+    let (total, spells) = match range.filter(|_| compare_windows(view)) {
         Some((lo, hi)) => {
-            let (mut total, spells) = seg.compare_spells(guid, Some((lo as i64, hi as i64)));
+            let (mut total, spells) = seg.spells_in(guid, view, Some((lo as i64, hi as i64)));
             total.key = guid.to_string();
             (total, spells)
         }

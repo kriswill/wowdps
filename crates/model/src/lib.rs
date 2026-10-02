@@ -72,6 +72,23 @@ impl View {
         self != View::EnemyTaken
     }
 
+    /// v33/v38: does a drill on this view answer a zoom window
+    /// (`Cursor::Segment.range`)? Only where a sparse per-second series
+    /// stands behind the rows: Damage's and Healing's abilities (R12, R26),
+    /// and the enemy's attackers (R24). Every other view's drill is the
+    /// whole fight, its zoom the client's own.
+    pub fn windows_drill(self) -> bool {
+        matches!(self, View::Damage | View::Healing | View::EnemyTaken)
+    }
+
+    /// v38: does a windowed drill on this view scope its TARGETS too, and
+    /// an open ability's? Damage reads them from R24's per-enemy series and
+    /// the enemy view is its attackers; Healing keeps no per-target series,
+    /// so its targets stay the whole fight under a window.
+    pub fn windows_targets(self) -> bool {
+        matches!(self, View::Damage | View::EnemyTaken)
+    }
+
     /// Count views report occurrences, not a rate.
     pub fn is_rate(self) -> bool {
         matches!(
@@ -1252,6 +1269,22 @@ impl SpellTree {
         self.groups.is_empty() && self.rows.is_empty()
     }
 
+    /// v38: the tree over a zoom window's rows — the nesting alone. Casts,
+    /// parts, misses and uptime are counted over the whole fight with no
+    /// clock of their own, so beside a window's tallies they would lie
+    /// (parts that no longer sum to their row, a cast count for hits the
+    /// window left out); a windowed answer carries none of them.
+    pub fn windowed(mut self) -> Self {
+        for m in &mut self.rows {
+            m.casts = 0;
+            m.parts.clear();
+            m.misses = 0;
+            m.uptime_ms = 0;
+        }
+        self.rows.retain(|m| !m.group.is_empty());
+        self
+    }
+
     /// The top-level entries over `rows`, in the order their first row
     /// comes: each group of two or more once, where its first member
     /// stands; every other row alone. The daemon ranks these for the
@@ -1761,6 +1794,58 @@ pub struct SegmentInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v38: a window's tree keeps the nesting and drops every whole-fight
+    /// count; a row with nothing but counts to add has no meta left.
+    #[test]
+    fn a_windowed_tree_keeps_its_groups_alone() {
+        let part = SpellPart {
+            spell_id: 1,
+            periodic: true,
+            amount: 5,
+            extra: 0,
+            count: 1,
+            crits: 0,
+        };
+        let tree = SpellTree {
+            groups: vec![SpellGroup {
+                key: "summon:Infernal".into(),
+                label: "Summon Infernal".into(),
+                spell_id: 1122,
+                kind: GroupKind::Summon,
+            }],
+            rows: vec![
+                SpellMeta {
+                    key: "Immolation\u{0}Infernal".into(),
+                    group: "summon:Infernal".into(),
+                    casts: 3,
+                    parts: vec![part.clone(), part],
+                    misses: 1,
+                    uptime_ms: 9,
+                },
+                SpellMeta {
+                    key: "Wither".into(),
+                    group: String::new(),
+                    casts: 12,
+                    parts: Vec::new(),
+                    misses: 0,
+                    uptime_ms: 40_000,
+                },
+            ],
+        };
+        let w = tree.clone().windowed();
+        assert_eq!(w.groups, tree.groups);
+        assert_eq!(
+            w.rows,
+            vec![SpellMeta {
+                key: "Immolation\u{0}Infernal".into(),
+                group: "summon:Infernal".into(),
+                ..SpellMeta::default()
+            }]
+        );
+        assert!(View::Healing.windows_drill() && !View::Healing.windows_targets());
+        assert!(View::Damage.windows_targets() && !View::Taken.windows_drill());
+    }
 
     /// `ALL` is the index order, exhaustively, and `next` walks it in a
     /// single cycle — the overlay's click-cycle and its menu are the same

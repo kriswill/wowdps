@@ -1804,9 +1804,12 @@ impl Segment {
         self.breakdown_ranged(player_guid, view, death, None)
     }
 
-    /// v33 (R24): `breakdown_at` with a zoom window, honoured on the
-    /// EnemyTaken view only — its attacker list is read from the sparse
-    /// series inside `[lo, hi)`; every other view ignores the window.
+    /// v33 (R24): `breakdown_at` with a zoom window `[lo, hi)`, snapped out
+    /// to whole seconds, honoured where a sparse series stands behind the
+    /// rows ([`View::windows_drill`]): the EnemyTaken view's attacker list,
+    /// and (v38) Damage's and Healing's abilities — [`Self::spells_in`] —
+    /// with Damage's targets from R24's series ([`Self::damage_targets_in`]);
+    /// Healing's targets, and every other view, stay the whole fight.
     pub fn breakdown_ranged(
         &self,
         player_guid: &str,
@@ -1899,10 +1902,24 @@ impl Segment {
                 .map(|(k, t)| (k.clone(), k, 0, 0, t))
                 .collect(),
         );
-        (
+        let (spell_rows, target_rows) = (
             self.finish_rows(spell_rows, view),
             self.finish_rows(target_rows, view),
-        )
+        );
+        // v38: a zoom window on Damage or Healing reads the abilities from
+        // the sparse series, Damage's targets from R24's.
+        match Self::snap_window(range).filter(|_| view.windows_drill()) {
+            Some(window) => {
+                let (_, spells) = self.spells_in(player_guid, view, Some(window));
+                let targets = if view.windows_targets() {
+                    self.damage_targets_in(player_guid, None, window)
+                } else {
+                    target_rows
+                };
+                (spells, targets)
+            }
+            None => (spell_rows, target_rows),
+        }
     }
 
     /// R17: one player's mitigation split over this segment. Pets fold onto
@@ -4248,16 +4265,45 @@ impl Segment {
     /// header can wear the window's own damage and DPS. Pets fold into their
     /// owner under the same "{spell} ({pet})" labels `breakdown` writes.
     pub fn compare_spells(&self, player_guid: &str, range: Option<(i64, i64)>) -> (Row, Vec<Row>) {
+        self.spells_in(player_guid, View::Damage, range)
+    }
+
+    /// v38: [`Self::compare_spells`] on Damage or Healing — whichever sparse
+    /// per-spell series stands behind the view (R12's, R26's) — the rows a
+    /// zoom window scopes a drill's abilities to, as well as a comparison's
+    /// tables. Each row wears the school its whole-fight row does, its
+    /// `per_sec` over the window (the segment when `None`) and its `pct` of
+    /// the window's total. Every other view answers empty: it keeps no such
+    /// series.
+    pub fn spells_in(
+        &self,
+        player_guid: &str,
+        view: View,
+        range: Option<(i64, i64)>,
+    ) -> (Row, Vec<Row>) {
+        let map = match view {
+            View::Damage => &self.spell_series,
+            View::Healing => &self.heal_spell_series,
+            _ => {
+                let total = Row {
+                    key: player_guid.to_string(),
+                    label: self.label_for(player_guid),
+                    ..Row::default()
+                };
+                return (total, Vec::new());
+            }
+        };
         let in_range = |bucket: u32| Self::bucket_in(range, bucket);
-        let mut spells: HashMap<String, (String, u32, Tally)> = HashMap::new();
+        let mut spells: HashMap<String, (String, u32, u32, Tally)> = HashMap::new();
         let mut total = Tally::default();
-        for (actor, per_spell) in &self.spell_series {
+        for (actor, per_spell) in map {
             if self.resolve_owner(actor) != player_guid {
                 continue;
             }
             // R5: pets keep their "{spell} ({pet})" label, keyed by NAME so
             // swarm summons share one row — same fold as `breakdown`.
             let pet_name = (actor != player_guid).then(|| self.label_for(actor));
+            let by_spell = self.stats(actor, view).map(|st| &st.by_spell);
             for (spell, (id, slices)) in per_spell {
                 let mut t = Tally::default();
                 for (b, s) in slices {
@@ -4275,17 +4321,23 @@ impl Segment {
                 };
                 let e = spells
                     .entry(key)
-                    .or_insert_with(|| (label, 0, Tally::default()));
+                    .or_insert_with(|| (label, 0, 0, Tally::default()));
                 if e.1 == 0 {
                     e.1 = *id;
                 }
-                e.2.merge(&t);
+                // The series keeps no school; the whole-fight row does.
+                if e.2 == 0 {
+                    e.2 = by_spell
+                        .and_then(|m| m.get(spell))
+                        .map_or(0, |slot| slot.school);
+                }
+                e.3.merge(&t);
             }
         }
 
         let class = self.classes.get(player_guid).copied();
         let spec = self.specs.get(player_guid).copied();
-        let row = |key: String, label: String, spell_id: u32, t: &Tally| Row {
+        let row = |key: String, label: String, spell_id: u32, school: u32, t: &Tally| Row {
             key,
             label,
             amount: t.amount,
@@ -4300,34 +4352,28 @@ impl Segment {
             gain: false,
             spell_id,
             enemy: false,
-            // The sparse per-spell series carries no school; the compare
-            // table draws no bars, so nothing reads this.
-            school: 0,
+            school,
             mine: false,
             offset_ms: None,
         };
 
-        let mut rows: Vec<Row> = spells
+        let rows: Vec<Row> = spells
             .into_iter()
-            .map(|(k, (l, id, t))| row(k, l, id, &t))
+            .map(|(k, (l, id, school, t))| row(k, l, id, school, &t))
             .collect();
-        let view_total: u64 = rows.iter().map(|r| r.amount).sum();
+        let rows = match range {
+            Some(_) => self.finish_window(rows, range),
+            None => self.finish_rows(rows, view),
+        };
         let secs = match range {
             Some((lo, hi)) => (hi - lo).max(0) as f64 / 1000.0,
             None => self.duration_ms(self.last_ms) as f64 / 1000.0,
         };
-        for r in &mut rows {
-            r.pct = if view_total > 0 {
-                r.amount as f64 / view_total as f64 * 100.0
-            } else {
-                0.0
-            };
-        }
-        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
 
         let mut total_row = row(
             player_guid.to_string(),
             self.label_for(player_guid),
+            0,
             0,
             &total,
         );
@@ -4337,6 +4383,113 @@ impl Segment {
             0.0
         };
         (total_row, rows)
+    }
+
+    /// v38: who the player's damage landed on inside a zoom window — R24's
+    /// per-enemy series summed over the player and their pets, one row per
+    /// enemy NAME (the key the whole-fight list carries). With `spell_key`
+    /// (a by-spell row's key, "spell" or "spell\0pet"), the opened ability's
+    /// targets: `pct` of that spell's window total and its school on every
+    /// row, as [`Self::spell_targets`] words them; without it, the drill's
+    /// target list: `per_sec` over the window and `pct` of its total.
+    /// HOSTILE units only — R24 keeps no series for a hit on anything else —
+    /// and `extra` is 0 (R24's is what was absorbed, not overkill).
+    pub fn damage_targets_in(
+        &self,
+        player_guid: &str,
+        spell_key: Option<&str>,
+        range: (i64, i64),
+    ) -> Vec<Row> {
+        let range = Self::snap_window(Some(range));
+        let want = spell_key.map(|k| match k.split_once('\u{0}') {
+            Some((s, p)) => (s, Some(p)),
+            None => (k, None),
+        });
+        let mut acc: HashMap<String, Tally> = HashMap::new();
+        let mut school = 0u32;
+        for (unit, per_attacker) in &self.enemy_series {
+            let mut name: Option<String> = None;
+            for (attacker, per_spell) in per_attacker {
+                if self.resolve_owner(attacker) != player_guid {
+                    continue;
+                }
+                if let Some((_, want_pet)) = want {
+                    let pet = (attacker.as_str() != player_guid).then(|| self.label_for(attacker));
+                    if pet.as_deref() != want_pet {
+                        continue;
+                    }
+                }
+                for (spell, es) in per_spell {
+                    if want.is_some_and(|(s, _)| s != spell) {
+                        continue;
+                    }
+                    let mut t = Tally::default();
+                    for (b, s) in &es.slices {
+                        if Self::bucket_in(range, *b) {
+                            t.merge(s);
+                        }
+                    }
+                    if t.count == 0 {
+                        continue;
+                    }
+                    if school == 0 {
+                        school = es.school;
+                    }
+                    let name = name.get_or_insert_with(|| self.label_for(unit));
+                    acc.entry(name.clone()).or_default().merge(&t);
+                }
+            }
+        }
+        let class = self.classes.get(player_guid).copied();
+        let spec = self.specs.get(player_guid).copied();
+        let rows: Vec<Row> = acc
+            .into_iter()
+            .map(|(target, t)| Row {
+                key: target.clone(),
+                label: target,
+                amount: t.amount,
+                extra: 0,
+                count: t.count,
+                crits: t.crits,
+                per_sec: 0.0,
+                pct: 0.0,
+                class,
+                spec,
+                hp: None,
+                gain: false,
+                spell_id: 0,
+                enemy: false,
+                school: if spell_key.is_some() { school } else { 0 },
+                mine: false,
+                offset_ms: None,
+            })
+            .collect();
+        let mut rows = self.finish_window(rows, range);
+        if spell_key.is_some() {
+            // An opened ability's targets carry no rate, as `spell_targets`'.
+            for r in &mut rows {
+                r.per_sec = 0.0;
+            }
+        }
+        rows
+    }
+
+    /// v38: who a drilled ability landed on, scoped to a zoom window where
+    /// the view keeps a series for it ([`View::windows_targets`]): the enemy
+    /// view's attacker abilities (v33), Damage's targets from R24's series;
+    /// every other view — and no window — the whole fight.
+    pub fn spell_targets_ranged(
+        &self,
+        player_guid: &str,
+        spell_key: &str,
+        view: View,
+        range: Option<(i64, i64)>,
+    ) -> Vec<Row> {
+        match (view, range) {
+            (View::EnemyTaken, _) => self.enemy_attacker_abilities(player_guid, spell_key, range),
+            (View::Damage, Some(w)) => self.damage_targets_in(player_guid, Some(spell_key), w),
+            _ => self.spell_targets(player_guid, spell_key, view),
+        }
     }
 
     /// R12: record an item marker for a player, if the spell came from an
@@ -8082,6 +8235,138 @@ mod tests {
         let (t0, s0) = seg.compare_spells(P1, Some((20_000, 30_000)));
         assert!(s0.is_empty());
         assert_eq!(t0.amount, 0);
+    }
+
+    /// v38: Healing's sparse series answers the whole fight exactly as
+    /// `breakdown` does — the same rows, schools included — and Damage's
+    /// rows now wear their school too.
+    #[test]
+    fn v38_spells_in_whole_matches_breakdown_on_both_views() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            damage(1_500, pet(), Some(sp(3110, "Firebolt")), 25),
+            at(
+                1_600,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                    spell: Spell::default(),
+                },
+            ),
+            heal(2_000, p1(), 300, 50),
+            heal(3_500, p1(), 200, 0),
+        ]);
+        let seg = &m.segments()[0];
+        let key = |r: &Row| {
+            (
+                r.key.clone(),
+                r.label.clone(),
+                r.amount,
+                r.extra,
+                r.count,
+                r.crits,
+                r.spell_id,
+                r.school,
+            )
+        };
+        for view in [View::Damage, View::Healing] {
+            let (by_spell, _) = seg.breakdown(P1, view);
+            let (_, spells) = seg.spells_in(P1, view, None);
+            assert!(!spells.is_empty(), "{view:?}");
+            assert_eq!(
+                spells.iter().map(key).collect::<Vec<_>>(),
+                by_spell.iter().map(key).collect::<Vec<_>>(),
+                "{view:?}"
+            );
+        }
+        // A view with no series answers empty.
+        assert!(seg.spells_in(P1, View::Taken, None).1.is_empty());
+    }
+
+    /// v38: a zoom window scopes a Damage drill's abilities AND targets —
+    /// the rate over the window's whole seconds, the share of its total —
+    /// and an opened ability's targets; a Healing drill's abilities, its
+    /// targets staying the whole fight (no per-target healing series).
+    #[test]
+    fn v38_a_window_scopes_the_damage_and_healing_drills() {
+        let add = unit("Creature-0-777", "Gore Rattle", 0xa48);
+        let hit_add = |ts: i64, spell: Spell, amount: u64| {
+            at(
+                ts,
+                Event::Damage {
+                    src: p1(),
+                    dst: add.clone(),
+                    spell: Some(spell),
+                    amount,
+                    overkill: -1,
+                    absorbed: 0,
+                    blocked: 0,
+                    critical: true,
+                    periodic: false,
+                },
+            )
+        };
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            heal(500, p1(), 300, 50),
+            damage(5_000, p1(), Some(sp(116, "Frostbolt")), 40),
+            hit_add(5_200, sp(116, "Frostbolt"), 60),
+            heal(5_500, p1(), 200, 0),
+            damage(9_500, p1(), Some(sp(133, "Fireball")), 60),
+        ]);
+        let seg = &m.segments()[0];
+        // (4 500, 9 600) snaps out to (4 000, 10 000): six seconds.
+        let window = Some((4_500, 9_600));
+        let (spells, targets) = seg.breakdown_ranged(P1, View::Damage, None, window);
+        let words = |rows: &[Row]| {
+            rows.iter()
+                .map(|r| (r.label.clone(), r.amount, r.count))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            words(&spells),
+            vec![
+                ("Frostbolt".to_string(), 100, 2),
+                ("Fireball".to_string(), 60, 1)
+            ]
+        );
+        assert!((spells[0].per_sec - 100.0 / 6.0).abs() < 1e-9, "{spells:?}");
+        assert!((spells[0].pct - 62.5).abs() < 1e-9);
+        assert_eq!(spells[0].crits, 1, "the add's hit was a crit");
+        assert_eq!(spells[0].school, 1, "the whole-fight row's school");
+        assert_eq!(
+            words(&targets),
+            vec![
+                ("Ulgrax".to_string(), 100, 2),
+                ("Gore Rattle".to_string(), 60, 1)
+            ]
+        );
+        assert!((targets[0].per_sec - 100.0 / 6.0).abs() < 1e-9);
+        // The opened ability's targets: its own share, no rate.
+        let frost = seg.spell_targets_ranged(P1, "Frostbolt", View::Damage, window);
+        assert_eq!(
+            words(&frost),
+            vec![
+                ("Gore Rattle".to_string(), 60, 1),
+                ("Ulgrax".to_string(), 40, 1)
+            ]
+        );
+        assert!((frost[0].pct - 60.0).abs() < 1e-9 && frost[0].per_sec == 0.0);
+        // Healing: the abilities are the window's, the targets the fight's.
+        let (heals, healed) = seg.breakdown_ranged(P1, View::Healing, None, window);
+        assert_eq!(words(&heals), vec![("Flash Heal".to_string(), 200, 1)]);
+        assert_eq!(
+            words(&healed),
+            vec![("Bob".to_string(), 450, 2)],
+            "effective"
+        );
+        // A view that keeps no series answers the whole fight.
+        let (_, whole) = seg.breakdown(P1, View::Damage);
+        let (_, unwindowed) = seg.breakdown_ranged(P1, View::Damage, None, None);
+        assert_eq!(whole, unwindowed);
+        // An empty window answers empty, not a panic or NaN.
+        let (none, nobody) = seg.breakdown_ranged(P1, View::Damage, None, Some((20_000, 30_000)));
+        assert!(none.is_empty() && nobody.is_empty());
     }
 
     #[test]
