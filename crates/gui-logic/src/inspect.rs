@@ -132,3 +132,59 @@ pub fn beside(window: f32) -> Option<f32> {
         Fit::Wide => Some(WIDE),
     }
 }
+
+/// The inspector widened over the stage (its corner button, `f`): the
+/// whole width under the view tabs, the meter set aside. Its graph stands
+/// taller, its numbers in one line, and its lists side by side where the
+/// stage has the room — a drill's abilities beside its targets, a recap
+/// beside its attackers — one over the other where it has not.
+pub mod wide {
+    use super::list::Room;
+
+    /// The widened graph's plot (beside the meter: `geometry::PLOT_H`).
+    pub const PLOT_H: f32 = 180.0;
+    /// At this stage width and over, two lists stand side by side.
+    pub const SPLIT: f32 = 1100.0;
+    /// The first list's share of a split: the abilities (or the recap)
+    /// carry the columns, the targets (or attackers) four.
+    pub const FIRST: f32 = 0.6;
+    /// A comparison's half this wide or wider shows the rate, hits and
+    /// crit beside its amount and share.
+    pub const PAIR_ROOMY: f32 = 520.0;
+    /// The most numbers one line of the head holds.
+    pub const NUMS_MAX: usize = 8;
+
+    /// Do two lists stand side by side on a stage `stage` wide?
+    pub fn split(stage: f32) -> bool {
+        stage >= SPLIT
+    }
+
+    /// The room a comparison's two lists have, side by side on the stage.
+    pub fn pair_room(stage: f32) -> Room {
+        if stage / 2.0 >= PAIR_ROOMY {
+            Room::Wide
+        } else {
+            Room::Normal
+        }
+    }
+
+    /// The numbers to a line: all of them, between four and the most.
+    pub fn per_row(nums: usize) -> usize {
+        nums.clamp(4, NUMS_MAX)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_wide_stage_splits_and_a_tile_stacks() {
+            // 1440 less the docked rail, and a 1000 px tile's stage.
+            assert!(split(1203.0) && !split(1000.0));
+            assert_eq!(pair_room(1203.0), Room::Wide);
+            assert_eq!(pair_room(900.0), Room::Normal);
+            assert_eq!((per_row(2), per_row(6), per_row(12)), (4, 6, NUMS_MAX));
+            const { assert!(PLOT_H > super::super::geometry::PLOT_H) };
+        }
+    }
+}

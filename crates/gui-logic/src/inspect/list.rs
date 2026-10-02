@@ -34,29 +34,86 @@ pub enum Kind {
     Pair,
 }
 
+/// How much room a list has for its figures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Room {
+    /// An inspector 440 px or narrower (`@container insp (max-width:
+    /// 440px)`): the amount, the share and one more.
+    Narrow,
+    /// The inspector beside the meter: the prototype's columns.
+    Normal,
+    /// A list in the inspector widened over the stage: the rate joins
+    /// them, and the view's own last word (overheal, absorbed).
+    Wide,
+}
+
 impl Kind {
-    /// The columns this list shows in `view`, and the grid they stand on:
-    /// the prototype's `.t-ab` (Hits and Avg giving way in an inspector
-    /// 440 px or narrower — `narrow`), `.t-tg` and `.cmp2`. A count has
-    /// no rate, crit or average; what hit a player has no crit of theirs.
-    pub fn columns(self, view: View, narrow: bool) -> (Vec<Col>, Grid) {
+    /// The columns this list shows in `view` with `room` for them, and the
+    /// grid they stand on: the prototype's `.t-ab` (Hits and Avg giving way
+    /// in a narrow inspector), `.t-tg` and `.cmp2`, and in a widened
+    /// inspector every figure a row carries. A count has no rate, crit or
+    /// average; what hit a player has no crit of theirs. A column no row
+    /// can fill (a rate the rows were never given) is the drawer's to drop.
+    pub fn columns(self, view: View, room: Room) -> (Vec<Col>, Grid) {
         let counted = !view.is_rate();
+        let narrow = room == Room::Narrow;
         match self {
             Kind::Abilities => {
-                let cols = match (counted, view, narrow) {
+                let cols = match (counted, view, room) {
                     (true, _, _) => vec![Col::Amount, Col::Pct],
-                    (_, View::Taken, true) => vec![Col::Amount, Col::Pct],
-                    (_, View::Taken, false) => vec![Col::Amount, Col::Pct, Col::Hits, Col::Avg],
-                    (_, _, true) => vec![Col::Amount, Col::Pct, Col::Crit],
-                    (_, _, false) => {
+                    (_, View::Taken, Room::Narrow) => vec![Col::Amount, Col::Pct],
+                    (_, View::Taken, Room::Normal) => {
+                        vec![Col::Amount, Col::Pct, Col::Hits, Col::Avg]
+                    }
+                    (_, View::Taken, Room::Wide) => vec![
+                        Col::Amount,
+                        Col::Rate,
+                        Col::Pct,
+                        Col::Hits,
+                        Col::Avg,
+                        Col::Absorbed,
+                    ],
+                    (_, _, Room::Narrow) => vec![Col::Amount, Col::Pct, Col::Crit],
+                    (_, _, Room::Normal) => {
                         vec![Col::Amount, Col::Pct, Col::Hits, Col::Crit, Col::Avg]
                     }
+                    (_, View::Healing, Room::Wide) => vec![
+                        Col::Amount,
+                        Col::Rate,
+                        Col::Pct,
+                        Col::Hits,
+                        Col::Crit,
+                        Col::Avg,
+                        Col::Overheal,
+                    ],
+                    (_, _, Room::Wide) => vec![
+                        Col::Amount,
+                        Col::Rate,
+                        Col::Pct,
+                        Col::Hits,
+                        Col::Crit,
+                        Col::Avg,
+                    ],
                 };
                 (cols, Grid::Abilities { narrow })
             }
             Kind::Targets if counted => (vec![Col::Amount, Col::Pct], Grid::Targets),
+            Kind::Targets if room == Room::Wide => (
+                vec![Col::Amount, Col::Rate, Col::Pct, Col::Hits],
+                Grid::Targets,
+            ),
             Kind::Targets => (vec![Col::Amount, Col::Pct, Col::Hits], Grid::Targets),
-            Kind::Pair => (vec![Col::Amount, Col::Pct], Grid::Pair),
+            Kind::Pair if counted || room != Room::Wide => {
+                (vec![Col::Amount, Col::Pct], Grid::Pair)
+            }
+            Kind::Pair if view == View::Taken => (
+                vec![Col::Amount, Col::Rate, Col::Pct, Col::Hits],
+                Grid::Pair,
+            ),
+            Kind::Pair => (
+                vec![Col::Amount, Col::Rate, Col::Pct, Col::Hits, Col::Crit],
+                Grid::Pair,
+            ),
         }
     }
 }
@@ -129,14 +186,37 @@ mod tests {
     #[test]
     fn each_list_has_its_columns() {
         assert_eq!(
-            Kind::Abilities.columns(View::Interrupts, false).0,
+            Kind::Abilities.columns(View::Interrupts, Room::Normal).0,
             [Col::Amount, Col::Pct]
         );
         assert_eq!(
-            Kind::Abilities.columns(View::Damage, true).0,
+            Kind::Abilities.columns(View::Damage, Room::Narrow).0,
             [Col::Amount, Col::Pct, Col::Crit]
         );
-        assert_eq!(Kind::Targets.columns(View::Damage, false).0.len(), 3);
-        assert_eq!(Kind::Pair.columns(View::Healing, false).1, Grid::Pair);
+        assert_eq!(Kind::Targets.columns(View::Damage, Room::Normal).0.len(), 3);
+        assert_eq!(
+            Kind::Pair.columns(View::Healing, Room::Normal).1,
+            Grid::Pair
+        );
+        // Widened: the rate joins every rate list, and the view's last word.
+        let (wide, grid) = Kind::Abilities.columns(View::Healing, Room::Wide);
+        assert_eq!(grid, Grid::Abilities { narrow: false });
+        assert_eq!((wide[1], wide.last()), (Col::Rate, Some(&Col::Overheal)));
+        assert_eq!(
+            Kind::Abilities.columns(View::Taken, Room::Wide).0.last(),
+            Some(&Col::Absorbed)
+        );
+        assert!(
+            Kind::Targets
+                .columns(View::Damage, Room::Wide)
+                .0
+                .contains(&Col::Rate)
+        );
+        assert_eq!(Kind::Pair.columns(View::Damage, Room::Wide).0.len(), 5);
+        assert_eq!(
+            Kind::Abilities.columns(View::Deaths, Room::Wide).0,
+            [Col::Amount, Col::Pct],
+            "a count is a count at any width"
+        );
     }
 }

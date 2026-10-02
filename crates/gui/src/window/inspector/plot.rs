@@ -71,6 +71,9 @@ pub struct Input {
     pub total: bool,
     /// What the hover calls a lone curve's value ("dps").
     pub word: &'static str,
+    /// The plot's height at zoom 1: `geo::PLOT_H` beside the meter, more in
+    /// an inspector widened over the stage.
+    pub plot_h: f32,
 }
 
 impl Input {
@@ -84,6 +87,7 @@ impl Input {
             lanes: &self.lanes,
             total: self.total,
             word: self.word,
+            plot_h: self.plot_h,
         }
     }
 
@@ -302,7 +306,7 @@ fn paint(f: &Frame, b: Bounds<Pixels>, hitbox: &Hitbox, window: &mut Window, cx:
     window.paint_quad(gpui_kit::fill(
         pen.rect(
             left,
-            geo::PLOT_H - geo::HAIRLINE,
+            g.plot_h - geo::HAIRLINE,
             (w - left).max(0.0),
             geo::HAIRLINE,
         ),

@@ -341,7 +341,7 @@ action rides ONE action, `keys::Do(Action)`, in the `Meter && !Input` context
 — GPUI's `!` reads the whole context stack, so no meter key fires while a
 text field has the keys — and the zoom chords ride `ZoomTo`, window-wide. A
 typed character binds as itself (`?`, `~`, `+`; `K` is Shift+K). Every
-window-only gesture (`t`, `p`, Ctrl K, `/`, `m`, `~`, `H`, `?`) is a
+window-only gesture (`t`, `p`, Ctrl K, `/`, `m`, `~`, `H`, `?`, `f`) is a
 `keys::Go(Gesture)` the window answers itself, never through the table, and
 is listed in `keys::BINDINGS` with `window_local: true`. Two window-local rows
 are extra READINGS of keys the table also answers: ← → (older/newer segment
@@ -368,10 +368,10 @@ back as `ClientState::compare_view`) — on Taken the tables list the abilities
 that HIT them ("hit by"), the header's rate is dtps, the curve is
 `Segment::taken_timeline` (so consumables, externals and mitigation spans
 still mark it) and each side's R17 mitigation record sits under its table;
-the view keys re-ask for the same pair. The drag-zoom window stays
-damage-only — `compare_spells`' sparse series is damage's — and the daemon
-echoes `range: None` on other views rather than pairing a zoomed graph with
-full-fight tables. Hovering a spell row lights the SAME ability in BOTH lists
+the view keys re-ask for the same pair. The drag-zoom window scopes the
+tables on Damage and (v38) Healing — `Segment::spells_in` reads their sparse
+per-spell series — and the daemon echoes `range: None` on other views rather
+than pairing a zoomed graph with full-fight tables. Hovering a spell row lights the SAME ability in BOTH lists
 (`Overlay::spell_hover`, the window's `InspState::spell_hover`), matched by
 by-spell KEY because the two lists are sorted independently. Every list that
 answers the mouse wears its surface's one hover fill (the window's `hover`
@@ -659,7 +659,28 @@ the breakdown in hand; the window holds the last player's body
 (`inspector::model::Held`, re-taken on every snapshot —
 `ClientState::snapshot_gen`) and draws it dimmed until the next one's lands.
 Enter on a pair beside the meter does nothing; Tab and `g` in a narrow window
-push the inspector they change.
+push the inspector they change. A drag across the graph (v38) scopes the
+lists to the window where the daemon keeps a clock for them
+(`View::windows_drill` / `windows_targets`: Damage's abilities and targets,
+Healing's abilities, the enemies' attackers): the window rides
+`Cursor::Segment.range`, the rows come back windowed (`Segment::spells_in`,
+`damage_targets_in`; the tree keeps its groups alone, `SpellTree::windowed`),
+the list's heading names the window ("Ability, 0:42–1:13") or says it kept
+the whole fight ("Target, whole fight"; a stored pull's state never sends a
+window, `ClientState::set_drill_windows(false)`, "whole pull"), and the
+graph's top line gives the window's rate. WIDENED (the corner button at
+the head's right, `f`; `InspState::wide`, session-wide, nothing in a narrow
+window): the inspector takes the whole stage under the view tabs, the meter
+set aside while j/k still walk its players (`Seat::Wide`,
+`inspector::model::Layout::Wide`, its rules gui-logic's `inspect::wide`): the
+head on one line with the actions beside the name, the numbers in one line,
+the graph 180 px tall, and the panes the tabs would switch side by side 3:2
+on a stage of 1100 px or more (else one over the other) — a drill's
+abilities beside its targets ("Hit by" heads Taken's), a recap beside its
+attackers, R21's matrices under them rather than behind a tab — every list
+with room for the rate and the view's last word (`inspect::list::Room::Wide`;
+a rate no row was given is dropped), a pair's halves with rate, hits and
+crit. Tab walks the two lists; Esc narrows it before Home.
 
 **Home** (`window/home.rs`, its panels in `home/panels.rs` and its charts in
 `home/charts.rs`; the derivations gui-logic's `home` and `home::chart`;
@@ -736,7 +757,8 @@ and a 6 px rise (160 ms). The toast (`cards/toast.rs`, its words gui-logic's
 stage's foot, brief, taking no pointer. Esc walks one level up: the palette,
 the talent viewer and the menus answer their own Esc first, then the rail's
 drawer, then on the stage the filter's text, the inspector's ability or keys
-(a narrow window's push), the comparison, and Home, where the chain ends.
+(a narrow window's push), the comparison, a widened inspector, and Home,
+where the chain ends.
 `/` focuses the row filter; its Esc (`Filter > Input`) clears it and gives
 the keys back, Enter keeps the text and gives them back. The filter narrows
 what is drawn by label, class, spec or role name (`Class::name` /
@@ -935,7 +957,7 @@ is reviewed without launching it: ignored tests open the real views in a
 `HeadlessAppContext` over the daemon's mock and capture frames through GPUI's
 headless renderer (a wgpu adapter: the GPU, or Mesa's lavapipe — CI and the
 nix sandbox run none of them), motion reduced so every picture is the
-settled pixels. `window::shots::window_shots` renders the window's 15 states
+settled pixels. `window::shots::window_shots` renders the window's 22 states
 at the prototype's three sizes, each reached by the gestures a user makes,
 over the fixture or `WOWDPS_SHOTS_LOG` (+ `_FIGHT`, `_OWNER`, a read-only
 `_HISTORY` store, `_ONLY`); `overlay::panel::tests::overlay_shots` the

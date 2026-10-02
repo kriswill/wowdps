@@ -78,9 +78,17 @@ pub struct ClientState {
     /// daemon always sends the buckets and lets the client shape them.
     graph: GraphMode,
     /// v14: the drilldown graph's zoom window (ms from segment start).
-    /// Purely local — the drill timeline arrives whole, so zooming is the
-    /// client's own slice and never round-trips. Cleared with the drill.
+    /// The drill timeline arrives whole, so the curve's zoom is the
+    /// client's own slice; where the view windows its drill
+    /// (`View::windows_drill`: the enemies' attackers, v33, and Damage's
+    /// and Healing's abilities, v38) the window also rides the Watch and
+    /// scopes the rows. Cleared with the drill.
     drill_range: Option<(u32, u32)>,
+    /// v38: the daemon behind this state answers a drill's window. A live
+    /// one does; a stored pull's synthetic answers do not (the store keeps
+    /// no per-second abilities), so its state never sends one and keeps
+    /// every zoom the client's own.
+    drill_windows: bool,
     /// v18: the comparison's ability drill — one (by-spell key, label)
     /// applied to BOTH sides. Cleared one level ahead of the pair.
     compare_spell: Option<(String, String)>,
@@ -136,6 +144,7 @@ impl ClientState {
             compare_snap_view: None,
             graph: GraphMode::default(),
             drill_range: None,
+            drill_windows: true,
             compare_spell: None,
             follow: false,
             inspecting: false,
@@ -177,10 +186,9 @@ impl ClientState {
                     .as_ref()
                     .and_then(|d| d.spell.as_ref().map(|(k, _)| k.clone())),
                 // v33 (R24): the zoom window scopes the enemy drill's rows;
-                // elsewhere the zoom is the client's own.
-                range: (self.view == View::EnemyTaken && self.drill.is_some())
-                    .then_some(self.drill_range)
-                    .flatten(),
+                // v38: Damage's and Healing's too. Elsewhere the zoom is the
+                // client's own.
+                range: self.drill_windowed().then_some(self.drill_range).flatten(),
             }),
             // R12. `Screen::Compare` is only ever entered with both picks in
             // hand, so the pair is always there to name.
@@ -611,11 +619,34 @@ impl ClientState {
         }
     }
 
-    /// v33 (R24): on the EnemyTaken view a breakdown answers ONE window;
-    /// a snapshot still in flight from before a zoom must not show as if
-    /// it were the window's.
+    /// v33 (R24): on a view that windows its drill a breakdown answers ONE
+    /// window; a snapshot still in flight from before a zoom must not show
+    /// as if it were the window's.
     fn range_matches(&self, b: &Breakdown) -> bool {
-        self.view != View::EnemyTaken || self.drill.is_none() || b.range == self.drill_range
+        !self.drill_windowed() || b.range == self.drill_range
+    }
+
+    /// v38: does the drill on show ride its zoom window to the daemon — a
+    /// drill open on a view that windows one, against a daemon that does?
+    fn drill_windowed(&self) -> bool {
+        self.drill.is_some()
+            && self.view.windows_drill()
+            && (self.drill_windows || self.view == View::EnemyTaken)
+    }
+
+    /// v38: tell this state whether the daemon behind it answers a drill's
+    /// zoom window. A stored pull's says no: its state then never sends a
+    /// window, and the rows it shows are the whole pull.
+    pub fn set_drill_windows(&mut self, on: bool) {
+        self.drill_windows = on;
+    }
+
+    /// v38: the window the drill's rows on show answer — the breakdown's
+    /// echo, so a reply in flight never words itself as the new window's.
+    /// `None` is the whole fight: no zoom, a view whose drill is never
+    /// windowed, or a daemon that windows none.
+    pub fn drill_shown_range(&self) -> Option<(u32, u32)> {
+        self.drill_breakdown().and_then(|b| b.range)
     }
 
     /// v14: the drilled player's damage timeline, when the snapshot carries
@@ -696,7 +727,7 @@ impl ClientState {
                 view,
                 breakdown: Some(b),
                 ..
-            }) if *view == self.view => Some(b),
+            }) if *view == self.view && self.range_matches(b) => Some(b),
             _ => None,
         }
     }
@@ -796,8 +827,9 @@ impl ClientState {
         (self.view == View::Taken).then_some((&b.stacking, &b.stacks, &b.stack_base))
     }
 
-    /// v14: the drill graph's zoom window. Local-only — the timeline is
-    /// whole, so the renderer slices it itself.
+    /// v14: the drill graph's zoom window, as asked. The timeline is whole,
+    /// so the renderer slices it itself; the rows' own window is
+    /// [`Self::drill_shown_range`].
     pub fn drill_range(&self) -> Option<(u32, u32)> {
         self.drill_range
     }
@@ -881,15 +913,16 @@ impl ClientState {
             .collect()
     }
 
-    /// v33 (R24): on the EnemyTaken view the window also scopes the drill's
-    /// rows, so a changed window re-watches; every other view zooms the
-    /// curve client-side and sends nothing.
+    /// v33 (R24): where the view windows its drill (the enemies' attackers,
+    /// v33; Damage's and Healing's abilities, v38) the window also scopes
+    /// the drill's rows, so a changed window re-watches; every other view
+    /// zooms the curve client-side and sends nothing.
     pub fn set_drill_range(&mut self, range: Option<(u32, u32)>) -> Vec<ClientMsg> {
         // A degenerate selection means zoom out, like the comparison's.
         let range = range.filter(|(lo, hi)| lo < hi);
         let changed = range != self.drill_range;
         self.drill_range = range;
-        if changed && self.view == View::EnemyTaken && self.drill.is_some() {
+        if changed && self.drill_windowed() {
             vec![self.watch_msg()]
         } else {
             Vec::new()

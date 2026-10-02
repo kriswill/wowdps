@@ -422,6 +422,76 @@ fn the_drill_accessors_read_the_breakdown_only_for_the_current_view() {
     assert!(st.drill_timeline().is_none());
 }
 
+/// v38: a Damage drill's zoom window rides the Watch and scopes its rows —
+/// a reply still in flight from before the zoom shows nothing as the
+/// window's, the echo names the rows' own window — while a state whose
+/// daemon windows none (a stored pull) keeps every zoom its own.
+#[test]
+fn a_damage_drill_window_rides_the_watch_and_waits_for_its_echo() {
+    let mut st = on_meter();
+    st.apply(Action::Open);
+    st.on_msg(snapshot(
+        SegmentRef::Live,
+        Some(SegmentId(3)),
+        View::Damage,
+        vec![row("A", 300)],
+        Some(drilled_breakdown()),
+        3,
+    ));
+    let reqs = st.set_drill_range(Some((1_000, 4_000)));
+    assert!(matches!(
+        watch_of(&reqs),
+        Cursor::Segment { range: Some((1_000, 4_000)), drill: Some(k), .. } if k == "A"
+    ));
+    // The whole-fight answer still in hand is not the window's.
+    assert!(st.breakdown().0.is_empty());
+    assert!(st.drill_breakdown().is_none(), "waiting, not empty");
+    assert!(st.drill_shown_range().is_none());
+    // The window's answer, echoed, is.
+    let windowed = Breakdown {
+        by_spell: vec![row("Frostbolt", 30)],
+        range: Some((1_000, 4_000)),
+        ..drilled_breakdown()
+    };
+    st.on_msg(snapshot(
+        SegmentRef::Live,
+        Some(SegmentId(3)),
+        View::Damage,
+        vec![row("A", 300)],
+        Some(windowed),
+        3,
+    ));
+    assert_eq!(st.breakdown().0.len(), 1);
+    assert_eq!(st.drill_shown_range(), Some((1_000, 4_000)));
+    // The same window again asks nothing; a right press gives it back.
+    assert!(st.set_drill_range(Some((1_000, 4_000))).is_empty());
+    let reqs = st.set_drill_range(None);
+    assert!(matches!(
+        watch_of(&reqs),
+        Cursor::Segment { range: None, .. }
+    ));
+    // A count view's drill never sends one.
+    st.apply(Action::SetView(View::Interrupts));
+    assert!(st.set_drill_range(Some((0, 1_000))).is_empty());
+
+    // A stored pull's state: the zoom is the client's, the rows the pull's.
+    let mut stored = on_meter();
+    stored.set_drill_windows(false);
+    stored.apply(Action::Open);
+    stored.on_msg(snapshot(
+        SegmentRef::Live,
+        Some(SegmentId(3)),
+        View::Damage,
+        vec![row("A", 300)],
+        Some(drilled_breakdown()),
+        3,
+    ));
+    assert!(stored.set_drill_range(Some((1_000, 4_000))).is_empty());
+    assert_eq!(stored.drill_range(), Some((1_000, 4_000)));
+    assert_eq!(stored.breakdown().0.len(), 2, "the whole pull's rows");
+    assert!(stored.drill_shown_range().is_none());
+}
+
 #[test]
 fn the_ability_drill_needs_a_rate_view_and_the_spell_pane() {
     let mut st = on_meter();

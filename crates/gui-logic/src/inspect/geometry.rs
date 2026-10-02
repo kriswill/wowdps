@@ -19,7 +19,8 @@ use crate::axis::ticks;
 use crate::table::figure;
 use crate::theme::Color;
 
-/// The plot's height (`.iplot{height:96px}`).
+/// The plot's height (`.iplot{height:96px}`) — beside the meter; a widened
+/// inspector draws a taller one ([`Plot::plot_h`]).
 pub const PLOT_H: f32 = 96.0;
 /// The axis under it (`.iaxis{height:16px;margin-top:2px}`).
 pub const AXIS_GAP: f32 = 2.0;
@@ -263,12 +264,15 @@ pub struct Plot<'a> {
     pub total: bool,
     /// What the hover calls a lone curve's value ("dps").
     pub word: &'a str,
+    /// The plot's own height: [`PLOT_H`] beside the meter, taller in an
+    /// inspector widened over the stage.
+    pub plot_h: f32,
 }
 
 impl Plot<'_> {
     /// The whole canvas: the plot, its axis and the lanes.
     pub fn height(&self) -> f32 {
-        PLOT_H + AXIS_GAP + AXIS_H + self.lanes_h()
+        self.plot_h + AXIS_GAP + AXIS_H + self.lanes_h()
     }
 
     pub fn lanes_h(&self) -> f32 {
@@ -316,9 +320,9 @@ impl Plot<'_> {
     /// few px, or under the hatches' words — [`Plot::top_of`]).
     pub fn y_of(&self, v: f64, top: f32) -> f32 {
         if self.peak <= 0.0 {
-            return PLOT_H;
+            return self.plot_h;
         }
-        PLOT_H - (v / self.peak).clamp(0.0, 1.0) as f32 * (PLOT_H - top)
+        self.plot_h - (v / self.peak).clamp(0.0, 1.0) as f32 * (self.plot_h - top)
     }
 
     /// Where the peak is drawn, under the hatches' words `hatches` when
@@ -332,7 +336,7 @@ impl Plot<'_> {
 
     /// The top of lane `lane`'s row (its label's line).
     pub fn lane_y(&self, lane: usize) -> f32 {
-        PLOT_H + AXIS_GAP + AXIS_H + LANES_TOP + lane as f32 * (LANE_ROW + LANE_GAP)
+        self.plot_h + AXIS_GAP + AXIS_H + LANES_TOP + lane as f32 * (LANE_ROW + LANE_GAP)
     }
 
     /// The top of lane `lane`'s track, centred in its row.
@@ -412,7 +416,7 @@ impl Plot<'_> {
 
     /// Is `(x, y)` on the plot itself — where a press starts a zoom?
     pub fn in_plot(&self, x: f32, y: f32) -> bool {
-        y <= PLOT_H && x >= self.left()
+        y <= self.plot_h && x >= self.left()
     }
 
     /// What the pointer at `(x, y)` is over.
@@ -420,7 +424,7 @@ impl Plot<'_> {
         if let Some((lane, i)) = self.span_at(x, y, w) {
             return Some(Hover::Span(lane, i));
         }
-        if y < 0.0 || y > PLOT_H || x < self.left() || x > w {
+        if y < 0.0 || y > self.plot_h || x < self.left() || x > w {
             return None;
         }
         // Snapped to the first curve's bucket, so the readout and the
@@ -587,7 +591,7 @@ impl Plot<'_> {
                 figure(self.peak.round() as u64),
                 (top - line / 2.0).max(0.0),
             ),
-            ("0".to_string(), PLOT_H - line),
+            ("0".to_string(), self.plot_h - line),
         ]
         .into_iter()
         .map(|(words, y)| {
@@ -614,7 +618,7 @@ impl Plot<'_> {
         let plot_w = (w - left).max(1.0);
         let mut out = self.hatch_labels(w, measure);
         out.extend(self.scale_labels(Self::top_of(&out), measure));
-        let axis_y = PLOT_H + AXIS_GAP + AXIS_WORDS_Y;
+        let axis_y = self.plot_h + AXIS_GAP + AXIS_WORDS_Y;
         for t in ticks(self.window, plot_w) {
             let x = self.x_of(f64::from(t), w);
             let words = duration(i64::from(t));
@@ -745,8 +749,8 @@ impl Plot<'_> {
 /// along — held inside the plot, so a steep step cannot swing the line
 /// under its baseline or over its top. One `[c1, c2, to]` per segment,
 /// after a move to the first point.
-pub fn smooth(pts: &[(f32, f32)]) -> Vec<[(f32, f32); 3]> {
-    let hold = |(x, y): (f32, f32)| (x, y.clamp(0.0, PLOT_H));
+pub fn smooth(pts: &[(f32, f32)], plot_h: f32) -> Vec<[(f32, f32); 3]> {
+    let hold = |(x, y): (f32, f32)| (x, y.clamp(0.0, plot_h));
     let at = |j: usize| {
         pts.get(j)
             .or_else(|| pts.last())
@@ -765,14 +769,14 @@ pub fn smooth(pts: &[(f32, f32)]) -> Vec<[(f32, f32); 3]> {
 
 /// A death's "/" stripes between `x1` and `x2`, each cut to the span: from
 /// `(s, bottom)` up to `(s + H, top)`, kept where it is between the two.
-pub fn stripes(x1: f32, x2: f32) -> Vec<((f32, f32), (f32, f32))> {
+pub fn stripes(x1: f32, x2: f32, plot_h: f32) -> Vec<((f32, f32), (f32, f32))> {
     let mut out = Vec::new();
-    let mut s = x1 - PLOT_H;
+    let mut s = x1 - plot_h;
     while s < x2 {
-        let t0 = ((x1 - s) / PLOT_H).clamp(0.0, 1.0);
-        let t1 = ((x2 - s) / PLOT_H).clamp(0.0, 1.0);
+        let t0 = ((x1 - s) / plot_h).clamp(0.0, 1.0);
+        let t1 = ((x2 - s) / plot_h).clamp(0.0, 1.0);
         if t1 > t0 {
-            let at = |t: f32| (s + t * PLOT_H, PLOT_H - t * PLOT_H);
+            let at = |t: f32| (s + t * plot_h, plot_h - t * plot_h);
             out.push((at(t0), at(t1)));
         }
         s += STRIPE_STEP;

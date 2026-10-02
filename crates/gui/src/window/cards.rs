@@ -319,6 +319,7 @@ impl Gui {
                 && app.view == View::Deaths
                 && app.raid().is_some()
                 && !app.inspecting(),
+            narrow: !beside,
         })
     }
 
@@ -385,6 +386,10 @@ impl Gui {
                 },
                 cx,
             );
+        } else if self.insp.wide && !narrow {
+            // A widened inspector narrows back beside the meter before the
+            // chain leaves the pull.
+            self.toggle_wide(cx);
         } else {
             self.open_home(cx);
         }

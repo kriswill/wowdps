@@ -2,7 +2,7 @@
 //! `KeyBinding`s registered once at start. The meter's actions ride in one
 //! GPUI action, `Do`, carrying the model's `Action` as data, in the
 //! `Meter` key context; the zoom chords in `ZoomTo`, window-wide. The
-//! window-local gestures (`t`, `p`, Ctrl K, `/`, `m`, `~`, `H`, `?`) get
+//! window-local gestures (`t`, `p`, Ctrl K, `/`, `m`, `~`, `H`, `?`, `f`) get
 //! actions of their own with the screens that answer them.
 //!
 //! Spike S11: a typed character binds as ITSELF. On Linux a shift-/ arrives
@@ -60,6 +60,8 @@ pub enum Gesture {
     Earlier,
     /// `?`: the keyboard sheet.
     Sheet,
+    /// `f`: the inspector widened over the stage, or back beside the meter.
+    Wide,
 }
 
 /// A window-local gesture, as GPUI dispatches it.
@@ -68,7 +70,7 @@ pub enum Gesture {
 pub struct Go(pub Gesture);
 
 /// The window-local gestures' chords, as typed (spike S11).
-pub const GESTURES: [(&str, Gesture); 8] = [
+pub const GESTURES: [(&str, Gesture); 9] = [
     ("t", Gesture::Talents),
     ("p", Gesture::Pin),
     ("ctrl-k", Gesture::Jump),
@@ -77,6 +79,7 @@ pub const GESTURES: [(&str, Gesture); 8] = [
     ("~", Gesture::Home),
     ("H", Gesture::Earlier),
     ("?", Gesture::Sheet),
+    ("f", Gesture::Wide),
 ];
 
 /// GPUI's keystroke string for a chord.

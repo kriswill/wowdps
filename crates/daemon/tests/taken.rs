@@ -315,6 +315,77 @@ fn a_windowed_taken_comparison_answers_whole_and_echoes_no_range() {
     assert!(a.total.amount < row(&dmg_rows, DURGAN).amount);
 }
 
+/// v38: a zoom window rides a Damage or Healing drill's cursor and scopes
+/// its abilities — echoed, Σ inside the whole fight's, the tree carrying
+/// no whole-fight counts — and a Healing comparison windows too; a Taken
+/// drill answers whole and echoes nothing.
+#[test]
+fn a_windowed_damage_or_healing_drill_scopes_its_abilities() {
+    let mut mock = MockDaemon::fixture_at(Path::new(SAMPLE));
+    let seg = ids(&mut mock)[0];
+    let windowed = |mock: &mut MockDaemon, view: View, drill: &str, range| {
+        let out = mock.handle(ClientMsg::Watch(Cursor::Segment {
+            segment: SegmentRef::Id(seg),
+            view,
+            top_n: None,
+            drill: Some(drill.to_string()),
+            death: None,
+            spell: None,
+            range,
+        }));
+        out.into_iter()
+            .rev()
+            .find_map(|m| match m {
+                DaemonMsg::Snapshot {
+                    view: v,
+                    breakdown: Some(b),
+                    ..
+                } if v == view => Some(b),
+                _ => None,
+            })
+            .expect("a drilled snapshot")
+    };
+    for view in [View::Damage, View::Healing] {
+        let (_, rows, _) = watch(&mut mock, seg, view, None);
+        let top = rows.first().expect("someone on the meter").key.clone();
+        let whole = windowed(&mut mock, view, &top, None);
+        assert_eq!(whole.range, None);
+        let b = windowed(&mut mock, view, &top, Some((0, 2_000)));
+        assert_eq!(b.range, Some((0, 2_000)), "{view:?}: the window echoed");
+        let sum = |rows: &[Row]| rows.iter().map(|r| r.amount).sum::<u64>();
+        assert!(sum(&b.by_spell) <= sum(&whole.by_spell), "{view:?}");
+        assert!(
+            b.tree
+                .rows
+                .iter()
+                .all(|m| m.casts == 0 && m.parts.is_empty()),
+            "{view:?}: no whole-fight counts beside a window's rows"
+        );
+    }
+    let (_, rows, _) = watch(&mut mock, seg, View::Taken, None);
+    let top = rows.first().expect("someone took damage").key.clone();
+    let b = windowed(&mut mock, View::Taken, &top, Some((0, 2_000)));
+    assert_eq!(b.range, None, "Taken keeps no per-spell series");
+
+    // A Healing comparison windows now, and says so.
+    let (_, rows, _) = watch(&mut mock, seg, View::Healing, None);
+    if let [a, b, ..] = rows.as_slice() {
+        let out = mock.handle(ClientMsg::Watch(Cursor::Compare {
+            segment: SegmentRef::Id(seg),
+            a: a.key.clone(),
+            b: b.key.clone(),
+            view: View::Healing,
+            range: Some((0, 2_000)),
+            spell: None,
+        }));
+        let range = out.into_iter().rev().find_map(|m| match m {
+            DaemonMsg::CompareSnapshot { range, .. } => Some(range),
+            _ => None,
+        });
+        assert_eq!(range, Some(Some((0, 2_000))));
+    }
+}
+
 #[test]
 fn an_unknown_drill_under_taken_has_no_record() {
     let mut mock = MockDaemon::fixture_at(Path::new(TAKEN));

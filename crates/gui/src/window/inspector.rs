@@ -23,13 +23,14 @@ use std::rc::Rc;
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, Window, div};
 use wowdps_gui_logic::inspect::curves::stack_keys;
+use wowdps_gui_logic::inspect::list::Room;
 use wowdps_gui_logic::inspect::matrix::matrices;
 use wowdps_gui_logic::table::{sorted, step_in};
 use wowdps_gui_logic::tree;
 use wowdps_model::{Action, Pane, Row, Screen, View};
 use wowdps_proto::ClientState;
 
-use self::model::{Ctx, Deaths, Graph, Insp, Press, RangeTo, Stacks};
+use self::model::{Ctx, Deaths, Graph, Insp, Layout, Press, RangeTo, Stacks};
 use crate::window::Gui;
 use crate::window::w::{Fit, W};
 
@@ -54,7 +55,47 @@ impl Gui {
             owner_of: &owner_of,
             stored: self.hist.store.stored.is_some(),
             bare: self.hist.store.stored.as_ref().is_some_and(|s| s.bare()),
+            layout: self.inspector_layout(w),
         })
+    }
+
+    /// Is the inspector widened over the stage now? Asked for, and in a
+    /// window that is not narrow — whose inspector is pushed over
+    /// everything already.
+    pub(crate) fn widened(&self, w: &W) -> bool {
+        self.insp.wide && w.fit() != Fit::Narrow
+    }
+
+    /// How the inspector stands: widened over the stage (the window less
+    /// a docked rail), else a column whose lists keep three figures when
+    /// it is 440 px or narrower.
+    pub(crate) fn inspector_layout(&self, w: &W) -> Layout {
+        if self.widened(w) {
+            let rail = if w.fit() == Fit::Wide {
+                crate::window::rail::RAIL_W + 1.0
+            } else {
+                0.0
+            };
+            return Layout::Wide {
+                stage: (w.width - rail).max(0.0),
+            };
+        }
+        let narrow = self.inspector_width(w) <= wowdps_gui_logic::inspect::NARROW_LIST;
+        Layout::Column {
+            room: if narrow { Room::Narrow } else { Room::Normal },
+        }
+    }
+
+    /// The corner button, `f`: widened over the stage under the tabs, or
+    /// back beside the meter. Nothing in a narrow window.
+    pub(crate) fn toggle_wide(&mut self, cx: &mut Context<Self>) {
+        if Fit::of(self.width) == Fit::Narrow {
+            return;
+        }
+        self.insp.wide = !self.insp.wide;
+        // The keys' line, if any, comes into sight in the new layout.
+        self.insp.reveal.set(true);
+        cx.notify();
     }
 
     /// How wide the inspector stands: beside the meter, else the stage.
@@ -222,6 +263,10 @@ impl Gui {
     /// Tab on a Taken drill whose player has an R21 ledger: the Stacks tab
     /// joins the walk. `true` when this Tab was the walk's.
     fn stacks_tab(&mut self, cx: &mut Context<Self>) -> bool {
+        // Widened, the matrices stand under the lists: Tab walks the two.
+        if self.insp.wide && Fit::of(self.width) != Fit::Narrow {
+            return false;
+        }
         let app = self.fight(cx);
         let ledger = app.view == View::Taken
             && app.drill_spell().is_none()
@@ -405,6 +450,7 @@ impl Gui {
                 },
                 cx,
             ),
+            Press::Widen => self.toggle_wide(cx),
             Press::Sort(col) => {
                 self.insp.drill_sort = match self.insp.drill_sort {
                     Some((c, true)) if c == col => Some((col, false)),
@@ -429,6 +475,7 @@ pub fn graph(g: &Graph, w: &W, cx: &Context<Gui>) -> AnyElement {
         lanes: g.lanes.clone(),
         total: g.total,
         word: g.word,
+        plot_h: g.plot_h,
     };
     let gui = cx.entity();
     let to = g.range_to;

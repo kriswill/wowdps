@@ -57,9 +57,13 @@ const LIST_PAD: (f32, f32) = (4.0, 14.0);
 const EMPTY_PAD_Y: f32 = 6.0;
 const NOTE_PAD_Y: f32 = 2.0;
 
-/// The list, `narrow` in an inspector 440 px or narrower.
-pub fn view(l: &List, narrow: bool, keep: &Keep, w: &W, cx: &Context<Gui>) -> Div {
-    let (cols, grid) = l.kind.columns(l.view, narrow);
+/// The list, its columns as its room allows — less a rate none of its rows
+/// was given (an opened ability's targets, a stored pull's rows).
+pub fn view(l: &List, keep: &Keep, w: &W, cx: &Context<Gui>) -> Div {
+    let (mut cols, grid) = l.kind.columns(l.view, l.room);
+    if !l.rows.iter().any(|r| r.per_sec >= 1.0) {
+        cols.retain(|c| *c != Col::Rate);
+    }
     let mut list = div()
         .flex()
         .flex_col()

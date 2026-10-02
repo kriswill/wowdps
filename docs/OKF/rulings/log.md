@@ -1,5 +1,10 @@
 # Log
 
+## 2026-10-01
+
+- **Update** — [R12 Timelines & markers](r12.md): link the v38 decision whose drill
+  window reads the same sparse per-spell series ([decision](../decisions/a-window-scopes-the-drill.md)).
+
 ## 2026-09-30
 
 - **Update** — [R1 Damage](r1.md): a hit the target's shield took whole (`*_MISSED`

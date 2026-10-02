@@ -29,6 +29,7 @@ impl Owned {
             lanes: &self.lanes,
             total: false,
             word: "dps",
+            plot_h: PLOT_H,
         }
     }
 }
@@ -357,7 +358,7 @@ fn a_tooltip_hides_the_labels_under_it() {
 #[test]
 fn curves_bands_and_stripes_hold_their_shape() {
     let pts = [(0.0, 90.0), (10.0, 0.0), (20.0, 96.0), (30.0, 10.0)];
-    let segs = smooth(&pts);
+    let segs = smooth(&pts, PLOT_H);
     assert_eq!(segs.len(), 3);
     for (seg, p) in segs.iter().zip(pts.iter().skip(1)) {
         assert_eq!(seg[2], *p, "each segment ends on its point");
@@ -365,13 +366,13 @@ fn curves_bands_and_stripes_hold_their_shape() {
             assert!((0.0..=PLOT_H).contains(&c.1), "held: {c:?}");
         }
     }
-    assert!(smooth(&pts[..1]).is_empty());
-    let s = stripes(100.0, 160.0);
+    assert!(smooth(&pts[..1], PLOT_H).is_empty());
+    let s = stripes(100.0, 160.0, PLOT_H);
     assert!(!s.is_empty());
     for (a, b) in &s {
         assert!(a.0 >= 100.0 - 0.01 && b.0 <= 160.0 + 0.01, "{a:?} {b:?}");
     }
-    assert!(stripes(100.0, 100.0).is_empty());
+    assert!(stripes(100.0, 100.0, PLOT_H).is_empty());
 
     let mut o = owned((0, 3_000), Vec::new());
     o.curves = vec![
@@ -421,6 +422,7 @@ fn the_samples_point_where_they_say() {
             lanes: &s.lanes,
             total: s.total,
             word: s.word,
+            plot_h: PLOT_H,
         };
         let hover = s
             .pointer

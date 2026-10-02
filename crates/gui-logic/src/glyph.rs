@@ -81,11 +81,15 @@ pub enum Glyph {
     Graph,
     // The pull rail's kill and timed mark (a wipe's is `Close`).
     Check,
+    // The inspector's width: widened over the stage, and back beside the
+    // meter.
+    Expand,
+    Collapse,
 }
 
 impl Glyph {
     /// Every glyph, for the tests that draw them all.
-    pub const ALL: [Glyph; 22] = [
+    pub const ALL: [Glyph; 24] = [
         Glyph::Sword,
         Glyph::Cross,
         Glyph::Shield,
@@ -108,6 +112,8 @@ impl Glyph {
         Glyph::Book,
         Glyph::Graph,
         Glyph::Check,
+        Glyph::Expand,
+        Glyph::Collapse,
     ];
 
     /// The glyph a view's tab wears — the prototype's `VIEWS` table.
@@ -271,6 +277,22 @@ impl Glyph {
             ],
             // m3.5 8.4 2.9 2.9 6.1-6.6
             Glyph::Check => vec![poly(&[(3.5, 8.4), (6.4, 11.3), (12.5, 4.7)], false)],
+            // M9.5 3.5h3v3 M12.5 3.5 8.8 7.2 M6.5 12.5h-3v-3 M3.5 12.5l3.7-3.7:
+            // two corners pointing out, the chevrons' stroke
+            Glyph::Expand => vec![
+                poly(&[(9.5, 3.5), (12.5, 3.5), (12.5, 6.5)], false),
+                line((12.5, 3.5), (8.8, 7.2)),
+                poly(&[(6.5, 12.5), (3.5, 12.5), (3.5, 9.5)], false),
+                line((3.5, 12.5), (7.2, 8.8)),
+            ],
+            // M9.2 3.6v3.2h3.2 M9.2 6.8l3.6-3.6 M6.8 12.4V9.2H3.6 M6.8 9.2
+            // 3.2 12.8: the same corners pointing in
+            Glyph::Collapse => vec![
+                poly(&[(9.2, 3.6), (9.2, 6.8), (12.4, 6.8)], false),
+                line((9.2, 6.8), (12.8, 3.2)),
+                poly(&[(6.8, 12.4), (6.8, 9.2), (3.6, 9.2)], false),
+                line((6.8, 9.2), (3.2, 12.8)),
+            ],
             // circle r2.2 and eight spokes
             Glyph::Gear => vec![
                 circle(8.0, 8.0, 2.2),
