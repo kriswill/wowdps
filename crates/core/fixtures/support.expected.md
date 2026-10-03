@@ -78,26 +78,28 @@ Line numbers below are `support.txt`'s (1-based).
 
 | player | damage | overkill | pet dmg | DPS | pct |
 |---|---:|---:|---:|---:|---:|
-| M Ignatia | **291 000** | 0 | 9 000 | 4850.00 | 48.30 |
-| W Brakkar | **242 000** | 2 500 | 0 | 4033.33 | 40.17 |
-| E Vessyra | **69 500** | 0 | 0 | 1158.33 | 11.54 |
+| M Ignatia | **291 000** | 0 | 9 000 | 4850.00 | 48.50 |
+| W Brakkar | **239 500** | 2 500 | 0 | 3991.67 | 39.92 |
+| E Vessyra | **69 500** | 0 | 0 | 1158.33 | 11.58 |
 | H Seraphíne | 0 | 0 | 0 | 0.00 | 0.00 |
 
-Segment total damage **602 500**.
+Segment total damage **600 000** (R1 since 2026-10-02: W's two killing blows'
+2 500 overkill is out of the amount and stays in `overkill`; it was 602 500).
 
 - **M 291 000** = 40 000 + 42 000 + 44 000 Fireball on the boss (l.14, 26, 33)
   + **20 000 Fireball the boss's shield took whole** (l.37, a `SPELL_MISSED`
   ABSORB — R1 counts it as a hit, amount 0 + absorbed 20 000) + 6 000 Ignite (l.24) + 30 000 Fireball on the add (l.55) + 100 000 Pyroblast
   (l.61) + pet 9 000 Waterbolt (l.22).
-- **W 242 000** = 12 000 + 13 000 swings (l.17, 30; their `_LANDED` twins l.18,
-  31 are the same swings) + 35 000 Mortal Strike (l.20) + 52 000 Mortal Strike on
-  the add (l.56, killing blow, overkill 2 000) + 130 000 Execute (l.62, the boss's
-  killing blow, overkill 500). Overkill 2 500.
+- **W 239 500** = 12 000 + 13 000 swings (l.17, 30; their `_LANDED` twins l.18,
+  31 are the same swings) + 35 000 Mortal Strike (l.20) + 50 000 Mortal Strike on
+  the add (l.56, the killing blow's 52 000 less its overkill 2 000) + 129 500
+  Execute (l.62, the boss's killing blow's 130 000 less its overkill 500).
+  Overkill 2 500, reported apart.
 - **E 69 500** = 30 000 + 32 000 Eruption (l.16, 60) + **7 500 Bombardments
   (l.28)** — the plain `SPELL_DAMAGE` half of the twice-logged proc. R1 counts
   it here, once; see the self-support case below.
 - **Every `*_SUPPORT` line contributes 0 to `damage`** (R1: `Other` for the
-  Damage view). If M reads 292 850, W 256 750 or E 77 000, the support shares
+  Damage view). If M reads 292 850, W 254 250 or E 77 000, the support shares
   are being added to damage — R1 has not moved.
 - Interrupts, CC, dispels, deaths: 0 for everyone (the add's and the boss's
   `UNIT_DIED`, l.57 / l.65, are not player deaths).
@@ -124,7 +126,7 @@ Segment total damage **602 500**.
 |---|---:|---:|---:|
 | E Vessyra | **24 100** | **7 500** | 69 500 − 7 500 + 24 100 = **86 100** |
 | M Ignatia | 0 | **1 850** | 291 000 − 1 850 = **289 150** |
-| W Brakkar | 0 | **14 750** | 242 000 − 14 750 = **227 250** |
+| W Brakkar | 0 | **14 750** | 239 500 − 14 750 = **224 750** |
 | H Seraphíne | 0 | 0 | **0** |
 
 - **E given 24 100** = 400 + 120 + 2 800 + 90 + 300 + 420 + 7 500 + 130 + 440
@@ -248,8 +250,8 @@ Segment total damage **602 500**.
 **1. Σ effective = Σ damage** (R19: a true partition of the raid's damage):
 
 ```
-effective:  E 86 100 + M 289 150 + W 227 250 + H 0 = 602 500
-damage:     E 69 500 + M 291 000 + W 242 000 + H 0 = 602 500   ✓
+effective:  E 86 100 + M 289 150 + W 224 750 + H 0 = 600 000
+damage:     E 69 500 + M 291 000 + W 239 500 + H 0 = 600 000   ✓
 ```
 
 **2. Σ given = Σ received**, damage and healing separately (a share whose `src`

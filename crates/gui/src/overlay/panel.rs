@@ -22,7 +22,7 @@ use wowdps_gui_logic::labels::{self, Tone};
 
 use wowdps_gui_logic::table::enemy_split;
 use wowdps_gui_logic::timeline;
-use wowdps_model::fmt::{duration, view_name};
+use wowdps_model::fmt::{duration, human, view_name};
 use wowdps_model::{Action, Screen, SegmentId, View};
 use wowdps_proto::{ClientMsg, ClientState};
 
@@ -752,6 +752,25 @@ impl Overlay {
         } else {
             labels::header_tag(state)
         };
+        // v40: a keystone run's rows rate over combat time, as the game's own
+        // meter does; the group's RUN rate — the fold over the key timer
+        // beside it — is the secondary figure, here.
+        let run = state
+            .run_clock()
+            .filter(|_| state.view.is_rate())
+            .map(|key_ms| {
+                let total: u64 = state
+                    .rows()
+                    .iter()
+                    .filter(|r| !r.enemy)
+                    .map(|r| r.amount)
+                    .sum();
+                format!(
+                    "run {} {}",
+                    human(wowdps_model::rate(total, key_ms).round() as u64),
+                    labels::rate_label(state.view)
+                )
+            });
         div()
             .flex()
             .items_center()
@@ -763,6 +782,7 @@ impl Overlay {
             .child(ov.words(name, 11., color))
             .child(ov.words(tag, 9., tone_color(ov, tone)))
             .child(div().flex_1())
+            .when_some(run, |d, run| d.child(ov.nums(run, 10., dim)))
             .child(ov.nums(duration(state.duration_ms()), 11., dim))
     }
 

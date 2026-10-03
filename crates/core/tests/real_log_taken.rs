@@ -124,6 +124,9 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
             // a `Creature-` unit (Niuzao) is "itself" for the fold but was
             // never in Taken's universe, so it is in neither side.
             let selfed: u64 = guids.iter().map(|g| seg.self_harm_on_friendly(g)).sum();
+            // R22 amendment: friendly fire (Spirit Link Totem) likewise, and
+            // all of it reached a friendly.
+            let ff: u64 = guids.iter().map(|g| seg.friendly_fire(g)).sum();
             let rows = seg.rows(View::Taken);
             let taken: u64 = rows.iter().map(|r| r.amount).sum();
             let ticked: u64 = rows
@@ -142,9 +145,9 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
                 .map(|r| r.amount)
                 .sum();
             assert_eq!(
-                dealt + selfed,
+                dealt + selfed + ff,
                 taken + ticked + orphaned,
-                "{}: dealt to friendlies (+self {selfed}) vs taken (+ticked {ticked}, \
+                "{}: dealt to friendlies (+self {selfed}, +friendly fire {ff}) vs taken (+ticked {ticked}, \
                  +unowned pets {orphaned})",
                 seg.name
             );

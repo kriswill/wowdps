@@ -2592,7 +2592,7 @@ impl<B: Backend> Store<B> {
                 let mut externals_given = 0u32;
                 for (c, p) in s.pulls.iter().filter(|(_, p)| p.role() == role) {
                     let m = match role {
-                        Some(Role::Dps) => p.effective_dps(c.duration_ms),
+                        Some(Role::Dps) => p.effective_dps(c.rate_ms()),
                         Some(Role::Healer) => p.hps,
                         Some(Role::Tank) => p.mitigated_pct(),
                         None => 0.0,
@@ -2701,7 +2701,7 @@ impl<B: Backend> Store<B> {
                     // v23 (R19): the numerator is `effective` and the
                     // rate is it over the card's own duration — `dps` bit
                     // for bit on a fight without support.
-                    TrendMeasure::EffectiveDps => (p.effective(), p.effective_dps(c.duration_ms)),
+                    TrendMeasure::EffectiveDps => (p.effective(), p.effective_dps(c.rate_ms())),
                     // v25 (R18, step 4b): the numerator is the AM union in ms
                     // and the value its percentage of the card's duration.
                     TrendMeasure::AmUptime => (p.am_uptime_ms, p.am_uptime_pct(c.duration_ms)),
@@ -3439,6 +3439,8 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         tz_min: tz,
         start_utc_ms,
         duration_ms: seg.duration_ms(now),
+        // v40: the clock the rows' rates below were divided by.
+        combat_ms: Some(seg.combat_ms(now)),
         official_ms: fight.visit.as_ref().and_then(|v| v.official_ms),
         pars_ms: fight.visit.as_ref().and_then(|v| v.pars_ms),
         success: if aborted { None } else { seg.success },

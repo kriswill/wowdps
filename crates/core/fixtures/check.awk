@@ -4,7 +4,8 @@
 #
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
 # stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6,
-# R17, R18, R19 (+ the R2 amendment), R20, R21 and R26 semantics, written from the log grammar.
+# R7 (+ its 2026-10-02 combat clock), R17, R18, R19 (+ the R2 amendment), R20, R21,
+# R22 (+ friendly fire) and R26 semantics, written from the log grammar.
 # It never calls, links, or consults the Rust implementation — that is the whole
 # point: the Rust is graded against this, not the other way round. R18 (aura
 # spans with caster and target) runs over a hard-coded copy of the FIXTURES'
@@ -278,6 +279,54 @@ function passive_stale() {
     return 0
 }
 
+# ---- R7 amendment (2026-10-02), the COMBAT clock rates run on. An ENGAGEMENT
+# line is a DAMAGE line between a unit the group controls — flags friendly
+# (0x10) AND player-controlled (0x100) — and an enemy, flags hostile (0x40) or
+# neutral (0x20), either way round. Never a passive *_MISSED line (a dodge, a
+# hit a shield took whole): those may not extend a segment, and the clock only
+# sums stretches inside first..last, so a trash clock never outruns its R7
+# duration. Per segment, the stretches between consecutive engagement lines are
+# summed, a stretch longer than ENGAGE_QUIET left out (the walk to the next
+# pack); heals and HoT ticks keep a segment OPEN (R4) but never run this clock.
+# In END: an encounter's clock is its R7 duration, a trash segment's this sum
+# (its R7 duration when it saw no engagement line at all), and `dps` divides by
+# it.
+function engaged(sf, df,   s, d) {
+    s = strtonum(sf); d = strtonum(df)
+    return (and(s, 0x110) == 0x110 && and(d, 0x60) != 0) || (and(s, 0x60) != 0 && and(d, 0x110) == 0x110)
+}
+function engage(   g) {
+    if (!cur) return
+    if (cur in engLast) {
+        g = now - engLast[cur]
+        if (g <= 0) return
+        if (g <= ENGAGE_QUIET) engMs[cur] += g
+    }
+    engLast[cur] = now
+}
+
+# ---- R22 amendment (2026-10-02), FRIENDLY FIRE: a hit on a friendly GUID
+# (`Player-` / `Pet-`) that is not the attacker itself, from a unit on the
+# victim's own side — both flags player-controlled (0x100) and sharing a
+# reaction bit, friendly (0x10) or hostile (0x40) — or from a unit a PLAYER
+# SUMMONED (SPELL_SUMMON only, followed up the chain) whose own flags, as last
+# seen (`uflags`), share that reaction bit with a player-controlled victim: a
+# totem's last lines carry a neutral NPC's 0xa28, and the summoner's side is
+# what tells our Spirit Link Totem from an arena enemy's totem hitting us.
+# Spirit Link Totem's redistribution is the case in the wild. Never `damage`;
+# reported as `friendly_fire`; the victim's `taken` still counts it.
+function summoner(g,   i) {
+    for (i = 0; i < 8 && ((g SUBSEP epoch) in summoned); i++) g = summoned[g SUBSEP epoch]
+    return g
+}
+function friendly_fire(sguid, sflags, dguid, dflags,   s, d, top) {
+    if (!friendlyGuid(dguid) || sguid == dguid) return 0
+    s = strtonum(sflags); d = strtonum(dflags)
+    if (and(s, d, 0x100) && and(s, d, 0x50)) return 1
+    top = summoner(sguid)
+    return and(d, 0x100) && top != sguid && friendlyGuid(top) && (top in uflags) && and(strtonum(uflags[top]), d, 0x50)
+}
+
 # ---- R26 (step 3), the ATTACKER's side of a miss: a *_MISSED line by one of
 # ours (a player by flag, a pet folded) that is not its own target, through the
 # passive gate — Miss % beside the ability's hits. Kept apart from `note`.
@@ -341,6 +390,7 @@ function absorbed_whole(periodic, spell, label, amt,   a, t) {
     }
     a = actor($2, $4); if (a == "") return
     if (a == actor($6, $8)) { note(cur, a, "self_harm", amt); return }
+    if (friendly_fire($2, $4, $6, $8)) { note(cur, a, "friendly_fire", amt); return }   # R22 amendment
     note(cur, a, "damage", amt)
     if ($2 != a) note(cur, a, "petdamage", amt)
     if (periodic) note(cur, a, "damage_periodic", amt)
@@ -412,6 +462,7 @@ BEGIN {
     cc[5246] = 1     # Intimidating Shout (fear)
     cc[117526] = 1   # Binding Shot (root/stun)
     TRASH_GAP = 60000
+    ENGAGE_QUIET = 30000   # R7 amendment: the combat clock's quiet cut
     # R18 role-spell table — the FIXTURES' ids only, hard-coded (aura id =
     # the buff the log applies, never the cast id). The Rust table is
     # crates/core/src/role_spells.rs (generated, curated membership); these
@@ -481,6 +532,10 @@ ev == "COMBAT_LOG_VERSION" {
 
 # ---------------------------------------------------------------- pass 2: totals
 {
+    # R22 amendment: every unit's flags as last seen, for friendly_fire()'s
+    # summoner-side test (the nil unit's are meaningless and never asked).
+    if ($2 ~ /^(Player|Pet|Creature|Vehicle)-/ && $4 ~ /^0x/) uflags[$2] = $4
+    if ($6 ~ /^(Player|Pet|Creature|Vehicle)-/ && $8 ~ /^0x/) uflags[$6] = $8
     isCombat = 0
     if (ev == "SWING_DAMAGE" || ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" ||
         ev == "RANGE_DAMAGE" || ev == "ENVIRONMENTAL_DAMAGE" || ev == "SPELL_HEAL" ||
@@ -519,16 +574,26 @@ isCombat {
     segLast[cur] = now
 }
 
-# ---- R1 damage: amount = base_amount + absorbed-field; extra = overkill clamped >=0
+# R22 amendment: "one of ours SUMMONED" is known from the SPELL_SUMMON on, never
+# before it (pass 1's `owner` map is the whole file's, for R5's pets-act-early).
+ev == "SPELL_SUMMON" { summoned[$6 SUBSEP epoch] = $2 }
+
+# ---- R1 damage: amount = base_amount + absorbed-field - overkill (2026-10-02:
+# the log's amount includes the part past the victim's last health point, and
+# the game's own meter counts none of it); extra = overkill clamped >=0, still
+# reported. Every ledger the hit reaches takes the same amount — `taken`, the
+# R21 cells, a stagger tick's `stagger_ticked`, `self_harm`, `friendly_fire`.
 # SWING_DAMAGE only (LANDED is the same swing); *_SUPPORT and DAMAGE_SPLIT excluded.
 # R17: the same event is recorded a second time on its DESTINATION (`taken`).
 ev == "SWING_DAMAGE" {
-    taken($6, $8, $29 + 0, $35 + 0, $34 + 0)   # R17: off28 base, off34 absorbed, off33 blocked
-    stack_hit($6, $8, 0, "Melee", $29 + $35)  # R21
-    a = actor($2, $4); if (a == "") next
-    amt = $29 + $35                    # off28 base_amount + off34 absorbed
     ok  = ($31 + 0 > 0) ? $31 + 0 : 0  # off30 overkill
+    if (engaged($4, $8) && !friendly_fire($2, $4, $6, $8)) engage()   # R7 amendment (friendly fire never engages)
+    taken($6, $8, $29 - ok, $35 + 0, $34 + 0)   # R17: off28 base, off34 absorbed, off33 blocked
+    stack_hit($6, $8, 0, "Melee", $29 + $35 - ok)  # R21
+    a = actor($2, $4); if (a == "") next
+    amt = $29 + $35 - ok               # off28 base_amount + off34 absorbed - overkill
     if (a == actor($6, $8)) { note(cur, a, "self_harm", amt) }   # R22
+    else if (friendly_fire($2, $4, $6, $8)) { note(cur, a, "friendly_fire", amt) }   # R22 amendment
     else {
         note(cur, a, "damage", amt); note(cur, a, "overkill", ok)
         if ($2 != a) note(cur, a, "petdamage", amt)
@@ -539,16 +604,18 @@ ev == "SWING_DAMAGE" {
 
 ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
     if (NF != 42) next                 # truncated/malformed
+    ok  = ($34 + 0 > 0) ? $34 + 0 : 0  # off33 overkill
+    if (engaged($4, $8) && !friendly_fire($2, $4, $6, $8)) engage()   # R7 amendment (friendly fire never engages)
     # R17: a self-sourced Stagger tick (124255, src == dst) re-deals damage the
     # staggered hit already had Taken in full: excluded from `taken`, tallied as
     # `stagger_ticked`. R22: it is also NOT damage done — a self-sourced tick
     # is self-harm, tallied below as `self_harm` instead of `damage`.
-    if ($10 + 0 == 124255 && $2 == $6) { if (friendlyGuid($6)) { t = actor($6, $8); note(cur, t, "stagger_ticked", $32 + 0) } }
-    else { taken($6, $8, $32 + 0, $38 + 0, $37 + 0); stack_hit($6, $8, $10 + 0, strip($11), $32 + $38) }   # off31 base, off37 absorbed, off36 blocked; R21
+    if ($10 + 0 == 124255 && $2 == $6) { if (friendlyGuid($6)) { t = actor($6, $8); note(cur, t, "stagger_ticked", $32 - ok) } }
+    else { taken($6, $8, $32 - ok, $38 + 0, $37 + 0); stack_hit($6, $8, $10 + 0, strip($11), $32 + $38 - ok) }   # off31 base, off37 absorbed, off36 blocked; R21
     a = actor($2, $4); if (a == "") next
-    amt = $32 + $38                    # off31 base_amount + off37 absorbed
-    ok  = ($34 + 0 > 0) ? $34 + 0 : 0  # off33 overkill
+    amt = $32 + $38 - ok               # off31 base_amount + off37 absorbed - overkill
     if (a == actor($6, $8)) { note(cur, a, "self_harm", amt) }   # R22
+    else if (friendly_fire($2, $4, $6, $8)) { note(cur, a, "friendly_fire", amt) }   # R22 amendment
     else {
         note(cur, a, "damage", amt); note(cur, a, "overkill", ok)
         if ($2 != a) note(cur, a, "petdamage", amt)
@@ -563,8 +630,9 @@ ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
 # deals nothing; the destination takes it.
 ev == "ENVIRONMENTAL_DAMAGE" {
     if (NF != 39) next
-    taken($6, $8, $30 + 0, $36 + 0, $35 + 0)
-    stack_hit($6, $8, 0, strip($29), $30 + $36)   # R21: the envType is the label
+    ok = ($32 + 0 > 0) ? $32 + 0 : 0   # off31 overkill (R1: out of every amount)
+    taken($6, $8, $30 - ok, $36 + 0, $35 + 0)
+    stack_hit($6, $8, 0, strip($29), $30 + $36 - ok)   # R21: the envType is the label
     next
 }
 
@@ -764,6 +832,8 @@ END {
         dur = (segKind[s] == "Encounter" && segEnd[s] != "") \
               ? segEnd[s] - segStart[s] \
               : (segLast[s] - segFirst[s])
+        # R7 amendment: the combat clock `dps` runs on (see engage())
+        comb = (segKind[s] == "Trash" && (s in engLast)) ? engMs[s] + 0 : dur
         # total damage for pct
         tot = 0
         for (k in seen) {
@@ -789,7 +859,8 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdamage\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, d
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\toverkill\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "overkill"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpetdamage\t%d\n",    s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "petdamage"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdps\t%.2f\n",        s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, (dur > 0 ? d / (dur / 1000.0) : 0)
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdps\t%.2f\n",        s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, (comb > 0 ? d / (comb / 1000.0) : 0)
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcombat_ms\t%d\n",    s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, comb
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpct\t%.2f\n",        s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, (tot > 0 ? 100.0 * d / tot : 0)
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\theal\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "heal"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\toverheal\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "overheal"] + 0
@@ -809,6 +880,9 @@ END {
             # R22: what this actor (its pets folded in) dealt to ITSELF — held
             # off `damage`, so `damage` is what reached everyone else.
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tself_harm\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "self_harm"] + 0
+            # R22 amendment: what it dealt to a teammate — held off `damage`,
+            # still in the victim's `taken`.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tfriendly_fire\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "friendly_fire"] + 0
             # R19 support + the R2 amendment — fixed shape, always emitted after
             # the R17 metrics (zeros included). `effective` is DERIVED:
             # damage - support_received + support_given (never stored by the

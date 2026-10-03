@@ -11,8 +11,8 @@ use std::time::Duration;
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, Div, MouseButton, TestSupportExt as _, div, relative};
 use wowdps_gui_logic::fight_head::{
-    GONE, NEWER_TIP, OLDER_TIP, RAIL_TIP, READING, Seen, Stats, Verdict, WAITING, You, meta,
-    outcome, pairs, pending, you,
+    GONE, NEWER_TIP, OLDER_TIP, RAIL_TIP, READING, RunClocks, Seen, Stats, Verdict, WAITING, You,
+    meta, outcome, pairs, pending, you,
 };
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::home::wipe_pct;
@@ -149,7 +149,7 @@ fn stats_of(gui: &Gui, cx: &App) -> Stats {
         you
     });
     Stats {
-        pairs: pairs(app.view, &rows, raid),
+        pairs: pairs(app.view, &rows, raid, RunClocks::of(app)),
         you,
     }
 }

@@ -138,6 +138,8 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             // R22: damage this player (pets folded) dealt to themselves —
             // held off their Damage row, reported here.
             put("self_harm", seg.self_harm(key));
+            // R22 amendment: what they dealt to a teammate, likewise held off.
+            put("friendly_fire", seg.friendly_fire(key));
             put("effective", seg.effective(key));
             // R18: the span measures — the AM union, externals both ways,
             // the supporter's total over its targets, the plain span count
@@ -145,6 +147,8 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             let mut put_i = |metric: &str, v: i64| {
                 out.insert((i, key.clone(), metric.to_string()), v as f64);
             };
+            // R7 amendment: the segment's combat clock, the `dps` divisor.
+            put_i("combat_ms", seg.combat_ms(last_ms));
             put_i("am_uptime_ms", seg.am_uptime_ms(key));
             let (given, given_ms) = seg.externals_given(key);
             put_i("externals_given", i64::from(given));

@@ -66,16 +66,18 @@ P1 = 9 800 swing + 26 500 Mortal Strike. P3 = 22 000 Aimed Shot + 4 300 pet swin
 
 | player | damage | overkill | pet dmg | DPS | pct |
 |---|---:|---:|---:|---:|---:|
-| P1 Thraxx | **185 370** | 5 200 | 0 | 3089.50 | 50.83 |
-| P3 Kael'thar | **167 200** | 0 | 30 450 | 2786.67 | 45.85 |
-| P2 Mírelle | **12 100** | 0 | 0 | 201.67 | 3.32 |
+| P1 Thraxx | **180 170** | 5 200 | 0 | 3002.83 | 50.12 |
+| P3 Kael'thar | **167 200** | 0 | 30 450 | 2786.67 | 46.51 |
+| P2 Mírelle | **12 100** | 0 | 0 | 201.67 | 3.37 |
 
-Segment total damage **364 670**.
+Segment total damage **359 470** (R1 since 2026-10-02: the killing blow's
+5 200 overkill is out of the amount and stays in `overkill`; it was 364 670).
 
 Derivations:
-- **P1 185 370** = 12 500 + 11 800 + 13 020 + 6 600 (swings; the 6 600 is the off-hand
+- **P1 180 170** = 12 500 + 11 800 + 13 020 + 6 600 (swings; the 6 600 is the off-hand
   swing carrying the optional 39th field) + 34 200 Mortal Strike + 51 000 Execute
-  + 47 800 Execute (killing blow, overkill 5 200) + 4 100 + 4 350 Deep Wounds.
+  + 42 600 Execute (the killing blow's 47 800 less its overkill 5 200) + 4 100 +
+  4 350 Deep Wounds.
 - **P3 167 200** = own 136 750 (28 700 + 30 100 + 29 400 Aimed Shot, 41 200
   `"Kill Shot, Empowered"`, 3 600 + 3 750 Serpent Sting) + pet 30 450 (5 200 + 5 450 +
   5 600 swings, 7 300 Bite, 6 900 Claw).
@@ -223,6 +225,18 @@ validate here, and I am flagging them rather than implying coverage:
    `check.awk` disagreed (the meter measured segment-open→close). The meter now
    implements R7 and `fixture_totals.rs` GATES trash duration and trash DPS.
 
+## Addendum — game-meter parity (2026-10-02: R1 overkill, the R7 combat clock, R22 friendly fire)
+
+Reconciled against the game's own meter (CONTRACT R1, R7, R22): a damage
+amount is `base + absorbed − overkill` everywhere (P1's Execute above, so
+segment 2's total and every pct moved), `dps` divides by the segment's COMBAT
+clock, and friendly fire is held off `damage`. `check.awk` emits two more
+metrics per (segment, player) row: **`combat_ms`** right after `dps` (an
+encounter's duration; a trash segment's engagement clock — here every trash
+segment's equals its `dur_ms`, no stretch in this log runs quiet past 30 s)
+and **`friendly_fire`** right after `self_harm` (0 throughout this log).
+`taken.txt`'s third segment is the fixture built for both.
+
 ## Addendum — R17 damage taken (destination side)
 
 `check.awk` now also emits seven destination-side metrics per (segment, player)
@@ -272,7 +286,7 @@ In this log:
   Given lands on a player with no rows of its own; the meter keys support by
   raw guid and names the supporter at read time (unnamed here). P3's
   `effective` = 167 200 − 29 400 = **137 800**; Σ effective over the segment =
-  185 370 + 137 800 + 12 100 + 29 400 = 364 670 = Σ damage. (This pair is a
+  180 170 + 137 800 + 12 100 + 29 400 = 359 470 = Σ damage. (This pair is a
   synthetic oddity — the share equals the whole hit, which real Ebon Might
   never does — but it is read exactly as logged.) R1 is unchanged: the twin
   still adds nothing to anyone's `damage`.

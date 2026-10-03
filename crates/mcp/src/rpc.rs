@@ -45,8 +45,10 @@ const UNSUPPORTED_PROTOCOL_VERSION: i32 = -32022;
 
 const INSTRUCTIONS: &str = "Live and historical World of Warcraft combat metering. Start with \
      list_fights (or status for liveness), then fight/breakdown/compare \
-     for per-player analysis. Amounts are raw totals; per_sec is the \
-     rate over the fight's duration.";
+     for per-player analysis. Amounts are raw totals with overkill left \
+     out, as the game's own meter counts them; per_sec is the rate over the \
+     fight's COMBAT time (combat_ms), and a keystone run's rows add \
+     run_per_sec, the rate over the key timer.";
 
 pub fn serve<R: BufRead, W: Write>(
     input: R,

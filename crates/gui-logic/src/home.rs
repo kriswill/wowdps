@@ -323,12 +323,12 @@ pub fn measure_of(p: &CardPlayer, duration_ms: i64) -> (&'static str, f64) {
 pub fn standing(card: &FightCard, guid: &str) -> Option<Standing> {
     let me = card.players.iter().find(|p| p.guid == guid && !p.enemy)?;
     let role = me.role();
-    let (_, mine) = measure_of(me, card.duration_ms);
+    let (_, mine) = measure_of(me, card.rate_ms());
     let peers: Vec<f64> = card
         .players
         .iter()
         .filter(|p| !p.enemy && (role.is_none() || p.role() == role))
-        .map(|p| measure_of(p, card.duration_ms).1)
+        .map(|p| measure_of(p, card.rate_ms()).1)
         .collect();
     Some(Standing {
         place: peers.iter().filter(|v| **v > mine).count() + 1,
@@ -764,7 +764,7 @@ fn night_panel(mine: &[(&FightCard, &CardPlayer)], known: &Known) -> Option<Nigh
     Some(NightPanel {
         day,
         place,
-        measure: measure_of(me, newest.duration_ms).0,
+        measure: measure_of(me, newest.rate_ms()).0,
         who,
         pulls: pulls.into_iter().map(|(_, p)| p).collect(),
     })
@@ -886,7 +886,7 @@ fn trend_points(mine: &[(&FightCard, &CardPlayer)]) -> Vec<TrendPoint> {
             fight_id: c.id.clone(),
             who: Char::of(p),
             day: rail::night_of(c.start_local_ms),
-            value: p.effective_dps(c.duration_ms),
+            value: p.effective_dps(c.rate_ms()),
             best: false,
         })
         .filter(|t| t.value > 0.0)

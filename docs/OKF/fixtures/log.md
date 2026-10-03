@@ -1,5 +1,12 @@
 # Log
 
+## 2026-10-02
+
+- **Update** — [taken.txt](taken.md): a third segment — a boar pull with a 40 s
+  quiet walk (the R7 combat clock) and a Spirit Link Totem hitting two
+  teammates, one line flagged `0xa28` (R22 friendly fire); segment 1's killing
+  blow counts 25 000 less (R1 overkill).
+
 ## 2026-09-30
 
 - **Update** — [taken.txt](taken.md): the boss's two whole-absorbed hits are

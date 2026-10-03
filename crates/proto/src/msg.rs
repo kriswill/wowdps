@@ -15,7 +15,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 39;
+pub const PROTO_VERSION: u16 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -957,6 +957,8 @@ fn put_info(buf: &mut Vec<u8>, i: &SegmentInfo) {
     wire::put_bool(buf, i.arena);
     // v20: encounter identity (id, difficulty, group size).
     wire::put_opt(buf, i.encounter.as_ref(), put_encounter);
+    // v40: the combat clock the rows' `per_sec` ran on.
+    wire::put_i64(buf, i.combat_ms);
 }
 
 fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
@@ -971,6 +973,7 @@ fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
         pars_ms: rd.opt(get_pars)?,
         arena: rd.bool()?,
         encounter: rd.opt(get_encounter)?,
+        combat_ms: rd.i64()?,
     })
 }
 
@@ -1748,6 +1751,8 @@ fn put_card(buf: &mut Vec<u8>, c: &FightCard) {
     wire::put_opt(buf, c.tz_min.as_ref(), |b, m| wire::put_u16(b, *m as u16));
     wire::put_i64(buf, c.start_utc_ms);
     wire::put_i64(buf, c.duration_ms);
+    // v40: the combat clock rates run on (`None` on a card written before it).
+    put_opt_i64(buf, c.combat_ms);
     put_opt_i64(buf, c.official_ms);
     wire::put_opt(buf, c.pars_ms.as_ref(), put_pars);
     wire::put_opt(buf, c.success.as_ref(), |b, v| wire::put_bool(b, *v));
@@ -1795,6 +1800,7 @@ fn get_card(rd: &mut Reader) -> Result<FightCard> {
         tz_min: rd.opt(|r| Ok(r.u16()? as i16))?,
         start_utc_ms: rd.i64()?,
         duration_ms: rd.i64()?,
+        combat_ms: rd.opt(|r| r.i64())?,
         official_ms: rd.opt(|r| r.i64())?,
         pars_ms: rd.opt(get_pars)?,
         success: rd.opt(|r| r.bool())?,

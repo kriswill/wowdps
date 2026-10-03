@@ -1,5 +1,18 @@
 # Log
 
+## 2026-10-02
+
+- **Update** — [R1 Damage](r1.md): the amount leaves the overkill out on every ledger;
+  `extra` still reports it ([decision](../decisions/match-the-game-meter.md)).
+- **Update** — [R7 Duration](r7.md): every rate runs on the combat clock — an
+  encounter's duration, a trash segment's engagement clock (30 s quiet cut).
+- **Update** — [R10 Visits & Overall](r10.md): every Σ rates over Σ members' combat
+  clocks, a key's too; its run rate is a reader's sum.
+- **Update** — [R17 Damage taken & mitigation](r17.md): the identity carries
+  `friendly_fire`; Taken's amount is R1's, overkill out.
+- **Update** — [R22 Self-harm](r22.md): friendly fire (Spirit Link Totem) is held
+  off the Damage row beside self-harm.
+
 ## 2026-10-01
 
 - **Update** — [R12 Timelines & markers](r12.md): link the v38 decision whose drill

@@ -54,14 +54,14 @@ impl Measure {
         }
     }
 
-    /// The player's value of this measure on a card of `duration_ms` — the
-    /// effective measure derives its rate from it the way `finish_rows`
-    /// derived `dps`.
-    fn of(self, p: &CardPlayer, duration_ms: i64) -> f64 {
+    /// The player's value of this measure on a card whose rate clock is
+    /// `rate_ms` (`FightCard::rate_ms`) — the effective measure derives
+    /// its rate from it the way `finish_rows` derived `dps`.
+    fn of(self, p: &CardPlayer, rate_ms: i64) -> f64 {
         match self {
             Measure::Dps => p.dps,
             Measure::Hps => p.hps,
-            Measure::Effective => p.effective_dps(duration_ms),
+            Measure::Effective => p.effective_dps(rate_ms),
         }
     }
 }
@@ -142,7 +142,7 @@ fn pool(card: &FightCard, me: &CardPlayer, measure: Measure) -> Grade {
         .players
         .iter()
         .filter(|p| !p.enemy && p.role() == Some(measure.role()))
-        .map(|p| measure.of(p, card.duration_ms))
+        .map(|p| measure.of(p, card.rate_ms()))
         .collect();
     all.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     let top = all.first().copied().unwrap_or(0.0);
@@ -160,7 +160,7 @@ fn pool(card: &FightCard, me: &CardPlayer, measure: Measure) -> Grade {
         })
         .map(|(_, &d)| d)
         .collect();
-    let mine = measure.of(me, card.duration_ms);
+    let mine = measure.of(me, card.rate_ms());
     // An enemy (R13 arena side) is never ranked among the friendly pool and
     // has no share of the friendly total, whatever their spec.
     let counted = !me.enemy && me.role() == Some(measure.role()) && kept.contains(&mine);
@@ -173,7 +173,7 @@ fn pool(card: &FightCard, me: &CardPlayer, measure: Measure) -> Grade {
         .players
         .iter()
         .filter(|p| !p.enemy)
-        .map(|p| measure.of(p, card.duration_ms))
+        .map(|p| measure.of(p, card.rate_ms()))
         .sum();
     Grade {
         role: me.role(),
@@ -235,6 +235,7 @@ mod tests {
             tz_min: None,
             start_utc_ms: 0,
             duration_ms: 100_000,
+            combat_ms: None,
             official_ms: None,
             pars_ms: None,
             success: Some(true),

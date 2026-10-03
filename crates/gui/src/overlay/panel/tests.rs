@@ -195,9 +195,29 @@ fn tree_drilled<C: AppContext>(cx: &mut C, rig: &Rig) {
     apply(cx, rig, Action::Open);
 }
 
+/// R10: `instance.txt`'s completed key, its Σ watched — the rows rated over
+/// combat time, the chip's secondary figure the group's run rate over the
+/// key timer (v40).
+fn to_the_key<C: AppContext>(cx: &mut C, rig: &Rig) {
+    settle_all(cx, rig);
+    let pos = cx.read_entity(&rig.session, |s, _| {
+        s.state()
+            .entries()
+            .iter()
+            .position(|e| e.row.pars_ms.is_some())
+    });
+    assert!(pos.is_some(), "instance.txt holds a key");
+    let pos = pos.unwrap_or_default();
+    cx.update_entity(&rig.session, |s, cx| s.act(|st| st.goto_list_pos(pos), cx));
+    settle_all(cx, rig);
+}
+
 /// R17: `taken.txt`'s boss on the Taken view, its tank drilled.
 fn taken_drilled<C: AppContext>(cx: &mut C, rig: &Rig) {
     settle_all(cx, rig);
+    // Past the two trash pulls after the visit (the second is R7's combat
+    // clock and R22's friendly fire).
+    apply(cx, rig, Action::OlderSegment);
     apply(cx, rig, Action::OlderSegment);
     apply(cx, rig, Action::SetView(View::Taken));
     apply(cx, rig, Action::Open);
@@ -983,6 +1003,7 @@ fn states() -> Vec<Shot> {
             settle_all(cx, rig);
         }),
         shot("live", live_link, settle_all),
+        shot("key", instance_link, to_the_key),
         shot("arena", arena_link, arena_split),
         shot("drill", kill, drilled),
         shot("drill-hover", kill, |cx, rig| {

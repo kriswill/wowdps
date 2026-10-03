@@ -94,7 +94,11 @@ pub fn catalog() -> Vec<Tool> {
         Tool {
             name: "fight",
             description: "One fight's meter: per-player totals, per-second rates, activity \
-                          share and crit rate for the chosen view. The place to start for \
+                          share and crit rate for the chosen view. Totals leave overkill out \
+                          (as the game's own meter does; a damage row reports it as \
+                          overkill), and per_sec divides by the fight's COMBAT time — \
+                          `combat_ms` on the fight object; a keystone run's rows add \
+                          run_per_sec over the key timer (`duration_ms`). The place to start for \
                           performance questions — view=taken (R17) is the tank side: \
                           damage taken per player, per_sec = DTPS, extra = absorbed. A row \
                           with mine: true is one of the user's own characters (v35: the \
@@ -1658,7 +1662,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 f.rows
                     .iter()
                     .enumerate()
-                    .map(|(i, r)| meter_row(i, r, view, f.card.duration_ms))
+                    .map(|(i, r)| meter_row(i, r, view, run_clock(&f.card)))
                     .collect(),
             ),
         ),
@@ -2156,7 +2160,7 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "absorbed": Json::u64(me.absorbed),
         "support_given": Json::u64(me.support_given),
         "support_received": Json::u64(me.support_received),
-        "effective_dps": Json::num(round1(me.effective_dps(c.duration_ms))),
+        "effective_dps": Json::num(round1(me.effective_dps(c.rate_ms()))),
         "healed_received": Json::u64(me.healed_received),
         "self_healed": Json::u64(me.self_healed),
         "support": Json::Bool(me.spec.is_some_and(Spec::support)),
@@ -2327,6 +2331,10 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
         "start_utc_ms": Json::num(c.start_utc_ms as f64),
         "duration": Json::str(wowdps_model::fmt::duration(c.duration_ms)),
         "duration_ms": Json::num(c.duration_ms as f64),
+        // v40: the clock the stored rates ran on — the duration itself on a
+        // card written before the combat clock existed.
+        "combat": Json::str(wowdps_model::fmt::duration(c.rate_ms())),
+        "combat_ms": Json::num(c.rate_ms() as f64),
         "official_ms": c.official_ms.map_or(Json::Null, |m| Json::num(m as f64)),
         "keystone_pars_ms": c.pars_ms.map_or(Json::Null, |(par, plus2, plus3)| {
             Json::Arr(vec![
@@ -2388,7 +2396,7 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
             "absorbed": Json::u64(p.absorbed),
             "support_given": Json::u64(p.support_given),
             "support_received": Json::u64(p.support_received),
-            "effective_dps": Json::num(round1(p.effective_dps(c.duration_ms))),
+            "effective_dps": Json::num(round1(p.effective_dps(c.rate_ms()))),
             "healed_received": Json::u64(p.healed_received),
             "self_healed": Json::u64(p.self_healed),
             "support": Json::Bool(p.spec.is_some_and(Spec::support)),
@@ -2543,7 +2551,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .rows
         .iter()
         .enumerate()
-        .map(|(i, r)| meter_row(i, r, view, snap.info.duration_ms))
+        .map(|(i, r)| meter_row(i, r, view, snap.info.pars_ms.map(|_| snap.info.duration_ms)))
         .collect();
     let mut out = vec![
         (
@@ -3497,6 +3505,13 @@ fn fight_info(id: Option<SegmentId>, info: &SegmentInfo, log_id: Option<u64>) ->
             "duration_ms".to_string(),
             Json::num(info.duration_ms as f64),
         ),
+        // v40: the combat clock `per_sec` divides by (a key's run time is
+        // `duration`; an encounter's two agree).
+        (
+            "combat".to_string(),
+            Json::str(wowdps_model::fmt::duration(info.combat_ms)),
+        ),
+        ("combat_ms".to_string(), Json::num(info.combat_ms as f64)),
         ("result".to_string(), result_name(info.success, info.arena)),
     ];
     if info.live {
@@ -3539,7 +3554,15 @@ fn player_ident(r: &Row) -> Json {
 /// One meter row. `amount` is damage/healing for those views, an event count
 /// for the rest; `extra` is overkill (damage), overheal (healing) or absorbed
 /// (the two taken views).
-fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
+/// A stored keystone run's key clock (R10's, the card's `duration_ms`) —
+/// what its rows' `run_per_sec` divides by; `None` off keys.
+fn run_clock(c: &FightCard) -> Option<i64> {
+    (c.kind == FightKind::Key).then_some(c.duration_ms)
+}
+
+/// `run_ms`: a keystone run's key clock — the row then adds `run_per_sec`,
+/// its amount over the timer, beside `per_sec` over combat time (v40).
+fn meter_row(rank: usize, r: &Row, view: View, run_ms: Option<i64>) -> Json {
     let mut o = vec![
         ("rank".to_string(), Json::u64(rank as u64 + 1)),
         ("player".to_string(), Json::str(r.label.clone())),
@@ -3562,6 +3585,12 @@ fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
     ];
     if view.is_rate() {
         o.push(("per_sec".to_string(), Json::num(round1(r.per_sec))));
+        if let Some(ms) = run_ms {
+            o.push((
+                "run_per_sec".to_string(),
+                Json::num(round1(wowdps_model::rate(r.amount, ms))),
+            ));
+        }
         o.push(("crit_pct".to_string(), Json::num(round1(r.crit_pct()))));
         o.push((
             match view {
@@ -4282,6 +4311,7 @@ mod tests {
             tz_min: None,
             start_utc_ms: 0,
             duration_ms,
+            combat_ms: None,
             official_ms: None,
             pars_ms: None,
             success: Some(true),
@@ -4962,6 +4992,7 @@ mod tests {
             name: "Key".to_string(),
             start_ms: 0,
             duration_ms: 61_000,
+            combat_ms: 61_000,
             success: Some(true),
             live: true,
             instance: Some(2),
@@ -4991,10 +5022,10 @@ mod tests {
             hp: Some((10, 100)),
             ..Row::default()
         };
-        let healing = meter_row(0, &r, View::Healing, 1000);
+        let healing = meter_row(0, &r, View::Healing, None);
         assert!(keys(&healing).contains(&"overheal"), "{healing:?}");
         assert_eq!(healing.get("crit_pct").and_then(Json::as_f64), Some(25.0));
-        let deaths = meter_row(2, &r, View::Deaths, 1000);
+        let deaths = meter_row(2, &r, View::Deaths, None);
         assert!(!keys(&deaths).contains(&"per_sec"));
         assert_eq!(deaths.get("rank").and_then(Json::as_u64), Some(3));
         assert_eq!(deaths.get("spec").and_then(Json::as_str), Some("Fire"));

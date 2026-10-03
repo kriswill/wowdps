@@ -163,6 +163,7 @@ fn info() -> SegmentInfo {
         name: "Verkath the Hollow".to_string(),
         start_ms: -62_135_596_800_000, // i64 edge-ish: far-past timestamp
         duration_ms: 45_000,
+        combat_ms: 45_000,
         success: Some(false),
         live: true,
         instance: Some(7),
@@ -385,6 +386,7 @@ fn card() -> FightCard {
         tz_min: Some(-240),
         start_utc_ms: 1_722_014_400_123,
         duration_ms: 61_500,
+        combat_ms: Some(58_250),
         official_ms: Some(61_400),
         pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
         success: Some(true),
@@ -1036,7 +1038,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 39, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 40, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1091,6 +1093,7 @@ fn golden_bytes_pin_the_encoding() {
             name: String::new(),
             start_ms: 0,
             duration_ms: 0,
+            combat_ms: 0,
             success: None,
             live: false,
             instance: None,
@@ -1139,7 +1142,9 @@ fn golden_bytes_pin_the_encoding() {
         // mitigation presence byte at the tail of EACH side — 0x0106 to 0x0109.
         // v35: each zeroed Row grew a `00` mine flag and a `00` offset_ms
         // presence byte — two bytes apiece, 0x0109 to 0x010d.
-        "0d010000890100000000000000000001000000000000000000000000000000000000000000000000000000010000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa0000000000000002010000005007000000090000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // v40: SegmentInfo grew a trailing i64 combat_ms — eight `00` bytes
+        // after the encounter's presence byte, 0x010d to 0x0115.
+        "150100008901000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000010000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa0000000000000002010000005007000000090000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 
     // v24 (R18): a role-kind mark with its caster. Placed on side `b` so the
@@ -1156,6 +1161,7 @@ fn golden_bytes_pin_the_encoding() {
             name: String::new(),
             start_ms: 0,
             duration_ms: 0,
+            combat_ms: 0,
             success: None,
             live: false,
             instance: None,
@@ -1228,6 +1234,7 @@ fn golden_bytes_pin_the_encoding() {
             name: "B".to_string(),
             start_ms: 1000,
             duration_ms: 2000,
+            combat_ms: 2000,
             success: Some(true),
             live: true,
             instance: None,
@@ -1792,8 +1799,11 @@ fn golden_bytes_pin_the_encoding() {
         // — `01 01feffffffffffffff` right after the school — and Snapshot a
         // trailing Option<RaidTimeline> `raid`, the final `00`; the frame
         // grew from 0x99 to 0xa4.
-        "a40000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
-         010000000001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000000000\
+        // v40: SegmentInfo gained a trailing i64 `combat_ms` — the
+        // `d007000000000000` (2 000) right after the encounter's presence
+        // byte; the frame grew from 0xa4 to 0xac.
+        "ac0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
+         0100000000 d007000000000000 01000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000000000\
          0049400107400003000000000000000100000000000000010500000000000000060000000000000001f3760000012000\
          0000 01 01feffffffffffffff 01000000 00 02000000 00 00 00"
             .replace(' ', "")
@@ -1846,6 +1856,7 @@ fn golden_bytes_pin_the_encoding() {
             name: String::new(),
             start_ms: 0,
             duration_ms: 0,
+            combat_ms: 0,
             success: None,
             live: false,
             instance: None,
@@ -1943,6 +1954,7 @@ fn golden_bytes_pin_the_encoding() {
             name: String::new(),
             start_ms: 0,
             duration_ms: 0,
+            combat_ms: 0,
             success: None,
             live: false,
             instance: None,
@@ -1979,8 +1991,8 @@ fn golden_bytes_pin_the_encoding() {
     assert_eq!(
         hex(&taken.encode()),
         // len 0xb4 (v33: + the range presence byte, last) | 82 | seq 1 | Live 00 | id None 00 | view 06 | info (27
-        // bytes: Trash 01, "" 00000000, start 0, duration 0, success 00,
-        // live 00, instance 00, pars 00, arena 00, encounter 00) | rows 0 |
+        // bytes, 35 since v40: Trash 01, "" 00000000, start 0, duration 0, success 00,
+        // live 00, instance 00, pars 00, arena 00, encounter 00, combat 0) | rows 0 |
         // total_rows 0 | breakdown 01: by_spell 0, by_target 0, timeline 00,
         // spell_timeline 00, spell_targets 00, mitigation 01 + 6×u64 (1..6)
         // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | v27 (R21):
@@ -1988,8 +2000,8 @@ fn golden_bytes_pin_the_encoding() {
         // (16 zero bytes) | v28 (R9): deaths vec 0, death_index 00,
         // deaths_dropped 0 (9 more) | v36 (R26): the tree's two empty vecs and
         // the two empty series (16 more) | segment_count 0, source 00, status
-        // 00 | v35 (R25): raid 00 — len 0xc5.
-        "c50000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // 00 | v35 (R25): raid 00 — len 0xc5; v40: 0xcd.
+        "cd00000082010000000000000000000601000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 }
 

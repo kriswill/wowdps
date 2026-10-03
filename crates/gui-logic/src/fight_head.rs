@@ -154,7 +154,58 @@ pub fn pending(app: &ClientState) -> bool {
 /// the prototype's `statLine()` has them. The timeline answers for the
 /// whole fight on every view, so the line says the same of it wherever
 /// the reader has been; without one (a card-only stored pull) it says less.
-pub fn pairs(view: View, rows: &[Row], raid: Option<&RaidTimeline>) -> Vec<Pair> {
+///
+/// v40: on a keystone run's Σ (`run`, its two clocks) a rate view also
+/// says the RUN rate — the fold over the key timer, right after the raid
+/// rate, which is over combat time as the game's own meter reckons it —
+/// and, last, how long the group was in combat, so the two rates explain
+/// each other.
+pub fn pairs(
+    view: View,
+    rows: &[Row],
+    raid: Option<&RaidTimeline>,
+    run: Option<RunClocks>,
+) -> Vec<Pair> {
+    let mut line = view_pairs(view, rows, raid);
+    if let Some(run) = run
+        && view.is_rate()
+    {
+        let total: u64 = rows.iter().filter(|r| !r.enemy).map(|r| r.amount).sum();
+        let at = line.len().min(1);
+        line.insert(
+            at,
+            Pair {
+                label: format!("Run {}", rate_label(view)),
+                value: commas(wowdps_model::rate(total, run.key_ms).round() as u64),
+            },
+        );
+        line.push(Pair {
+            label: "In combat".to_string(),
+            value: duration(run.combat_ms),
+        });
+    }
+    line
+}
+
+/// v40: a keystone run's two clocks — the key timer its run rate divides
+/// by, and the combat time every row's rate already did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunClocks {
+    pub key_ms: i64,
+    pub combat_ms: i64,
+}
+
+impl RunClocks {
+    /// The watched segment's, when it is a keystone run.
+    pub fn of(app: &ClientState) -> Option<Self> {
+        app.run_clock().map(|key_ms| Self {
+            key_ms,
+            combat_ms: app.combat_ms(),
+        })
+    }
+}
+
+fn view_pairs(view: View, rows: &[Row], raid: Option<&RaidTimeline>) -> Vec<Pair> {
     let ours: Vec<&Row> = rows.iter().filter(|r| !r.enemy).collect();
     let total: u64 = ours.iter().map(|r| r.amount).sum();
     let extra: u64 = ours.iter().map(|r| r.extra).sum();
@@ -512,4 +563,58 @@ pub fn player_chart(view: View) -> bool {
 pub fn watched(app: &ClientState) -> Option<SegmentId> {
     app.segment_name()?;
     app.entries().get(app.segment_index()).map(|e| e.id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(label: &str, amount: u64, per_sec: f64) -> Row {
+        Row {
+            key: label.to_string(),
+            label: label.to_string(),
+            amount,
+            per_sec,
+            ..Row::default()
+        }
+    }
+
+    fn words(line: Vec<Pair>) -> Vec<String> {
+        line.into_iter()
+            .map(|p| format!("{} {}", p.label, p.value))
+            .collect()
+    }
+
+    /// v40: a keystone run's Σ says both rates — the raid rate over combat
+    /// time first, as the game's own meter reads it, then the run rate over
+    /// the key timer — and how long the group fought; nothing else does,
+    /// and a count view never has a rate to say twice.
+    #[test]
+    fn a_key_says_its_run_rate_and_its_combat_time() {
+        let rows = [row("A", 600_000, 400.0), row("B", 300_000, 200.0)];
+        let run = RunClocks {
+            key_ms: 1_800_000,
+            combat_ms: 1_500_000,
+        };
+        assert_eq!(
+            words(pairs(View::Damage, &rows, None, Some(run))),
+            [
+                "Raid dps 600",
+                "Run dps 500",
+                "Damage 900,000",
+                "In combat 25:00"
+            ]
+        );
+        assert_eq!(
+            words(pairs(View::Damage, &rows, None, None)),
+            ["Raid dps 600", "Damage 900,000"]
+        );
+        let counts = words(pairs(View::Interrupts, &rows, None, Some(run)));
+        assert!(
+            counts
+                .iter()
+                .all(|w| !w.starts_with("Run") && !w.starts_with("In combat")),
+            "{counts:?}"
+        );
+    }
 }

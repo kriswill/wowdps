@@ -185,7 +185,7 @@ fn the_card_carries_the_healing_split_and_the_support_scalars() {
             EVOKER, 69_500u64, 24_100u64, 7_500u64, 86_100u64, 10_000u64, 0u64, 0u64, 0u64,
         ),
         (MAGE, 291_000, 0, 1_850, 289_150, 5_000, 0, 0, 0),
-        (WARRIOR, 242_000, 0, 14_750, 227_250, 50_000, 0, 0, 0),
+        (WARRIOR, 239_500, 0, 14_750, 224_750, 50_000, 0, 0, 0),
         (PRIEST, 0, 0, 0, 0, 13_000, 13_000, 16_000, 15_000),
     ] {
         let p = player(card, guid);
@@ -197,9 +197,9 @@ fn the_card_carries_the_healing_split_and_the_support_scalars() {
         );
         assert_eq!(p.effective(), effective, "{guid} effective");
         assert!(
-            close(p.effective_dps(card.duration_ms), effective as f64 / 60.0),
+            close(p.effective_dps(card.rate_ms()), effective as f64 / 60.0),
             "{guid} effective_dps {}",
-            p.effective_dps(card.duration_ms)
+            p.effective_dps(card.rate_ms())
         );
         assert_eq!(
             (p.healed_received, p.self_healed),
@@ -218,21 +218,25 @@ fn the_card_carries_the_healing_split_and_the_support_scalars() {
     assert_eq!(priest.healing, 88_000);
     assert!(priest.absorbed <= priest.healing);
     assert!(
-        close(priest.effective_dps(card.duration_ms), 0.0),
+        close(priest.effective_dps(card.rate_ms()), 0.0),
         "a healer with no damage has no effective rate"
     );
     // The Evoker's rate is its contribution, above its raw dps.
     let evoker = player(card, EVOKER);
     assert!(close(evoker.dps, 69_500.0 / 60.0));
-    assert!(evoker.effective_dps(card.duration_ms) > evoker.dps);
+    assert!(evoker.effective_dps(card.rate_ms()) > evoker.dps);
     // The Mage's is below its raw dps — the shares are the Evoker's.
     let mage = player(card, MAGE);
-    assert!(mage.effective_dps(card.duration_ms) < mage.dps);
+    assert!(mage.effective_dps(card.rate_ms()) < mage.dps);
 
     // The identity the roster gap would break: Σ effective = Σ damage.
     let effective: u64 = card.players.iter().map(CardPlayer::effective).sum();
     let damage: u64 = card.players.iter().map(|p| p.damage).sum();
-    assert_eq!((effective, damage), (602_500, 602_500));
+    assert_eq!(
+        (effective, damage),
+        (600_000, 600_000),
+        "the Warrior's 2 500 overkill out"
+    );
     // And Σ given = Σ received (damage shares), every share on a player.
     assert_eq!(
         card.players.iter().map(|p| p.support_given).sum::<u64>(),
@@ -419,11 +423,11 @@ fn effective_dps_is_dps_bit_for_bit_wherever_there_is_no_support() {
                 if p.support_given == 0 && p.support_received == 0 {
                     assert_eq!(p.effective(), p.damage, "{path} {id} {}", p.guid);
                     assert_eq!(
-                        p.effective_dps(c.duration_ms).to_bits(),
+                        p.effective_dps(c.rate_ms()).to_bits(),
                         p.dps.to_bits(),
                         "{path} {id} {}: {} vs {}",
                         p.guid,
-                        p.effective_dps(c.duration_ms),
+                        p.effective_dps(c.rate_ms()),
                         p.dps
                     );
                     checked += 1;
@@ -474,7 +478,7 @@ fn a_supporter_with_no_meter_row_is_on_the_card() {
         (0, 29_400, 0)
     );
     assert_eq!(p.effective(), 29_400);
-    assert!(close(p.effective_dps(card.duration_ms), 29_400.0 / 60.0));
+    assert!(close(p.effective_dps(card.rate_ms()), 29_400.0 / 60.0));
     assert!(close(p.dps, 0.0), "no Damage row, no dps");
     assert_eq!(p.name, UNNAMED, "unnamed in the log: the guid is the label");
     assert!(!p.enemy);
@@ -491,9 +495,13 @@ fn a_supporter_with_no_meter_row_is_on_the_card() {
     assert_eq!(hunter.effective(), 137_800);
     assert_eq!(
         card.players.iter().map(CardPlayer::effective).sum::<u64>(),
-        364_670
+        // R1 (2026-10-02): the Ashen Warden's killing blow's 5 200 overkill out.
+        364_670 - 5_200
     );
-    assert_eq!(card.players.iter().map(|p| p.damage).sum::<u64>(), 364_670);
+    assert_eq!(
+        card.players.iter().map(|p| p.damage).sum::<u64>(),
+        364_670 - 5_200
+    );
     // The rows tier: the supporter's block with the hunter as its one
     // target; the hunter's received-only block.
     let rows = store.rows(id).unwrap();

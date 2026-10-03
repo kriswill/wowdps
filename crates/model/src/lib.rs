@@ -450,16 +450,26 @@ impl Healed {
 /// only `on_friendly` belongs in the R17 identity. Keyed by raw source guid
 /// and folded onto owners at read time like `Mitigation`; additive under the
 /// R10 merge.
+///
+/// `friendly_fire` (R22 amendment, 2026-10-02) is the other half of "not
+/// damage DONE": what the actor dealt to ANOTHER unit on its own side —
+/// both ends player-controlled and of one reaction, the victim a `Player-`
+/// / `Pet-` — Spirit Link Totem's share of a teammate's health being the
+/// case that put 4% on a Restoration Shaman's Damage row. The victim really
+/// lost that health, so all of it is in Taken's universe and joins the R17
+/// identity beside `on_friendly`. It is not part of `total`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SelfHarm {
     pub total: u64,
     pub on_friendly: u64,
+    pub friendly_fire: u64,
 }
 
 impl SelfHarm {
     pub fn merge(&mut self, other: &SelfHarm) {
         self.total += other.total;
         self.on_friendly += other.on_friendly;
+        self.friendly_fire += other.friendly_fire;
     }
 }
 
@@ -482,6 +492,19 @@ impl SelfHarm {
 pub fn effective(damage: u64, received: u64, given: u64) -> u64 {
     let net = i128::from(damage) - i128::from(received) + i128::from(given);
     u64::try_from(net.max(0)).unwrap_or(u64::MAX)
+}
+
+/// `amount` per second over `clock_ms` — the meter's own arithmetic
+/// (`amount as f64 / secs`), 0.0 on a clock that is not positive. What a
+/// reader uses for a keystone run's RUN rate (`amount / duration_ms`, the
+/// key timer) beside the combat-clock `per_sec` every row carries.
+pub fn rate(amount: u64, clock_ms: i64) -> f64 {
+    let secs = clock_ms as f64 / 1000.0;
+    if secs > 0.0 {
+        amount as f64 / secs
+    } else {
+        0.0
+    }
 }
 
 /// Player class, from COMBATANT_INFO's currentSpecID when available, else
@@ -1776,8 +1799,14 @@ pub struct SegmentInfo {
     pub name: String,
     pub start_ms: i64,
     /// R7 semantics, computed by the engine: the live clock never stretches a
-    /// closed segment. For Overall (R10): the sum of member durations.
+    /// closed segment. For Overall (R10): the sum of member durations — a
+    /// keystone run's key timer.
     pub duration_ms: i64,
+    /// v40 (R7/R10 amendment): the COMBAT clock every row's `per_sec` was
+    /// divided by — an encounter's START..END, a trash segment's engaged
+    /// time, an Overall's Σ members' (a key's included). A keystone run's
+    /// RUN rate is `amount / duration_ms`, a reader's sum ([`rate`]).
+    pub combat_ms: i64,
     pub success: Option<bool>,
     /// Still accumulating right now.
     pub live: bool,

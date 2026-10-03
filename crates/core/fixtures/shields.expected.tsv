@@ -3,6 +3,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	petdamage	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	dps	3100.00
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	combat_ms	60000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	pct	46.50
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	heal	11000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	overheal	0
@@ -19,6 +20,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stagger	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stagger_ticked	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	self_harm	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_given	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_received	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_given_heal	0
@@ -51,6 +53,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	petdamage	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	dps	1216.67
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	combat_ms	60000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	pct	18.25
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	heal	9000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	overheal	0
@@ -67,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stagger	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stagger_ticked	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	self_harm	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_given	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_received	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_given_heal	0
@@ -99,6 +103,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	petdamage	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	dps	1100.00
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	combat_ms	60000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	pct	16.50
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	heal	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	overheal	0
@@ -115,6 +120,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stagger	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stagger_ticked	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	self_harm	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_given	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_received	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_given_heal	0
@@ -147,6 +153,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	petdamage	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	dps	816.67
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	combat_ms	60000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	pct	12.25
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	heal	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	overheal	0
@@ -163,6 +170,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stagger	3000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stagger_ticked	1500
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	self_harm	1500
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_given	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_received	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_given_heal	0
@@ -195,6 +203,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	petdamage	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	dps	433.33
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	combat_ms	60000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	pct	6.50
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	heal	89000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	overheal	6000
@@ -211,6 +220,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stagger	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stagger_ticked	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	self_harm	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_given	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_received	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_given_heal	0
@@ -243,6 +253,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C43	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	petdamage	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	dps	4500.00
+2	Trash	Trash		8000			Player-1168-0A1B2C43	combat_ms	8000
 2	Trash	Trash		8000			Player-1168-0A1B2C43	pct	85.71
 2	Trash	Trash		8000			Player-1168-0A1B2C43	heal	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	overheal	0
@@ -259,6 +270,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C43	stagger	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	stagger_ticked	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	self_harm	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	friendly_fire	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	support_given	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	support_received	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	support_given_heal	0
@@ -291,6 +303,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	petdamage	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	dps	750.00
+2	Trash	Trash		8000			Player-1168-0A1B2C42	combat_ms	8000
 2	Trash	Trash		8000			Player-1168-0A1B2C42	pct	14.29
 2	Trash	Trash		8000			Player-1168-0A1B2C42	heal	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	overheal	0
@@ -307,6 +320,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	stagger	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	stagger_ticked	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	self_harm	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	friendly_fire	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	support_given	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	support_received	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	support_given_heal	0

@@ -29,6 +29,43 @@ const ENVIRONMENT: &str = "Environment";
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
 pub(crate) const TRASH_GAP_MS: i64 = 60_000;
 
+/// R7 amendment (2026-10-02): the trash COMBAT clock stops across a quiet
+/// stretch longer than this between two engagement lines (`engagement`).
+/// Calibrated against the game's own meter on a +15 Murder Row (one run, so
+/// retune it when a second disagrees): its combat time was 1600.4 s, this
+/// clock's 1610.7 s (+0.6%; the old key-clock divisor was 1716.9 s, +7.3%),
+/// and the clock barely moves from 30 s to 45 s, so 30 s sits on a plateau
+/// rather than a knife's edge.
+pub(crate) const ENGAGE_QUIET_MS: i64 = 30_000;
+
+/// Unit-flag bits the combat clock and the friendly-fire rule read.
+const REACTION_FRIENDLY: u32 = 0x10;
+const REACTION_NEUTRAL: u32 = 0x20;
+const CONTROL_PLAYER: u32 = 0x100;
+
+/// R7 amendment: a line between a unit the group controls (friendly AND
+/// player-controlled by its flags) and an enemy (hostile or neutral), in
+/// either direction. Heals, HoT ticks and an NPC's lines among its own keep
+/// a trash SEGMENT open (R4) but are not the group being engaged, and the
+/// combat clock runs on engagement alone — a healer's HoTs ticking on the
+/// walk between packs held the old clock open for minutes per key.
+fn engagement(src: u32, dst: u32) -> bool {
+    let ours =
+        |f: u32| f & (REACTION_FRIENDLY | CONTROL_PLAYER) == REACTION_FRIENDLY | CONTROL_PLAYER;
+    let foe = |f: u32| f & (REACTION_HOSTILE | REACTION_NEUTRAL) != 0;
+    (ours(src) && foe(dst)) || (foe(src) && ours(dst))
+}
+
+/// R22 amendment: a hit from one player-controlled unit onto another of the
+/// same reaction — friendly fire, the way the game's own meter sees it
+/// (it never counts it as damage done). Spirit Link Totem's redistribution
+/// is the case in the wild; an arena enemy's own totem on its teammates is
+/// the same rule seen from the other side.
+fn friendly_fire(src: u32, dst: u32) -> bool {
+    let both = src & dst;
+    both & CONTROL_PLAYER != 0 && both & (REACTION_FRIENDLY | REACTION_HOSTILE) != 0
+}
+
 /// Self-absorb effects that are not healing (R2).
 pub(crate) const NON_HEALING_ABSORBS: [u32; 4] = [114556, 31850, 31230, 115069];
 
@@ -620,6 +657,14 @@ pub struct Segment {
     /// R10, Overall segments only: the merged member combat time — an
     /// unkeyed visit's `duration_ms`.
     overall_ms: i64,
+    /// R7/R10 amendment, Overall segments only: Σ members' `combat_ms` —
+    /// the clock every Overall's rates run on, keyed or not.
+    overall_combat_ms: i64,
+    /// R7 amendment: the engagement clock — Σ of the stretches between
+    /// consecutive engagement lines no longer than `ENGAGE_QUIET_MS` — and
+    /// the last such line. A Trash segment's rates run on it.
+    engaged_ms: i64,
+    engaged_last: Option<i64>,
     /// R10, Overall segments only: the visit was a keystone run, so its
     /// clock is the key timer (see `Visit::key_clock`), not `overall_ms`.
     key: bool,
@@ -1089,6 +1134,9 @@ impl Segment {
             project_id: seed.project_id,
             log_version: seed.log_version,
             overall_ms: 0,
+            overall_combat_ms: 0,
+            engaged_ms: 0,
+            engaged_last: None,
             key: false,
             official_ms: None,
             joined: false,
@@ -1178,6 +1226,38 @@ impl Segment {
             }
         };
         (end - self.start_ms).max(0)
+    }
+
+    /// R7/R10 amendment (2026-10-02): the clock every RATE runs on — the
+    /// game's own meter divides by combat time, and so do we. An Encounter
+    /// is in combat START..END (its `duration_ms`); a Trash segment runs on
+    /// its engagement clock (`engaged_ms`; R7's first..last when it saw no
+    /// engagement line at all, a healing-only stretch); an Overall is Σ its
+    /// members' — a keystone run included, whose `duration_ms` stays the key
+    /// timer it is judged on (run DPS is amount over that, a reader's sum).
+    pub fn combat_ms(&self, now_ms: i64) -> i64 {
+        match self.kind {
+            SegmentKind::Encounter => self.duration_ms(now_ms),
+            SegmentKind::Trash if self.engaged_last.is_some() => self.engaged_ms,
+            SegmentKind::Trash => self.duration_ms(now_ms),
+            SegmentKind::Overall => self.overall_combat_ms,
+        }
+    }
+
+    /// R7 amendment: one engagement line at `ts` advances the engagement
+    /// clock by the stretch since the last one, unless the group was quiet
+    /// for longer than `ENGAGE_QUIET_MS` — walking to the next pack.
+    fn engage(&mut self, ts: i64) {
+        if let Some(last) = self.engaged_last {
+            let gap = ts - last;
+            if gap <= 0 {
+                return;
+            }
+            if gap <= ENGAGE_QUIET_MS {
+                self.engaged_ms += gap;
+            }
+        }
+        self.engaged_last = Some(ts);
     }
 
     /// R16: keep, per hostile NPC, the lowest-fraction report and the
@@ -1579,6 +1659,7 @@ impl Segment {
         }
         self.last_ms = self.last_ms.max(other.last_ms);
         self.overall_ms += other.duration_ms(other.last_ms);
+        self.overall_combat_ms += other.combat_ms(other.last_ms);
     }
 
     /// R18: the uptime rollup as of now — the closed cells plus every span
@@ -1656,7 +1737,7 @@ impl Segment {
 
     fn finish_rows(&self, mut rows: Vec<Row>, view: View) -> Vec<Row> {
         let total: u64 = rows.iter().map(|r| r.amount).sum();
-        let secs = self.duration_ms(self.last_ms) as f64 / 1000.0;
+        let secs = self.combat_ms(self.last_ms) as f64 / 1000.0;
         for r in &mut rows {
             r.pct = if total > 0 {
                 r.amount as f64 / total as f64 * 100.0
@@ -2009,6 +2090,13 @@ impl Segment {
     /// for the fold but was never in Taken's universe.
     pub fn self_harm_on_friendly(&self, player_guid: &str) -> u64 {
         self.self_harm_record(player_guid).on_friendly
+    }
+
+    /// R22 amendment: what the player (pets folded) dealt to a TEAMMATE —
+    /// held off their Damage row like `self_harm`, and all of it in Taken's
+    /// universe, so the R17 identity carries it whole.
+    pub fn friendly_fire(&self, player_guid: &str) -> u64 {
+        self.self_harm_record(player_guid).friendly_fire
     }
 
     fn self_harm_record(&self, player_guid: &str) -> SelfHarm {
@@ -4294,7 +4382,7 @@ impl Segment {
     ) -> (Row, Vec<Row>) {
         let secs = match range {
             Some((lo, hi)) => (hi - lo).max(0) as f64 / 1000.0,
-            None => self.duration_ms(self.last_ms) as f64 / 1000.0,
+            None => self.combat_ms(self.last_ms) as f64 / 1000.0,
         };
         let class = self.classes.get(player_guid).copied();
         let spec = self.specs.get(player_guid).copied();
@@ -5042,20 +5130,44 @@ impl Meter {
         src == dst || self.summon_fold(src) == self.summon_fold(dst)
     }
 
-    /// R1: file one hit, at `amount + absorbed`, on every ledger a damage
-    /// event reaches — the attacker's Damage (or R22's self-harm), R24's
-    /// enemy row, R17's Taken on a friendly victim — in the segment the
-    /// caller made current: `ensure_combat` for a damage line, the passive
-    /// gate for a hit a shield took whole (the scanner never sees a
-    /// `*_MISSED` line, so it must never open, extend or split a segment).
+    /// R1: file one hit, at `amount + absorbed − overkill`, on every ledger
+    /// a damage event reaches — the attacker's Damage (or R22's self-harm
+    /// and friendly fire), R24's enemy row, R17's Taken on a friendly victim
+    /// — in the segment the caller made current: `ensure_combat` for a
+    /// damage line, the passive gate for a hit a shield took whole (the
+    /// scanner never sees a `*_MISSED` line, so it must never open, extend
+    /// or split a segment).
     fn file_hit(&mut self, ts: i64, h: &Hit<'_>) {
         let (guid, dst_guid) = (h.src.guid.as_str(), h.dst.guid.as_str());
         let label = h.spell.map_or("Melee", |s| s.name.as_str());
         let spell_id = h.spell.map_or(0, |s| s.id);
         // v15: a swing has no spell block — it is Physical (1).
         let school = h.spell.map_or(1, |s| s.school);
-        let dealt = h.amount + h.absorbed;
+        // R1 (2026-10-02): the log's amount includes the overkill — the
+        // part past the victim's last health point — and the game's own
+        // meter counts none of it (four of a Warlock's abilities matched it
+        // to the thousand once it was taken out; a Windwalker's Touch of
+        // Death is half overkill). It stays in `extra` for the reports that
+        // want it.
+        let dealt = (h.amount + h.absorbed).saturating_sub(h.overkill);
         let self_hit = self.self_hit(guid, dst_guid);
+        // R22 amendment: same side by the flags — or a unit a player on the
+        // victim's side SUMMONED: a totem's last lines carry neutral NPC
+        // flags (0xa28), and a third of a real Spirit Link Totem's
+        // redistribution was written that way. The summoner's own flags
+        // decide the side, so an arena enemy's Shadowfiend or totem hitting
+        // us stays the enemy's damage.
+        let top = self.summon_fold(guid);
+        let summoned_by_a_teammate = guid != top
+            && is_friendly_source(top)
+            && h.dst.flags & CONTROL_PLAYER != 0
+            && self
+                .flags
+                .get(top)
+                .is_some_and(|&f| f & h.dst.flags & (REACTION_FRIENDLY | REACTION_HOSTILE) != 0);
+        let ff = !self_hit
+            && is_friendly_source(dst_guid)
+            && (friendly_fire(h.src.flags, h.dst.flags) || summoned_by_a_teammate);
         // R24's "ours": through SUMMONS only (`summon_fold`, as R22 — a
         // guardian we summoned is a `Creature-` too, and its own stagger
         // tick is R22's, never an enemy row), NEVER through the ownership
@@ -5066,6 +5178,16 @@ impl Meter {
         let Some(s) = self.segments.last_mut() else {
             return;
         };
+        // R7 amendment: a hit between the group and an enemy runs the
+        // combat clock — a damage LINE, never a passive one (a hit a shield
+        // took whole, like a dodge, is a `*_MISSED` line, which may not
+        // extend a segment either): the clock only ever sums stretches
+        // inside first..last, so a trash segment's `combat_ms` never
+        // exceeds its `duration_ms`. Nor friendly fire: an orphaned totem's
+        // neutral flags would otherwise read as an enemy hitting us.
+        if !h.whole && !ff && engagement(h.src.flags, h.dst.flags) {
+            s.engage(ts);
+        }
         // R22: damage an actor dealt to ITSELF — its own pets folded in, so
         // a Brewmaster's Niuzao staggering itself is the monk hurting
         // himself — is never Damage DONE. It is tallied apart, so the meter
@@ -5079,6 +5201,15 @@ impl Meter {
             if is_friendly_source(dst_guid) {
                 rec.on_friendly += dealt;
             }
+        } else if ff {
+            // R22 amendment: nor is what it dealt to a teammate (Spirit
+            // Link Totem evening out the group's health). Raw-keyed like
+            // the self-harm beside it; the victim's Taken below still
+            // counts the health they lost.
+            s.self_harm
+                .entry(guid.to_string())
+                .or_default()
+                .friendly_fire += dealt;
         } else {
             s.record(
                 guid,
@@ -6936,8 +7067,198 @@ mod tests {
             ),
         ]);
         let row = &m.segments()[0].rows(View::Damage)[0];
-        assert_eq!(row.amount, 600);
+        assert_eq!(
+            row.amount, 300,
+            "100 + the killing blow's 500 less its 300 overkill"
+        );
         assert_eq!(row.extra, 300, "only the real overkill, -1 clamped away");
+    }
+
+    /// R1 (2026-10-02): overkill is out of every ledger the hit reaches —
+    /// the attacker's row, the enemy's R24 row, a player victim's Taken —
+    /// and stays in `extra` on the attacker's row alone.
+    #[test]
+    fn overkill_is_out_of_every_amount_and_kept_in_extra() {
+        let killing = |src: Unit, dst: Unit| Event::Damage {
+            src,
+            dst,
+            spell: None,
+            amount: 500,
+            overkill: 300,
+            absorbed: 40,
+            blocked: 0,
+            critical: false,
+            periodic: false,
+        };
+        let m = fed(vec![
+            at(0, killing(p1(), boss())),
+            at(1_000, killing(boss(), p2())),
+        ]);
+        let s = &m.segments()[0];
+        let dmg = s.rows(View::Damage);
+        let mine = dmg.iter().find(|r| r.key == p1().guid).unwrap();
+        assert_eq!((mine.amount, mine.extra), (240, 300), "500 + 40 − 300");
+        let enemy = &s.rows(View::EnemyTaken)[0];
+        assert_eq!(enemy.amount, 240);
+        let taken = s.rows(View::Taken);
+        assert_eq!(
+            taken[0].amount, 240,
+            "the victim lost 200 health and 40 of shield"
+        );
+    }
+
+    /// R22 amendment: a teammate's hit on a teammate — Spirit Link Totem
+    /// evening out health, its flags player-controlled or (its last lines)
+    /// a neutral NPC's — is never damage done; the victim still took it,
+    /// and the R17 identity carries it as `friendly_fire`.
+    #[test]
+    fn friendly_fire_is_held_off_the_damage_row_and_kept_in_taken() {
+        let totem = Unit {
+            guid: "Creature-0-1-2-3-53006-0000AAAA".into(),
+            name: "Spirit Link Totem".into(),
+            flags: 0x2112,
+        };
+        let orphan = Unit {
+            flags: 0xa28,
+            ..totem.clone()
+        };
+        let link = |src: Unit, amount: u64| Event::Damage {
+            src,
+            dst: p2(),
+            spell: Some(Spell {
+                id: 98021,
+                name: "Spirit Link".into(),
+                school: 8,
+            }),
+            amount,
+            overkill: -1,
+            absorbed: 0,
+            blocked: 0,
+            critical: false,
+            periodic: false,
+        };
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            at(
+                500,
+                Event::Summon {
+                    owner: p1(),
+                    pet: totem.clone(),
+                    spell: Spell {
+                        id: 98008,
+                        name: "Spirit Link Totem".into(),
+                        school: 8,
+                    },
+                },
+            ),
+            at(1_000, link(totem, 700)),
+            at(2_000, link(orphan, 50)),
+        ]);
+        let s = &m.segments()[0];
+        let mine = s
+            .rows(View::Damage)
+            .into_iter()
+            .find(|r| r.key == p1().guid)
+            .unwrap();
+        assert_eq!(mine.amount, 100, "only the hit on the boss");
+        assert_eq!(s.friendly_fire(&p1().guid), 750);
+        assert_eq!(s.self_harm(&p1().guid), 0, "not self-harm either");
+        let taken = s.rows(View::Taken);
+        assert_eq!(taken[0].amount, 750, "the teammate still lost it");
+    }
+
+    /// R22 amendment: the summoned arm asks the SUMMONER's side. An arena
+    /// enemy's totem — even written with a neutral NPC's flags at its end —
+    /// hitting one of ours is the enemy's damage, never friendly fire.
+    #[test]
+    fn an_enemy_players_summon_hitting_us_is_damage_not_friendly_fire() {
+        let enemy = Unit {
+            guid: "Player-1-0EEEEEEE".into(),
+            name: "Rival".into(),
+            flags: 0x548,
+        };
+        let totem = Unit {
+            guid: "Creature-0-1-2-3-61245-0000BBBB".into(),
+            name: "Capacitor Totem".into(),
+            flags: 0xa28,
+        };
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            at(
+                500,
+                Event::Summon {
+                    owner: enemy.clone(),
+                    pet: totem.clone(),
+                    spell: Spell {
+                        id: 192058,
+                        name: "Capacitor Totem".into(),
+                        school: 8,
+                    },
+                },
+            ),
+            at(
+                1_000,
+                Event::Damage {
+                    src: totem,
+                    dst: p2(),
+                    spell: None,
+                    amount: 300,
+                    overkill: -1,
+                    absorbed: 0,
+                    blocked: 0,
+                    critical: false,
+                    periodic: false,
+                },
+            ),
+        ]);
+        let s = &m.segments()[0];
+        assert_eq!(s.friendly_fire(&enemy.guid), 0);
+        let (_, by_target) = s.breakdown(&enemy.guid, View::Damage);
+        assert_eq!(
+            by_target.iter().map(|r| r.amount).sum::<u64>(),
+            300,
+            "the enemy's own damage: {by_target:?}"
+        );
+    }
+
+    /// R7 amendment: a Trash segment's rates run on the engagement clock —
+    /// group-vs-enemy lines, the stretches between them summed unless one
+    /// ran past `ENGAGE_QUIET_MS` — while its `duration_ms` stays R7's
+    /// first..last, heals included.
+    #[test]
+    fn trash_rates_run_on_the_engagement_clock() {
+        let heal = |ts: i64| {
+            at(
+                ts,
+                Event::Heal {
+                    src: p2(),
+                    dst: p2(),
+                    spell: Spell {
+                        id: 774,
+                        name: "Rejuvenation".into(),
+                        school: 8,
+                    },
+                    amount: 10,
+                    overheal: 0,
+                    absorbed: 0,
+                    critical: false,
+                    periodic: true,
+                },
+            )
+        };
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            damage(10_000, p1(), None, 100),
+            heal(25_000),
+            // 40 s of quiet engagement (heals in it), past the 30 s cut:
+            damage(50_000, p1(), None, 100),
+            damage(55_000, p1(), None, 100),
+        ]);
+        let s = &m.segments()[0];
+        assert_eq!(s.duration_ms(99_999), 55_000, "R7: first..last combat line");
+        assert_eq!(s.combat_ms(99_999), 15_000, "10 s + 5 s, the 40 s walk out");
+        let row = &s.rows(View::Damage)[0];
+        assert!((row.per_sec - 400.0 / 15.0).abs() < 1e-9, "{}", row.per_sec);
     }
 
     // ---- R2: healing accounting ------------------------------------------
