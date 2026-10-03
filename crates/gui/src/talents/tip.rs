@@ -95,7 +95,7 @@ pub(crate) fn tooltip(
         .pt(px(7.0))
         .px(px(logic::TIP_PAD_X))
         .rounded(p.r(4.0))
-        .font_family(p.def.faces.ui)
+        .font_family(crate::theme::face(&p.def.faces.ui))
         .flex()
         .flex_col()
         .children(rows);

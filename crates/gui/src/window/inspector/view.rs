@@ -386,7 +386,7 @@ fn head_block(
             .when(!h.sub.is_empty(), |d| {
                 d.child(
                     div()
-                        .font_family(w.ui)
+                        .font_family(w.ui.clone())
                         .text_size(w.z(SUB_PX))
                         .text_color(w.c(|t| t.ink_2))
                         .child(h.sub.clone()),
@@ -434,7 +434,7 @@ fn name_line(h: &Head, w: &W) -> Div {
         .children(h.name.iter().enumerate().map(|(i, p)| {
             let last = i + 1 == h.name.len();
             div()
-                .font_family(w.ui)
+                .font_family(w.ui.clone())
                 .font_weight(if p.semibold { SEMIBOLD } else { REGULAR })
                 .text_size(w.z(NAME_PX))
                 .text_color(hsla(p.ink))

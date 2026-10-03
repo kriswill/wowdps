@@ -44,7 +44,8 @@ const CHIP_GAP: f32 = 6.0;
 /// The card over the window, under the gear.
 pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> AnyElement {
     let current = gui.cfg.chrome();
-    let themes = crate::theme::Themes::global(cx);
+    // Its own copy: the chips need the context the registry is borrowed from.
+    let themes = crate::theme::Themes::global(cx).clone();
     let active = gui.theme_def(cx);
     let themes_row = div()
         .flex()
@@ -66,7 +67,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         };
         div()
             .max_w(w.z(w.pitch.menu_w))
-            .font_family(w.ui)
+            .font_family(w.ui.clone())
             .text_size(w.z(w.size.tiny))
             .text_color(w.c(|t| t.ink_3_text))
             .child(format!("Config: {first}{more}"))
@@ -110,13 +111,19 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
                 .flex()
                 .gap(w.z(CHIP_GAP))
                 .child(chrome_chip(
-                    active.accent_label,
+                    active.accent_label.to_string(),
                     Chrome::Theme,
                     current,
                     w,
                     cx,
                 ))
-                .child(chrome_chip("Your class", Chrome::Class, current, w, cx)),
+                .child(chrome_chip(
+                    "Your class".to_string(),
+                    Chrome::Class,
+                    current,
+                    w,
+                    cx,
+                )),
         )
         // Presses on the card are its own; the pointer wandering off it
         // closes it.
@@ -179,7 +186,7 @@ fn checkbox(
 /// accent's edge over a wash of it, its label in ink; the other in a
 /// hairline, its label secondary.
 fn chrome_chip(
-    label: &'static str,
+    label: String,
     chrome: Chrome,
     current: Chrome,
     w: &W,
@@ -224,7 +231,7 @@ const SWATCH_STRIPE: f32 = 3.0;
 /// one height, as the wordmark's size relates each title face), pressed as
 /// the chrome chips are.
 fn theme_chip(
-    def: &'static Def,
+    def: &Def,
     on: bool,
     w: &W,
     cx: &mut Context<Gui>,
@@ -268,14 +275,14 @@ fn theme_chip(
         .child(swatch)
         .child(
             div()
-                .font_family(def.faces.title)
+                .font_family(crate::theme::face(&def.faces.title))
                 .text_size(w.z(size))
                 .text_color(if on { w.c(|t| t.ink) } else { w.c(|t| t.ink_2) })
                 .whitespace_nowrap()
-                .child(def.label),
+                .child(def.label.to_string()),
         )
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| this.set_theme(def.name, cx)),
-        )
+        .on_mouse_down(MouseButton::Left, {
+            let name = def.name.clone();
+            cx.listener(move |this, _, _, cx| this.set_theme(&name, cx))
+        })
 }

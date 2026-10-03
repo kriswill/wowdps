@@ -302,9 +302,9 @@ impl TalentViewer {
 
 /// What every piece of the viewer draws with: the theme's window and
 /// talent tokens, its face, and the tree's fit.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Paint {
-    pub def: &'static Def,
+    pub def: std::sync::Arc<Def>,
     pub t: TalentTokens,
     /// The trees' scale: 1 when they fit, less (to `MIN_FIT`) when not.
     pub s: f32,
@@ -325,7 +325,7 @@ impl Paint {
     /// Words that wrap at their container's width.
     pub fn words(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> gpui_kit::Div {
         div()
-            .font_family(self.def.faces.ui)
+            .font_family(crate::theme::face(&self.def.faces.ui))
             .text_size(px(size))
             .text_color(color)
             .child(text.into())
@@ -334,7 +334,7 @@ impl Paint {
     /// `text` at `size` in the window's face and `color`.
     pub fn text(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> gpui_kit::Div {
         div()
-            .font_family(self.def.faces.ui)
+            .font_family(crate::theme::face(&self.def.faces.ui))
             .text_size(px(size))
             .text_color(color)
             .whitespace_nowrap()
@@ -407,9 +407,10 @@ impl Render for TalentViewer {
             .build
             .as_ref()
             .is_none_or(|b| content_width(b) * s <= avail + 0.5);
+        let t = def.talents;
         let p = Paint {
-            def,
-            t: def.talents,
+            def: std::sync::Arc::clone(&def),
+            t,
             s,
         };
         let motion = self.motion(window, cx);
@@ -544,17 +545,16 @@ impl Render for TalentViewer {
             .on_action(cx.listener(|this, _: &CloseTalents, _, cx| this.apply(Msg::Close, cx)))
             .on_action(cx.listener(|this, _: &FlipTab, _, cx| this.apply(Msg::ToggleTab, cx)))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.drop_files(paths, cx)))
-            .drag_over::<ExternalPaths>(move |style, _, _, _| {
-                style
-                    .border_color(hsla(p.t.taken))
-                    .bg(hsla(p.t.taken.alpha(0.04)))
+            .drag_over::<ExternalPaths>({
+                let taken = p.t.taken;
+                move |style, _, _, _| style.border_color(hsla(taken)).bg(hsla(taken.alpha(0.04)))
             })
             .size_full()
             .p(px(10.))
             .border_1()
             .border_color(hsla(wowdps_gui_logic::theme::Color::TRANSPARENT))
             .bg(p.w(|t| t.ground))
-            .font_family(def.faces.ui)
+            .font_family(crate::theme::face(&def.faces.ui))
             .line_height(gpui_kit::relative(1.3))
             .text_color(ink)
             .child(body)
@@ -685,7 +685,7 @@ impl TalentViewer {
             pane::pane(pane::PaneArgs {
                 index: i,
                 model: Rc::clone(model),
-                paint: *p,
+                paint: p.clone(),
                 picker: ui.picker,
                 hover: self.pane_hover.get(i).copied().flatten(),
                 motion,
@@ -906,5 +906,5 @@ fn chip(
 
 /// The badge text's font: the window's face.
 pub(crate) fn face(p: &Paint) -> gpui_kit::Font {
-    font(p.def.faces.ui)
+    font(crate::theme::face(&p.def.faces.ui))
 }

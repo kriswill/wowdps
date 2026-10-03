@@ -262,7 +262,7 @@ fn scope_name(meta: &Meta, chars: &[CharLine]) -> Option<String> {
 /// Words that wrap, in the window's face.
 fn wrapping(w: &W, words: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
     div()
-        .font_family(w.ui)
+        .font_family(w.ui.clone())
         .text_size(w.z(size))
         .text_color(color)
         .child(words.into())
@@ -318,7 +318,7 @@ fn top(meta: &Meta, chars: &[CharLine], w: &W, cx: &mut Context<Gui>) -> impl In
         .gap_y(w.z(CHIP_GAP))
         .child(
             div()
-                .font_family(w.title)
+                .font_family(w.title.clone())
                 .text_size(w.z(w.size.home_title))
                 .text_color(w.c(|t| t.ink))
                 .child(title),

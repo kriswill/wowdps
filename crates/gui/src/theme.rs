@@ -16,8 +16,19 @@
 //! prototype's raise.
 
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Global, Hsla, Rgba, px};
+use std::sync::{Arc, LazyLock};
+
+use gpui_kit::{App, Global, Hsla, Rgba, SharedString, px};
 use wowdps_gui_logic::theme::{self as gl, Accent, Def, Registry};
+
+/// A theme's words (a face's family) as GPUI's: a compiled-in literal
+/// stays one, a config's shares its string — neither allocates.
+pub fn face(t: &gl::Text) -> SharedString {
+    match t {
+        gl::Text::Static(s) => SharedString::new_static(s),
+        gl::Text::Shared(s) => SharedString::from(Arc::clone(s)),
+    }
+}
 
 /// A gui-logic colour as GPUI's.
 pub fn hsla(c: gl::Color) -> Hsla {
@@ -31,9 +42,11 @@ pub fn hsla(c: gl::Color) -> Hsla {
 }
 
 /// The active definition and chrome, for every surface that draws itself.
-#[derive(Clone, Copy, Debug)]
+/// The definition is shared, not permanent: when another theme is applied
+/// the last holder drops this one and it is freed.
+#[derive(Clone, Debug)]
 pub struct Look {
-    pub def: &'static Def,
+    pub def: Arc<Def>,
     /// The chrome: the theme's own accent, or the owner's class.
     pub accent: Accent,
 }
@@ -50,10 +63,9 @@ impl Global for Themes {}
 
 impl Themes {
     /// The registry; the built-ins alone before any is set (a test).
-    pub fn global(cx: &App) -> Registry {
-        cx.try_global::<Themes>()
-            .map(|t| t.0.clone())
-            .unwrap_or_default()
+    pub fn global(cx: &App) -> &Registry {
+        static BUILTIN: LazyLock<Registry> = LazyLock::new(Registry::builtin);
+        cx.try_global::<Themes>().map_or(&*BUILTIN, |t| &t.0)
     }
 
     pub fn set(registry: Registry, cx: &mut App) {
@@ -65,8 +77,8 @@ impl Look {
     /// The active look; `navy` with its own chrome before any `apply` (a
     /// test that opens a bare window).
     pub fn global(cx: &App) -> Look {
-        cx.try_global::<Look>().copied().unwrap_or(Look {
-            def: &gl::NAVY,
+        cx.try_global::<Look>().cloned().unwrap_or_else(|| Look {
+            def: Arc::new(gl::NAVY.clone()),
             accent: own_accent(&gl::NAVY),
         })
     }
@@ -88,8 +100,10 @@ pub fn own_accent(def: &Def) -> Accent {
 }
 
 /// Make `def` the active theme, with `accent` as the chrome (a class
-/// chrome's; `None` is the theme's own), and repaint every window.
-pub fn apply(def: &'static Def, accent: Option<Accent>, cx: &mut App) {
+/// chrome's; `None` is the theme's own), and repaint every window. The
+/// look takes its own copy; the one it replaces is freed with its last
+/// holder.
+pub fn apply(def: &Def, accent: Option<Accent>, cx: &mut App) {
     let accent = accent.unwrap_or_else(|| own_accent(def));
     let mode = if def.dark {
         ThemeMode::Dark
@@ -102,7 +116,10 @@ pub fn apply(def: &'static Def, accent: Option<Accent>, cx: &mut App) {
         Theme::change(mode, None, cx);
     }
     Theme::update(cx, |theme| map(def, accent, theme));
-    cx.set_global(Look { def, accent });
+    cx.set_global(Look {
+        def: Arc::new(def.clone()),
+        accent,
+    });
     cx.refresh_windows();
 }
 
@@ -110,9 +127,9 @@ fn map(def: &Def, accent: Accent, theme: &mut Theme) {
     let w = &def.window;
     let h = hsla;
     let hover = w.hover.over(w.ground);
-    theme.font_family = def.faces.ui.into();
+    theme.font_family = face(&def.faces.ui);
     // The tabular digits are baked into the face, so it is the mono face too.
-    theme.mono_font_family = def.faces.ui.into();
+    theme.mono_font_family = face(&def.faces.ui);
     theme.font_size = px(def.size.body);
     theme.radius = px(def.shape.radius(6.0));
     theme.radius_lg = px(def.shape.radius(8.0));
@@ -244,7 +261,23 @@ mod tests {
     use wowdps_gui_logic::theme::{FROST, NAVY, class_accent};
     use wowdps_model::Class;
 
-    use super::{Look, apply, hsla};
+    use super::{Look, apply, face, hsla};
+
+    /// A theme switch frees the definition it replaces: the look holds its
+    /// theme by a count, so a config's theme, switched away from, is gone —
+    /// the overlay rebuilds and re-applies on every config change.
+    #[gpui_kit::test]
+    fn a_switch_frees_the_theme_it_replaces(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        // A theme as a config builds one: its words shared, not compiled in.
+        let mut mine = NAVY.clone();
+        mine.name = wowdps_gui_logic::theme::Text::from("mine");
+        cx.update(|cx| apply(&mine, None, cx));
+        let held = cx.update(|cx| std::sync::Arc::downgrade(&Look::global(cx).def));
+        assert!(held.upgrade().is_some_and(|d| d.name == "mine"));
+        cx.update(|cx| apply(&NAVY, None, cx));
+        assert!(held.upgrade().is_none(), "the switch freed mine");
+    }
 
     /// Every built-in theme's window faces are bundled and register under
     /// the names it gives them, and each draws all ten digits at one
@@ -253,7 +286,7 @@ mod tests {
     #[test]
     fn every_theme_s_faces_are_bundled_and_tabular() {
         use gpui_kit::{FontWeight, font, px};
-        use wowdps_gui_logic::theme::THEMES;
+        use wowdps_gui_logic::theme::themes;
         let mut cx = crate::testkit::headless();
         cx.update(|cx| {
             let faces = wowdps_gui_logic::fonts::FONTS
@@ -264,16 +297,16 @@ mod tests {
                 .add_fonts(faces)
                 .expect("the bundled fonts load");
             let names = cx.text_system().all_font_names();
-            for def in THEMES {
-                for family in [def.faces.ui, def.faces.title] {
+            for def in themes() {
+                for family in [&def.faces.ui, &def.faces.title] {
                     assert!(
-                        names.iter().any(|n| n == family),
+                        names.iter().any(|n| n.as_str() == family.as_str()),
                         "{}: {family} is bundled",
                         def.name
                     );
                 }
                 for weight in [FontWeight::NORMAL, FontWeight::MEDIUM, FontWeight::SEMIBOLD] {
-                    let mut f = font(def.faces.ui);
+                    let mut f = font(face(&def.faces.ui));
                     f.weight = weight;
                     let id = cx.text_system().resolve_font(&f);
                     let widths: Vec<f32> = ('0'..='9')
@@ -304,7 +337,7 @@ mod tests {
             assert!(theme.is_dark());
             assert_eq!(theme.background, hsla(NAVY.window.ground));
             assert_eq!(theme.primary, hsla(NAVY.window.accent));
-            assert_eq!(theme.font_family.as_ref(), NAVY.faces.ui);
+            assert_eq!(theme.font_family.as_ref(), NAVY.faces.ui.as_str());
             assert_eq!(Look::global(cx).def.name, "navy");
         });
 

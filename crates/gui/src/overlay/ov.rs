@@ -18,14 +18,14 @@ use wowdps_gui_logic::theme::{self as gl, Bars, DataTokens, Effects, OverlayToke
 use crate::theme::{Look, hsla};
 
 /// The overlay's render context.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Ov {
     pub zoom: f32,
     pub t: OverlayTokens,
     /// The face of the overlay's words.
-    pub sans: &'static str,
+    pub sans: SharedString,
     /// The face of its numbers.
-    pub mono: &'static str,
+    pub mono: SharedString,
     /// The corners: the overlay's are the theme's shape too.
     pub shape: Shape,
     /// How much class colour a row's bar shows.
@@ -42,8 +42,8 @@ impl Ov {
         Self {
             zoom,
             t: look.def.overlay,
-            sans: look.def.faces.overlay,
-            mono: look.def.faces.overlay_num,
+            sans: crate::theme::face(&look.def.faces.overlay),
+            mono: crate::theme::face(&look.def.faces.overlay_num),
             shape: look.def.shape,
             bars: look.def.bars,
             fx: look.def.effects,
@@ -134,7 +134,7 @@ impl Ov {
     /// Words in the overlay's face, `size` ×z.
     pub fn words(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
         div()
-            .font_family(self.sans)
+            .font_family(self.sans.clone())
             .text_size(self.z(size))
             .text_color(color)
             .whitespace_nowrap()
@@ -144,7 +144,7 @@ impl Ov {
     /// Numbers in the overlay's monospace face, `size` ×z.
     pub fn nums(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
         div()
-            .font_family(self.mono)
+            .font_family(self.mono.clone())
             .text_size(self.z(size))
             .text_color(color)
             .whitespace_nowrap()

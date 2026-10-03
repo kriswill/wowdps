@@ -101,7 +101,7 @@ fn main() -> ExitCode {
             config::Config::path().display()
         );
     }
-    let def = themes.named(&cfg.theme);
+    let def = themes.named(&cfg.theme).clone();
     // The overlay's output, chosen before the app starts: under Hyprland it
     // may wait for the game window to map, a wait no frame should take.
     let output = overlay.then(|| overlay::choose_output(&cfg)).flatten();
@@ -145,7 +145,7 @@ fn main() -> ExitCode {
         keys::bind(cx);
         fonts(cx);
         theme::Themes::set(themes, cx);
-        theme::apply(def, chrome, cx);
+        theme::apply(&def, chrome, cx);
         let fail = move |e: String, cx: &mut gpui_kit::App| {
             *failed.borrow_mut() = Some(e);
             cx.quit();
@@ -184,7 +184,7 @@ fn print_theme(name: Option<String>) -> ExitCode {
     let cfg = config::Config::load();
     let themes = cfg.themes();
     let Some(name) = name else {
-        let names: Vec<_> = themes.themes().iter().map(|d| d.name).collect();
+        let names: Vec<&str> = themes.themes().iter().map(|d| d.name.as_str()).collect();
         eprintln!(
             "wowdps-gui: --print-theme takes a theme: {}",
             names.join(", ")
@@ -198,7 +198,7 @@ fn print_theme(name: Option<String>) -> ExitCode {
         );
     }
     let Some(def) = themes.get(&name) else {
-        let names: Vec<_> = themes.themes().iter().map(|d| d.name).collect();
+        let names: Vec<&str> = themes.themes().iter().map(|d| d.name.as_str()).collect();
         eprintln!(
             "wowdps-gui: no theme is named {name:?}: {}",
             names.join(", ")
@@ -210,6 +210,6 @@ fn print_theme(name: Option<String>) -> ExitCode {
          # the tables (and give it a `label`) to make a theme of your own.\n",
         def.label, def.name
     );
-    print!("{}", wowdps_gui_logic::theme::theme_toml(def, def.name));
+    print!("{}", wowdps_gui_logic::theme::theme_toml(def, &def.name));
     ExitCode::SUCCESS
 }

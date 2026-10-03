@@ -34,7 +34,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Opt
         .floating(w, w.c(|t| t.raise), w.c(|t| t.edge), w.shadows.toast)
         .child(
             div()
-                .font_family(w.ui)
+                .font_family(w.ui.clone())
                 .font_weight(REGULAR)
                 .text_size(w.z(PX))
                 .text_color(w.c(|t| t.ink))

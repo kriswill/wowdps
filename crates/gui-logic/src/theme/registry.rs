@@ -32,25 +32,25 @@
 //! theme — each is a line in [`Registry::warnings`] and is otherwise left
 //! out.
 //!
-//! The registry hands out `&'static Def`s, as the built-ins are: a theme
-//! built from a config is interned, so building the registry again (the
-//! overlay re-reads the config when the window switches themes) reuses
-//! every definition that did not change rather than leaking a new one.
+//! The registry owns what it builds: a theme from a config is a plain
+//! value, its words shared strings ([`Text`]), freed with the registry (and
+//! with the look that wears it) — so the overlay building the registry
+//! again on every config change keeps nothing it no longer names.
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
 
 use super::color::Color;
 use super::defs::{
-    DataTokens, Def, Effects, Faces, NAVY, OverlayTokens, THEMES, WindowTokens, builtin,
+    DataTokens, Def, Effects, Faces, NAVY, OverlayTokens, WindowTokens, builtin, themes,
 };
 use super::metrics::{Bars, Pitches, Shape, Sizes};
 use super::talent_tokens::TalentTokens;
+use super::text::Text;
 
 /// Every theme a config can choose, and what it got wrong.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Registry {
-    defs: Vec<&'static Def>,
+    defs: Vec<Def>,
     /// One line per mistake in the config's `[themes]`, for the GUI to say.
     pub warnings: Vec<String>,
 }
@@ -71,7 +71,7 @@ impl Registry {
     /// The built-ins alone.
     pub fn builtin() -> Self {
         Self {
-            defs: THEMES.to_vec(),
+            defs: themes().into_iter().cloned().collect(),
             warnings: Vec::new(),
         }
     }
@@ -79,15 +79,15 @@ impl Registry {
     /// The built-ins with a config's `[themes]` table laid over them: the
     /// built-ins first in their own order, then the config's own themes
     /// by name.
-    pub fn from_table(themes: &toml::Table) -> Self {
+    pub fn from_table(table: &toml::Table) -> Self {
         let mut build = Build {
-            table: themes,
+            table,
             done: BTreeMap::new(),
             visiting: Vec::new(),
             warnings: Vec::new(),
         };
         let mut names: Vec<String> = Vec::new();
-        for key in themes.keys() {
+        for key in table.keys() {
             let Some(name) = canonical(key) else {
                 build.warnings.push(format!(
                     "themes.{}: a theme's name is letters, digits, '-' and '_'",
@@ -105,17 +105,16 @@ impl Registry {
             build.resolve(key, &name);
             names.push(name);
         }
-        let mut defs: Vec<&'static Def> = THEMES
-            .iter()
-            .map(|d| build.done.get(d.name).copied().flatten().unwrap_or(d))
+        let mut done = build.done;
+        let mut defs: Vec<Def> = themes()
+            .into_iter()
+            .map(|d| {
+                done.remove(d.name.as_str())
+                    .flatten()
+                    .unwrap_or_else(|| d.clone())
+            })
             .collect();
-        for (name, def) in &build.done {
-            if builtin(name).is_none()
-                && let Some(def) = def
-            {
-                defs.push(def);
-            }
-        }
+        defs.extend(done.into_values().flatten());
         Self {
             defs,
             warnings: build.warnings,
@@ -123,21 +122,22 @@ impl Registry {
     }
 
     /// Every theme, in the ⚙ card's order.
-    pub fn themes(&self) -> &[&'static Def] {
+    pub fn themes(&self) -> &[Def] {
         &self.defs
     }
 
     /// The theme `name` spells (any case; a built-in's old name too).
-    pub fn get(&self, name: &str) -> Option<&'static Def> {
-        let canonical = builtin(name).map_or_else(|| name.trim().to_lowercase(), |d| d.name.into());
-        self.defs.iter().copied().find(|d| d.name == canonical)
+    pub fn get(&self, name: &str) -> Option<&Def> {
+        let canonical =
+            builtin(name).map_or_else(|| name.trim().to_lowercase(), |d| d.name.to_string());
+        self.defs.iter().find(|d| d.name == canonical.as_str())
     }
 
     /// The theme config `theme` names; a name it does not know is `navy`
     /// (the config's own `navy`, overrides and all).
-    pub fn named(&self, name: &str) -> &'static Def {
+    pub fn named(&self, name: &str) -> &Def {
         self.get(name)
-            .or_else(|| self.get(NAVY.name))
+            .or_else(|| self.get(&NAVY.name))
             .unwrap_or(&NAVY)
     }
 }
@@ -179,16 +179,16 @@ fn bare(key: &str) -> String {
 struct Build<'a> {
     table: &'a toml::Table,
     /// Each theme resolved so far, by name; `None` for a table that failed.
-    done: BTreeMap<String, Option<&'static Def>>,
+    done: BTreeMap<String, Option<Def>>,
     /// The chain being resolved, so a base that leads back into it is a loop.
     visiting: Vec<String>,
     warnings: Vec<String>,
 }
 
 impl Build<'_> {
-    fn resolve(&mut self, key: &str, name: &str) -> Option<&'static Def> {
+    fn resolve(&mut self, key: &str, name: &str) -> Option<Def> {
         if let Some(done) = self.done.get(name) {
-            return *done;
+            return done.clone();
         }
         let at = format!("themes.{}", bare(key));
         if self.visiting.iter().any(|v| v == name) {
@@ -214,44 +214,45 @@ impl Build<'_> {
         let start = self.base(key, name, entry);
         self.visiting.pop();
         let own = builtin(name).filter(|d| d.name == name);
+        let base_accent = start.window.accent;
         let mut def = Def {
-            name: intern(name),
-            label: own.map_or_else(|| intern(&title_case(name)), |d| d.label),
-            ..*start
+            name: Text::from(name),
+            label: own.map_or_else(
+                || Text::from(title_case(name).as_str()),
+                |d| d.label.clone(),
+            ),
+            ..start
         };
         apply(&mut def, &at, entry, &mut self.warnings);
         // A theme of the config's own that moved its accent has no name for
         // it unless it says one: its base's ("White") would be wrong.
-        if own.is_none()
-            && def.window.accent != start.window.accent
-            && !entry.contains_key("accent_label")
+        if own.is_none() && def.window.accent != base_accent && !entry.contains_key("accent_label")
         {
-            def.accent_label = "Theme";
+            def.accent_label = Text::Static("Theme");
         }
-        let def = intern_def(def);
-        self.done.insert(name.to_string(), Some(def));
+        self.done.insert(name.to_string(), Some(def.clone()));
         Some(def)
     }
 
     /// What `[themes.<key>]` starts from: its `base`, else the built-in it
     /// is named for, else `navy`.
-    fn base(&mut self, key: &str, name: &str, entry: &toml::Table) -> &'static Def {
-        let own = || builtin(name).filter(|d| d.name == name);
+    fn base(&mut self, key: &str, name: &str, entry: &toml::Table) -> Def {
+        let own = || builtin(name).filter(|d| d.name == name).cloned();
         let Some(base) = entry.get("base") else {
-            return own().unwrap_or(&NAVY);
+            return own().unwrap_or_else(|| NAVY.clone());
         };
         let at = format!("themes.{}.base", bare(key));
         let Some(base) = base.as_str().and_then(canonical) else {
             self.warnings
                 .push(format!("{at}: {base} is not a theme's name, as a string"));
-            return own().unwrap_or(&NAVY);
+            return own().unwrap_or_else(|| NAVY.clone());
         };
         if base == name {
             return own().unwrap_or_else(|| {
                 self.warnings.push(format!(
                     "{at}: a theme cannot start from itself; starting from navy"
                 ));
-                &NAVY
+                NAVY.clone()
             });
         }
         let other = self
@@ -260,13 +261,13 @@ impl Build<'_> {
             .find(|k| canonical(k).as_deref() == Some(base.as_str()))
             .cloned();
         if let Some(other) = other {
-            return self.resolve(&other, &base).unwrap_or(&NAVY);
+            return self.resolve(&other, &base).unwrap_or_else(|| NAVY.clone());
         }
-        builtin(&base).unwrap_or_else(|| {
+        builtin(&base).cloned().unwrap_or_else(|| {
             self.warnings.push(format!(
                 "{at}: no theme is named {base:?}; starting from navy"
             ));
-            &NAVY
+            NAVY.clone()
         })
     }
 }
@@ -279,11 +280,11 @@ fn apply(def: &mut Def, head: &str, entry: &toml::Table, warnings: &mut Vec<Stri
         match field.as_str() {
             "base" => {}
             "label" => match value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                Some(s) => def.label = intern(s),
+                Some(s) => def.label = Text::from(s),
                 None => warnings.push(format!("{at}: {value} is not a name, as a string")),
             },
             "accent_label" => match value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                Some(s) => def.accent_label = intern(s),
+                Some(s) => def.accent_label = Text::from(s),
                 None => warnings.push(format!("{at}: {value} is not a name, as a string")),
             },
             "dark" => match value.as_bool() {
@@ -447,7 +448,7 @@ fn set_face(faces: &mut Faces, k: &str, v: &toml::Value, warn: &mut dyn FnMut(St
         return warn(format!("no such face ({})", did_you_mean(k, Faces::NAMES)));
     };
     match v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(family) => *slot = intern(family),
+        Some(family) => *slot = Text::from(family),
         None => warn(format!("{v} is not a family's name")),
     }
 }
@@ -503,36 +504,6 @@ fn title_case(name: &str) -> String {
     }
 }
 
-/// `s` as a `&'static str`, leaked once per distinct string.
-fn intern(s: &str) -> &'static str {
-    static STRINGS: OnceLock<Mutex<Vec<&'static str>>> = OnceLock::new();
-    let mut strings = STRINGS
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(found) = strings.iter().find(|x| **x == s) {
-        return found;
-    }
-    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
-    strings.push(leaked);
-    leaked
-}
-
-/// `def` as a `&'static Def`, leaked once per distinct definition.
-fn intern_def(def: Def) -> &'static Def {
-    static DEFS: OnceLock<Mutex<Vec<&'static Def>>> = OnceLock::new();
-    let mut defs = DEFS
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(found) = defs.iter().find(|d| ***d == def) {
-        return found;
-    }
-    let leaked: &'static Def = Box::leak(Box::new(def));
-    defs.push(leaked);
-    leaked
-}
-
 /// Every key of `def` as a config's `[themes.<as_name>]` tables: a theme to
 /// copy and edit (`wowdps-gui --print-theme onyx`). It reads back as `def`
 /// with `as_name`, to the nearest 8-bit step of every colour.
@@ -543,7 +514,7 @@ pub fn theme_toml(def: &Def, as_name: &str) -> String {
     let _ = writeln!(out, "[{head}]");
     // A built-in's copy keeps its base, so a token a later version adds
     // comes from the theme it was copied from, not from navy.
-    if builtin(def.name).is_some_and(|b| b.name == def.name) {
+    if builtin(&def.name).is_some_and(|b| b.name == def.name) {
         let _ = writeln!(out, "base = {:?}", def.name);
     }
     let _ = writeln!(out, "label = {:?}", def.label);
@@ -599,7 +570,7 @@ pub fn theme_toml(def: &Def, as_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::{FROST, ONYX};
+    use crate::theme::ONYX;
 
     fn table(text: &str) -> toml::Table {
         toml::from_str(text).unwrap_or_default()
@@ -609,10 +580,11 @@ mod tests {
     fn with_no_themes_table_the_built_ins_are_all_there() {
         let r = Registry::from_table(&toml::Table::new());
         assert_eq!(r, Registry::builtin());
-        assert_eq!(r.themes(), &[&NAVY, &ONYX, &FROST]);
-        assert_eq!(r.named("onyx"), &ONYX);
-        assert_eq!(r.named("Gold"), &NAVY, "the old name");
-        assert_eq!(r.named("nope"), &NAVY);
+        let names: Vec<&str> = r.themes().iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["navy", "onyx", "frost"]);
+        assert_eq!(*r.named("onyx"), *ONYX);
+        assert_eq!(*r.named("Gold"), *NAVY, "the old name");
+        assert_eq!(*r.named("nope"), *NAVY);
         assert!(r.warnings.is_empty());
     }
 
@@ -630,7 +602,7 @@ mod tests {
         assert_eq!(onyx.window.ink, ONYX.window.ink);
         assert_eq!(onyx.label, "Onyx");
         assert_eq!(r.themes().len(), 3);
-        assert_eq!(r.named("navy"), &NAVY);
+        assert_eq!(*r.named("navy"), *NAVY);
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
     }
 
@@ -659,7 +631,7 @@ mod tests {
             "##,
         ));
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
-        let names: Vec<_> = r.themes().iter().map(|d| d.name).collect();
+        let names: Vec<_> = r.themes().iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["navy", "onyx", "frost", "ash", "ember", "plain"]);
         let ember = r.named("EMBER");
         assert_eq!(
@@ -668,7 +640,10 @@ mod tests {
             "the changed onyx"
         );
         assert_eq!(ember.window.accent, Color::hex(0xFF7A3D));
-        assert_eq!((ember.label, ember.accent_label), ("Ember glow", "Ember"));
+        assert_eq!(
+            (ember.label.as_str(), ember.accent_label.as_str()),
+            ("Ember glow", "Ember")
+        );
         assert_eq!(ember.faces.title, "Marcellus");
         assert_eq!(ember.faces.ui, ONYX.faces.ui);
         let ash = r.named("ash");
@@ -733,20 +708,30 @@ mod tests {
         assert!(r.get("notatable").is_none());
     }
 
-    /// Building the same config twice hands out the same definitions: the
-    /// overlay rebuilds on every config change and must not leak.
+    /// What a config builds is the registry's own: dropped with it, every
+    /// word of it freed — the overlay rebuilds on every config change and
+    /// must keep nothing it no longer names. Built twice, it is equal.
     #[test]
-    fn a_rebuild_reuses_its_definitions() {
-        let t = table("[ember.window]\naccent = \"#ff7a3d\"\n");
-        let a = Registry::from_table(&t).named("ember");
-        let b = Registry::from_table(&t).named("ember");
-        assert!(std::ptr::eq(a, b));
+    fn a_dropped_registry_frees_what_it_built() {
+        let t = table("[ember]\nlabel = \"Ember glow\"\n[ember.faces]\ntitle = \"Some Face\"\n");
+        let r = Registry::from_table(&t);
+        assert_eq!(r, Registry::from_table(&t), "built twice, equal");
+        let weak = match &r.named("ember").faces.title {
+            Text::Shared(a) => Some(std::sync::Arc::downgrade(a)),
+            Text::Static(_) => None,
+        };
+        assert!(weak.as_ref().and_then(std::sync::Weak::upgrade).is_some());
+        drop(r);
+        assert!(
+            weak.and_then(|w| w.upgrade()).is_none(),
+            "the face's name went with the registry"
+        );
     }
 
     /// A printed theme reads back as itself.
     #[test]
     fn a_printed_theme_reads_back() {
-        for def in THEMES {
+        for def in themes() {
             let text = theme_toml(def, "copy");
             let parsed: toml::Table = toml::from_str(&text).unwrap_or_default();
             let themes = parsed.get("themes").and_then(|t| t.as_table()).cloned();

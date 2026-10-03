@@ -6,13 +6,15 @@ use super::color::Color;
 use super::defs::{Def, WindowTokens};
 use super::navy::NAVY;
 use super::talent_tokens::TALENTS_FROST;
+use super::text::Text;
+use std::sync::LazyLock;
 
 const FROST_TOKEN: Color = Color::hex(0x8FD0F2);
 
-pub const FROST: Def = Def {
-    name: "frost",
-    label: "Frost",
-    accent_label: "Frost",
+pub static FROST: LazyLock<Def> = LazyLock::new(|| Def {
+    name: Text::Static("frost"),
+    label: Text::Static("Frost"),
+    accent_label: Text::Static("Frost"),
     window: WindowTokens {
         ground: Color::hex(0x0A1016),
         surface: Color::hex(0x101923),
@@ -38,5 +40,5 @@ pub const FROST: Def = Def {
         ..NAVY.window
     },
     talents: TALENTS_FROST,
-    ..NAVY
-};
+    ..NAVY.clone()
+});

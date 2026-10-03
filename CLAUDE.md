@@ -809,7 +809,10 @@ name: `[themes.<name>.window|overlay|talents|data|faces|size|pitch|shape|bars|
 effects]`, plus `base`, `label`, `accent_label` and `dark` — `theme::Registry`
 lays a config's tables over the built-ins (a table named for one overrides
 it; any other is a theme of the user's own, from its `base`, `navy` when
-unsaid), interns what it builds so a rebuild leaks nothing, and words every
+unsaid), owns what it builds — a theme's words are `theme::Text`, a
+literal or a string shared from the config; the built-ins are lazily built
+statics; the active `Look` holds its `Def` by an `Arc`, so a theme switched
+away from is freed — and words every
 mistake (`did you mean "accent"?`) for stderr and the ⚙ card. The window
 switches theme from the ⚙ card (`Gui::set_theme`, one key through
 `Config::store`, the chrome kept); the overlay polls the config's mtime once

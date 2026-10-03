@@ -227,8 +227,8 @@ impl Config {
 
     /// The configured theme, overrides and all; a name we do not know is
     /// `navy`.
-    pub fn theme(&self) -> &'static crate::theme::Def {
-        self.themes().named(&self.theme)
+    pub fn theme(&self) -> crate::theme::Def {
+        self.themes().named(&self.theme).clone()
     }
 
     /// The configured chrome; a name we do not know is the default, the

@@ -168,19 +168,20 @@ impl Gui {
     /// The theme, by name: written to the config alone (the overlay, which
     /// watches the file, follows), and the window repainted in it with the
     /// chrome it had.
-    pub(crate) fn set_theme(&mut self, name: &'static str, cx: &mut Context<Self>) {
+    pub(crate) fn set_theme(&mut self, name: &str, cx: &mut Context<Self>) {
         if self.cfg.theme == name {
             return;
         }
         self.cfg.theme = name.to_string();
-        wowdps_gui_logic::config::Config::store(|c| c.theme = name.to_string());
+        let stored = name.to_string();
+        wowdps_gui_logic::config::Config::store(|c| c.theme = stored);
         self.repaint(cx);
     }
 
     /// The theme the config names, from the registry the window started
     /// with (the config's own `[themes]` included).
-    pub(crate) fn theme_def(&self, cx: &App) -> &'static Def {
-        theme::Themes::global(cx).named(&self.cfg.theme)
+    pub(crate) fn theme_def(&self, cx: &App) -> Def {
+        theme::Themes::global(cx).named(&self.cfg.theme).clone()
     }
 
     /// Apply the configured theme and chrome. A class chrome wears the
@@ -198,7 +199,8 @@ impl Gui {
             Chrome::Theme => None,
         };
         self.learned = chrome == Chrome::Class && class.is_some();
-        theme::apply(self.theme_def(cx), accent, cx);
+        let def = self.theme_def(cx);
+        theme::apply(&def, accent, cx);
         cx.notify();
     }
 

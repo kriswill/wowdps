@@ -295,11 +295,11 @@ fn the_overlay_follows_the_config_s_theme(cx: &mut TestAppContext) {
     };
     rig.overlay
         .update(cx, |o, cx| o.take_theme(read("theme = \"onyx\"\n"), cx));
-    assert_eq!(*worn(cx), ONYX);
+    assert_eq!(*worn(cx), *ONYX);
     rig.overlay.update(cx, |o, cx| {
         o.take_theme(read("theme = \"onyx\"\nzoom = 2.0\n"), cx)
     });
-    assert_eq!(*worn(cx), ONYX, "nothing to repaint");
+    assert_eq!(*worn(cx), *ONYX, "nothing to repaint");
     rig.overlay.update(cx, |o, cx| {
         o.take_theme(
             read("theme = \"mine\"\n[themes.mine]\nbase = \"onyx\"\n[themes.mine.overlay]\nyellow = \"#ff0000\"\n"),

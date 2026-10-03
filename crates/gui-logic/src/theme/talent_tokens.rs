@@ -130,14 +130,14 @@ pub const TALENTS_ONYX: TalentTokens = TalentTokens {
 
 #[cfg(test)]
 mod tests {
-    use crate::theme::{AA_CONTRAST, Color, THEMES, contrast};
+    use crate::theme::{AA_CONTRAST, Color, contrast, themes};
 
     /// Every theme's tooltip words read on its tooltip box, and its rank
     /// badges' on their plate (each composited over black, the darkest
     /// thing under them).
     #[test]
     fn every_theme_s_talent_words_read() {
-        for def in THEMES {
+        for def in themes() {
             let t = def.talents;
             let tip = t.tip.over(Color::BLACK);
             for (name, ink) in [

@@ -1,6 +1,6 @@
 use super::samples::{ITEM_KINDS, mark, marked, role_marked, timeline};
 use super::*;
-use crate::theme::{NAVY, THEMES};
+use crate::theme::{NAVY, themes};
 
 /// The shared y-scale is the whole point: a player doing half the damage
 /// must draw half as tall, not identically.
@@ -52,7 +52,7 @@ fn marker_colors_and_names_are_distinct_per_kind() {
                 | (MarkKind::Defensive, MarkKind::ActiveMitigation)
         )
     };
-    for def in THEMES {
+    for def in themes() {
         let color = |k| mark_color(k, &def.data);
         for (i, a) in kinds.iter().enumerate() {
             for b in kinds.iter().skip(i + 1) {

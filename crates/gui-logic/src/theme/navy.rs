@@ -8,6 +8,8 @@ use super::color::{Color, INK_DARK};
 use super::defs::{DataTokens, Def, Effects, Faces, OverlayTokens, WindowTokens};
 use super::metrics::{BARS, PITCHES, SHADOWS, SHAPE, SIZES};
 use super::talent_tokens::TALENTS_NAVY;
+use super::text::Text;
+use std::sync::LazyLock;
 
 const GOLD: Color = Color::hex(0xF2C14B);
 
@@ -42,10 +44,10 @@ pub const DATA: DataTokens = DataTokens {
 };
 
 /// The window redesign's Tokens and the overlay as it has always looked.
-pub const NAVY: Def = Def {
-    name: "navy",
-    label: "Navy",
-    accent_label: "Gold",
+pub static NAVY: LazyLock<Def> = LazyLock::new(|| Def {
+    name: Text::Static("navy"),
+    label: Text::Static("Navy"),
+    accent_label: Text::Static("Gold"),
     dark: true,
     window: WindowTokens {
         ground: Color::hex(0x0A0E18),
@@ -139,10 +141,10 @@ pub const NAVY: Def = Def {
     talents: TALENTS_NAVY,
     data: DATA,
     faces: Faces {
-        ui: crate::fonts::BARLOW,
-        title: crate::fonts::MARCELLUS,
-        overlay: "Noto Sans",
-        overlay_num: "Noto Sans Mono",
+        ui: Text::Static(crate::fonts::BARLOW),
+        title: Text::Static(crate::fonts::MARCELLUS),
+        overlay: Text::Static("Noto Sans"),
+        overlay_num: Text::Static("Noto Sans Mono"),
     },
     size: SIZES,
     pitch: PITCHES,
@@ -156,4 +158,4 @@ pub const NAVY: Def = Def {
         quiet_press: false,
     },
     shadows: SHADOWS,
-};
+});

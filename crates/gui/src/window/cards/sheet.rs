@@ -168,7 +168,7 @@ fn group_lines(group: &str, bindings: &[&Binding], inert: &[&str], w: &W) -> Div
                     div()
                         .flex_1()
                         .min_w_0()
-                        .font_family(w.ui)
+                        .font_family(w.ui.clone())
                         .font_weight(REGULAR)
                         .text_size(w.z(w.size.sheet_key))
                         .text_color(ink)

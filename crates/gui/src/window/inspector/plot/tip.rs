@@ -30,13 +30,16 @@ pub fn weight(face: Face) -> FontWeight {
 pub(super) struct Shaper {
     text: Arc<WindowTextSystem>,
     pen: Pen,
+    /// The face its words are set in.
+    ui: SharedString,
 }
 
 impl Shaper {
-    pub fn new(window: &Window, pen: Pen) -> Self {
+    pub fn new(window: &Window, pen: Pen, ui: SharedString) -> Self {
         Self {
             text: window.text_system().clone(),
             pen,
+            ui,
         }
     }
 
@@ -57,7 +60,7 @@ impl Shaper {
             len: s.len(),
             font: Font {
                 weight: weight(face),
-                ..font(self.pen.ui)
+                ..font(self.ui.clone())
             },
             color,
             background_color: None,

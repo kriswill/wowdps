@@ -162,7 +162,7 @@ fn disc(ov: &Ov, fill: Color, tag: &'static str, d: Pixels) -> AnyElement {
                 .flex()
                 .items_center()
                 .justify_center()
-                .font_family(ov.mono)
+                .font_family(ov.mono.clone())
                 .text_size(r * 0.9)
                 .text_color(ov.c(|t| t.on_bar))
                 .child(tag),

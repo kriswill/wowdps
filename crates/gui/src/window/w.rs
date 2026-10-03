@@ -54,7 +54,7 @@ impl Fit {
 }
 
 /// The window's render context.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct W {
     pub zoom: f32,
     pub t: WindowTokens,
@@ -72,9 +72,9 @@ pub struct W {
     /// The chrome: the theme's own accent or the owner's class.
     pub accent: Accent,
     /// Names and numbers (a face with tabular digits).
-    pub ui: &'static str,
+    pub ui: SharedString,
     /// Encounter titles and the wordmark.
-    pub title: &'static str,
+    pub title: SharedString,
     /// The window's width at zoom 1, in logical pixels.
     pub width: f32,
 }
@@ -93,8 +93,8 @@ impl W {
             data: look.def.data,
             shadows: look.def.shadows,
             accent: look.accent,
-            ui: look.def.faces.ui,
-            title: look.def.faces.title,
+            ui: crate::theme::face(&look.def.faces.ui),
+            title: crate::theme::face(&look.def.faces.title),
             width,
         }
     }
@@ -204,7 +204,7 @@ impl W {
         weight: FontWeight,
     ) -> Div {
         div()
-            .font_family(self.ui)
+            .font_family(self.ui.clone())
             .font_weight(weight)
             .text_size(self.z(size))
             .text_color(color)
@@ -216,7 +216,7 @@ impl W {
     /// of a control whose hover brightens it.
     pub fn words(&self, words: impl Into<SharedString>, size: f32, weight: FontWeight) -> Div {
         div()
-            .font_family(self.ui)
+            .font_family(self.ui.clone())
             .font_weight(weight)
             .text_size(self.z(size))
             .whitespace_nowrap()
@@ -226,7 +226,7 @@ impl W {
     /// One line in the title face (Marcellus).
     pub fn title_text(&self, words: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
         self.text(words, size, color, REGULAR)
-            .font_family(self.title)
+            .font_family(self.title.clone())
     }
 
     /// A class colour as data — a bar, a disc, a skull: `Class::rgb`

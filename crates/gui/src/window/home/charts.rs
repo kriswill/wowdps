@@ -62,12 +62,19 @@ struct Word {
 }
 
 impl Word {
-    fn paint(&self, o: Point<Pixels>, z: f32, ui: &'static str, window: &mut Window, cx: &mut App) {
+    fn paint(
+        &self,
+        o: Point<Pixels>,
+        z: f32,
+        ui: &SharedString,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let run = TextRun {
             len: self.s.len(),
             font: Font {
                 weight: self.weight,
-                ..font(ui)
+                ..font(ui.clone())
             },
             color: self.color,
             background_color: None,
@@ -176,7 +183,7 @@ pub fn rank_slope(
         })
         .collect();
     let hits = targets(&dots, tips, "slope-dot", w, cx);
-    let (t, z, ui) = (w.t, w.zoom, w.ui);
+    let (t, z, ui) = (w.t, w.zoom, w.ui.clone());
     let marks: Vec<(bool, String)> = pulls
         .iter()
         .map(|p| (hollow(p.mark), ordinal(p.standing.place)))
@@ -186,7 +193,7 @@ pub fn rank_slope(
         |_, _, _| {},
         move |b, (), window, cx| {
             paint_slope(
-                &drawn, &marks, &labelled, color, cw, t, z, ui, b, window, cx,
+                &drawn, &marks, &labelled, color, cw, t, z, &ui, b, window, cx,
             );
         },
     )
@@ -212,7 +219,7 @@ fn paint_slope(
     cw: f32,
     t: WindowTokens,
     z: f32,
-    ui: &'static str,
+    ui: &SharedString,
     b: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
@@ -303,7 +310,7 @@ pub fn trend(
         })
         .collect();
     let hits = targets(&dots, tips, "trend-dot", w, cx);
-    let (t, z, ui) = (w.t, w.zoom, w.ui);
+    let (t, z, ui) = (w.t, w.zoom, w.ui.clone());
     let fills: Vec<(Hsla, bool, f64, i64)> = points
         .iter()
         .map(|p| {
@@ -344,7 +351,7 @@ pub fn trend(
                     weight: REGULAR,
                     anchor: Anchor::Right,
                 }
-                .paint(o, z, ui, window, cx);
+                .paint(o, z, &ui, window, cx);
             }
             for (((xy, _), (color, best, value, day)), first) in drawn.iter().zip(&fills).zip(&days)
             {
@@ -362,7 +369,7 @@ pub fn trend(
                         weight: SEMIBOLD,
                         anchor: Anchor::Center,
                     }
-                    .paint(o, z, ui, window, cx);
+                    .paint(o, z, &ui, window, cx);
                 }
                 if *first {
                     Word {
@@ -374,7 +381,7 @@ pub fn trend(
                         weight: REGULAR,
                         anchor: Anchor::Center,
                     }
-                    .paint(o, z, ui, window, cx);
+                    .paint(o, z, &ui, window, cx);
                 }
             }
         },

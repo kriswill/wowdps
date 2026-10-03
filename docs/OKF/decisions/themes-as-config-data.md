@@ -60,9 +60,17 @@ over the built-ins: a table named for one overrides only what it says; any
 other is a theme of the user's own, starting from its `base` (a built-in,
 overridden or not, or another of their themes; `navy` when unsaid). Loops,
 bad colours, unknown keys and non-tables are lines in `warnings` (stderr at
-start, and the first in the ⚙ card), never a failed file. Built themes are
-interned, so the overlay rebuilding the registry on every config change
-leaks nothing. `wowdps-gui --print-theme <name>` prints every key of a
+start, and the first in the ⚙ card), never a failed file. What a config
+builds is owned, not permanent: a theme's words are `theme::Text` (a
+compiled-in literal, or a string shared from the config), the registry
+owns plain `Def`s, and the active `Look` holds its theme by an `Arc`, so
+the overlay rebuilding the registry on every config change keeps nothing
+it no longer names. The first build interned (leaked) each distinct
+definition so it could pass for a built-in `&'static Def`; CodeRabbit's
+security review flagged the unbounded growth across distinct edits, and
+the built-ins became lazily built statics instead (a `const` cannot hold a
+type with a destructor), the window, overlay and talent contexts carrying
+their faces as GPUI `SharedString`s. `wowdps-gui --print-theme <name>` prints every key of a
 theme as tables to copy. The config keeps `themes` as written
 (`toml::Table`), so a save never drops a key this version does not know.
 Names: `gold` reads as `navy` for `theme`, and as `theme` for `chrome`.

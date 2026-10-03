@@ -230,21 +230,21 @@ impl Overlay {
             return;
         }
         let themes = disk.themes();
-        let def = themes.named(&disk.theme);
+        let def = themes.named(&disk.theme).clone();
         let accent = (disk.chrome() == Chrome::Class)
             .then(|| disk.character_class())
             .flatten()
             .map(class_accent);
         let look = Look::global(cx);
-        let wanted = accent.unwrap_or_else(|| own_accent(def));
+        let wanted = accent.unwrap_or_else(|| own_accent(&def));
         self.cfg.theme = disk.theme;
         self.cfg.themes = disk.themes;
         self.cfg.chrome = disk.chrome;
-        if *look.def == *def && look.accent == wanted {
+        if *look.def == def && look.accent == wanted {
             return;
         }
         Themes::set(themes, cx);
-        crate::theme::apply(def, accent, cx);
+        crate::theme::apply(&def, accent, cx);
         cx.notify();
     }
 
@@ -641,7 +641,7 @@ impl Overlay {
             .id("overlay")
             .size_full()
             .relative()
-            .font_family(ov.sans)
+            .font_family(ov.sans.clone())
             .line_height(relative(1.3))
             .child(frame)
             .children(card)
@@ -1054,7 +1054,7 @@ impl Overlay {
                 div()
                     .py(px(2.))
                     .px(px(8.))
-                    .font_family(ov.mono)
+                    .font_family(ov.mono.clone())
                     .text_size(ov.z(9.))
                     .text_color(dim)
                     .child(line),

@@ -168,7 +168,7 @@ pub fn view(t: Table, gui: &Gui, w: &W, cx: &mut Context<Gui>) -> impl IntoEleme
                 .child(
                     div()
                         .truncate()
-                        .font_family(w.ui)
+                        .font_family(w.ui.clone())
                         .text_size(w.z(w.size.frame))
                         .text_color(w.c(|t| t.ink_2))
                         .child(total_words(&t.all)),
@@ -216,7 +216,7 @@ fn line(
             div()
                 .flex_shrink(1.)
                 .min_w_0()
-                .font_family(w.ui)
+                .font_family(w.ui.clone())
                 .font_weight(if on { MEDIUM } else { REGULAR })
                 .text_size(w.z(w.size.name))
                 .text_color(if on {
@@ -240,7 +240,7 @@ fn line(
         div()
             .flex_shrink(1.)
             .min_w_0()
-            .font_family(w.ui)
+            .font_family(w.ui.clone())
             .text_size(w.z(BLOW_PX))
             .text_color(if wd.note {
                 w.c(|t| t.ink_3_text)
@@ -257,7 +257,7 @@ fn line(
                 // one.
                 .flex_shrink(1000.)
                 .min_w_0()
-                .font_family(w.ui)
+                .font_family(w.ui.clone())
                 .text_size(w.z(w.size.small))
                 .text_color(w.c(|t| t.ink_3_text))
                 .truncate()

@@ -13,6 +13,7 @@ mod navy;
 mod onyx;
 mod registry;
 mod talent_tokens;
+mod text;
 mod tokens;
 
 pub use color::*;
@@ -20,6 +21,7 @@ pub use defs::*;
 pub use metrics::*;
 pub use registry::{Registry, theme_toml};
 pub use talent_tokens::*;
+pub use text::Text;
 
 // ---- the chrome -----------------------------------------------------------
 

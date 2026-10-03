@@ -361,7 +361,7 @@ fn row_line(
     let name = div()
         .flex_shrink(1.)
         .min_w_0()
-        .font_family(w.ui)
+        .font_family(w.ui.clone())
         .font_weight(if selected { MEDIUM } else { REGULAR })
         .text_size(w.z(w.size.name))
         .text_color(if selected {
@@ -645,7 +645,7 @@ fn total(m: &Meter, cols: &[Col], grid: Grid, who: f32, w: &W) -> impl IntoEleme
                         .child(
                             div()
                                 .truncate()
-                                .font_family(w.ui)
+                                .font_family(w.ui.clone())
                                 .text_size(w.z(w.size.frame))
                                 .text_color(w.c(|t| t.ink_2))
                                 .child(label),

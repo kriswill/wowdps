@@ -60,7 +60,7 @@ struct Cols {
 
 /// `words`' one-line width at `size` in the window's face and `weight`.
 fn text_w(window: &Window, w: &W, words: &str, size: f32, weight: FontWeight) -> f32 {
-    let mut f = font(w.ui);
+    let mut f = font(w.ui.clone());
     f.weight = weight;
     let run = TextRun {
         len: words.len(),
@@ -176,7 +176,7 @@ pub fn view(r: &Recap, fit: Fit, w: &W, window: &mut Window, _cx: &Context<Gui>)
                         .bg(hsla(wash))
                         .flex()
                         .flex_wrap()
-                        .font_family(w.ui)
+                        .font_family(w.ui.clone())
                         .text_size(w.z(INSIGHT_PX))
                         .children(words.into_iter().map(|(s, b)| {
                             div()

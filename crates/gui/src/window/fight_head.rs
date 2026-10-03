@@ -201,7 +201,7 @@ fn title_line(head: &Head, w: &W, cx: &mut Context<Gui>) -> Div {
         Some(title) => div()
             .flex_shrink(1.)
             .min_w_0()
-            .font_family(w.title)
+            .font_family(w.title.clone())
             .text_size(w.z(title_px))
             .line_height(relative(TITLE_LEADING))
             .text_color(w.c(|t| t.ink))

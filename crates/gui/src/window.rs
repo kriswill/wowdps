@@ -508,7 +508,8 @@ impl Gui {
             return;
         };
         self.learned = true;
-        theme::apply(self.theme_def(cx), Some(class_accent(class)), cx);
+        let def = self.theme_def(cx);
+        theme::apply(&def, Some(class_accent(class)), cx);
         if self.cfg.character_class() != Some(class) {
             Config::store_character_class(Some(class.name().to_string()));
         }
@@ -965,7 +966,7 @@ impl Render for Gui {
             .flex_col()
             .bg(w.c(|t| t.ground))
             .text_color(w.c(|t| t.ink))
-            .font_family(w.ui)
+            .font_family(w.ui.clone())
             .text_size(w.z(w.size.frame))
             .line_height(relative(1.3));
         // The talent viewer holds the whole window while it is open.

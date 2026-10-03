@@ -343,7 +343,7 @@ pub fn view(
         (H, MARGIN)
     };
     let z = w.zoom;
-    let look = *w;
+    let look = w.clone();
     let ribbon = Rc::new(ribbon);
     let painted = Rc::clone(&seen);
     let drawn = Rc::clone(&ribbon);
@@ -438,7 +438,7 @@ fn paint(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let (t, ui) = (look.t, look.ui);
+    let (t, ui) = (look.t, &look.ui);
     let z = geo.z;
     let w = geo.w;
     let at = |x: f32, y: f32| point(b.origin.x + px(x), b.origin.y + px(y));
@@ -679,11 +679,14 @@ fn shape(
     size: f32,
     weight: FontWeight,
     color: Hsla,
-    ui: &'static str,
+    ui: &SharedString,
 ) -> gpui_kit::ShapedLine {
     let run = TextRun {
         len: s.len(),
-        font: Font { weight, ..font(ui) },
+        font: Font {
+            weight,
+            ..font(ui.clone())
+        },
         color,
         background_color: None,
         underline: None,
@@ -704,7 +707,7 @@ fn tip_of(
     geo: &Geo<'_>,
     hover: Hover,
     t: wowdps_gui_logic::theme::WindowTokens,
-    ui: &'static str,
+    ui: &SharedString,
     window: &mut Window,
 ) -> Option<Tip> {
     let z = geo.z;

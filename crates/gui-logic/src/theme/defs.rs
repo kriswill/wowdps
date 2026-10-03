@@ -13,6 +13,7 @@
 use super::color::Color;
 use super::metrics::{Bars, Pitches, Shadows, Shape, Sizes};
 use super::talent_tokens::TalentTokens;
+use super::text::Text;
 use super::tokens::tokens;
 
 pub use super::frost::FROST;
@@ -283,21 +284,48 @@ impl DataTokens {
     }
 }
 
-tokens! {
 /// The families a theme draws in. A family must be named: GPUI resolves
 /// no generic names (`sans-serif`, `monospace`; spike S6). The bundled
 /// faces (`crate::fonts`) are always registered; a config may name any
-/// family installed on the machine.
-pub struct Faces: &'static str {
+/// family installed on the machine. Its words are [`Text`], not `Copy`, so
+/// it is written out rather than by `tokens!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Faces {
     /// The window's names and numbers. Its digits should be tabular.
-    ui,
+    pub ui: Text,
     /// Encounter titles, the wordmark and Home's place names.
-    title,
+    pub title: Text,
     /// The overlay's words.
-    overlay,
+    pub overlay: Text,
     /// The overlay's numbers.
-    overlay_num,
+    pub overlay_num: Text,
 }
+
+impl Faces {
+    /// Every face, as a config names it.
+    pub const NAMES: &'static [&'static str] = &["ui", "title", "overlay", "overlay_num"];
+
+    /// The face a config names.
+    pub fn get(&self, name: &str) -> Option<&Text> {
+        match name {
+            "ui" => Some(&self.ui),
+            "title" => Some(&self.title),
+            "overlay" => Some(&self.overlay),
+            "overlay_num" => Some(&self.overlay_num),
+            _ => None,
+        }
+    }
+
+    /// The face a config names, to set.
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Text> {
+        match name {
+            "ui" => Some(&mut self.ui),
+            "title" => Some(&mut self.title),
+            "overlay" => Some(&mut self.overlay),
+            "overlay_num" => Some(&mut self.overlay_num),
+            _ => None,
+        }
+    }
 }
 
 tokens! {
@@ -328,15 +356,17 @@ pub struct Effects: bool {
 }
 }
 
-/// One theme.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// One theme: an owned value. A built-in lives in a static for the life of
+/// the process; one built from a config is freed with the last thing
+/// holding it — the registry it came from, the look that wears it.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Def {
     /// What config `theme` spells it as: lowercase, no spaces.
-    pub name: &'static str,
+    pub name: Text,
     /// What the ⚙ card calls it.
-    pub label: &'static str,
+    pub label: Text,
     /// What the ⚙ card calls its own chrome, beside "Your class".
-    pub accent_label: &'static str,
+    pub accent_label: Text,
     /// Dark ground, light ink. Every built-in is dark today.
     pub dark: bool,
     pub window: WindowTokens,
@@ -358,7 +388,9 @@ pub struct Def {
 }
 
 /// Every built-in theme, in the ⚙ card's order: `navy` first (the default).
-pub const THEMES: [&Def; 3] = [&NAVY, &ONYX, &FROST];
+pub fn themes() -> [&'static Def; 3] {
+    [&NAVY, &ONYX, &FROST]
+}
 
 /// Names a config may still spell a built-in by: `gold` was `navy`'s name
 /// until there were themes to tell apart.
@@ -371,7 +403,7 @@ pub fn builtin(name: &str) -> Option<&'static Def> {
         .iter()
         .find(|(old, _)| old.eq_ignore_ascii_case(name))
         .map_or(name, |(_, new)| *new);
-    THEMES
+    themes()
         .into_iter()
         .find(|d| d.name.eq_ignore_ascii_case(name))
 }
@@ -395,7 +427,7 @@ mod tests {
     /// thing under it, and over a raised row, the lightest).
     #[test]
     fn every_theme_reads() {
-        for def in THEMES {
+        for def in themes() {
             let w = def.window;
             let mut fills = vec![
                 ("ground", w.ground),
@@ -446,7 +478,7 @@ mod tests {
     /// game (the panel's own alpha, 0.92), and on a card.
     #[test]
     fn every_overlay_reads() {
-        for def in THEMES {
+        for def in themes() {
             let o = def.overlay;
             let panel = o.panel.alpha(0.92).over(Color::BLACK);
             let card = o.card.over(Color::BLACK);
@@ -472,20 +504,24 @@ mod tests {
 
     #[test]
     fn themes_are_named_and_an_unknown_name_is_navy() {
-        assert_eq!(THEMES[0], &NAVY, "navy is the default");
-        for def in THEMES {
-            assert_eq!(def_named(def.name), def);
+        assert_eq!(themes()[0].name, "navy", "navy is the default");
+        for def in themes() {
+            assert_eq!(def_named(&def.name), def);
             assert_eq!(def_named(&def.name.to_uppercase()), def);
             assert!(!def.label.is_empty() && !def.accent_label.is_empty());
-            assert_eq!(def.name, def.name.to_lowercase(), "names are lowercase");
+            assert_eq!(
+                def.name.as_str(),
+                def.name.to_lowercase(),
+                "names are lowercase"
+            );
         }
-        assert_eq!(def_named("purple"), &NAVY);
+        assert_eq!(def_named("purple").name, "navy");
         assert_eq!(builtin("purple"), None);
-        assert_eq!(def_named(" Gold "), &NAVY, "the old name still reads");
-        let mut names: Vec<_> = THEMES.iter().map(|d| d.name).collect();
+        assert_eq!(def_named(" Gold ").name, "navy", "the old name still reads");
+        let mut names: Vec<&str> = themes().iter().map(|d| d.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), THEMES.len());
+        assert_eq!(names.len(), themes().len());
     }
 
     /// The token tables name every field once, and a name reads back

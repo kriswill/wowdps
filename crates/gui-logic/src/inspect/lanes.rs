@@ -212,7 +212,8 @@ mod tests {
     use super::*;
     use wowdps_model::Row as MeterRow;
 
-    const CLASSLESS: Color = crate::theme::NAVY.window.classless;
+    // `navy`'s classless grey.
+    const CLASSLESS: Color = Color::rgb(0.42, 0.44, 0.52);
 
     fn mark(kind: MarkKind, label: &str, at_ms: i64, dur_ms: i64, src: &str) -> Mark {
         Mark {

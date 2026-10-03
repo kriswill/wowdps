@@ -222,7 +222,7 @@ fn tag_disc(
                 .flex()
                 .items_center()
                 .justify_center()
-                .font_family(w.ui)
+                .font_family(w.ui.clone())
                 .font_weight(SEMIBOLD)
                 .text_size(r * 0.9)
                 .text_color(w.c(|t| t.on_class))

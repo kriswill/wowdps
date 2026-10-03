@@ -13,16 +13,18 @@ use super::defs::{DataTokens, Def, Effects, Faces, OverlayTokens, WindowTokens};
 use super::metrics::{Bars, PITCHES, SHADOWS, SIZES, Shape, Sizes};
 use super::navy::DATA;
 use super::talent_tokens::TALENTS_ONYX;
+use super::text::Text;
+use std::sync::LazyLock;
 
 /// Lume: values, names, the accent's neighbour.
 const LUME: Color = Color::hex(0xF2F3F5);
 /// The kill green: a pale lume, the one green the theme has.
 const GOOD: Color = Color::hex(0x73E0A9);
 
-pub const ONYX: Def = Def {
-    name: "onyx",
-    label: "Onyx",
-    accent_label: "White",
+pub static ONYX: LazyLock<Def> = LazyLock::new(|| Def {
+    name: Text::Static("onyx"),
+    label: Text::Static("Onyx"),
+    accent_label: Text::Static("White"),
     dark: true,
     window: WindowTokens {
         ground: Color::hex(0x000000),
@@ -125,10 +127,10 @@ pub const ONYX: Def = Def {
         ..DATA
     },
     faces: Faces {
-        ui: crate::fonts::SAIRA,
-        title: crate::fonts::MICHROMA,
-        overlay: crate::fonts::SAIRA,
-        overlay_num: crate::fonts::SAIRA,
+        ui: Text::Static(crate::fonts::SAIRA),
+        title: Text::Static(crate::fonts::MICHROMA),
+        overlay: Text::Static(crate::fonts::SAIRA),
+        overlay_num: Text::Static(crate::fonts::SAIRA),
     },
     // Michroma is wide: its titles are set smaller to stand where
     // Marcellus's did.
@@ -161,4 +163,4 @@ pub const ONYX: Def = Def {
         quiet_press: true,
     },
     shadows: SHADOWS,
-};
+});
