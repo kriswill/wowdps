@@ -306,6 +306,9 @@ fn dealt_to_friendlies_equals_taken_on_every_segment() {
             // Damage by_target for another friendly, so it joins the left —
             // the `on_friendly` half, the part R17 also saw.
             let selfed: u64 = guids.iter().map(|g| seg.self_harm_on_friendly(g)).sum();
+            // R22 amendment: friendly fire (Spirit Link Totem) is held off
+            // the Damage by_target too, and all of it reached a friendly.
+            let ff: u64 = guids.iter().map(|g| seg.friendly_fire(g)).sum();
             let rows = seg.rows(View::Taken);
             let taken: u64 = rows.iter().map(|r| r.amount).sum();
             let ticked: u64 = rows
@@ -314,9 +317,9 @@ fn dealt_to_friendlies_equals_taken_on_every_segment() {
                 .map(|m| m.stagger_ticked)
                 .sum();
             assert_eq!(
-                dealt + selfed,
+                dealt + selfed + ff,
                 taken + ticked,
-                "{name} / {}: dealt to friendlies (+self {selfed}) vs taken (+ticked {ticked})",
+                "{name} / {}: dealt to friendlies (+self {selfed}, +friendly fire {ff}) vs taken (+ticked {ticked})",
                 seg.name
             );
             // The drill panes total the row: by ability and by attacker.
@@ -378,6 +381,27 @@ fn taken_survives_lazy_loading_on_every_fixture() {
                 "{name} / {}",
                 meta.name
             );
+            // R7 amendment: the combat clock is the slice's own lines, and
+            // R22's friendly fire folds through summons the seeds replay.
+            assert_eq!(
+                ls.combat_ms(ls.last_combat_ms()),
+                seg.combat_ms(seg.last_combat_ms()),
+                "{name} / {}: combat clock",
+                meta.name
+            );
+            for r in seg
+                .rows(View::Healing)
+                .iter()
+                .chain(&seg.rows(View::Damage))
+            {
+                assert_eq!(
+                    ls.friendly_fire(&r.key),
+                    seg.friendly_fire(&r.key),
+                    "{name} / {}: {} friendly fire",
+                    meta.name,
+                    r.label
+                );
+            }
             checked += 1;
         }
         // R10: a lazily loaded Overall folds exactly like the full one.

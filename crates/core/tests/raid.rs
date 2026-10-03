@@ -404,10 +404,12 @@ fn a_death_names_its_killing_blow_and_its_rez() {
     assert!(!raid.deaths[1].battle_rezzed(), "nothing raised B");
     assert_eq!(rez.map(|r| r.spell.as_str()), Some("Rebirth"));
     assert_eq!(raid.deaths[1].rez, None);
-    // Damage taken is the series: A's two smashes and B's one.
+    // Damage taken is the series: A's two smashes and B's one — less the
+    // overkill (R1, 2026-10-02: the 7 000 and the 1 past their last health
+    // point), which the recap's killing blow above still names.
     assert_eq!(raid.view, View::Taken);
-    assert_eq!(raid.series.iter().sum::<u64>(), 1_007_000);
-    assert_eq!(raid.series.get(30), Some(&307_000));
+    assert_eq!(raid.series.iter().sum::<u64>(), 1_007_000 - 7_000 - 1);
+    assert_eq!(raid.series.get(30), Some(&300_000));
 
     let meter = meter_from_lines(pull().iter().map(String::as_str));
     let (events, _) = meter.segments()[0].breakdown(A, View::Deaths);

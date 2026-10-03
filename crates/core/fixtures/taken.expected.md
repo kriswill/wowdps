@@ -21,7 +21,10 @@ petdamage dps pct heal overheal absorbheal interrupts cc dispels deaths` — the
 the seven R17 ones (below), then R22 `self_harm`, then the seven R19 /
 healing-received ones defined
 in `support.expected.md` (in this log only `effective` = `damage` everywhere
-and Zenlí's `healed_received` = `self_healed` = 22 000, the Expel Harm):
+and Zenlí's `healed_received` = `self_healed` = 22 000, the Expel Harm). Since
+2026-10-02 two more ride the same rows: `combat_ms` right after `dps` (R7's
+combat clock, the `dps` divisor) and `friendly_fire` right after `self_harm`
+(R22's amendment) — segment 3 below is built for both:
 
 | metric | R17 definition (per player, per segment; pets fold onto owners) |
 |---|---|
@@ -62,11 +65,20 @@ emitted.
 - add `Creature-…-215010-0000AB02` "Taken Test Add", `0xa48`, max HP 60 000
   (< half the boss: never a council member, R16)
 - `Creature-0-4232-2552-0-1985-0000CC01` "Wandering Boar" — the trash tail
+- `T` = `Player-1168-0A1B2C14` "Tidecall-Nebula-US", `0x514` — a **Restoration
+  Shaman** (no COMBATANT_INFO; segment 3 only), and her Spirit Link Totem
+  `Creature-0-4232-2552-0-53006-0000DD01`, `0x2114`, summoned at l.72 — its
+  l.76 line is written with a neutral NPC's flags, `0xa28`, as the game writes a
+  totem's last lines
+- `Creature-0-4232-2552-0-1985-0000CC02` "Wandering Boar" — segment 3's, max HP
+  70 000
 
-**Expected segment count: 2**, in order: Encounter "Taken Test Boss" (id 3145,
+**Expected segment count: 3**, in order: Encounter "Taken Test Boss" (id 3145,
 difficulty 16, **kill**, 60.000 s = 21:05:00 → 21:06:00, R4), then Trash (3.000 s,
-R7 — see below for why the miss at 21:10:05 does not extend it). Nothing fires
-between the `ZONE_CHANGE` in and `ENCOUNTER_START`, so no pre-pull Trash exists.
+R7 — see below for why the miss at 21:10:05 does not extend it), then Trash
+(45.000 s, 21:12:00 → 21:12:45 — 117 s after the last combat line, past R4's
+60 s gap). Nothing fires between the `ZONE_CHANGE` in and `ENCOUNTER_START`, so
+no pre-pull Trash exists.
 
 Line numbers below are `taken.txt`'s (1-based).
 
@@ -78,14 +90,16 @@ Line numbers below are `taken.txt`'s (1-based).
 
 | player | damage | overkill | pet dmg | DPS | pct | heal | overheal | absorbheal |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| F Pyralis | **227 000** | 25 000 | 12 000 | 3783.33 | 68.58 | 26 000 | 0 | 26 000 |
-| W Durgan | **71 000** | 0 | 0 | 1183.33 | 21.45 | 12 000 | 0 | 12 000 |
-| M Zenlí | **33 000** | 0 | 6 000 | 550.00 | 9.97 | 25 000 | 8 000 | 3 000 |
+| F Pyralis | **202 000** | 25 000 | 12 000 | 3366.67 | 66.01 | 26 000 | 0 | 26 000 |
+| W Durgan | **71 000** | 0 | 0 | 1183.33 | 23.20 | 12 000 | 0 | 12 000 |
+| M Zenlí | **33 000** | 0 | 6 000 | 550.00 | 10.78 | 25 000 | 8 000 | 3 000 |
 
-Segment total damage **331 000** (R22: the 12 500 of self-harm is not in it).
+Segment total damage **306 000** (R22: the 12 500 of self-harm is not in it;
+R1 since 2026-10-02: nor is the killing blow's 25 000 overkill — it was 331 000).
 
-- **F 227 000** = 65 000 Fireball (l.39) + 120 000 Pyroblast (l.59) + 30 000 Fire
-  Blast (l.60, the killing blow: overkill 25 000, boss HP report 0) + pet 12 000
+- **F 202 000** = 65 000 Fireball (l.39) + 120 000 Pyroblast (l.59) + 5 000 Fire
+  Blast (l.60, the killing blow: 30 000 less its overkill 25 000 — R1 leaves it
+  out of the amount, `overkill` reports it — boss HP report 0) + pet 12 000
   Waterbolt (l.41; the pet's `SPELL_DAMAGE` block describes the *target*, so
   ownership comes from the `SPELL_SUMMON` alone).
 - **W 71 000** = 15 000 + 16 000 swings (l.11, l.57) + 40 000 Shield Slam (l.13).
@@ -291,6 +305,46 @@ Out of the raid (`ZONE_CHANGE` to Dornogal, difficulty 0, l.63). Only W has a ro
   duration reads 5 000 ms, the miss path is touching the segment clock and the
   index scanner and meter have fallen out of lockstep.
 
+## Segment 3 — Trash, 45.000 s (21:12:00 → 21:12:45): the combat clock and friendly fire
+
+Built for the 2026-10-02 amendments (CONTRACT R1, R7, R22). Lines 69–79.
+
+| player | damage | overkill | DPS | **combat_ms** | heal | taken | healed_received | **friendly_fire** |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| W Durgan | **70 000** | 5 000 | **14000.00** | 5 000 | 0 | **40 000** | 15 000 | 0 |
+| F Pyralis | 0 | 0 | 0.00 | 5 000 | 0 | **8 000** | 40 000 | 0 |
+| T Tidecall | **0** | 0 | 0.00 | 5 000 | **55 000** | 0 | 0 | **48 000** |
+
+- **W 70 000** = 30 000 swing (l.69, opens the segment) + 20 000 Shield Slam
+  (l.71) + 20 000 swing (l.77, the boar's killing blow: 25 000 less its 5 000
+  overkill — R1). The boar's 70 000 max HP is exactly what it took.
+- **The combat clock: 5 000 ms of a 45 000 ms segment.** R7's duration is
+  first..last combat line, 21:12:00 → 21:12:45 = 45 000 ms, unchanged. The
+  combat clock counts ENGAGEMENT only — a damage line between a friendly,
+  player-controlled unit (`0x10 | 0x100`) and a hostile or neutral one — and
+  those are l.69 (0 s), l.71 (5 s) and l.77 (45 s): the 5 s stretch counts, the
+  40 s one is past `ENGAGE_QUIET_MS` (30 s) and does not. The totem's lines are
+  not engagement (friendly on friendly, and friendly fire never is — l.76's
+  `0xa28` source would otherwise read as an enemy hitting Pyralis), nor is the
+  Riptide tick at l.75 (a heal: it keeps the SEGMENT open, R4 — the gap
+  between l.73 and l.77 never reaches 60 s — but never runs the clock). So
+  `dps` = 70 000 / 5 s = **14 000**, not 70 000 / 45 s. If `combat_ms` reads
+  45 000, the clock is R7's duration; 10 000, friendly fire is engaging;
+  20 000, the heal is.
+- **Friendly fire: T 48 000** = the totem's Spirit Link on Durgan, 40 000 (l.73,
+  `0x2114` on `0x511`: both player-controlled, both friendly) + on Pyralis,
+  8 000 (l.76, `0xa28` on `0x514`: not by the flags — the totem was summoned by
+  T at l.72, onto a friendly, player-controlled victim). **None of it is
+  `damage`**: T has no Damage row. If T's damage reads 48 000, R22's amendment
+  is missing; 8 000, its summoned arm is.
+- **Taken: W 40 000, F 8 000** — the victims really lost the health, so R17
+  still records it, and the identity carries it as `friendly_fire`: over this
+  segment Σ Damage `by_target` for friendly names 0 + `self_harm_on_friendly`
+  0 + **`friendly_fire` 48 000** = Σ Taken **48 000** + `stagger_ticked` 0.
+- **T's healing 55 000** = 40 000 Spirit Link heal on Pyralis (l.74 — the
+  redistribution's other half stays HEALING) + 15 000 Riptide on Durgan (l.75).
+  `healed_received`: F 40 000, W 15 000.
+
 ---
 
 ## Every `MissKind`, and where it lands
@@ -330,6 +384,9 @@ W 1 (trash). Every shape from FORMAT-NOTES is present: `SWING_MISSED` 11 / 12,
 | `ENVIRONMENTAL_DAMAGE` (39 fields, nil source) | 50 | taken 9 000, labeled Falling / Environment |
 | killing blow with overkill | 57 | F overkill 25 000; boss best_pct 0 on the kill (R16) |
 | miss after the last combat event of a Trash segment | 65 | counted, duration unchanged (3 000 ms) |
+| a 40 s quiet stretch with a HoT tick in it | 71 → 77, 75 | R7's combat clock leaves it out: `combat_ms` 5 000 of 45 000 |
+| friendly fire by flags and by summon (`0xa28`) | 73, 76 | `friendly_fire` 48 000, never `damage`; Taken 40 000 + 8 000 |
+| a trash killing blow with overkill | 77 | W's 25 000 swing counts 20 000; `overkill` 5 000 |
 
 ## v34: the mage's barriers are spans
 

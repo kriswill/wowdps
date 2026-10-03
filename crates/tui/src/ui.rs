@@ -80,6 +80,22 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
                     duration(app.duration_ms()),
                     state,
                 );
+                // v40: a key's rows rate over combat time, as the game's
+                // meter does; the group's run rate over the key timer and
+                // the combat time it was in follow the clock.
+                if let Some(key_ms) = app.run_clock().filter(|_| app.view.is_rate()) {
+                    let total: u64 = app
+                        .rows()
+                        .iter()
+                        .filter(|r| !r.enemy)
+                        .map(|r| r.amount)
+                        .sum();
+                    s.push_str(&format!(
+                        "  run {}  in combat {}",
+                        fmt::human(wowdps_model::rate(total, key_ms).round() as u64),
+                        duration(app.combat_ms()),
+                    ));
+                }
                 if !app.following_live() {
                     s.push_str(" (history)");
                 }
@@ -721,8 +737,9 @@ mod tests {
         let (state, _mock) = kill_state();
         let lines = render(&state, 110, 20);
         let line = &lines[row_index(&lines, "Thraxx-Nebula-US")];
-        // 185 370 damage, 3089.50 DPS, 50.83 % of 364 670, 5 200 overkill.
-        for want in ["185.4k", "3.1k", "50.8%", "ok 5.2k"] {
+        // 180 170 damage (R1: the 185 370 less its 5 200 overkill), 3002.83
+        // DPS, 50.12 % of 359 470, the 5 200 overkill still reported.
+        for want in ["180.2k", "3.0k", "50.1%", "ok 5.2k"] {
             assert!(line.contains(want), "expected {want:?} in: {line:?}");
         }
     }
@@ -762,7 +779,7 @@ mod tests {
             !line.contains("ok "),
             "no room for overkill at 80 cols: {line:?}"
         );
-        assert!(line.contains("185.4k"), "amount still shown: {line:?}");
+        assert!(line.contains("180.2k"), "amount still shown: {line:?}");
     }
 
     #[test]
@@ -913,6 +930,9 @@ mod tests {
         let first = state.initial_request();
         pump(&mut state, &mut mock, vec![first]);
         apply(&mut state, &mut mock, Action::Open);
+        // Past the two trash pulls after it (the second, R7's combat clock
+        // and R22's friendly fire).
+        apply(&mut state, &mut mock, Action::OlderSegment);
         apply(&mut state, &mut mock, Action::OlderSegment);
         assert_eq!(state.segment_name().as_deref(), Some("Taken Test Boss"));
         apply(&mut state, &mut mock, Action::SetView(View::Taken));
@@ -1210,6 +1230,7 @@ mod tests {
             name: "Hall".to_string(),
             start_ms: 0,
             duration_ms: 70_000,
+            combat_ms: 70_000,
             success,
             live,
             instance: Some(0),
@@ -1320,6 +1341,7 @@ mod tests {
                 name: "Pull".to_string(),
                 start_ms: 0,
                 duration_ms: 1000,
+                combat_ms: 1000,
                 success: None,
                 live: true,
                 instance: None,
@@ -1415,6 +1437,7 @@ mod tests {
                 name: "Pull".to_string(),
                 start_ms: 0,
                 duration_ms: 60_000,
+                combat_ms: 60_000,
                 success: None,
                 live: true,
                 instance: None,

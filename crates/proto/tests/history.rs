@@ -96,6 +96,7 @@ fn card() -> FightCard {
         tz_min: Some(-240),
         start_utc_ms: 1_722_000_000_123 + 240 * 60_000,
         duration_ms: 61_500,
+        combat_ms: None,
         official_ms: Some(61_400),
         pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
         success: Some(true),
@@ -473,7 +474,7 @@ fn annotation() -> Annotation {
 
 // ---- goldens --------------------------------------------------------------------
 
-const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"am_uptime_pct":40,"absorb_efficiency":0.75,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"am_uptime_ms":24600,"externals_given":3,"externals_given_ms":38000,"externals_received":2,"externals_received_ms":60000,"effective_dps":2000,"absorb_wasted":1000,"shields_unknown":1},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"am_uptime_pct":0,"absorb_efficiency":null,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":0,"absorb_wasted":null,"shields_unknown":0}],"bosses":[]}"#;
+const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"combat_ms":null,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"am_uptime_pct":40,"absorb_efficiency":0.75,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"am_uptime_ms":24600,"externals_given":3,"externals_given_ms":38000,"externals_received":2,"externals_received_ms":60000,"effective_dps":2000,"absorb_wasted":1000,"shields_unknown":1},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"am_uptime_pct":0,"absorb_efficiency":null,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":0,"absorb_wasted":null,"shields_unknown":0}],"bosses":[]}"#;
 
 /// Step 3b: one supporter's block on the rows tier, every scalar distinct;
 /// `targets` is one `Segment::support_targets` row.
@@ -1050,12 +1051,38 @@ fn effective_dps_is_derived_from_the_scalars_not_stored() {
         Some(card().players[0].clone())
     );
     assert_eq!(
-        card().players[0].to_json_in(Some(61_500)).to_line(),
+        card().players[0]
+            .to_json_in(Some((61_500, 61_500)))
+            .to_line(),
         alone
             .replace(r#""effective_dps":null"#, r#""effective_dps":2000"#)
             // (step 4b derives its pct from the same duration.)
             .replace(r#""am_uptime_pct":null"#, r#""am_uptime_pct":40"#)
     );
+}
+
+/// v40: a card's rates run on its `combat_ms` when it carries one (a key's
+/// `duration_ms` stays the key clock it is judged on) and on `duration_ms`
+/// before it — `rate_ms`, the one reader. The derived `effective_dps`
+/// follows the rate clock; the AM uptime percentage stays on the duration
+/// its spans close on.
+#[test]
+fn a_v40_card_rates_on_its_combat_clock() {
+    let mut c = card();
+    assert_eq!(c.rate_ms(), 61_500, "no combat clock: the duration");
+    c.combat_ms = Some(41_000);
+    assert_eq!(c.rate_ms(), 41_000);
+    let line = c.to_json().to_line();
+    assert!(
+        line.contains(r#""duration_ms":61500,"combat_ms":41000,"#),
+        "{line}"
+    );
+    assert!(line.contains(r#""am_uptime_pct":40,"#), "{line}");
+    assert!(
+        line.contains(r#""effective_dps":3000,"#),
+        "123 000 over 41 s: {line}"
+    );
+    assert_eq!(FightCard::from_json(&json::parse(&line).unwrap()), Some(c));
 }
 
 #[test]

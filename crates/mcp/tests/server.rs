@@ -428,9 +428,9 @@ fn the_whole_surface_over_a_real_daemon() {
     assert_eq!(rows.len(), 3, "three players in the fixture");
     let top = &rows[0];
     assert_eq!(str_of(top, "player"), "Thraxx-Nebula-US");
-    assert_eq!(num_of(top, "amount"), 185370.0, "golden total (R1-R5)");
-    assert_eq!(num_of(top, "per_sec"), 3089.5, "golden dps");
-    assert_eq!(num_of(top, "share_pct"), 50.8);
+    assert_eq!(num_of(top, "amount"), 180170.0, "golden total (R1-R5)");
+    assert_eq!(num_of(top, "per_sec"), 3002.8, "golden dps");
+    assert_eq!(num_of(top, "share_pct"), 50.1);
     assert_eq!(num_of(top, "overkill"), 5200.0);
     let second = &rows[1];
     assert_eq!(
@@ -458,7 +458,7 @@ fn the_whole_surface_over_a_real_daemon() {
         other => panic!("no abilities: {other:?}"),
     };
     let total: f64 = abilities.iter().map(|a| num_of(a, "amount")).sum();
-    assert_eq!(total, 185370.0, "abilities sum to the meter row");
+    assert_eq!(total, 180170.0, "abilities sum to the meter row");
     let tl = doc
         .get("timeline")
         .expect("damage drill carries the timeline");
@@ -476,7 +476,7 @@ fn the_whole_surface_over_a_real_daemon() {
     let doc = tool_doc(&replies[0]);
     let a = doc.get("a").expect("side a");
     let b = doc.get("b").expect("side b");
-    assert_eq!(num_of(a, "total"), 185370.0);
+    assert_eq!(num_of(a, "total"), 180170.0);
     assert_eq!(num_of(b, "total"), 167200.0);
     assert!(matches!(a.get("abilities"), Some(Json::Arr(s)) if !s.is_empty()));
     assert!(
@@ -1568,11 +1568,12 @@ fn dps_owner_generic_block_equals_the_legacy_block() {
     }
     // …but the fixture's RANGE_DAMAGE_SUPPORT pair moves 29 400 of Kael'thar's
     // 167 200 to a supporter (sample.expected.md's addendum), so the pool's
-    // median differs between the two blocks: raw (185 370 + 167 200) / 2
-    // over 60 s against effective (185 370 + 137 800) / 2. This is the one
+    // median differs between the two blocks: raw (180 170 + 167 200) / 2
+    // over 60 s against effective (180 170 + 137 800) / 2 (R1 since
+    // 2026-10-02: the 185 370 less its killing blow's 5 200 overkill). This is the one
     // key the two blocks may disagree on for an unbuffed player.
-    assert_eq!(f64_of(&me, "dps_median"), 2938.1);
-    assert_eq!(f64_of(&me, "rank_median"), 2693.1);
+    assert_eq!(f64_of(&me, "dps_median"), 2894.8);
+    assert_eq!(f64_of(&me, "rank_median"), 2649.8);
     assert!(matches!(me.get("rank_dps"), Some(Json::Num(_))), "{me:?}");
     assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(2));
     assert!(matches!(me.get("dps_median"), Some(Json::Num(_))));
@@ -2012,13 +2013,13 @@ fn an_augmentation_owner_is_graded_by_effective_dps_and_flagged_support() {
     assert_eq!(me.get("rank").and_then(Json::as_u64), Some(3));
     assert_eq!(me.get("rank_count").and_then(Json::as_u64), Some(3));
     assert_eq!(me.get("rank_excluded").and_then(Json::as_u64), Some(0));
-    assert_eq!(f64_of(&me, "rank_median"), 3787.5);
-    assert_eq!(f64_of(&me, "rank_share"), 14.3);
-    // The legacy block is raw dps: 69 500 ranks last among 291 000 / 242 000.
+    assert_eq!(f64_of(&me, "rank_median"), 3745.8);
+    assert_eq!(f64_of(&me, "rank_share"), 14.4);
+    // The legacy block is raw dps: 69 500 ranks last among 291 000 / 239 500.
     assert_eq!(me.get("rank_dps").and_then(Json::as_u64), Some(3));
     assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(3));
-    assert_eq!(f64_of(&me, "dps_median"), 4033.3);
-    assert_eq!(f64_of(&me, "dps_share"), 11.5);
+    assert_eq!(f64_of(&me, "dps_median"), 3991.7);
+    assert_eq!(f64_of(&me, "dps_share"), 11.6);
     assert_eq!(me.get("tank_pair"), None);
 }
 
@@ -2040,8 +2041,8 @@ fn a_buffed_mage_owner_ranks_first_on_effective_dps_below_its_raw_dps() {
     assert_eq!(str_of(&me, "rank_measure"), "effective_dps");
     assert_eq!(me.get("rank").and_then(Json::as_u64), Some(1));
     assert_eq!(me.get("rank_dps").and_then(Json::as_u64), Some(1));
-    assert_eq!(f64_of(&me, "rank_share"), 48.0);
-    assert_eq!(f64_of(&me, "dps_share"), 48.3);
+    assert_eq!(f64_of(&me, "rank_share"), 48.2);
+    assert_eq!(f64_of(&me, "dps_share"), 48.5);
 }
 
 #[test]
@@ -2065,7 +2066,7 @@ fn a_healer_owner_reads_the_healing_split_and_the_self_healed_pair() {
     // The legacy block describes the three DPS, raw, and never ranks her.
     assert_eq!(me.get("rank_dps"), Some(&Json::Null));
     assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(3));
-    assert_eq!(f64_of(&me, "dps_median"), 4033.3);
+    assert_eq!(f64_of(&me, "dps_median"), 3991.7);
 }
 
 #[test]
@@ -2093,7 +2094,7 @@ fn the_roster_and_a_peer_carry_the_support_scalars() {
     };
     let w = row("Brakkar");
     assert_eq!(u64_of(&w, "support_received"), 14_750);
-    assert_eq!(f64_of(&w, "effective_dps"), 3787.5);
+    assert_eq!(f64_of(&w, "effective_dps"), 3745.8);
     assert_eq!(u64_of(&w, "healed_received"), 50_000, "the NPC heal counts");
     assert_eq!(u64_of(&w, "self_healed"), 0);
     assert_eq!(w.get("support"), Some(&Json::Bool(false)));
@@ -2122,8 +2123,8 @@ fn the_roster_and_a_peer_carry_the_support_scalars() {
     assert!(str_of(&peer, "name").starts_with("Brakkar"));
     assert_eq!(str_of(&peer, "rank_measure"), "effective_dps");
     assert_eq!(peer.get("rank").and_then(Json::as_u64), Some(2));
-    assert_eq!(f64_of(&peer, "effective_dps"), 3787.5);
-    assert_eq!(f64_of(&peer, "dps"), 4033.3);
+    assert_eq!(f64_of(&peer, "effective_dps"), 3745.8);
+    assert_eq!(f64_of(&peer, "dps"), 3991.7);
     assert_eq!(u64_of(&peer, "support_received"), 14_750);
 }
 

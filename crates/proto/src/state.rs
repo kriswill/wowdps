@@ -1014,6 +1014,25 @@ impl ClientState {
         self.snapshot.as_ref().map_or(0, |s| s.info.duration_ms)
     }
 
+    /// v40: the combat clock the rows' `per_sec` ran on (see
+    /// [`SegmentInfo::combat_ms`]).
+    pub fn combat_ms(&self) -> i64 {
+        self.snapshot.as_ref().map_or(0, |s| s.info.combat_ms)
+    }
+
+    /// v40: a keystone run's KEY clock — `duration_ms` on a segment with
+    /// par timers, the one place run time and combat time part ways and a
+    /// header shows both rates (`wowdps_model::rate(amount, clock)` is the
+    /// run rate). `None` everywhere else, and wherever the two clocks do
+    /// not part: no combat clock yet, or a stored key written before v40,
+    /// whose rows already ran on the key clock.
+    pub fn run_clock(&self) -> Option<i64> {
+        let (key, combat) = (self.duration_ms(), self.combat_ms());
+        self.segment_pars_ms()
+            .filter(|_| combat > 0 && combat != key)
+            .map(|_| key)
+    }
+
     pub fn list_selection(&self) -> usize {
         self.list_sel
     }
@@ -1811,6 +1830,7 @@ mod tests {
                 name: String::new(),
                 start_ms: 5_000,
                 duration_ms: 100_000,
+                combat_ms: 100_000,
                 success: None,
                 live: true,
                 instance: Some(0),
@@ -1906,6 +1926,7 @@ mod tests {
                 name: String::new(),
                 start_ms: 0,
                 duration_ms: 1,
+                combat_ms: 1,
                 success: None,
                 live: true,
                 instance: None,
@@ -2026,6 +2047,7 @@ mod tests {
                 name: String::new(),
                 start_ms: 0,
                 duration_ms: 1,
+                combat_ms: 1,
                 success: None,
                 live: true,
                 instance: None,

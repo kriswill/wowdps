@@ -60,6 +60,7 @@ fn info(kind: SegmentKind) -> SegmentInfo {
         name: "Boss".to_string(),
         start_ms: 60_000,
         duration_ms: 30_000,
+        combat_ms: 30_000,
         success: Some(false),
         live: false,
         instance: Some(3),
@@ -265,6 +266,39 @@ fn a_snapshot_fills_every_header_accessor() {
     let mut st = st;
     st.view = View::Healing;
     assert!(st.rows().is_empty());
+}
+
+/// v40: a keystone run's key clock is offered as the run clock only while
+/// the combat clock parts from it — never off a key, never before a combat
+/// clock exists, never on a stored key written before v40 (one clock).
+#[test]
+fn the_run_clock_is_a_keys_and_only_when_the_clocks_part() {
+    let keyed = |duration_ms: i64, combat_ms: i64, pars: bool| {
+        let mut st = on_meter();
+        let mut msg = snapshot(
+            SegmentRef::Live,
+            Some(SegmentId(3)),
+            View::Damage,
+            vec![row("A", 300)],
+            None,
+            3,
+        );
+        if let DaemonMsg::Snapshot { info, .. } = &mut msg {
+            info.kind = SegmentKind::Overall;
+            info.duration_ms = duration_ms;
+            info.combat_ms = combat_ms;
+            info.pars_ms = pars.then_some((2_040_000, 1_632_000, 1_224_000));
+        }
+        st.on_msg(msg);
+        (st.combat_ms(), st.run_clock())
+    };
+    assert_eq!(
+        keyed(1_716_855, 1_610_729, true),
+        (1_610_729, Some(1_716_855))
+    );
+    assert_eq!(keyed(1_716_855, 1_716_855, true).1, None, "a pre-v40 card");
+    assert_eq!(keyed(1_716_855, 0, true).1, None, "no combat yet");
+    assert_eq!(keyed(1_716_855, 1_610_729, false).1, None, "not a key");
 }
 
 #[test]

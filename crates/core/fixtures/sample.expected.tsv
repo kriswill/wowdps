@@ -3,6 +3,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C01	overkill	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	petdamage	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	dps	2016.67
+1	Trash	Trash		18000			Player-1168-0A1B2C01	combat_ms	18000
 1	Trash	Trash		18000			Player-1168-0A1B2C01	pct	51.86
 1	Trash	Trash		18000			Player-1168-0A1B2C01	heal	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	overheal	0
@@ -19,6 +20,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C01	stagger	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	stagger_ticked	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	self_harm	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	friendly_fire	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	support_given	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	support_received	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	support_given_heal	0
@@ -51,6 +53,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C03	overkill	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	petdamage	4300
 1	Trash	Trash		18000			Player-1168-0A1B2C03	dps	1461.11
+1	Trash	Trash		18000			Player-1168-0A1B2C03	combat_ms	18000
 1	Trash	Trash		18000			Player-1168-0A1B2C03	pct	37.57
 1	Trash	Trash		18000			Player-1168-0A1B2C03	heal	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	overheal	0
@@ -67,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C03	stagger	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	stagger_ticked	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	self_harm	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	friendly_fire	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	support_given	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	support_received	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	support_given_heal	0
@@ -99,6 +103,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C02	overkill	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	petdamage	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	dps	411.11
+1	Trash	Trash		18000			Player-1168-0A1B2C02	combat_ms	18000
 1	Trash	Trash		18000			Player-1168-0A1B2C02	pct	10.57
 1	Trash	Trash		18000			Player-1168-0A1B2C02	heal	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	overheal	0
@@ -115,6 +120,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C02	stagger	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	stagger_ticked	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	self_harm	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	friendly_fire	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	support_given	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	support_received	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	support_given_heal	0
@@ -143,11 +149,12 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C02	heal_periodic	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	misses_dealt	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	dot_uptime_ms	0
-2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	damage	185370
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	damage	180170
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	overkill	5200
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	petdamage	0
-2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	dps	3089.50
-2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	pct	50.83
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	dps	3002.83
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	combat_ms	60000
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	pct	50.12
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	heal	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	overheal	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	absorbheal	0
@@ -163,13 +170,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stagger	5000
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stagger_ticked	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	self_harm	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	friendly_fire	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	support_given	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	support_received	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	support_given_heal	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	support_received_heal	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	healed_received	68000
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	self_healed	0
-2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	effective	185370
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	effective	180170
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	am_uptime_ms	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	externals_given	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	externals_given_ms	0
@@ -195,7 +203,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	overkill	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	petdamage	30450
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	dps	2786.67
-2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	pct	45.85
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	combat_ms	60000
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	pct	46.51
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	heal	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	overheal	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	absorbheal	0
@@ -211,6 +220,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stagger	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stagger_ticked	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	self_harm	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	friendly_fire	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	support_given	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	support_received	29400
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	support_given_heal	0
@@ -243,7 +253,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	overkill	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	petdamage	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	dps	201.67
-2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	pct	3.32
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	combat_ms	60000
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	pct	3.37
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	heal	149800
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	overheal	27300
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	absorbheal	22800
@@ -259,6 +270,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stagger	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stagger_ticked	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	self_harm	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	friendly_fire	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	support_given	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	support_received	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	support_given_heal	0
@@ -291,6 +303,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	overkill	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	petdamage	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	dps	0.00
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	combat_ms	60000
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	pct	0.00
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	heal	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	overheal	0
@@ -307,6 +320,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stagger	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stagger_ticked	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	self_harm	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	friendly_fire	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	support_given	29400
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	support_received	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	support_given_heal	0
@@ -339,6 +353,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C03	overkill	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	petdamage	6200
 3	Trash	Trash		11000			Player-1168-0A1B2C03	dps	2518.18
+3	Trash	Trash		11000			Player-1168-0A1B2C03	combat_ms	11000
 3	Trash	Trash		11000			Player-1168-0A1B2C03	pct	73.28
 3	Trash	Trash		11000			Player-1168-0A1B2C03	heal	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	overheal	0
@@ -355,6 +370,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C03	stagger	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	stagger_ticked	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	self_harm	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	friendly_fire	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	support_given	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	support_received	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	support_given_heal	0
@@ -387,6 +403,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C01	overkill	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	petdamage	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	dps	918.18
+3	Trash	Trash		11000			Player-1168-0A1B2C01	combat_ms	11000
 3	Trash	Trash		11000			Player-1168-0A1B2C01	pct	26.72
 3	Trash	Trash		11000			Player-1168-0A1B2C01	heal	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	overheal	0
@@ -403,6 +420,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C01	stagger	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	stagger_ticked	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	self_harm	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	friendly_fire	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	support_given	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	support_received	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	support_given_heal	0
@@ -435,6 +453,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	petdamage	12000
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	dps	1628.89
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	combat_ms	45000
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	pct	52.51
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	heal	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	overheal	0
@@ -451,6 +470,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stagger	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stagger_ticked	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	self_harm	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	friendly_fire	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	support_given	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	support_received	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	support_given_heal	0
@@ -483,6 +503,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	petdamage	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	dps	1293.33
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	combat_ms	45000
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	pct	41.69
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	heal	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	overheal	0
@@ -499,6 +520,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stagger	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stagger_ticked	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	self_harm	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	friendly_fire	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	support_given	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	support_received	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	support_given_heal	0
@@ -531,6 +553,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	petdamage	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	dps	180.00
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	combat_ms	45000
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	pct	5.80
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	heal	56400
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	overheal	38200
@@ -547,6 +570,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stagger	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stagger_ticked	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	self_harm	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	friendly_fire	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	support_given	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	support_received	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	support_given_heal	0

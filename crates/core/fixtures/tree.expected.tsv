@@ -3,6 +3,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	overkill	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	petdamage	73000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	dps	36933.33
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	combat_ms	30000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	pct	97.28
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	heal	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	overheal	0
@@ -19,6 +20,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stagger	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stagger_ticked	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	self_harm	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	friendly_fire	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_given	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_received	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_given_heal	0
@@ -51,6 +53,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overkill	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	petdamage	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	dps	1033.33
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	combat_ms	30000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	pct	2.72
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	heal	73000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overheal	7000
@@ -67,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stagger	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stagger_ticked	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	self_harm	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	friendly_fire	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_given	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_received	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_given_heal	0
@@ -99,6 +103,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	dps	40000.00
+2	Trash	Trash		1500			Player-1168-0A1B2C61	combat_ms	1500
 2	Trash	Trash		1500			Player-1168-0A1B2C61	pct	100.00
 2	Trash	Trash		1500			Player-1168-0A1B2C61	heal	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	overheal	0
@@ -115,6 +120,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		1500			Player-1168-0A1B2C61	stagger	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	stagger_ticked	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	self_harm	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	friendly_fire	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	support_given	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	support_received	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	support_given_heal	0
@@ -147,6 +153,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	dps	40000.00
+3	Trash	Trash		1500			Player-1168-0A1B2C61	combat_ms	1500
 3	Trash	Trash		1500			Player-1168-0A1B2C61	pct	100.00
 3	Trash	Trash		1500			Player-1168-0A1B2C61	heal	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	overheal	0
@@ -163,6 +170,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1500			Player-1168-0A1B2C61	stagger	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	stagger_ticked	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	self_harm	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	friendly_fire	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	support_given	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	support_received	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	support_given_heal	0

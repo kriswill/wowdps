@@ -1,9 +1,10 @@
 segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	damage	227000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	damage	202000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	overkill	25000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	petdamage	12000
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	dps	3783.33
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	pct	68.58
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	dps	3366.67
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	combat_ms	60000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	pct	66.01
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	heal	26000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	overheal	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	absorbheal	26000
@@ -19,13 +20,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stagger	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stagger_ticked	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	self_harm	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	friendly_fire	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_given	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_given_heal	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_received_heal	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	healed_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	self_healed	0
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	effective	227000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	effective	202000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	am_uptime_ms	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	externals_given	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	externals_given_ms	0
@@ -51,7 +53,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	petdamage	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	dps	1183.33
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	pct	21.45
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	combat_ms	60000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	pct	23.20
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	heal	12000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	overheal	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	absorbheal	12000
@@ -67,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stagger	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stagger_ticked	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	self_harm	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	friendly_fire	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_given	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_given_heal	0
@@ -99,7 +103,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	petdamage	6000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	dps	550.00
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	pct	9.97
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	combat_ms	60000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	pct	10.78
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	heal	25000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	overheal	8000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	absorbheal	3000
@@ -115,6 +120,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stagger	25000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stagger_ticked	10000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	self_harm	12500
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	friendly_fire	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_given	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_given_heal	0
@@ -147,6 +153,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	overkill	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	petdamage	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	dps	2000.00
+2	Trash	Trash		3000			Player-1168-0A1B2C11	combat_ms	3000
 2	Trash	Trash		3000			Player-1168-0A1B2C11	pct	100.00
 2	Trash	Trash		3000			Player-1168-0A1B2C11	heal	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	overheal	0
@@ -163,6 +170,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	stagger	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	stagger_ticked	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	self_harm	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	friendly_fire	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	support_given	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	support_received	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	support_given_heal	0
@@ -191,3 +199,153 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	heal_periodic	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	misses_dealt	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	dot_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	damage	70000
+3	Trash	Trash		45000			Player-1168-0A1B2C11	overkill	5000
+3	Trash	Trash		45000			Player-1168-0A1B2C11	petdamage	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	dps	14000.00
+3	Trash	Trash		45000			Player-1168-0A1B2C11	combat_ms	5000
+3	Trash	Trash		45000			Player-1168-0A1B2C11	pct	100.00
+3	Trash	Trash		45000			Player-1168-0A1B2C11	heal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	overheal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	absorbheal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	interrupts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	cc	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	dispels	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	deaths	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	taken	40000
+3	Trash	Trash		45000			Player-1168-0A1B2C11	absorbed	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	blocked	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	prevented	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	misses	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	stagger	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	stagger_ticked	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	self_harm	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	friendly_fire	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	support_given	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	support_received	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	support_given_heal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	support_received_heal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	healed_received	15000
+3	Trash	Trash		45000			Player-1168-0A1B2C11	self_healed	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	effective	70000
+3	Trash	Trash		45000			Player-1168-0A1B2C11	am_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	externals_given	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	externals_given_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	externals_received	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	externals_received_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	support_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	spans	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	taken10_0	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	absorb_applied	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	absorb_wasted	
+3	Trash	Trash		45000			Player-1168-0A1B2C11	shields_unknown	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	stack_hits	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	stack_sum	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	stack_max	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	stack_cells	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	stack_auras	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	casts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	damage_periodic	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	heal_periodic	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	misses_dealt	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	dot_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	damage	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	overkill	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	petdamage	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	dps	0.00
+3	Trash	Trash		45000			Player-1168-0A1B2C13	combat_ms	5000
+3	Trash	Trash		45000			Player-1168-0A1B2C13	pct	0.00
+3	Trash	Trash		45000			Player-1168-0A1B2C13	heal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	overheal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	absorbheal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	interrupts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	cc	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	dispels	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	deaths	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	taken	8000
+3	Trash	Trash		45000			Player-1168-0A1B2C13	absorbed	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	blocked	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	prevented	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	misses	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	stagger	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	stagger_ticked	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	self_harm	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	friendly_fire	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	support_given	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	support_received	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	support_given_heal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	support_received_heal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	healed_received	40000
+3	Trash	Trash		45000			Player-1168-0A1B2C13	self_healed	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	effective	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	am_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	externals_given	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	externals_given_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	externals_received	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	externals_received_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	support_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	spans	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	taken10_0	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	absorb_applied	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	absorb_wasted	
+3	Trash	Trash		45000			Player-1168-0A1B2C13	shields_unknown	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	stack_hits	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	stack_sum	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	stack_max	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	stack_cells	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	stack_auras	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	casts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	damage_periodic	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	heal_periodic	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	misses_dealt	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	dot_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	damage	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	overkill	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	petdamage	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	dps	0.00
+3	Trash	Trash		45000			Player-1168-0A1B2C14	combat_ms	5000
+3	Trash	Trash		45000			Player-1168-0A1B2C14	pct	0.00
+3	Trash	Trash		45000			Player-1168-0A1B2C14	heal	55000
+3	Trash	Trash		45000			Player-1168-0A1B2C14	overheal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	absorbheal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	interrupts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	cc	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	dispels	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	deaths	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	taken	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	absorbed	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	blocked	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	prevented	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	misses	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	stagger	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	stagger_ticked	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	self_harm	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	friendly_fire	48000
+3	Trash	Trash		45000			Player-1168-0A1B2C14	support_given	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	support_received	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	support_given_heal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	support_received_heal	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	healed_received	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	self_healed	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	effective	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	am_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	externals_given	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	externals_given_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	externals_received	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	externals_received_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	support_uptime_ms	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	spans	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	taken10_0	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	absorb_applied	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	absorb_wasted	
+3	Trash	Trash		45000			Player-1168-0A1B2C14	shields_unknown	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	stack_hits	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	stack_sum	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	stack_max	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	stack_cells	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	stack_auras	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	casts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	damage_periodic	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	heal_periodic	15000
+3	Trash	Trash		45000			Player-1168-0A1B2C14	misses_dealt	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	dot_uptime_ms	0

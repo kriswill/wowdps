@@ -882,6 +882,8 @@ impl Engine {
                     name: seg.name.clone(),
                     start_ms: seg.start_ms,
                     duration_ms: seg.duration_ms(self.now_ms),
+                    // `render` fills it from the segment the rows come from.
+                    combat_ms: 0,
                     success: seg.success,
                     live: seg.end_ms.is_none(),
                     instance: seg.visit,
@@ -905,6 +907,7 @@ impl Engine {
                     name: meta.name.clone(),
                     start_ms: meta.start_ms,
                     duration_ms: meta.duration_ms,
+                    combat_ms: 0,
                     success: meta.success,
                     live: false,
                     instance: meta.visit,
@@ -939,6 +942,7 @@ impl Engine {
                     name: meta.name.clone(),
                     start_ms: meta.start_ms,
                     duration_ms: meta.duration_ms,
+                    combat_ms: 0,
                     success: meta.success,
                     live: false,
                     instance: meta.visit,
@@ -1007,6 +1011,7 @@ impl Engine {
                 name: String::new(),
                 start_ms: 0,
                 duration_ms: 0,
+                combat_ms: 0,
                 success: None,
                 live: false,
                 instance: None,
@@ -1041,6 +1046,8 @@ impl Engine {
                 || self.live_overall_duration(ordinal),
                 |s| s.duration_ms(self.now_ms),
             ),
+            // `render` fills it from the merged segment.
+            combat_ms: 0,
             success: v.and_then(|v| v.verdict(self.now_ms)),
             live: v.is_some_and(|v| self.visit_live(v)),
             instance: Some(ordinal),
@@ -1078,11 +1085,19 @@ impl Engine {
         &self,
         sref: SegmentRef,
         id: Option<SegmentId>,
-        info: SegmentInfo,
+        mut info: SegmentInfo,
         want: &Want,
         seg: Option<&wowdps_core::meter::Segment>,
         status: Option<String>,
     ) -> DaemonMsg {
+        // v40: the combat clock the rows below ran on, from the segment that
+        // made them — an encounter's is its duration, which the index is
+        // authoritative for (a lazily loaded slice may lack its END); nothing
+        // resident yet (a loading placeholder, no rows) reads the duration.
+        info.combat_ms = match seg {
+            Some(s) if s.kind != SegmentKind::Encounter => s.combat_ms(self.now_ms),
+            _ => info.duration_ms,
+        };
         match want {
             Want::Meter {
                 view,

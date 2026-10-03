@@ -183,6 +183,7 @@ fn raid_with(
         name: "The Coiled Altar".to_string(),
         start_ms: 1_000,
         duration_ms: 422_040,
+        combat_ms: 422_040,
         success: Some(true),
         live: false,
         instance: Some(0),

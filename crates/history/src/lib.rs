@@ -406,9 +406,31 @@ impl Lake {
                     ", CAST(NULL AS DOUBLE) AS effective_dps",
                 )
             };
+            // v40: the clock the rows' rates ran on — `FightCard::rate_ms`,
+            // the card's `combat_ms`, else its `duration_ms` (a card written
+            // before the combat clock). The column only exists once a card
+            // carries it, and is only TYPED once one carries a number (a
+            // lake of rewritten pre-v40 cards has it null everywhere, which
+            // DuckDB sniffs as JSON — no coalesce survives that), so the
+            // probe reads its type rather than its presence.
+            let fights_have_combat = self
+                .sql("DESCRIBE SELECT combat_ms FROM fights")
+                .map(|t| {
+                    t.rows.iter().any(|r| {
+                        r.get(1)
+                            .and_then(Json::as_str)
+                            .is_some_and(|ty| !ty.starts_with("JSON") && ty != "NULL")
+                    })
+                })
+                .unwrap_or(false);
+            let clock = if fights_have_combat {
+                "coalesce(f.combat_ms, f.duration_ms)"
+            } else {
+                "f.duration_ms"
+            };
             let effective_sql = format!(
-                "{stored_effective}, CASE WHEN f.duration_ms > 0 \
-                 THEN CAST({effective} AS DOUBLE) / (CAST(f.duration_ms AS DOUBLE) / 1000.0) \
+                "{stored_effective}, {clock} AS rate_ms, CASE WHEN {clock} > 0 \
+                 THEN CAST({effective} AS DOUBLE) / (CAST({clock} AS DOUBLE) / 1000.0) \
                  ELSE 0.0 END AS effective_dps_sql"
             );
             // R18 (step 4b): the span scalars ride the player struct too,

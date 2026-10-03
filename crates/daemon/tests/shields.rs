@@ -420,7 +420,7 @@ fn a_role_night_folds_the_night_by_role() {
         let expect = match r.role {
             Some(Role::Tank) => p.mitigated_pct(),
             Some(Role::Healer) => p.hps,
-            Some(Role::Dps) => p.effective_dps(card.duration_ms),
+            Some(Role::Dps) => p.effective_dps(card.rate_ms()),
             None => 0.0,
         };
         assert!(

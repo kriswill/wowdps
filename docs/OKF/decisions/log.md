@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-02
+
+- **Creation** — [Count And Clock The Way The Game's Own Meter Does](match-the-game-meter.md):
+  v40 — overkill leaves every amount (R1), friendly fire leaves the Damage row
+  (R22), and every rate divides by an engagement-based combat clock (R7/R10),
+  after a reconciliation against the game's built-in meter on a real +15
+  traced each difference to one cause; the run rate a key keeps beside it.
+
 ## 2026-10-01
 
 - **Creation** — [Stored Pulls Keep Their Seconds In A Binary Series Tier](a-series-tier-for-stored-windows.md):

@@ -291,6 +291,10 @@ pub struct FightCard {
     pub start_utc_ms: i64,
     /// R7 semantics (a key: the key clock).
     pub duration_ms: i64,
+    /// v40 (R7/R10 amendment): the COMBAT clock the rows' rates ran on —
+    /// `Segment::combat_ms`. `None` on a card written before it, whose rates
+    /// ran on `duration_ms`; [`Self::rate_ms`] is the one reader.
+    pub combat_ms: Option<i64>,
     /// Keys: CHALLENGE_MODE_END's totalMs.
     pub official_ms: Option<i64>,
     /// Keys: the dungeon's (par, +2, +3) timers.
@@ -368,6 +372,7 @@ impl Default for FightCard {
             tz_min: None,
             start_utc_ms: 0,
             duration_ms: 0,
+            combat_ms: None,
             official_ms: None,
             pars_ms: None,
             success: None,
@@ -386,6 +391,13 @@ impl Default for FightCard {
 }
 
 impl FightCard {
+    /// The clock the card's rates run on: `combat_ms`, or `duration_ms` on a
+    /// card written before v40 — so an older card reads exactly as it did.
+    /// A keystone run's RUN rate is `wowdps_model::rate(amount, duration_ms)`.
+    pub fn rate_ms(&self) -> i64 {
+        self.combat_ms.unwrap_or(self.duration_ms)
+    }
+
     pub fn to_json(&self) -> Json {
         obj! {
             "schema": Json::num(self.schema),
@@ -405,6 +417,7 @@ impl FightCard {
             "tz_min": self.tz_min.map_or(Json::Null, Json::num),
             "start_utc_ms": Json::num(self.start_utc_ms as f64),
             "duration_ms": Json::num(self.duration_ms as f64),
+            "combat_ms": self.combat_ms.map_or(Json::Null, |m| Json::num(m as f64)),
             "official_ms": self.official_ms.map_or(Json::Null, |m| Json::num(m as f64)),
             "pars_ms": pars_json(self.pars_ms),
             "success": opt_bool(self.success),
@@ -419,7 +432,10 @@ impl FightCard {
             "pinned": Json::Bool(self.pinned),
             "best_pct": opt_num(self.best_pct.map(u64::from)),
             "players": Json::Arr(
-                self.players.iter().map(|p| p.to_json_in(Some(self.duration_ms))).collect()
+                self.players
+                    .iter()
+                    .map(|p| p.to_json_in(Some((self.duration_ms, self.rate_ms()))))
+                    .collect()
             ),
             "bosses": Json::Arr(self.bosses.iter().map(KeyBoss::to_json).collect()),
         }
@@ -452,6 +468,7 @@ impl FightCard {
             tz_min: i64_of(v, "tz_min").and_then(|m| i16::try_from(m).ok()),
             start_utc_ms: i64_of(v, "start_utc_ms").unwrap_or(0),
             duration_ms: i64_of(v, "duration_ms").unwrap_or(0),
+            combat_ms: i64_of(v, "combat_ms"),
             official_ms: i64_of(v, "official_ms"),
             pars_ms: pars_from(v.get("pars_ms")),
             success: bool_of(v, "success"),
@@ -532,11 +549,12 @@ impl CardPlayer {
         wowdps_model::effective(self.damage, self.support_received, self.support_given)
     }
 
-    /// Effective damage per second over the card's `duration_ms` — the
-    /// SAME arithmetic `Meter::finish_rows` uses for a rate row's
-    /// `per_sec` (`amount as f64 / secs` with `secs = duration_ms as f64
-    /// / 1000.0`), so on a fight without support it is `dps` bit for bit,
-    /// which is what lets grading and trend rank it with no predicate.
+    /// Effective damage per second over a clock — pass the card's
+    /// [`FightCard::rate_ms`], the clock its rows' rates ran on — the SAME
+    /// arithmetic `Meter::finish_rows` uses for a rate row's `per_sec`
+    /// (`amount as f64 / secs` with `secs = clock as f64 / 1000.0`), so on
+    /// a fight without support it is `dps` bit for bit, which is what lets
+    /// grading and trend rank it with no predicate.
     /// 0.0 when the duration is not positive (an aborted card), as a rate
     /// row would be. Derived: written to JSON as `effective_dps` for
     /// readers that cannot do the fold (DuckDB), ignored on read.
@@ -575,9 +593,13 @@ impl CardPlayer {
         self.to_json_in(None)
     }
 
-    /// The player's line inside a card of `duration_ms`; `effective_dps`
-    /// is derived from it (`None` writes `null`).
-    pub fn to_json_in(&self, duration_ms: Option<i64>) -> Json {
+    /// The player's line inside a card of `(duration_ms, rate_ms)`:
+    /// `am_uptime_pct` is derived over the first (the R7 clock its spans
+    /// close on), `effective_dps` over the second (the card's rate clock,
+    /// [`FightCard::rate_ms`]); `None` writes `null` for both.
+    pub fn to_json_in(&self, clocks: Option<(i64, i64)>) -> Json {
+        let duration_ms = clocks.map(|c| c.0);
+        let rate_ms = clocks.map(|c| c.1);
         obj! {
             "guid": Json::str(&*self.guid),
             "name": Json::str(&*self.name),
@@ -616,7 +638,7 @@ impl CardPlayer {
             "externals_given_ms": Json::u64(self.externals_given_ms),
             "externals_received": Json::num(self.externals_received),
             "externals_received_ms": Json::u64(self.externals_received_ms),
-            "effective_dps": duration_ms.map_or(Json::Null, |d| Json::num(self.effective_dps(d))),
+            "effective_dps": rate_ms.map_or(Json::Null, |d| Json::num(self.effective_dps(d))),
             // Step 5 (R20): `null` when unknown, so SQL's NULL is honest.
             "absorb_wasted": self.absorb_wasted.map_or(Json::Null, Json::u64),
             "shields_unknown": Json::num(self.shields_unknown),

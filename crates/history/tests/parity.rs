@@ -743,6 +743,7 @@ fn card(id: &str, players: Vec<CardPlayer>) -> FightCard {
         tz_min: None,
         start_utc_ms: 0,
         duration_ms: 100_000,
+        combat_ms: None,
         official_ms: None,
         pars_ms: None,
         success: Some(true),
@@ -1741,7 +1742,8 @@ const SUPPORT_EXPECTED: [Supported; 4] = [
     // definition and the TSV on the Priest.
     Supported {
         guid: WARRIOR,
-        damage: 242_000,
+        // R1 (2026-10-02): its killing Execute's 2 500 overkill is out.
+        damage: 239_500,
         given: 0,
         received: 14_750,
         overheal: 0,
@@ -1968,22 +1970,22 @@ fn the_support_views_answer_the_r19_fixture() {
     }
     let stored_bits = assert_effective_agrees(&lake, &cards, "fixture");
 
-    // Identity 1: Σ effective = Σ damage = 582 500 — a true partition of the
+    // Identity 1: Σ effective = Σ damage = 600 000 — a true partition of the
     // raid's damage — computed in SQL off the card, where the fold is the
     // model's (`greatest(0, damage − received + given)`).
     let t = lake
         .sql(
             "SELECT sum(damage), \
                     sum(greatest(0, damage - support_received + support_given)), \
-                    sum(effective_dps_sql * duration_ms / 1000.0) \
+                    sum(effective_dps_sql * rate_ms / 1000.0) \
              FROM players",
         )
         .unwrap();
-    assert_eq!(t.rows[0][0].as_u64(), Some(602_500), "Σ damage");
-    assert_eq!(t.rows[0][1].as_u64(), Some(602_500), "Σ effective");
+    assert_eq!(t.rows[0][0].as_u64(), Some(600_000), "Σ damage");
+    assert_eq!(t.rows[0][1].as_u64(), Some(600_000), "Σ effective");
     let back = t.rows[0][2].as_f64().unwrap();
     assert!(
-        (back - 602_500.0).abs() < 1e-6,
+        (back - 600_000.0).abs() < 1e-6,
         "Σ effective_dps_sql × secs = {back}"
     );
 
@@ -2159,7 +2161,7 @@ fn the_support_views_answer_the_r19_fixture() {
     for (r, (guid, effective)) in
         t.rows
             .iter()
-            .zip([(MAGE, 289_150.0), (WARRIOR, 227_250.0), (EVOKER, 86_100.0)])
+            .zip([(MAGE, 289_150.0), (WARRIOR, 224_750.0), (EVOKER, 86_100.0)])
     {
         let key = (card.id.clone(), guid.to_string());
         assert_eq!(
@@ -2168,7 +2170,7 @@ fn the_support_views_answer_the_r19_fixture() {
             "{guid}: measure is effective_dps"
         );
         assert_eq!(r[5].as_f64(), Some(effective / 60.0), "{guid} measure");
-        assert_eq!(r[6].as_f64(), Some(227_250.0 / 60.0), "{guid} median");
+        assert_eq!(r[6].as_f64(), Some(224_750.0 / 60.0), "{guid} median");
     }
     let t = lake
         .sql("SELECT guid, rank_measure, rank FROM role_ranks WHERE role = 'healer'")

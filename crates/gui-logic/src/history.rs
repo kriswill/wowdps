@@ -576,6 +576,11 @@ pub fn info_of(card: &FightCard) -> SegmentInfo {
         name: card.name.clone(),
         start_ms: card.start_local_ms,
         duration_ms,
+        // v40: the clock the stored rows' rates ran on. A card written before
+        // it ran them on its duration — the same clock the header shows, so
+        // a reader sees one clock, not a run rate beside an equal "combat"
+        // one (`ClientState::run_clock` says nothing then).
+        combat_ms: card.combat_ms.unwrap_or(duration_ms),
         success: card.success,
         live: false,
         instance: None,
@@ -592,6 +597,7 @@ fn pending_info() -> SegmentInfo {
         name: String::new(),
         start_ms: 0,
         duration_ms: 0,
+        combat_ms: 0,
         success: None,
         live: false,
         instance: None,
@@ -1141,6 +1147,15 @@ mod tests {
         assert_eq!(info.duration_ms, 1_898_895, "the key clock");
         assert_eq!(info.pars_ms, key.pars_ms);
         assert!(!info.live);
+        // v40: a card written before the combat clock rated on the clock the
+        // header shows — one clock, so no run rate is said beside it; a v40
+        // card carries its own.
+        assert_eq!(info.combat_ms, info.duration_ms);
+        let v40 = info_of(&FightCard {
+            combat_ms: Some(1_750_000),
+            ..key.clone()
+        });
+        assert_eq!(v40.combat_ms, 1_750_000);
         let arena = FightCard {
             kind: FightKind::Arena,
             success: Some(false),

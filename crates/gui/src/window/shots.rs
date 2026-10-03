@@ -209,7 +209,11 @@ fn open(cx: &mut HeadlessAppContext, input: &Input, at: (f32, f32)) -> Shot {
                 .iter()
                 .enumerate()
                 .rev()
-                .find(|(_, e)| e.row.kind == SegmentKind::Encounter && e.row.name == fight)
+                .find(|(_, e)| {
+                    // A boss pull, or a visit's Σ (a key, "Murder Row +15").
+                    matches!(e.row.kind, SegmentKind::Encounter | SegmentKind::Overall)
+                        && e.row.name == fight
+                })
                 .map(|(pos, _)| pos)
         });
         if let Some(pos) = pos {

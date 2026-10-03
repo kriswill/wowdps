@@ -81,6 +81,7 @@ fn info() -> SegmentInfo {
         name: "Verkath the Hollow".to_string(),
         start_ms: -62_135_596_800_000,
         duration_ms: 45_000,
+        combat_ms: 45_000,
         success: Some(false),
         live: true,
         instance: Some(7),
