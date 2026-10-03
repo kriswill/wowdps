@@ -387,9 +387,18 @@ pub struct Def {
     pub shadows: Shadows,
 }
 
-/// Every built-in theme, in the ⚙ card's order: `navy` first (the default).
+/// Every built-in theme, in the ⚙ card's order: the default first.
 pub fn themes() -> [&'static Def; 3] {
-    [&NAVY, &ONYX, &FROST]
+    [&ONYX, &NAVY, &FROST]
+}
+
+/// The default theme, `onyx`: what a config that names none draws in, what
+/// a name no theme answers to falls back to, and what a theme of a
+/// config's own starts from when it says no `base`. (A config that still
+/// says `gold` — every config the GUI saved before there were themes says
+/// it — keeps the look it had: `gold` is `navy`'s old name.)
+pub fn default_def() -> &'static Def {
+    &ONYX
 }
 
 /// Names a config may still spell a built-in by: `gold` was `navy`'s name
@@ -409,9 +418,10 @@ pub fn builtin(name: &str) -> Option<&'static Def> {
 }
 
 /// The built-in theme config `theme` names; an unknown name is not an
-/// error, it is `navy`. (A config's own themes are [`super::Registry`]'s.)
+/// error, it is the default. (A config's own themes are
+/// [`super::Registry`]'s.)
 pub fn def_named(name: &str) -> &'static Def {
-    builtin(name).unwrap_or(&NAVY)
+    builtin(name).unwrap_or_else(default_def)
 }
 
 #[cfg(test)]
@@ -503,8 +513,9 @@ mod tests {
     }
 
     #[test]
-    fn themes_are_named_and_an_unknown_name_is_navy() {
-        assert_eq!(themes()[0].name, "navy", "navy is the default");
+    fn themes_are_named_and_an_unknown_name_is_the_default() {
+        assert_eq!(themes()[0].name, "onyx", "the default comes first");
+        assert_eq!(default_def().name, "onyx");
         for def in themes() {
             assert_eq!(def_named(&def.name), def);
             assert_eq!(def_named(&def.name.to_uppercase()), def);
@@ -515,7 +526,7 @@ mod tests {
                 "names are lowercase"
             );
         }
-        assert_eq!(def_named("purple").name, "navy");
+        assert_eq!(def_named("purple").name, "onyx", "the default");
         assert_eq!(builtin("purple"), None);
         assert_eq!(def_named(" Gold ").name, "navy", "the old name still reads");
         let mut names: Vec<&str> = themes().iter().map(|d| d.name.as_str()).collect();

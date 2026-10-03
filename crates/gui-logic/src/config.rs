@@ -84,10 +84,10 @@ pub struct Config {
     /// window's chrome is drawn in. A plain string for the reason `density`
     /// is one; the old `gold` reads as `theme`.
     pub chrome: String,
-    /// The theme the GUI draws in, by name (`navy`, `onyx`, `frost`, or one
-    /// of `themes`'): a plain string, so a name this version does not know
-    /// reads as `navy` rather than failing the file. The old `gold` is
-    /// `navy`.
+    /// The theme the GUI draws in, by name (`onyx`, the default; `navy`,
+    /// `frost`, or one of `themes`'): a plain string, so a name this version
+    /// does not know reads as the default rather than failing the file. The
+    /// old `gold` is `navy`.
     pub theme: String,
     /// `[themes.<name>]`: tokens overriding a built-in theme's, or a theme of
     /// the user's own (`theme::Registry` reads it, and says what it got
@@ -138,7 +138,7 @@ impl Default for Config {
             character: None,
             character_class: None,
             chrome: crate::theme::Chrome::default().name().to_string(),
-            theme: crate::theme::NAVY.name.to_string(),
+            theme: crate::theme::default_def().name.to_string(),
             themes: None,
             density: crate::theme::Density::default().name().to_string(),
             home_on_start: true,
@@ -226,7 +226,7 @@ impl Config {
     }
 
     /// The configured theme, overrides and all; a name we do not know is
-    /// `navy`.
+    /// the default, `onyx`.
     pub fn theme(&self) -> crate::theme::Def {
         self.themes().named(&self.theme).clone()
     }
@@ -461,17 +461,17 @@ mod tests {
     }
 
     #[test]
-    fn the_theme_defaults_to_navy_and_round_trips() {
+    fn the_theme_defaults_to_onyx_and_round_trips() {
         let dir = temp_path("theme");
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).unwrap();
         for (text, want) in [
-            ("zoom = 1.0\n", "navy"),
+            ("zoom = 1.0\n", "onyx"),
             ("theme = \"frost\"\n", "frost"),
             ("theme = \"FROST\"\n", "frost"),
             ("theme = \"onyx\"\n", "onyx"),
             ("theme = \"gold\"\n", "navy"),
-            ("theme = \"purple\"\n", "navy"),
+            ("theme = \"purple\"\n", "onyx"),
             (
                 "theme = \"ember\"\n[themes.ember]\nbase = \"onyx\"\n[themes.ember.window]\naccent = \"#ff7a3d\"\n",
                 "ember",

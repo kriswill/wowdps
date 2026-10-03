@@ -276,9 +276,9 @@ literal; everything draws from the active theme.
 - **Switching** is `Theme::update` + replacing `Look` + `cx.refresh_windows()`.
   A test switches between two definitions and checks that a Kit component
   and a bespoke surface both changed.
-- **As built (2026-10-03).** The built-ins are `navy` (the prototype's
-  Tokens; `gold` before there were themes, a name config still reads),
-  `onyx` and `frost`, chosen in the window's ⚙ card (config `theme`; the
+- **As built (2026-10-03).** The built-ins are `onyx` (the default),
+  `navy` (the prototype's Tokens; `gold` before there were themes, a name
+  config still reads) and `frost`, chosen in the window's ⚙ card (config `theme`; the
   overlay follows the file). User themes are NOT Kit `ThemeConfig` JSON:
   Kit's slots are a projection of ours (`apply`), not the definition, so a
   user theme is our own token groups in the config.toml the GUI already

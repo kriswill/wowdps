@@ -67,7 +67,7 @@ pull rail and the ribbon respond to the mouse.
 
 Configuration lives in ~/.config/wowdps/config.toml (zoom for both; edge,
 offset, panel size, monitor, follow_game, game_match for the overlay;
-theme = \"navy\", \"onyx\" or \"frost\" (also chosen in the window's options),
+theme = \"onyx\" (the default), \"navy\" or \"frost\" (also chosen in the window's options),
 chrome = \"theme\" or \"class\", density, home_on_start for the window) and
 is updated when you drag the tab or zoom. [themes.<name>] tables override a
 theme's colours, faces, sizes, corners and effects, or define a theme of

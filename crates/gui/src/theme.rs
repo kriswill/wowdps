@@ -74,12 +74,12 @@ impl Themes {
 }
 
 impl Look {
-    /// The active look; `navy` with its own chrome before any `apply` (a
-    /// test that opens a bare window).
+    /// The active look; the default theme with its own chrome before any
+    /// `apply` (a test that opens a bare window).
     pub fn global(cx: &App) -> Look {
         cx.try_global::<Look>().cloned().unwrap_or_else(|| Look {
-            def: Arc::new(gl::NAVY.clone()),
-            accent: own_accent(&gl::NAVY),
+            def: Arc::new(gl::default_def().clone()),
+            accent: own_accent(gl::default_def()),
         })
     }
 

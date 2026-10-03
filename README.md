@@ -101,8 +101,9 @@ scans Steam/Proton prefixes for the newest install.
 
 ### Themes
 
-The window's ⚙ menu switches between **Navy** (the default), **Onyx**
-(black and white, with smoked glass and instrument marks) and **Frost**; the
+The window's ⚙ menu switches between **Onyx** (the default: black and
+white, with smoked glass and instrument marks), **Navy** (the original look;
+a config that still says `theme = "gold"` keeps it) and **Frost**; the
 overlay follows within a second. The choice is config `theme`. Any theme's
 colours, fonts, sizes, corners and effects can be changed in the same file,
 and a table with a new name is a theme of your own:

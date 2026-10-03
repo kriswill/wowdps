@@ -35,10 +35,12 @@ was built under still hold:
 - **Dependencies.** `gpui-kit` is pinned exactly (`=0.7.0`), and its styled
   `gpui-component` layer is restyled per control. No forked or patched GPUI:
   a capability GPUI lacks is designed around or contributed upstream.
-- **Themes.** One theme definition (gui-logic's `theme::Def`: `navy` — the
-  prototype's Tokens and the overlay's palette, called `gold` until there
-  were themes, a name config still reads — `onyx` and `frost`; config `theme`,
-  chosen in the window's ⚙ card) feeds both Kit's `Theme` and the app's `Look`
+- **Themes.** One theme definition (gui-logic's `theme::Def`: `onyx`, the
+  default (`theme::default_def`: no `theme` key, an unknown name, a user
+  theme with no `base`); `navy` — the prototype's Tokens and the overlay's
+  palette, called `gold` until there were themes, a name config still reads
+  (so a config that says `gold` keeps the old look); and `frost`; config
+  `theme`, chosen in the window's ⚙ card) feeds both Kit's `Theme` and the app's `Look`
   (`crates/gui/src/theme.rs`). No surface draws a literal colour, face,
   corner or effect: each comes from the `Def`, and config.toml's
   `[themes.<name>]` tables override any built-in's tokens or define a theme
@@ -796,7 +798,8 @@ import field stays Kit's styled `Input`.
 
 **Chrome and type.** gui-logic's `theme` is the one definition: a `Def`
 (`NAVY`, `ONYX`, `FROST`, each in its own file under `theme/`; config
-`theme`, an unknown name reads `navy`, the old `gold` too) holds the
+`theme`; an unknown name reads the default, `onyx`, and the old `gold`
+reads `navy`) holds the
 window's `WindowTokens`, the overlay's `OverlayTokens`, the talent viewer's
 `TalentTokens`, the data hues (`DataTokens`: the stacked bands, the
 lettered squares, the foe, the timeline marks), the `Faces`, the type scale
@@ -808,7 +811,7 @@ is written by `theme::tokens!`, so each field is a config key by the same
 name: `[themes.<name>.window|overlay|talents|data|faces|size|pitch|shape|bars|
 effects]`, plus `base`, `label`, `accent_label` and `dark` — `theme::Registry`
 lays a config's tables over the built-ins (a table named for one overrides
-it; any other is a theme of the user's own, from its `base`, `navy` when
+it; any other is a theme of the user's own, from its `base`, the default when
 unsaid), owns what it builds — a theme's words are `theme::Text`, a
 literal or a string shared from the config; the built-ins are lazily built
 statics; the active `Look` holds its `Def` by an `Arc`, so a theme switched

@@ -8,7 +8,7 @@
 //! ground = "#050505"
 //!
 //! [themes.ember]                # a theme of the config's own
-//! base = "navy"                 # what it starts from; navy when unsaid
+//! base = "navy"                 # what it starts from; onyx when unsaid
 //! label = "Ember"               # its name in the ⚙ card
 //! accent_label = "Ember"        # its own chrome's name there
 //! [themes.ember.window]
@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 
 use super::color::Color;
 use super::defs::{
-    DataTokens, Def, Effects, Faces, NAVY, OverlayTokens, WindowTokens, builtin, themes,
+    DataTokens, Def, Effects, Faces, OverlayTokens, WindowTokens, builtin, default_def, themes,
 };
 use super::metrics::{Bars, Pitches, Shape, Sizes};
 use super::talent_tokens::TalentTokens;
@@ -133,12 +133,12 @@ impl Registry {
         self.defs.iter().find(|d| d.name == canonical.as_str())
     }
 
-    /// The theme config `theme` names; a name it does not know is `navy`
-    /// (the config's own `navy`, overrides and all).
+    /// The theme config `theme` names; a name it does not know is the
+    /// default (the config's own, overrides and all).
     pub fn named(&self, name: &str) -> &Def {
         self.get(name)
-            .or_else(|| self.get(&NAVY.name))
-            .unwrap_or(&NAVY)
+            .or_else(|| self.get(&default_def().name))
+            .unwrap_or(default_def())
     }
 }
 
@@ -194,13 +194,15 @@ impl Build<'_> {
         if self.visiting.iter().any(|v| v == name) {
             let chain = self.visiting.join(" → ");
             self.warnings.push(format!(
-                "{at}: its bases go round in a loop ({chain} → {name}); starting from navy"
+                "{at}: its bases go round in a loop ({chain} → {name}); starting from {}",
+                default_def().name
             ));
             return None;
         }
         if self.visiting.len() > MAX_DEPTH {
             self.warnings.push(format!(
-                "{at}: its bases go more than {MAX_DEPTH} deep; starting from navy"
+                "{at}: its bases go more than {MAX_DEPTH} deep; starting from {}",
+                default_def().name
             ));
             return None;
         }
@@ -235,24 +237,25 @@ impl Build<'_> {
     }
 
     /// What `[themes.<key>]` starts from: its `base`, else the built-in it
-    /// is named for, else `navy`.
+    /// is named for, else the default.
     fn base(&mut self, key: &str, name: &str, entry: &toml::Table) -> Def {
         let own = || builtin(name).filter(|d| d.name == name).cloned();
         let Some(base) = entry.get("base") else {
-            return own().unwrap_or_else(|| NAVY.clone());
+            return own().unwrap_or_else(|| default_def().clone());
         };
         let at = format!("themes.{}.base", bare(key));
         let Some(base) = base.as_str().and_then(canonical) else {
             self.warnings
                 .push(format!("{at}: {base} is not a theme's name, as a string"));
-            return own().unwrap_or_else(|| NAVY.clone());
+            return own().unwrap_or_else(|| default_def().clone());
         };
         if base == name {
             return own().unwrap_or_else(|| {
                 self.warnings.push(format!(
-                    "{at}: a theme cannot start from itself; starting from navy"
+                    "{at}: a theme cannot start from itself; starting from {}",
+                    default_def().name
                 ));
-                NAVY.clone()
+                default_def().clone()
             });
         }
         let other = self
@@ -261,13 +264,16 @@ impl Build<'_> {
             .find(|k| canonical(k).as_deref() == Some(base.as_str()))
             .cloned();
         if let Some(other) = other {
-            return self.resolve(&other, &base).unwrap_or_else(|| NAVY.clone());
+            return self
+                .resolve(&other, &base)
+                .unwrap_or_else(|| default_def().clone());
         }
         builtin(&base).cloned().unwrap_or_else(|| {
             self.warnings.push(format!(
-                "{at}: no theme is named {base:?}; starting from navy"
+                "{at}: no theme is named {base:?}; starting from {}",
+                default_def().name
             ));
-            NAVY.clone()
+            default_def().clone()
         })
     }
 }
@@ -513,7 +519,7 @@ pub fn theme_toml(def: &Def, as_name: &str) -> String {
     let head = format!("themes.{as_name}");
     let _ = writeln!(out, "[{head}]");
     // A built-in's copy keeps its base, so a token a later version adds
-    // comes from the theme it was copied from, not from navy.
+    // comes from the theme it was copied from, not from the default.
     if builtin(&def.name).is_some_and(|b| b.name == def.name) {
         let _ = writeln!(out, "base = {:?}", def.name);
     }
@@ -570,7 +576,7 @@ pub fn theme_toml(def: &Def, as_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::ONYX;
+    use crate::theme::{NAVY, ONYX};
 
     fn table(text: &str) -> toml::Table {
         toml::from_str(text).unwrap_or_default()
@@ -581,10 +587,10 @@ mod tests {
         let r = Registry::from_table(&toml::Table::new());
         assert_eq!(r, Registry::builtin());
         let names: Vec<&str> = r.themes().iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names, ["navy", "onyx", "frost"]);
+        assert_eq!(names, ["onyx", "navy", "frost"]);
         assert_eq!(*r.named("onyx"), *ONYX);
         assert_eq!(*r.named("Gold"), *NAVY, "the old name");
-        assert_eq!(*r.named("nope"), *NAVY);
+        assert_eq!(*r.named("nope"), *ONYX, "the default");
         assert!(r.warnings.is_empty());
     }
 
@@ -632,7 +638,7 @@ mod tests {
         ));
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
         let names: Vec<_> = r.themes().iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names, ["navy", "onyx", "frost", "ash", "ember", "plain"]);
+        assert_eq!(names, ["onyx", "navy", "frost", "ash", "ember", "plain"]);
         let ember = r.named("EMBER");
         assert_eq!(
             ember.window.ground,
@@ -651,7 +657,10 @@ mod tests {
         assert_eq!(ash.shape.scale, 0.0);
         assert_eq!(ash.label, "Ash");
         let plain = r.named("plain");
-        assert_eq!(plain.window, NAVY.window, "navy when no base is said");
+        assert_eq!(
+            plain.window, ONYX.window,
+            "the default when no base is said"
+        );
         assert_eq!(plain.label, "Plain");
     }
 
@@ -701,10 +710,13 @@ mod tests {
         assert!(says("themes.notatable: a theme is a table"));
         let mine = r.named("mine");
         assert_eq!(
-            mine.window.ink, NAVY.window.ink,
+            mine.window.ink, ONYX.window.ink,
             "a bad value changes nothing"
         );
-        assert_eq!(mine.size.name, NAVY.size.name);
+        assert_eq!(
+            mine.size.name, ONYX.size.name,
+            "from the default, its base named nothing"
+        );
         assert!(r.get("notatable").is_none());
     }
 

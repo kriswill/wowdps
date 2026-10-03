@@ -58,7 +58,7 @@ should not have to set a token called gold.
 **The registry.** `theme::Registry::from_table` lays `[themes.<name>]`
 over the built-ins: a table named for one overrides only what it says; any
 other is a theme of the user's own, starting from its `base` (a built-in,
-overridden or not, or another of their themes; `navy` when unsaid). Loops,
+overridden or not, or another of their themes; the default when unsaid). Loops,
 bad colours, unknown keys and non-tables are lines in `warnings` (stderr at
 start, and the first in the ⚙ card), never a failed file. What a config
 builds is owned, not permanent: a theme's words are `theme::Text` (a
@@ -117,7 +117,11 @@ action (`effects.quiet_press`: a raised key lit along its foot, where a
 white-filled "Stop comparing" was the loudest thing on the stage), drew the
 stack's rest as the player's whole curve (`Ink::StackRest`, graphite under
 a `stack_other_edge` line), and removed the last baked colour, the class
-chrome's `NEUTRAL` blue, for the theme's own accent.
+chrome's `NEUTRAL` blue, for the theme's own accent. Seeing it on the real display, the user made
+onyx the default (`theme::default_def`: no `theme` key, an unknown name, a
+user theme with no `base`, first in the ⚙ card); a config that still says
+`gold` — every config saved before themes says it — keeps navy, the look
+its owner had.
 
 ## Consequences
 
