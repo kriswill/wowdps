@@ -428,13 +428,13 @@ impl Grid {
     }
 
     /// The heading line's size on this grid: the meter's `.thead` at the
-    /// label size, the inspector's `.ihrow{font-size:13px}` — one size for
-    /// the whole line, the lead's included.
-    pub fn head_px(self) -> f32 {
+    /// theme's `label` size, the inspector's `.ihrow{font-size:13px}` — one
+    /// size for the whole line, the lead's included.
+    pub fn head_px(self, label: f32) -> f32 {
         if self.inspector() {
             INSPECTOR_HEAD_PX
         } else {
-            crate::theme::SIZES.label
+            label
         }
     }
 
@@ -741,13 +741,13 @@ mod tests {
         assert_eq!(widths(Grid::Pair, &[Col::Amount, Col::Pct]), [50.0, 40.0]);
         for g in [Grid::Abilities { narrow: false }, Grid::Targets, Grid::Pair] {
             assert_eq!(g.gap(), GAP);
-            assert_eq!(g.head_px(), 13.0, "{g:?}");
+            assert_eq!(g.head_px(crate::theme::SIZES.label), 13.0, "{g:?}");
         }
         let meter = Grid::Meter {
             view: View::Damage,
             narrow: false,
         };
-        assert_eq!(meter.head_px(), crate::theme::SIZES.label);
+        assert_eq!(meter.head_px(21.0), 21.0, "the theme's label size");
     }
 
     /// The live meter stands on the prototype's own grid, per view, at its

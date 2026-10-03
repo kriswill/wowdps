@@ -5,89 +5,97 @@
 //! (`docs/design/window-redesign.html`); the overlay names none of them (its
 //! sizes are literals it multiplies by its own zoom).
 
+use super::tokens::tokens;
+
+tokens! {
 /// The window's type scale, in logical pixels: the prototype's Tokens type
 /// specimens — encounter titles Marcellus 27 (22 in a narrow window), stat
 /// values 16 at 500, rows 15 with their numbers at 14.5, labels 13.5 in
-/// gold-dim.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Sizes {
+/// the label ink.
+pub struct Sizes: f32 {
     /// An encounter title, in the title face (`.ftitle h2`).
-    pub encounter: f32,
+    encounter,
     /// The same at 820 px and under.
-    pub encounter_narrow: f32,
+    encounter_narrow,
+    /// Home's heading, "You, this week", in the title face.
+    home_title,
+    /// The place on Home's night card, in the title face.
+    home_place,
     /// A screen title (`.empty h3`, `.sheet h3`).
-    pub title: f32,
+    title,
     /// A value on the fight header's stat line (weight 500).
-    pub stat: f32,
+    stat,
     /// The same at 820 px and under.
-    pub stat_narrow: f32,
+    stat_narrow,
     /// A row's name (`.nm`).
-    pub name: f32,
+    name,
     /// The top bar's places (`.place`, weight 500).
-    pub place: f32,
+    place,
     /// Body text (`.pull`, a menu row).
-    pub body: f32,
+    body,
     /// Every numeric cell (`.num`).
-    pub num: f32,
+    num,
     /// A view tab (`.vtab`, weight 500).
-    pub tab: f32,
+    tab,
     /// Captions, a roster's rank.
-    pub small: f32,
-    /// Column heads and stat labels, in gold-dim.
-    pub label: f32,
+    small,
+    /// Column heads and stat labels, in the label ink.
+    label,
     /// Tags, chips, badges.
-    pub micro: f32,
+    micro,
     /// Eyebrow notes, key hints.
-    pub tiny: f32,
+    tiny,
     /// A keycap (`kbd`, weight 500).
-    pub kbd: f32,
+    kbd,
     /// A line of the `?` sheet.
-    pub sheet_key: f32,
+    sheet_key,
     /// What follows a fight's title (`.fmeta`).
-    pub meta: f32,
+    meta,
     /// The same at 820 px and under.
-    pub meta_narrow: f32,
+    meta_narrow,
     /// The "you" chip's words (`.youchip`).
-    pub chip: f32,
+    chip,
     /// The owner row's "you" tag (`.youtag`, 600).
-    pub you_tag: f32,
+    you_tag,
     /// The row filter's text.
-    pub filter: f32,
+    filter,
     /// The top bar's wordmark, in the title face (`.mark`).
-    pub mark: f32,
+    mark,
     /// The frame's own size, what a piece that sets none inherits (`.app`).
-    pub frame: f32,
+    frame,
     /// A top-bar icon button's glyph (`.ibtn svg`).
-    pub icon: f32,
+    icon,
     /// A view tab's line icon (`.vtab svg.i`).
-    pub tab_icon: f32,
+    tab_icon,
     /// The live dot (`.pulse`).
-    pub dot: f32,
+    dot,
     /// An axis tick and the ribbon's words (`.axis span`).
-    pub tick: f32,
+    tick,
+}
 }
 
+tokens! {
 /// The window's pitches, in logical pixels.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Pitches {
+pub struct Pitches: f32 {
     /// A meter row (`.trow`).
-    pub row: f32,
+    row,
     /// The pinned total (`.ttotal`).
-    pub total: f32,
+    total,
     /// The top bar (`.app{grid-template-rows:44px …}`).
-    pub top_bar: f32,
+    top_bar,
     /// A top-bar place (`.place`, 42 and its 2 px underline).
-    pub place: f32,
+    place,
     /// A view tab (`.vtab`).
-    pub tab: f32,
+    tab,
     /// A meter row in the compact density.
-    pub compact_row: f32,
+    compact_row,
     /// An icon button's square target (`.ibtn`).
-    pub icon_button: f32,
+    icon_button,
     /// The scrollbar's lane at a list's right edge.
-    pub scroll_lane: f32,
+    scroll_lane,
     /// A menu's width (`.menu{min-width:250px}` and ten more).
-    pub menu_w: f32,
+    menu_w,
+}
 }
 
 impl Pitches {
@@ -113,6 +121,8 @@ impl Pitches {
 pub const SIZES: Sizes = Sizes {
     encounter: 27.0,
     encounter_narrow: 22.0,
+    home_title: 28.0,
+    home_place: 22.0,
     title: 17.0,
     stat: 16.0,
     stat_narrow: 15.0,
@@ -200,6 +210,89 @@ pub const SHADOW_TOAST: Shadow = Shadow {
     offset: (0.0, 12.0),
     blur: 30.0,
 };
+
+/// The shadows a theme casts under what floats: a menu or a card, the
+/// modal sheet and palette, and the toast.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shadows {
+    pub menu: Shadow,
+    pub sheet: Shadow,
+    pub toast: Shadow,
+    /// The pull rail's drawer, cast sideways over the stage.
+    pub drawer: Shadow,
+}
+
+/// The prototype's shadows.
+pub const SHADOWS: Shadows = Shadows {
+    menu: SHADOW_MENU,
+    sheet: SHADOW_SHEET,
+    toast: SHADOW_TOAST,
+    // `.app.rail-open .rail{box-shadow:20px 0 50px rgba(0,0,0,.5)}`.
+    drawer: Shadow {
+        color: super::Color::rgba(0.0, 0.0, 0.0, 0.5),
+        offset: (20.0, 0.0),
+        blur: 50.0,
+    },
+};
+
+tokens! {
+/// A theme's corners. Every radius a surface draws is its design value
+/// times `scale` (Navy's 1 draws the prototype's corners exactly; a
+/// machined theme sets less), and a chip or pill — a radius that is half a
+/// control's height — is at most `chip` (a large `chip` keeps it a pill; a
+/// small one makes it a squared tag). A disc stays a disc whatever this says:
+/// a player's crest and a dot are round by meaning.
+pub struct Shape: f32 {
+    /// What every corner radius is multiplied by.
+    scale,
+    /// The most a chip's or a pill's corner may be.
+    chip,
+}
+}
+
+tokens! {
+/// How strongly a class colour fills its bar (0..=1 alphas): a meter row's
+/// fades along its length, from `rest_from` at its start to `rest_to` at
+/// its end, the selected row's from `lit_from` to `lit_to`; the overlay's
+/// rows wear the resting ramp; an inspector list's bar is `list` flat.
+/// The class colour itself is data and never moves — only how much of it
+/// a bar shows, which a darker ground wants more of.
+pub struct Bars: f32 {
+    rest_from,
+    rest_to,
+    lit_from,
+    lit_to,
+    list,
+}
+}
+
+/// The bars as the meter, the overlay and the inspector have always drawn
+/// them.
+pub const BARS: Bars = Bars {
+    rest_from: 0.16,
+    rest_to: 0.55,
+    lit_from: 0.55,
+    lit_to: 1.0,
+    list: 0.55,
+};
+
+/// The prototype's corners: radii as designed, chips as pills.
+pub const SHAPE: Shape = Shape {
+    scale: 1.0,
+    chip: 99.0,
+};
+
+impl Shape {
+    /// A designed radius `r` at this shape.
+    pub fn radius(&self, r: f32) -> f32 {
+        r * self.scale.max(0.0)
+    }
+
+    /// A pill's radius `r` (half its height) at this shape.
+    pub fn pill(&self, r: f32) -> f32 {
+        r.min(self.chip.max(0.0))
+    }
+}
 
 /// Is a window `width` logical pixels wide narrow (820 and under)?
 pub fn is_narrow(width: f32) -> bool {

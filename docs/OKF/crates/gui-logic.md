@@ -82,7 +82,12 @@ cutover changed none of them but their doc comments.
   "Ability (Pet)" label; the GUI's `window/table.rs` gives a column its
   width and ink.
 - `theme` — the names the config spells: `Chrome`, `Density`, `CLASSES`,
-  `class_named` (and, from wave B, every token and measure below).
+  `class_named` (and, from wave B, every token and measure below); since
+  2026-10-03 the built-in themes (`navy`, `onyx`, `frost`, a file each), the
+  `tokens!` groups a config names and `Registry`, which lays a config's
+  `[themes]` over them ([themes as config data](../decisions/themes-as-config-data.md)).
+- `fonts` — every bundled face: Barlow and Marcellus (`navy`), Saira
+  Semi Condensed Tabular and Michroma (`onyx`).
 - `tree` — [R26](../rulings/r26.md)'s ability-tree lines: what the inspector's
   list draws and the keys walk, and the overlay's drill rollups.
 

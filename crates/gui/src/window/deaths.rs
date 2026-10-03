@@ -97,7 +97,7 @@ fn cells(narrow: bool, w: &W, cells: Vec<Div>) -> Div {
 /// The table: heads, hairline, the deaths, the total.
 pub fn view(t: Table, gui: &Gui, w: &W, cx: &mut Context<Gui>) -> impl IntoElement {
     let narrow = w.narrow();
-    let head = |words: &'static str| w.text(words, w.size.label, w.c(|t| t.gold_dim), REGULAR);
+    let head = |words: &'static str| w.text(words, w.size.label, w.c(|t| t.label_ink), REGULAR);
     let mut heads = vec![head("Time"), head("Player"), head("Killing blow")];
     if !narrow {
         heads.push(head("Hit"));
@@ -298,7 +298,7 @@ fn line(
         .items_center()
         .pl(w.z(LEAD))
         .pr(w.z(TRAIL))
-        .rounded(w.z(3.))
+        .rounded(w.r(3.))
         .cursor_pointer();
     el = if on && !t.keys_away {
         el.bg(w.c(|t| t.raise))

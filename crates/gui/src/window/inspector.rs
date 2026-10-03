@@ -50,6 +50,7 @@ impl Gui {
             app,
             st: &self.insp,
             t: &w.t,
+            data: &w.data,
             hide: self.cfg.hide_realms,
             owner,
             owner_of: &owner_of,

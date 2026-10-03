@@ -340,6 +340,43 @@ impl Paint {
             .whitespace_nowrap()
             .child(text.into())
     }
+
+    /// A corner the viewer draws at `v` px, at the theme's shape.
+    pub fn r(&self, v: f32) -> gpui_kit::Pixels {
+        px(self.def.shape.radius(v))
+    }
+
+    /// A pill's corner, `v` its half-height, at the theme's shape.
+    pub fn pill(&self, v: f32) -> gpui_kit::Pixels {
+        px(self.def.shape.pill(v))
+    }
+
+    /// The tooltip's face: its box in `tip` inside `tip_edge`, and, where
+    /// the theme is glass, a faint sheen down it and the specular rim
+    /// along its top (the window's `W::float`).
+    pub fn tip_face<E: Styled>(&self, el: E) -> E {
+        let el = el.border_1().border_color(self.c(|t| t.tip_edge));
+        if !self.def.effects.glass {
+            return el.bg(self.c(|t| t.tip));
+        }
+        let w = &self.def.window;
+        let sheen = w
+            .glass_sheen
+            .over(self.t.tip.alpha(1.0))
+            .alpha(self.t.tip.a);
+        el.bg(gpui_kit::linear_gradient(
+            180.,
+            gpui_kit::linear_color_stop(hsla(sheen), 0.),
+            gpui_kit::linear_color_stop(self.c(|t| t.tip), 0.30),
+        ))
+        .shadow(vec![gpui_kit::BoxShadow {
+            color: hsla(w.glass_rim),
+            offset: gpui_kit::point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        }])
+    }
 }
 
 /// The tree row's natural width, as the iced viewer sums it.
@@ -509,8 +546,8 @@ impl Render for TalentViewer {
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.drop_files(paths, cx)))
             .drag_over::<ExternalPaths>(move |style, _, _, _| {
                 style
-                    .border_color(hsla(p.t.gold))
-                    .bg(hsla(p.t.gold.alpha(0.04)))
+                    .border_color(hsla(p.t.taken))
+                    .bg(hsla(p.t.taken.alpha(0.04)))
             })
             .size_full()
             .p(px(10.))
@@ -627,7 +664,7 @@ impl TalentViewer {
             provenance = provenance.child(p.text("from combat log", 12., p.w(|t| t.good)));
         }
         if ui.edited {
-            provenance = provenance.child(p.text("edited", 12., p.w(|t| t.gold_dim)));
+            provenance = provenance.child(p.text("edited", 12., p.w(|t| t.label_ink)));
         }
         let copied = self
             .copied_until
@@ -663,13 +700,13 @@ impl TalentViewer {
                 .gap(px(8. * s))
                 .w(px(model.w.max(160.0) * s))
                 .children(icon.map(|i| img(i).size(px(20. * s))))
-                .child(p.text(name.to_uppercase(), 13. * s, p.c(|t| t.gold)))
+                .child(p.text(name.to_uppercase(), 13. * s, p.c(|t| t.taken)))
                 .child(div().flex_1())
                 .child(p.text(
                     label,
                     12. * s,
                     if full {
-                        p.c(|t| t.gold)
+                        p.c(|t| t.taken)
                     } else {
                         p.w(|t| t.ink_2)
                     },
@@ -798,7 +835,7 @@ fn hero_column(
                 .children(art::ring().map(|r| img(r).absolute().size(px(ring_d)))),
         );
     }
-    col = col.child(p.text(hero_name.to_uppercase(), 14. * p.s, p.c(|t| t.gold)));
+    col = col.child(p.text(hero_name.to_uppercase(), 14. * p.s, p.c(|t| t.taken)));
     if let (Some(pane), Some(model)) = (pane, model) {
         let (label, full) = logic::points_label(model.points, model.cap);
         col = col
@@ -806,7 +843,7 @@ fn hero_column(
                 label,
                 12. * p.s,
                 if full {
-                    p.c(|t| t.gold)
+                    p.c(|t| t.taken)
                 } else {
                     p.w(|t| t.ink_2)
                 },
@@ -817,7 +854,7 @@ fn hero_column(
                     .bg(p.c(|t| t.plate))
                     .border_1()
                     .border_color(p.c(|t| t.plate_edge))
-                    .rounded(px(10.))
+                    .rounded(p.r(10.))
                     .child(pane),
             );
     }
@@ -840,7 +877,7 @@ fn chip(
         .cursor_pointer()
         .py(px(3.))
         .px(px(8.))
-        .rounded(px(8.))
+        .rounded(p.pill(8.))
         .bg(p.c(|t| if selected { t.chip_on } else { t.chip }))
         .border_1()
         .border_color(p.c(|t| {

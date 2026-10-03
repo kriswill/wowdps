@@ -275,7 +275,7 @@ mod s12 {
     use gpui_kit::{
         Context, Entity, PathBuilder, SharedString, Window, canvas, div, point, px, size,
     };
-    use wowdps_gui_logic::theme::{FROST, GOLD};
+    use wowdps_gui_logic::theme::{FROST, NAVY};
 
     use super::{fonts_loaded, save};
     use crate::testkit;
@@ -411,7 +411,7 @@ mod s12 {
     fn s12_theming() {
         let mut cx = testkit::headless();
         fonts_loaded(&mut cx);
-        cx.update(|cx| apply(&GOLD, None, cx));
+        cx.update(|cx| apply(&NAVY, None, cx));
         let (window, _) =
             testkit::open_headless(&mut cx, size(px(560.), px(260.)), |window, cx| {
                 cx.new(|cx| Controls::new(window, cx))

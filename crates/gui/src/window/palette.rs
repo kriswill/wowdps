@@ -17,13 +17,12 @@ use std::rc::Rc;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, BoxShadow, Context, Div, ElementId, Entity, KeyBinding, MouseButton,
-    ScrollHandle, Subscription, TestSupportExt as _, Window, div, point, px,
+    AnyElement, App, Context, Div, ElementId, Entity, KeyBinding, MouseButton, ScrollHandle,
+    Subscription, TestSupportExt as _, Window, div,
 };
 use wowdps_gui_logic::fight_head::player_chart;
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::palette::{Item, Palette, Run, items, listed};
-use wowdps_gui_logic::theme::SHADOW_SHEET;
 use wowdps_model::{Action, View};
 
 use super::chrome::{class_icon, hairline, kbd};
@@ -31,9 +30,8 @@ use super::field::Field;
 use super::inspector::list::Keep;
 use super::paint::glyph;
 use super::top_bar::JUMP_WORDS;
-use super::w::{REGULAR, SEMIBOLD, W};
+use super::w::{Floating, REGULAR, SEMIBOLD, W};
 use super::{Gui, Place, Reveal};
-use crate::theme::hsla;
 
 /// The card (`.pal{width:min(580px,calc(100% - 24px));border-radius:10px}`),
 /// hung 64 px down over the scrim (`.overlay{padding-top:64px}`).
@@ -255,18 +253,6 @@ impl Gui {
     }
 }
 
-/// What lifts the card off the window (`.pal`'s shadow).
-fn sheet_shadow(w: &W) -> BoxShadow {
-    let s = SHADOW_SHEET;
-    BoxShadow {
-        color: hsla(s.color),
-        offset: point(w.z(s.offset.0), w.z(s.offset.1)),
-        blur_radius: w.z(s.blur),
-        spread_radius: px(0.),
-        inset: false,
-    }
-}
-
 /// The palette over the window: the scrim, which a press closes it from,
 /// and the card — the field over the grouped list, the selection raised
 /// with the accent's edge. Nothing under them hears the pointer.
@@ -327,7 +313,7 @@ pub fn view(gui: &Gui, w: &W, cx: &mut Context<Gui>) -> Option<AnyElement> {
                         .pt(w.z(GROUP_PAD.0))
                         .px(w.z(GROUP_PAD.1))
                         .pb(w.z(GROUP_PAD.2))
-                        .child(w.text(item.group.name(), GROUP_PX, w.c(|t| t.gold_dim), SEMIBOLD)),
+                        .child(w.text(item.group.name(), GROUP_PX, w.c(|t| t.label_ink), SEMIBOLD)),
                 );
             }
             list = list.child(line(i, item, i == sel, &keep, w, cx));
@@ -350,11 +336,9 @@ pub fn view(gui: &Gui, w: &W, cx: &mut Context<Gui>) -> Option<AnyElement> {
         .flex()
         .flex_col()
         .overflow_hidden()
-        .rounded(w.z(CARD_RADIUS))
+        .rounded(w.r(CARD_RADIUS))
         .border_1()
-        .border_color(w.c(|t| t.edge))
-        .bg(w.c(|t| t.surface))
-        .shadow(vec![sheet_shadow(w)])
+        .floating(w, w.c(|t| t.surface), w.c(|t| t.edge), w.shadows.sheet)
         .occlude()
         // A press on the card — a heading, its edge — is the card's own.
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

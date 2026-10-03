@@ -31,7 +31,9 @@ const GAP: f32 = 2.0;
 /// How far the picker's right edge stands in from the window's: the bar's
 /// right padding, then the gear and the help button and the gaps before
 /// them. The character menu hangs from there (`.menu{right:70px}`).
-pub const PICKER_END: f32 = PAD_RIGHT + 2.0 * (wowdps_gui_logic::theme::PITCHES.icon_button + GAP);
+pub fn picker_end(w: &W) -> f32 {
+    PAD_RIGHT + 2.0 * (w.pitch.icon_button + GAP)
+}
 /// The jump box (`.jump{flex:0 1 360px;height:28px;gap:8px;padding-inline:
 /// 10px;border:1px solid;border-radius:6px;font-size:14px}`): content-box,
 /// so 382 px edge to edge, and the room it keeps either side.
@@ -239,7 +241,7 @@ fn wordmark(w: &W) -> Div {
         .pl(w.z(6.))
         .pr(w.z(12.))
         .flex_none()
-        .child(w.title_text("wowdps", w.size.mark, w.c(|t| t.gold)))
+        .child(w.title_text("wowdps", w.size.mark, w.c(|t| t.accent)))
 }
 
 /// The jump box (`.jump`): the search glyph, the placeholder and its key,
@@ -259,7 +261,7 @@ fn jump_box(w: &W) -> gpui_kit::base::ObservedElement<gpui_kit::Stateful<Div>> {
         .bg(w.c(|t| t.ground))
         .border(w.z(1.))
         .border_color(w.c(|t| t.line))
-        .rounded(w.z(6.))
+        .rounded(w.r(6.))
         .cursor_pointer()
         .hover(|s| s.border_color(w.c(|t| t.edge)))
         .child(glyph(Glyph::Search, w.z(w.size.icon), w.c(|t| t.ink_3)))
@@ -303,7 +305,7 @@ fn live_pill(
         .gap(w.z(7.))
         // iced draws a container's border inside its padding; GPUI's is outside.
         .px(w.z(10. - 1.))
-        .rounded(w.z(PILL_H / 2.))
+        .rounded(w.pill(PILL_H / 2.))
         .border(w.z(1.))
         .cursor_pointer()
         .text_color(if current {
@@ -429,7 +431,7 @@ fn picker(
         .gap(w.z(8.))
         .pl(w.z(6.))
         .pr(w.z(8.))
-        .rounded(w.z(6.))
+        .rounded(w.r(6.))
         .cursor_pointer()
         .hover(|s| s.bg(w.c(|t| t.hover)))
         .child(icon)

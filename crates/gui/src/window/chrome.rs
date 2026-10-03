@@ -23,14 +23,14 @@ pub const INERT_ALPHA: f32 = 0.6;
 pub fn kbd(w: &W, key: impl Into<SharedString>) -> Div {
     div()
         .flex_none()
-        .rounded(w.z(4.))
+        .rounded(w.r(4.))
         .bg(w.c(|t| t.edge))
         .pt(w.z(1.))
         .px(w.z(1.))
         .pb(w.z(2.))
         .child(
             div()
-                .rounded(w.z(3.))
+                .rounded(w.r(3.))
                 .bg(w.c(|t| t.raise))
                 .px(w.z(5.))
                 .child(
@@ -59,7 +59,7 @@ pub fn icon_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(w.z(6.));
+        .rounded(w.r(6.));
     if enabled {
         frame
             .cursor_pointer()
@@ -128,9 +128,9 @@ pub fn badge(w: &W, word: &str, tone: Tone) -> Div {
         .gap(w.z(6.))
         .py(w.z(1.))
         .px(w.z(7.))
-        .rounded(w.z(4.))
+        .rounded(w.r(4.))
         .bg(color.opacity(0.12))
-        .when(tone == Tone::Live, |d| d.child(dot(w.z(8.), color)))
+        .when(tone == Tone::Live, |d| d.child(dot(w.z(w.size.dot), color)))
         .child(w.text(sentence(word), w.size.micro, color, SEMIBOLD))
 }
 
@@ -225,9 +225,7 @@ fn tag_disc(
                 .font_family(w.ui)
                 .font_weight(SEMIBOLD)
                 .text_size(r * 0.9)
-                .text_color(crate::theme::hsla(
-                    wowdps_gui_logic::theme::INK_DARK.alpha(0.85),
-                ))
+                .text_color(w.c(|t| t.on_class))
                 .child(tag),
         )
         .into_any_element()

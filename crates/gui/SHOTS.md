@@ -41,12 +41,19 @@ it the shot tests still render every state (a crash or a panic is still a
 failure) and save nothing. A run writes only its own file names and deletes
 nothing.
 
+`WOWDPS_SHOTS_THEME=<name>` draws every shot set in that built-in theme
+(`navy`, the default; `onyx`, `frost`) — the window's, the overlay's, the
+talent viewer's and the graph's — so a theme is reviewed state by state
+without a window on screen. Give each theme its own `WOWDPS_SHOTS_DIR`: the
+file names do not carry it. The render guard never reads it: the blessed
+pictures are `navy`'s.
+
 ## Window shots — `window::shots::window_shots`
 
 The window's states, each reached from a fresh `Gui` the way a user reaches
 it (keys dispatched as `keys::Do` / `keys::Go`, places and cards opened
 through the window's own methods), at the prototype's three frames, zoom 1,
-in the gold theme, with the bundled faces loaded:
+in `navy` (or `WOWDPS_SHOTS_THEME`'s), with the bundled faces loaded:
 
 | frame  | logical  |
 |--------|----------|

@@ -13,7 +13,13 @@
 //! and joins, drawn.
 
 use gpui_kit::prelude::*;
-use gpui_kit::{Bounds, Hsla, PathBuilder, Pixels, Point, Window, canvas, point, px};
+use gpui_kit::{
+    BorderStyle, Bounds, Hsla, PathBuilder, Pixels, Point, Window, canvas, linear_color_stop,
+    linear_gradient, point, px, quad,
+};
+use wowdps_gui_logic::theme::WindowTokens;
+
+use crate::theme::hsla;
 use wowdps_gui_logic::glyph::{Glyph, STROKE, Seg, Shape};
 
 /// A full circle into `path`, as two half arcs.
@@ -248,4 +254,50 @@ pub fn ring(d: Pixels, color: Hsla) -> impl IntoElement {
     )
     .size(d)
     .flex_none()
+}
+
+/// A box that floats over a canvas (a tooltip): `fill` inside a
+/// `border`-wide `edge` with `radius` corners — or, where the theme is
+/// glass, the canvas twin of `W::float`: the theme's translucent glass
+/// under its sheen, the same edge, and the specular rim, a hairline along
+/// the top inside the edge.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_float(
+    window: &mut Window,
+    b: Bounds<Pixels>,
+    radius: Pixels,
+    border: Pixels,
+    fill: Hsla,
+    edge: Hsla,
+    t: &WindowTokens,
+    glass: bool,
+) {
+    if !glass {
+        window.paint_quad(quad(b, radius, fill, border, edge, BorderStyle::Solid));
+        return;
+    }
+    let sheen = t.glass_sheen.over(t.glass.alpha(1.0)).alpha(t.glass.a);
+    window.paint_quad(quad(
+        b,
+        radius,
+        linear_gradient(
+            180.,
+            linear_color_stop(hsla(sheen), 0.),
+            linear_color_stop(hsla(t.glass), 0.30),
+        ),
+        border,
+        edge,
+        BorderStyle::Solid,
+    ));
+    let inset = radius.max(border);
+    let width = b.size.width - inset * 2.;
+    if width > px(0.) {
+        window.paint_quad(gpui_kit::fill(
+            Bounds::new(
+                point(b.origin.x + inset, b.origin.y + border),
+                gpui_kit::size(width, border),
+            ),
+            hsla(t.glass_rim),
+        ));
+    }
 }

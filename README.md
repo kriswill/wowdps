@@ -99,6 +99,33 @@ same store as `history`, `progression`, `trend`, `stored_fight`, `pin_fight`
 and `history_sql`). Log discovery checks `$WOWDPS_WOW_DIR`, then
 scans Steam/Proton prefixes for the newest install.
 
+### Themes
+
+The window's ⚙ menu switches between **Navy** (the default), **Onyx**
+(black and white, with smoked glass and instrument marks) and **Frost**; the
+overlay follows within a second. The choice is config `theme`. Any theme's
+colours, fonts, sizes, corners and effects can be changed in the same file,
+and a table with a new name is a theme of your own:
+
+```toml
+theme = "ember"
+
+[themes.onyx.window]   # change a built-in: only what you name moves
+ground = "#050505"
+
+[themes.ember]         # a new theme, starting from Onyx
+base = "onyx"
+label = "Ember"
+[themes.ember.window]
+accent = "#ff7a3d"
+[themes.ember.effects]
+glass = false
+```
+
+`wowdps-gui --print-theme onyx` prints every key a theme has, ready to copy.
+A key that does not exist or a value that does not parse is reported (on
+stderr, and in the ⚙ menu) and skipped; the rest of the theme still applies.
+
 ### Game data caches
 
 Class crests, spec icons and spell icons come from your own game install,

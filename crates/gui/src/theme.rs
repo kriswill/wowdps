@@ -3,20 +3,21 @@
 //!
 //! - GPUI Kit's `Theme`, slot by slot, so every Kit component wears it;
 //! - our `Look`, a global holding the definition and the chrome accent, for
-//!   every surface Kit has no slot for (inks, gold-dim, the overlay).
+//!   every surface Kit has no slot for (inks, labels, the overlay, the
+//!   effects).
 //!
 //! No surface draws a literal colour: each reads `Look` (or Kit's theme),
 //! so `apply` with another definition repaints everything.
 //!
 //! Kit's slot names are shadcn's: `primary` is the brand colour (a
 //! primary button, a checked box, the selected tab), `accent` is the
-//! hover wash behind a menu or list item. So the chrome (the game's gold,
+//! hover wash behind a menu or list item. So the chrome (the theme's accent,
 //! or the owner's class) goes to `primary` and `ring`, and `accent` is the
 //! prototype's raise.
 
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Global, Hsla, Rgba, px};
-use wowdps_gui_logic::theme::{self as gl, Accent, Def};
+use wowdps_gui_logic::theme::{self as gl, Accent, Def, Registry};
 
 /// A gui-logic colour as GPUI's.
 pub fn hsla(c: gl::Color) -> Hsla {
@@ -39,13 +40,34 @@ pub struct Look {
 
 impl Global for Look {}
 
+/// Every theme this process can switch to: the built-ins with the config's
+/// `[themes]` laid over them, read at start and again when the config
+/// changes under the overlay.
+#[derive(Clone, Debug, Default)]
+pub struct Themes(pub Registry);
+
+impl Global for Themes {}
+
+impl Themes {
+    /// The registry; the built-ins alone before any is set (a test).
+    pub fn global(cx: &App) -> Registry {
+        cx.try_global::<Themes>()
+            .map(|t| t.0.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set(registry: Registry, cx: &mut App) {
+        cx.set_global(Themes(registry));
+    }
+}
+
 impl Look {
-    /// The active look; `gold` with its own chrome before any `apply` (a
+    /// The active look; `navy` with its own chrome before any `apply` (a
     /// test that opens a bare window).
     pub fn global(cx: &App) -> Look {
         cx.try_global::<Look>().copied().unwrap_or(Look {
-            def: &gl::GOLD,
-            accent: own_accent(&gl::GOLD),
+            def: &gl::NAVY,
+            accent: own_accent(&gl::NAVY),
         })
     }
 
@@ -60,8 +82,8 @@ impl Look {
 /// The chrome a definition wears by itself: its own accent token.
 pub fn own_accent(def: &Def) -> Accent {
     Accent {
-        base: def.window.gold,
-        ink: def.window.gold_ink,
+        base: def.window.accent,
+        ink: def.window.accent_ink,
     }
 }
 
@@ -91,9 +113,9 @@ fn map(def: &Def, accent: Accent, theme: &mut Theme) {
     theme.font_family = def.faces.ui.into();
     // The tabular digits are baked into the face, so it is the mono face too.
     theme.mono_font_family = def.faces.ui.into();
-    theme.font_size = px(14.5);
-    theme.radius = px(def.radius);
-    theme.radius_lg = px(def.radius + 2.0);
+    theme.font_size = px(def.size.body);
+    theme.radius = px(def.shape.radius(6.0));
+    theme.radius_lg = px(def.shape.radius(8.0));
     theme.shadow = true;
 
     let c = &mut theme.colors;
@@ -142,11 +164,11 @@ fn map(def: &Def, accent: Accent, theme: &mut Theme) {
     c.button_danger_hover = h(w.bad.lighten(0.08));
     c.button_danger_active = h(w.bad.darken(0.08));
     c.button_success = h(w.good);
-    c.button_success_foreground = h(w.gold_ink);
+    c.button_success_foreground = h(w.accent_ink);
     c.button_success_hover = h(w.good.lighten(0.08));
     c.button_success_active = h(w.good.darken(0.08));
     c.button_warning = h(w.amber);
-    c.button_warning_foreground = h(w.gold_ink);
+    c.button_warning_foreground = h(w.accent_ink);
     c.button_warning_hover = h(w.amber.lighten(0.08));
     c.button_warning_active = h(w.amber.darken(0.08));
     c.button_info = h(accent.base);
@@ -166,7 +188,7 @@ fn map(def: &Def, accent: Accent, theme: &mut Theme) {
     c.table = h(w.ground);
     c.table_even = h(w.ground);
     c.table_head = h(w.surface);
-    c.table_head_foreground = h(w.gold_dim);
+    c.table_head_foreground = h(w.label_ink);
     c.table_hover = h(hover);
     c.table_active = h(w.raise);
     c.table_active_border = h(accent.base);
@@ -202,11 +224,11 @@ fn map(def: &Def, accent: Accent, theme: &mut Theme) {
     c.danger_hover = h(w.bad.lighten(0.08));
     c.danger_active = h(w.bad.darken(0.08));
     c.success = h(w.good);
-    c.success_foreground = h(w.gold_ink);
+    c.success_foreground = h(w.accent_ink);
     c.success_hover = h(w.good.lighten(0.08));
     c.success_active = h(w.good.darken(0.08));
     c.warning = h(w.amber);
-    c.warning_foreground = h(w.gold_ink);
+    c.warning_foreground = h(w.accent_ink);
     c.warning_hover = h(w.amber.lighten(0.08));
     c.warning_active = h(w.amber.darken(0.08));
     c.info = h(accent.base);
@@ -219,10 +241,56 @@ fn map(def: &Def, accent: Accent, theme: &mut Theme) {
 mod tests {
     use gpui_kit::TestAppContext;
     use gpui_kit::component::Theme;
-    use wowdps_gui_logic::theme::{FROST, GOLD, class_accent};
+    use wowdps_gui_logic::theme::{FROST, NAVY, class_accent};
     use wowdps_model::Class;
 
     use super::{Look, apply, hsla};
+
+    /// Every built-in theme's window faces are bundled and register under
+    /// the names it gives them, and each draws all ten digits at one
+    /// advance at every weight the window uses — so a column of figures lines
+    /// up whatever the theme (the bakes in `crates/gui-logic/fonts/README.md`).
+    #[test]
+    fn every_theme_s_faces_are_bundled_and_tabular() {
+        use gpui_kit::{FontWeight, font, px};
+        use wowdps_gui_logic::theme::THEMES;
+        let mut cx = crate::testkit::headless();
+        cx.update(|cx| {
+            let faces = wowdps_gui_logic::fonts::FONTS
+                .iter()
+                .map(|b| std::borrow::Cow::Borrowed(*b))
+                .collect();
+            cx.text_system()
+                .add_fonts(faces)
+                .expect("the bundled fonts load");
+            let names = cx.text_system().all_font_names();
+            for def in THEMES {
+                for family in [def.faces.ui, def.faces.title] {
+                    assert!(
+                        names.iter().any(|n| n == family),
+                        "{}: {family} is bundled",
+                        def.name
+                    );
+                }
+                for weight in [FontWeight::NORMAL, FontWeight::MEDIUM, FontWeight::SEMIBOLD] {
+                    let mut f = font(def.faces.ui);
+                    f.weight = weight;
+                    let id = cx.text_system().resolve_font(&f);
+                    let widths: Vec<f32> = ('0'..='9')
+                        .filter_map(|d| cx.text_system().advance(id, px(14.5), d).ok())
+                        .map(|s| f32::from(s.width))
+                        .collect();
+                    let first = widths.first().copied().unwrap_or_default();
+                    assert_eq!(widths.len(), 10);
+                    assert!(
+                        widths.iter().all(|w| (w - first).abs() < 0.01),
+                        "{} {weight:?}: {widths:?}",
+                        def.name
+                    );
+                }
+            }
+        });
+    }
 
     /// One definition drives both targets, and another replaces both: Kit's
     /// slots and our Look switch together, and a class chrome reaches the
@@ -230,26 +298,26 @@ mod tests {
     #[gpui_kit::test]
     fn a_definition_drives_kit_and_look_alike(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
-        cx.update(|cx| apply(&GOLD, None, cx));
+        cx.update(|cx| apply(&NAVY, None, cx));
         cx.update(|cx| {
             let theme = Theme::global(cx);
             assert!(theme.is_dark());
-            assert_eq!(theme.background, hsla(GOLD.window.ground));
-            assert_eq!(theme.primary, hsla(GOLD.window.gold));
-            assert_eq!(theme.font_family.as_ref(), GOLD.faces.ui);
-            assert_eq!(Look::global(cx).def.name, "gold");
+            assert_eq!(theme.background, hsla(NAVY.window.ground));
+            assert_eq!(theme.primary, hsla(NAVY.window.accent));
+            assert_eq!(theme.font_family.as_ref(), NAVY.faces.ui);
+            assert_eq!(Look::global(cx).def.name, "navy");
         });
 
         cx.update(|cx| apply(&FROST, None, cx));
         cx.update(|cx| {
             let theme = Theme::global(cx);
             assert_eq!(theme.background, hsla(FROST.window.ground));
-            assert_eq!(theme.primary, hsla(FROST.window.gold));
+            assert_eq!(theme.primary, hsla(FROST.window.accent));
             assert_eq!(Look::global(cx).def.name, "frost");
         });
 
-        let priest = class_accent(Some(Class::Priest));
-        cx.update(|cx| apply(&GOLD, Some(priest), cx));
+        let priest = class_accent(Class::Priest);
+        cx.update(|cx| apply(&NAVY, Some(priest), cx));
         cx.update(|cx| {
             let theme = Theme::global(cx);
             assert_eq!(theme.primary, hsla(priest.base));

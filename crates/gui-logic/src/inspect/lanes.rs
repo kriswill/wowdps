@@ -16,9 +16,6 @@ use wowdps_model::{Class, Mark, MarkKind};
 
 use super::Roster;
 
-/// A span whose caster has no known class: the classless grey.
-pub const CLASSLESS: Color = Color::rgb(0.42, 0.44, 0.52);
-
 /// The four lanes, in the order they stand under the curve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {
@@ -102,11 +99,17 @@ pub struct Row {
 /// The lanes of `player`'s marks — only the lanes something stands in,
 /// in [`Lane::ALL`]'s order. `class` is the player's own, for what they
 /// cast themselves; everyone else's is the `roster`'s, and a caster the
-/// window has never seen on a meter is drawn classless. A mark the log
-/// wrote twice at one instant (the same label, the same moment) is one
-/// span.
-pub fn lanes(marks: &[Mark], player: &str, class: Option<Class>, roster: &Roster) -> Vec<Row> {
-    let own = class.map_or(CLASSLESS, Color::of_class);
+/// window has never seen on a meter is drawn `classless` (the theme's
+/// grey). A mark the log wrote twice at one instant (the same label, the
+/// same moment) is one span.
+pub fn lanes(
+    marks: &[Mark],
+    player: &str,
+    class: Option<Class>,
+    roster: &Roster,
+    classless: Color,
+) -> Vec<Row> {
+    let own = class.map_or(classless, Color::of_class);
     let mut rows: Vec<Row> = Vec::new();
     for lane in Lane::ALL {
         let mut spans: Vec<Span> = Vec::new();
@@ -123,13 +126,13 @@ pub fn lanes(marks: &[Mark], player: &str, class: Option<Class>, roster: &Roster
                 match roster.get(&m.src) {
                     Some((name, who)) => (
                         Some(crate::labels::display_name(name).to_string()),
-                        who.map_or(CLASSLESS, Color::of_class),
+                        who.map_or(classless, Color::of_class),
                     ),
                     // A caster no meter named (a pet, someone never on
                     // screen): a guid's tail ("0A1B2C02") is no name a
                     // reader knows, so the hover says only that it was not
                     // the player.
-                    None => (Some(SOMEONE.to_string()), CLASSLESS),
+                    None => (Some(SOMEONE.to_string()), classless),
                 }
             };
             spans.push(Span {
@@ -209,6 +212,8 @@ mod tests {
     use super::*;
     use wowdps_model::Row as MeterRow;
 
+    const CLASSLESS: Color = crate::theme::NAVY.window.classless;
+
     fn mark(kind: MarkKind, label: &str, at_ms: i64, dur_ms: i64, src: &str) -> Mark {
         Mark {
             at_ms,
@@ -278,7 +283,7 @@ mod tests {
             ),
             mark(MarkKind::Death, "Death", 345_000, 10_000, ""),
         ];
-        let rows = lanes(&marks, me, Some(Class::Warlock), &roster());
+        let rows = lanes(&marks, me, Some(Class::Warlock), &roster(), CLASSLESS);
         let lanes_of: Vec<Lane> = rows.iter().map(|r| r.lane).collect();
         assert_eq!(lanes_of, Lane::ALL.to_vec());
         let labels = |lane: Lane| -> Vec<String> {
@@ -294,7 +299,7 @@ mod tests {
             labels(Lane::Defensives),
             ["Unending Resolve", "Shield Block"]
         );
-        let only_items = lanes(&marks[4..5], me, None, &Roster::default());
+        let only_items = lanes(&marks[4..5], me, None, &Roster::default(), CLASSLESS);
         assert_eq!(
             only_items.len(),
             1,
@@ -334,7 +339,7 @@ mod tests {
             mark(MarkKind::Cooldown, "Tyrant", 4_000, 15_000, me),
             mark(MarkKind::TrinketProc, "Proc", 5_000, 0, ""),
         ];
-        let rows = lanes(&marks, me, Some(Class::Warlock), &roster());
+        let rows = lanes(&marks, me, Some(Class::Warlock), &roster(), CLASSLESS);
         let span = |label: &str| -> Span {
             rows.iter()
                 .flat_map(|r| r.spans.iter())
@@ -381,7 +386,7 @@ mod tests {
             ),
             mark(MarkKind::TrinketUse, "Signet", 61_000, 0, me),
         ];
-        let rows = lanes(&marks, me, None, &roster());
+        let rows = lanes(&marks, me, None, &roster(), CLASSLESS);
         let externals = rows.iter().find(|r| r.lane == Lane::Externals).unwrap();
         assert_eq!(externals.spans.len(), 1);
         assert_eq!(
@@ -414,6 +419,7 @@ mod tests {
             a,
             Some(Class::Warlock),
             &roster(),
+            CLASSLESS,
         );
         let b_rows = lanes(
             &[
@@ -423,6 +429,7 @@ mod tests {
             b,
             Some(Class::Warrior),
             &roster(),
+            CLASSLESS,
         );
         let rows = pair(a_rows, b_rows, "Tranqlock", "Swampert");
         let lanes_of: Vec<Lane> = rows.iter().map(|r| r.lane).collect();

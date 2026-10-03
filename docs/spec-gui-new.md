@@ -276,13 +276,22 @@ literal; everything draws from the active theme.
 - **Switching** is `Theme::update` + replacing `Look` + `cx.refresh_windows()`.
   A test switches between two definitions and checks that a Kit component
   and a bespoke surface both changed.
-- **Later.** More built-in definitions (light, high-contrast, …) and user
-  themes from `~/.config/wowdps/themes/`. Likely Kit `ThemeConfig` JSON
-  carrying our extra tokens beside Kit's slots, hot-reloaded through
-  `ThemeRegistry::watch_dir`; the format is decided when the first extra
-  theme is built. A config key `theme` joins `chrome`. The phases ship
-  `gold` with `chrome = gold | class`, today's choices, and nothing more —
-  but nothing they build may assume there is only one.
+- **As built (2026-10-03).** The built-ins are `navy` (the prototype's
+  Tokens; `gold` before there were themes, a name config still reads),
+  `onyx` and `frost`, chosen in the window's ⚙ card (config `theme`; the
+  overlay follows the file). User themes are NOT Kit `ThemeConfig` JSON:
+  Kit's slots are a projection of ours (`apply`), not the definition, so a
+  user theme is our own token groups in the config.toml the GUI already
+  reads — `[themes.<name>.<group>]`, every field of every group by its
+  name (`theme::tokens!` writes struct and name table together), a table
+  named for a built-in overriding it, any other a theme of its own from a
+  `base` — read by `theme::Registry`, which reports every mistake by path
+  rather than failing the file. `chrome = theme | class` (`gold` still
+  reads). Beyond colours a `Def` now carries data hues, faces, corners
+  (`Shape`), shadows and `Effects` (glass, reticle brackets, the inspector's
+  sub-dial, the ribbon's chapter ring), all off or 1.0 in `navy` so its
+  pixels never moved. Decision record:
+  `docs/OKF/decisions/themes-as-config-data.md`.
 - **The overlay** draws from the theme's overlay palette. The built-in
   definition's overlay palette is today's, so "same overlay, new engine"
   holds, and a future theme can restyle it.

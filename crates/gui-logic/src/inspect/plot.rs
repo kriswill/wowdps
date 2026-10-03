@@ -23,6 +23,16 @@ pub enum Ink {
     /// it in the list, a 2 px gap of the panel between each, its colour
     /// solid (`points` are its OWN values; the draw sums them).
     Stack,
+    /// The stack's last band, the rest ("Other"): a `Stack` band a theme may
+    /// draw apart — its upper edge is the player's whole curve.
+    StackRest,
+}
+
+impl Ink {
+    /// A band of the stack, the rest's included.
+    pub fn is_stack(self) -> bool {
+        matches!(self, Ink::Stack | Ink::StackRest)
+    }
 }
 
 /// One curve: a value per bucket of `bucket_ms`, from the fight's start.

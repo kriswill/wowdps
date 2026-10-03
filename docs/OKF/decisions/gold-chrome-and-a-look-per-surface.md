@@ -44,6 +44,10 @@ Three constraints shaped how that landed:
 
 ## Decision
 
+**Since 2026-10-03** the gold is `navy`'s own accent and the choice is
+`chrome = "theme" | "class"` (`gold` still reads): see
+[Themes Are Data A Config Can Name](themes-as-config-data.md).
+
 **Gold is the default chrome.** `theme::Chrome` is `Gold` or `Class`,
 read from the config's `chrome` key (a plain string, like `density`, so a
 typo reads gold rather than breaking the file). Gold needs nobody. `Class`

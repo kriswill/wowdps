@@ -137,7 +137,7 @@ pub fn peak_in(curves: &[plot::Curve], window: (u32, u32)) -> f64 {
     };
     let lone = curves
         .iter()
-        .filter(|c| c.ink != plot::Ink::Stack)
+        .filter(|c| !c.ink.is_stack())
         .flat_map(|c| {
             let b = u64::from(c.bucket_ms.max(1));
             c.points
@@ -150,7 +150,7 @@ pub fn peak_in(curves: &[plot::Curve], window: (u32, u32)) -> f64 {
     // one grid.
     let mut sum: Vec<f64> = Vec::new();
     let mut b = 1;
-    for c in curves.iter().filter(|c| c.ink == plot::Ink::Stack) {
+    for c in curves.iter().filter(|c| c.ink.is_stack()) {
         b = u64::from(c.bucket_ms.max(1));
         if sum.len() < c.points.len() {
             sum.resize(c.points.len(), 0.0);

@@ -23,7 +23,7 @@ use wowdps_gui_logic::inspect::recap::{Recap, died_words};
 use wowdps_gui_logic::inspect::{Roster, lanes, stack, wide};
 use wowdps_gui_logic::labels::{rate_label, realmless, realmless_rows, shown_name};
 use wowdps_gui_logic::table::{Col, figure};
-use wowdps_gui_logic::theme::{self as gl, AA_CONTRAST, WindowTokens};
+use wowdps_gui_logic::theme::{self as gl, AA_CONTRAST, DataTokens, WindowTokens};
 use wowdps_gui_logic::{deaths, graph::mmss, tree};
 use wowdps_model::fmt::{commas, duration, mitigation_line};
 use wowdps_model::{
@@ -143,6 +143,9 @@ pub struct Head {
     pub discs: Vec<Disc>,
     pub name: Vec<NamePiece>,
     pub sub: String,
+    /// A single row's amount against the top row's (0..=1) — its meter bar's
+    /// length — for a theme that sweeps it round the crest (`effects.dial`).
+    pub sweep: Option<f32>,
 }
 
 /// One action (`.btn`): its glyph, its words, pressed or not, what it does
@@ -374,6 +377,8 @@ pub struct Ctx<'a> {
     pub app: &'a ClientState,
     pub st: &'a InspState,
     pub t: &'a WindowTokens,
+    /// The theme's data hues: the stacked bands.
+    pub data: &'a DataTokens,
     pub hide: bool,
     /// The owner's row on the chart on screen.
     pub owner: Option<usize>,
@@ -481,6 +486,7 @@ impl Insp {
                 discs: Vec::new(),
                 name: Vec::new(),
                 sub: String::new(),
+                sweep: None,
             },
             nums: Vec::new(),
             acts: Vec::new(),
@@ -707,6 +713,7 @@ fn stacked_curves(
         &context,
         name,
         cut,
+        cx.data,
     ));
     Some(curves)
 }
@@ -752,7 +759,8 @@ fn pane_list(
             let keys: Vec<String> = series.iter().map(|s| s.key.clone()).collect();
             keys.iter()
                 .filter_map(|k| {
-                    stack::hue(&cx.st.stack_slots, &context, &keys, k).map(|h| (k.clone(), h))
+                    stack::hue(&cx.st.stack_slots, &context, &keys, k, cx.data)
+                        .map(|h| (k.clone(), h))
                 })
                 .collect()
         }
@@ -816,6 +824,13 @@ pub fn tree_keyed(app: &ClientState, st: &InspState, lines: &[tree::Line]) -> Op
     tree::keyed(lines, cursor, d.spell_sel)
 }
 
+/// `row`'s amount against the largest in `rows`: the length its meter bar
+/// is drawn at, 0..=1.
+fn against_top(row: &Row, rows: &[Row]) -> f32 {
+    let top = rows.iter().map(|r| r.amount).max().unwrap_or(0).max(1);
+    (row.amount as f64 / top as f64).clamp(0.0, 1.0) as f32
+}
+
 /// A player's drill: what they did, over the fight.
 fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     let app = cx.app;
@@ -851,6 +866,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         discs: vec![Disc::Player(class, spec)],
         name: vec![cx.piece(shown_name(&drill.label, hide), class)],
         sub: sub.join(", "),
+        sweep: row.map(|r| against_top(r, rows)),
     };
     let nums = row.map(|r| player_nums(view, rows, r)).unwrap_or_default();
 
@@ -908,7 +924,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     let focus_color = spell_row
         .as_ref()
         .and_then(|r| gl::school_color(r.school))
-        .unwrap_or(cx.t.gold);
+        .unwrap_or(cx.t.accent);
     let graph = timeline.map(|t| {
         let focus = app
             .spell_timeline()
@@ -928,7 +944,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             app.drill_range(),
             curves,
             dead_spans(t, span, None, &cx.st.roster),
-            lanes::lanes(&t.marks, &drill.key, class, &cx.st.roster),
+            lanes::lanes(&t.marks, &drill.key, class, &cx.st.roster, cx.t.classless),
             None,
             RangeTo::Drill,
         )
@@ -1196,6 +1212,7 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             discs: vec![Disc::Player(class, spec)],
             name: vec![cx.piece(shown_name(&drill.label, hide), class)],
             sub: sub.join(", "),
+            sweep: None,
         },
         nums,
         acts,
@@ -1230,7 +1247,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     let attacker_color = spell_row
         .as_ref()
         .and_then(|r| r.class)
-        .map_or(cx.t.gold, gl::Color::of_class);
+        .map_or(cx.t.accent, gl::Color::of_class);
     let timeline = app
         .drill_timeline()
         .filter(|t| !t.buckets.is_empty() && spell.is_some());
@@ -1325,6 +1342,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
                 semibold: true,
             }],
             sub: "Enemy, every unit with this name folded together".to_string(),
+            sweep: row.map(|r| against_top(r, rows)),
         },
         nums: row
             .map(|r| player_nums(View::EnemyTaken, rows, r))
@@ -1379,6 +1397,7 @@ fn pair(cx: &Ctx, rows: &[Row]) -> Insp {
             cx.piece(b_name.clone(), b_class),
         ],
         sub: "One scale, one time axis. Move to swap the second player, v to stop.".to_string(),
+        sweep: None,
     };
     let metric = app.compare_view();
     let rate = metric.is_rate();
@@ -1456,8 +1475,20 @@ fn pair(cx: &Ctx, rows: &[Row]) -> Insp {
         let mut dead = dead_spans(&a.timeline, span, Some(&a_name), &cx.st.roster);
         dead.extend(dead_spans(&b.timeline, span, Some(&b_name), &cx.st.roster));
         let lanes = lanes::pair(
-            lanes::lanes(&a.timeline.marks, a_key, a_class, &cx.st.roster),
-            lanes::lanes(&b.timeline.marks, b_key, b_class, &cx.st.roster),
+            lanes::lanes(
+                &a.timeline.marks,
+                a_key,
+                a_class,
+                &cx.st.roster,
+                cx.t.classless,
+            ),
+            lanes::lanes(
+                &b.timeline.marks,
+                b_key,
+                b_class,
+                &cx.st.roster,
+                cx.t.classless,
+            ),
             &a_name,
             &b_name,
         );

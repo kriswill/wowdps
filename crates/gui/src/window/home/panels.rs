@@ -39,7 +39,8 @@ const PAD_NARROW: [f32; 4] = [14.0, 12.0, 24.0, 12.0];
 const GAP: f32 = 18.0;
 /// The title (`.home-top h2{font-family:Marcellus;font-size:28px}`) and
 /// what stands beside it (`.home-top{gap:16px}`).
-const TITLE_PX: f32 = 28.0;
+// The heading's and the night card's place sizes are the theme's
+// (`size.home_title`, `size.home_place`): they are set in its title face.
 const TOP_GAP: f32 = 16.0;
 /// A scope chip (`.chip{height:26px;padding-inline:10px;font-size:14px;
 /// gap:6px}`, `.chip .cd{8px}`) and the air between two (`.chips{gap:6px}`).
@@ -58,7 +59,6 @@ const CARD_GAP_Y: f32 = 18.0;
 const CARD_RADIUS: f32 = 10.0;
 const LEFT_SHARE: f32 = 12.0;
 const RIGHT_SHARE: f32 = 10.0;
-const PLACE_PX: f32 = 22.0;
 const CAP_PX: f32 = 13.0;
 const SUB_PX: f32 = 14.0;
 const SUB_ABOVE: f32 = 2.0;
@@ -319,7 +319,7 @@ fn top(meta: &Meta, chars: &[CharLine], w: &W, cx: &mut Context<Gui>) -> impl In
         .child(
             div()
                 .font_family(w.title)
-                .text_size(w.z(TITLE_PX))
+                .text_size(w.z(w.size.home_title))
                 .text_color(w.c(|t| t.ink))
                 .child(title),
         )
@@ -354,7 +354,7 @@ fn scope_chip(
         .h(w.z(CHIP_H))
         // iced draws a container's border inside its padding; GPUI's is outside.
         .px(w.z(CHIP_PAD_X - 1.))
-        .rounded(w.z(CHIP_H / 2.0))
+        .rounded(w.pill(CHIP_H / 2.0))
         .border(w.z(1.))
         .cursor_pointer()
         .when(on, |d| {
@@ -383,11 +383,11 @@ fn surface(radius: f32, w: &W) -> Div {
         .bg(w.c(|t| t.surface))
         .border(w.z(1.))
         .border_color(w.c(|t| t.line))
-        .rounded(w.z(radius))
+        .rounded(w.r(radius))
 }
 
 fn cap(words: &'static str, w: &W) -> Div {
-    w.text(words, CAP_PX, w.c(|t| t.gold_dim), SEMIBOLD)
+    w.text(words, CAP_PX, w.c(|t| t.label_ink), SEMIBOLD)
 }
 
 /// The note: `words` behind a 2 px edge rule, as tall as they are.
@@ -517,7 +517,7 @@ fn night_words(meta: &Meta, n: &NightPanel, w: &W, cx: &mut Context<Gui>) -> Div
         .items_start()
         .min_w_0()
         .child(cap(night_cap(n.day, meta.tonight), w))
-        .child(w.title_text(n.place.clone(), PLACE_PX, w.c(|t| t.ink)))
+        .child(w.title_text(n.place.clone(), w.size.home_place, w.c(|t| t.ink)))
         .child(sub);
     // The newest of a long night: the chart beside holds every pull.
     let skip = n.pulls.len().saturating_sub(MAX_TILES);
@@ -620,7 +620,7 @@ fn jump(
 ) -> gpui_kit::Stateful<Div> {
     div()
         .id(id.into())
-        .rounded(w.z(radius))
+        .rounded(w.r(radius))
         .cursor_pointer()
         .hover(|s| s.bg(w.c(|t| t.hover)))
         .on_mouse_down(

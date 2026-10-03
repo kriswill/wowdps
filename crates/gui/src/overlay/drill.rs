@@ -125,7 +125,7 @@ pub fn recap(ov: &Ov, r: &Row, max: u64) -> Div {
         div()
             .h_full()
             .w(relative(f32::from(pct) / 100.0))
-            .rounded(px(2.))
+            .rounded(ov.r(2.))
             .when(pct > 0, |d| d.bg(hsla(c)))
     };
     let health = match r.hp {
@@ -157,7 +157,11 @@ pub fn recap(ov: &Ov, r: &Row, max: u64) -> Div {
         .items_center()
         .gap(px(4.))
         .px(px(8.))
-        .child(ov.words(gd::compact_recap_label(&r.label), 12., ov.c(|t| t.text)))
+        .child(ov.words(
+            gd::compact_recap_label(&r.label),
+            12.,
+            ov.c(|t| t.recap_ink),
+        ))
         .child(div().flex_1())
         .child(ov.metric(
             gd::recap_amount(r),
@@ -165,12 +169,12 @@ pub fn recap(ov: &Ov, r: &Row, max: u64) -> Div {
             if r.gain { hsla(t.good) } else { hsla(t.ink) },
             52.,
         ))
-        .child(ov.metric(gd::recap_hp(r), 11., hsla(t.dim), 40.));
+        .child(ov.metric(gd::recap_hp(r), 11., hsla(t.recap_hp), 40.));
     div()
         .relative()
         .w_full()
         .h(ov.z(20.))
-        .rounded(px(3.))
+        .rounded(ov.r(3.))
         .child(bars)
         .child(words)
 }
@@ -205,7 +209,7 @@ pub fn crumb(ov: &Ov, player: &str, spell: &str, row: Option<&Row>) -> Div {
                 .flex_none()
                 .py(ov.z(1.))
                 .px(ov.z(5.))
-                .rounded(px(3.))
+                .rounded(ov.r(3.))
                 .bg(hsla(sc.alpha(0.10)))
                 .border_1()
                 .border_color(hsla(sc.alpha(0.55)))
@@ -233,7 +237,7 @@ pub fn stats(ov: &Ov, r: &Row, view: View) -> Div {
             .gap(px(2.))
             .py(ov.z(5.))
             .px(ov.z(4.))
-            .rounded(px(5.))
+            .rounded(ov.r(5.))
             .bg(ov.c(|t| t.stat_card))
             .border_1()
             .border_color(ov.c(|t| t.stat_card_edge))

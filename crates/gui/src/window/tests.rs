@@ -11,7 +11,7 @@ use wowdps_gui_logic::config::Config;
 use wowdps_gui_logic::keys::Zoom;
 use wowdps_gui_logic::raid::{raided, raided_deaths};
 use wowdps_gui_logic::table::Col;
-use wowdps_gui_logic::theme::{FROST, GOLD, PITCHES};
+use wowdps_gui_logic::theme::{FROST, NAVY, PITCHES};
 use wowdps_model::{Action, Screen, View};
 use wowdps_proto::ClientState;
 
@@ -257,11 +257,11 @@ fn a_theme_switch_repaints_the_window(cx: &mut TestAppContext) {
                     .iter()
                     .any(|q| q.background == Background::from(hsla(c)))
             };
-            (has(GOLD.window.surface), has(FROST.window.surface))
+            (has(NAVY.window.surface), has(FROST.window.surface))
         })
         .unwrap()
     };
-    cx.update(|cx| crate::theme::apply(&GOLD, None, cx));
+    cx.update(|cx| crate::theme::apply(&NAVY, None, cx));
     assert_eq!(surfaces(cx), (true, false));
     cx.update(|cx| crate::theme::apply(&FROST, None, cx));
     assert_eq!(surfaces(cx), (false, true));

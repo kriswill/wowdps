@@ -46,6 +46,9 @@ const ACTS_GAP: f32 = 6.0;
 const BTN_H: f32 = 26.0;
 const BTN_PAD_X: f32 = 9.0;
 const BTN_RADIUS: f32 = 5.0;
+/// A quiet press's lit bar: how far in from the key's sides, how tall.
+const LIT_INSET: f32 = 6.0;
+const LIT_H: f32 = 2.0;
 const BTN_PX: f32 = 13.5;
 const BTN_ICON: f32 = 14.0;
 /// A section (`.igraph{padding:10px 16px}`), and the graph's top line.
@@ -174,7 +177,7 @@ pub fn view(
                     div()
                         .px(w.z(SECTION_PAD.1))
                         .pt(w.z(SECTION_PAD.0))
-                        .child(w.text("Stacks", TAB_PX, w.c(|t| t.gold_dim), MEDIUM)),
+                        .child(w.text("Stacks", TAB_PX, w.c(|t| t.label_ink), MEDIUM)),
                 )
                 .child(super::stack_matrix(s, w, cx)),
         );
@@ -355,10 +358,21 @@ fn head_block(
     if pushed {
         top = top.child(back_button(w, cx));
     }
+    // One crest stands in the theme's sub-dial when it has one, its sweep
+    // the share; a pair's two never do.
+    let in_dial = w.fx.dial && h.discs.len() == 1;
     for d in &h.discs {
-        top = top.child(match *d {
-            Disc::Player(class, spec) => class_icon(w, class, spec, w.z(DISC), false),
-            Disc::Enemy => list::foe_disc(w.z(DISC)),
+        let (crest, sweep) = match *d {
+            Disc::Player(class, spec) => (
+                class_icon(w, class, spec, w.z(DISC), false),
+                hsla(w.class_rgb(class)),
+            ),
+            Disc::Enemy => (list::foe_disc(w.z(DISC), w.data.foe), w.c(|t| t.hostile)),
+        };
+        top = top.child(if in_dial {
+            crate::window::instruments::dial(crest, w.z(DISC), h.sweep, sweep, w)
+        } else {
+            crest
         });
     }
     top = top.child(
@@ -475,7 +489,7 @@ fn num_cell(n: &Num, w: &W) -> Div {
         .flex()
         .flex_col()
         .gap(w.z(1.))
-        .child(w.text(n.label.clone(), NUM_LABEL_PX, w.c(|t| t.gold_dim), REGULAR))
+        .child(w.text(n.label.clone(), NUM_LABEL_PX, w.c(|t| t.label_ink), REGULAR))
         .child(value)
 }
 
@@ -486,7 +500,16 @@ fn act_button(a: &Act, w: &W, cx: &Context<Gui>) -> AnyElement {
         ElementId::Name("act".into()),
         SharedString::from(a.words.clone()),
     ));
-    let (fill, edge, ink, icon) = if a.pressed {
+    let quiet = a.pressed && w.fx.quiet_press;
+    let (fill, edge, ink, icon) = if quiet {
+        // A raised key, lit along its foot (`effects.quiet_press`).
+        (
+            Some(w.c(|t| t.raise)),
+            w.accent(),
+            w.c(|t| t.ink),
+            w.c(|t| t.ink),
+        )
+    } else if a.pressed {
         (
             Some(hsla(w.accent.base)),
             hsla(w.accent.base),
@@ -508,13 +531,24 @@ fn act_button(a: &Act, w: &W, cx: &Context<Gui>) -> AnyElement {
         .flex()
         .items_center()
         .gap(w.z(ACTS_GAP))
-        .rounded(w.z(BTN_RADIUS))
+        .rounded(w.r(BTN_RADIUS))
         .border_1()
         .border_color(edge)
         .text_color(ink)
         .when_some(fill, |d, f| d.bg(f))
         .child(glyph(a.glyph, w.z(BTN_ICON), icon))
-        .child(w.words(a.words.clone(), BTN_PX, REGULAR));
+        .child(w.words(a.words.clone(), BTN_PX, REGULAR))
+        .when(quiet, |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left(w.z(LIT_INSET))
+                    .right(w.z(LIT_INSET))
+                    .h(w.z(LIT_H))
+                    .bg(w.accent()),
+            )
+        });
     if let Some(press) = a.press.clone() {
         btn = btn
             .cursor_pointer()
@@ -569,7 +603,7 @@ fn swatch(color: gl::Color, dashed: bool, w: &W) -> Div {
         div()
             .w(w.z(width))
             .h(w.z(3.))
-            .rounded(w.z(2.))
+            .rounded(w.r(2.))
             .bg(hsla(color))
     };
     if dashed {

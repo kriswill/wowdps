@@ -80,13 +80,22 @@ pub struct Config {
     /// Home or the meter has named anyone. `None` until learned.
     #[serde(default)]
     pub character_class: Option<String>,
-    /// `gold` (the default) or `class`: what the window's chrome is drawn
-    /// in. A plain string for the reason `density` is one.
+    /// `theme` (the default: the theme's own accent) or `class`: what the
+    /// window's chrome is drawn in. A plain string for the reason `density`
+    /// is one; the old `gold` reads as `theme`.
     pub chrome: String,
-    /// The theme the GUI draws in, by name (`gold`, `frost`, …): a plain
-    /// string, so a name this version does not know reads as `gold`
-    /// rather than failing the file.
+    /// The theme the GUI draws in, by name (`navy`, `onyx`, `frost`, or one
+    /// of `themes`'): a plain string, so a name this version does not know
+    /// reads as `navy` rather than failing the file. The old `gold` is
+    /// `navy`.
     pub theme: String,
+    /// `[themes.<name>]`: tokens overriding a built-in theme's, or a theme of
+    /// the user's own (`theme::Registry` reads it, and says what it got
+    /// wrong). Kept as written — any value, so even a `themes = "…"` that is
+    /// no table is a warning rather than a file that fails to load, and a
+    /// save never drops a key this version does not know.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub themes: Option<toml::Value>,
     /// `comfortable` / `compact`. A plain string, not an enum: a typo in a
     /// hand-edited file must fall back to the default, not make the whole
     /// config unparsable and block every save after it.
@@ -129,7 +138,8 @@ impl Default for Config {
             character: None,
             character_class: None,
             chrome: crate::theme::Chrome::default().name().to_string(),
-            theme: crate::theme::GOLD.name.to_string(),
+            theme: crate::theme::NAVY.name.to_string(),
+            themes: None,
             density: crate::theme::Density::default().name().to_string(),
             home_on_start: true,
             extra: toml::Table::new(),
@@ -199,12 +209,30 @@ impl Config {
         crate::theme::Density::from_name(&self.density).unwrap_or_default()
     }
 
-    /// The configured theme; a name we do not know is `gold`.
-    pub fn theme(&self) -> &'static crate::theme::Def {
-        crate::theme::def_named(&self.theme)
+    /// Every theme this config can choose: the built-ins with its
+    /// `[themes]` laid over them.
+    pub fn themes(&self) -> crate::theme::Registry {
+        match &self.themes {
+            None => crate::theme::Registry::builtin(),
+            Some(toml::Value::Table(t)) => crate::theme::Registry::from_table(t),
+            Some(other) => {
+                let mut r = crate::theme::Registry::builtin();
+                r.warnings.push(format!(
+                    "themes: {other} is not a table; a theme is [themes.<name>]"
+                ));
+                r
+            }
+        }
     }
 
-    /// The configured chrome; a name we do not know is the default, gold.
+    /// The configured theme, overrides and all; a name we do not know is
+    /// `navy`.
+    pub fn theme(&self) -> &'static crate::theme::Def {
+        self.themes().named(&self.theme)
+    }
+
+    /// The configured chrome; a name we do not know is the default, the
+    /// theme's own.
     pub fn chrome(&self) -> crate::theme::Chrome {
         crate::theme::Chrome::from_name(self.chrome.trim()).unwrap_or_default()
     }
@@ -397,6 +425,10 @@ mod tests {
             character_class: Some("Death Knight".to_string()),
             chrome: "class".to_string(),
             theme: "frost".to_string(),
+            themes: Some(toml::Value::Table(
+                toml::from_str("[onyx.window]\nground = \"#050505\"\n[mine]\nbase = \"onyx\"\n")
+                    .unwrap(),
+            )),
             density: "compact".to_string(),
             home_on_start: false,
             extra: toml::Table::new(),
@@ -429,15 +461,21 @@ mod tests {
     }
 
     #[test]
-    fn the_theme_defaults_to_gold_and_round_trips() {
+    fn the_theme_defaults_to_navy_and_round_trips() {
         let dir = temp_path("theme");
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).unwrap();
         for (text, want) in [
-            ("zoom = 1.0\n", "gold"),
+            ("zoom = 1.0\n", "navy"),
             ("theme = \"frost\"\n", "frost"),
             ("theme = \"FROST\"\n", "frost"),
-            ("theme = \"purple\"\n", "gold"),
+            ("theme = \"onyx\"\n", "onyx"),
+            ("theme = \"gold\"\n", "navy"),
+            ("theme = \"purple\"\n", "navy"),
+            (
+                "theme = \"ember\"\n[themes.ember]\nbase = \"onyx\"\n[themes.ember.window]\naccent = \"#ff7a3d\"\n",
+                "ember",
+            ),
         ] {
             std::fs::write(&path, text).unwrap();
             let cfg = Config::load_from(&path);
@@ -449,19 +487,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A `themes` key that is no table is a warning, not a file that fails
+    /// to load: every other key still reads, and a save keeps it as written.
     #[test]
-    fn the_chrome_defaults_to_gold_and_round_trips() {
+    fn a_themes_key_of_the_wrong_kind_fails_nothing() {
+        let dir = temp_path("themes-kind");
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "theme = \"onyx\"\nthemes = \"oops\"\nzoom = 1.5\n").unwrap();
+        let cfg = Config::load_from(&path);
+        assert!(!cfg.load_failed);
+        assert_eq!(cfg.zoom, 1.5);
+        assert_eq!(cfg.theme().name, "onyx");
+        let warnings = cfg.themes().warnings;
+        assert!(
+            warnings.iter().any(|w| w.contains("is not a table")),
+            "{warnings:?}"
+        );
+        cfg.save_to(&path);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("oops"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_chrome_defaults_to_the_theme_s_and_round_trips() {
         use crate::theme::Chrome;
-        assert_eq!(Config::default().chrome(), Chrome::Gold);
-        assert_eq!(Config::default().chrome, "gold");
+        assert_eq!(Config::default().chrome(), Chrome::Theme);
+        assert_eq!(Config::default().chrome, "theme");
         let dir = temp_path("chrome");
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).unwrap();
         for (text, want) in [
-            ("zoom = 1.0\n", Chrome::Gold),
-            ("chrome = \"gold\"\n", Chrome::Gold),
+            ("zoom = 1.0\n", Chrome::Theme),
+            ("chrome = \"gold\"\n", Chrome::Theme),
+            ("chrome = \"theme\"\n", Chrome::Theme),
             ("chrome = \"class\"\n", Chrome::Class),
-            ("chrome = \"purple\"\n", Chrome::Gold),
+            ("chrome = \"purple\"\n", Chrome::Theme),
         ] {
             std::fs::write(&path, text).unwrap();
             let cfg = Config::load_from(&path);

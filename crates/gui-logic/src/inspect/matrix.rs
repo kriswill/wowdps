@@ -182,7 +182,7 @@ pub mod samples {
 mod tests {
     use super::samples::ledger;
     use super::*;
-    use crate::theme::GOLD;
+    use crate::theme::NAVY;
 
     #[test]
     fn the_matrix_derives_level_zero_and_orders_the_levels() {
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn heat_runs_good_through_amber_to_bad() {
-        let w = GOLD.window;
+        let w = NAVY.window;
         assert_eq!(heat(0.0, &w), w.good);
         assert_eq!(heat(1.0, &w), w.bad);
         let mid = heat(0.5, &w);

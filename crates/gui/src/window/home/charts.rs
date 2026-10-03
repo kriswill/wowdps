@@ -412,12 +412,12 @@ pub fn par_bar(
     bw: f32,
     w: &W,
 ) -> impl IntoElement {
-    let (t, z) = (w.t, w.zoom);
+    let (t, z, shape) = (w.t, w.zoom, w.shape);
     canvas(
         |_, _, _| {},
         move |b, (), window, _| {
             let o = b.origin;
-            let r = PAR_TRACK_H / 2.0;
+            let r = shape.pill(PAR_TRACK_H / 2.0);
             let x_of = |ms: i64| par_x(pars.0, ms, bw);
             let track = |width: f32| {
                 Bounds::new(
@@ -428,7 +428,7 @@ pub fn par_bar(
             window.paint_quad(fill(track(bw), hsla(t.par_track)).corner_radii(px(r * z)));
             let run = x_of(clock_ms);
             if run > 0.0 {
-                let color = if timed { t.good } else { t.bad };
+                let color = if timed { t.par_timed } else { t.par_over };
                 window.paint_quad(
                     fill(track(run), hsla(color.alpha(PAR_FILL_ALPHA)))
                         .corner_radii(px(r.min(run / 2.0) * z)),

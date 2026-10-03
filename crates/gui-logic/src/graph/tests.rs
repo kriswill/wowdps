@@ -1,5 +1,6 @@
 use super::samples::{ITEM_KINDS, mark, marked, role_marked, timeline};
 use super::*;
+use crate::theme::{NAVY, THEMES};
 
 /// The shared y-scale is the whole point: a player doing half the damage
 /// must draw half as tall, not identically.
@@ -51,20 +52,26 @@ fn marker_colors_and_names_are_distinct_per_kind() {
                 | (MarkKind::Defensive, MarkKind::ActiveMitigation)
         )
     };
-    for (i, a) in kinds.iter().enumerate() {
-        for b in kinds.iter().skip(i + 1) {
-            if shares_a_hue(*a, *b) {
-                assert_eq!(mark_color(*a), mark_color(*b));
-            } else {
-                assert_ne!(mark_color(*a), mark_color(*b), "{a:?} vs {b:?}");
+    for def in THEMES {
+        let color = |k| mark_color(k, &def.data);
+        for (i, a) in kinds.iter().enumerate() {
+            for b in kinds.iter().skip(i + 1) {
+                if shares_a_hue(*a, *b) {
+                    assert_eq!(color(*a), color(*b));
+                } else {
+                    assert_ne!(color(*a), color(*b), "{}: {a:?} vs {b:?}", def.name);
+                }
+                assert_ne!(mark_name(*a), mark_name(*b));
             }
-            assert_ne!(mark_name(*a), mark_name(*b));
         }
     }
-    assert_eq!(mark_color(MarkKind::ActiveMitigation), MITIGATION);
-    assert_eq!(mark_color(MarkKind::SupportBuff), SUPPORT);
-    assert_eq!(mark_color(MarkKind::Cooldown), COOLDOWN);
-    assert_eq!(mark_color(MarkKind::Consumable), GOLD.overlay.good);
+    let color = |k| mark_color(k, &NAVY.data);
+    assert_eq!(
+        color(MarkKind::ActiveMitigation),
+        Color::rgb(1.0, 0.45, 0.40)
+    );
+    assert_eq!(color(MarkKind::Cooldown), Color::rgb(0.50, 0.40, 1.0));
+    assert_eq!(color(MarkKind::Consumable), NAVY.overlay.good);
     assert_eq!(mark_name(MarkKind::ActiveMitigation), "mitigation");
     assert_eq!(mark_name(MarkKind::Defensive), "defensive");
     assert_eq!(mark_name(MarkKind::SupportBuff), "support");

@@ -20,6 +20,7 @@ mod fight_head;
 mod history;
 mod home;
 mod inspector;
+mod instruments;
 mod paint;
 mod palette;
 mod rail;
@@ -507,7 +508,7 @@ impl Gui {
             return;
         };
         self.learned = true;
-        theme::apply(self.cfg.theme(), Some(class_accent(Some(class))), cx);
+        theme::apply(self.theme_def(cx), Some(class_accent(class)), cx);
         if self.cfg.character_class() != Some(class) {
             Config::store_character_class(Some(class.name().to_string()));
         }

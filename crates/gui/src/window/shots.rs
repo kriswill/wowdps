@@ -135,7 +135,10 @@ impl Input {
     /// iced shots' display keys — realms hidden, ranks shown, comfortable
     /// density — with the owner named.
     fn config(&self, path: &std::path::Path) -> Config {
-        let mut text = String::from("zoom = 1.0\nhome_on_start = false\n");
+        let mut text = format!(
+            "zoom = 1.0\nhome_on_start = false\ntheme = \"{}\"\n",
+            testkit::shots_theme().name
+        );
         if self.log.is_some() {
             text.push_str(&format!(
                 "hide_realms = true\nshow_ranks = true\ndensity = \"comfortable\"\n\
@@ -148,7 +151,8 @@ impl Input {
     }
 }
 
-/// A headless app with the window's fonts, the gold theme, motion reduced.
+/// A headless app with the window's fonts, the shots' theme
+/// (`WOWDPS_SHOTS_THEME`, else navy), motion reduced.
 pub(crate) fn app() -> HeadlessAppContext {
     let mut cx = testkit::headless();
     cx.update(|cx| {
@@ -159,7 +163,7 @@ pub(crate) fn app() -> HeadlessAppContext {
             .collect();
         let _ = cx.text_system().add_fonts(faces);
         crate::keys::bind(cx);
-        crate::theme::apply(&wowdps_gui_logic::theme::GOLD, None, cx);
+        crate::theme::apply(testkit::shots_theme(), None, cx);
     });
     cx
 }
@@ -537,7 +541,7 @@ fn the_chrome_budget_holds_on_the_log() {
             let list = window.find("meter-list").bounds();
             let state = shot.session.read(cx).state();
             let gui = shot.gui.read(cx);
-            let row = wowdps_gui_logic::theme::GOLD
+            let row = wowdps_gui_logic::theme::NAVY
                 .pitch
                 .row_of(gui.cfg.density());
             (list, state.rows().len(), row)

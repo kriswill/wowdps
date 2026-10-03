@@ -162,7 +162,7 @@ fn talent_shots() {
 
     {
         let _sb = Sandbox::new("gpui-shots");
-        let mut cx = app(&gl::GOLD);
+        let mut cx = app(crate::testkit::shots_theme());
         shoot(&mut cx, dir, "fixture", (900., 640.), frosty(), logged);
         shoot(
             &mut cx,
@@ -234,7 +234,7 @@ fn talent_shots() {
     };
     let fight = std::env::var("WOWDPS_SHOTS_FIGHT").unwrap_or_else(|_| "The Coiled Altar".into());
     let owner = std::env::var("WOWDPS_SHOTS_OWNER").unwrap_or_else(|_| "Tranqlock".into());
-    let mut cx = app(&gl::GOLD);
+    let mut cx = app(crate::testkit::shots_theme());
     let session = cx.update(|cx| {
         cx.new(|_| {
             Session::with_state(

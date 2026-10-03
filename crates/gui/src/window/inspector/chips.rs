@@ -87,7 +87,7 @@ pub fn chips(
             .gap(w.z(SKULL_GAP))
             .px(w.z(PAD.0 - 1.))
             .py(w.z(PAD.1 - 1.))
-            .rounded(w.z(RADIUS))
+            .rounded(w.pill(RADIUS))
             .border(w.z(1.))
             .border_color(if on { w.accent() } else { w.c(|t| t.line) })
             .when(on, |c| c.bg(hsla(accent_wash(w.accent))))
@@ -107,7 +107,7 @@ pub fn chips(
     Some(
         strip
             .child(div().flex_1())
-            .child(w.text("← → step", w.size.tiny, w.c(|t| t.ink_3), REGULAR))
+            .child(w.text("← → step", w.size.tiny, w.c(|t| t.ink_3_text), REGULAR))
             .into_any_element(),
     )
 }
@@ -122,7 +122,7 @@ mod tests {
         App, AppContext as _, Context, ElementId, IntoElement, ParentElement as _, Render,
         Styled as _, TestAppContext, Window, div, px, size,
     };
-    use wowdps_gui_logic::theme::GOLD;
+    use wowdps_gui_logic::theme::NAVY;
     use wowdps_proto::DeathWindow;
 
     use super::{OnPick, chips};
@@ -163,7 +163,7 @@ mod tests {
         let picked: Rc<RefCell<Vec<u32>>> = Rc::default();
         let p = picked.clone();
         let (window, _) = testkit::open(cx, size(px(520.), px(80.)), move |_, cx| {
-            crate::theme::apply(&GOLD, None, cx);
+            crate::theme::apply(&NAVY, None, cx);
             cx.new(|_| Host(p))
         });
         cx.update_window(window, |_, window, cx| {
