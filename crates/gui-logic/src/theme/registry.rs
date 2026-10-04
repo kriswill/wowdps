@@ -516,7 +516,10 @@ fn title_case(name: &str) -> String {
 pub fn theme_toml(def: &Def, as_name: &str) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
-    let head = format!("themes.{as_name}");
+    // A theme's name may be any letters (`valid_name`), and a TOML bare key
+    // only ASCII ones: a name like "mórrigan" is quoted, or the tables
+    // printed for it would not parse.
+    let head = format!("themes.{}", bare(as_name));
     let _ = writeln!(out, "[{head}]");
     // A built-in's copy keeps its base, so a token a later version adds
     // comes from the theme it was copied from, not from the default.
@@ -757,6 +760,20 @@ mod tests {
             assert_eq!(copy.overlay.yellow.to_hex(), def.overlay.yellow.to_hex());
             assert_eq!(copy.label, def.label);
         }
+        // A name past ASCII is a valid theme name and a quoted TOML key: every
+        // table it heads must still parse, and read back under that name.
+        let text = theme_toml(&ONYX, "mórrigan");
+        assert!(text.starts_with("[themes.\"mórrigan\"]\n"), "{text}");
+        assert!(text.contains("\n[themes.\"mórrigan\".window]\n"), "{text}");
+        let parsed: toml::Table = toml::from_str(&text).expect("parses");
+        let themes = parsed.get("themes").and_then(|t| t.as_table()).cloned();
+        let r = Registry::from_table(&themes.unwrap_or_default());
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+        assert_eq!(
+            r.named("mórrigan").window.ink.to_hex(),
+            ONYX.window.ink.to_hex()
+        );
+        assert!(theme_toml(&ONYX, "onyx").starts_with("[themes.onyx]\n"));
     }
 
     /// A built-in's old name names the built-in in a table too, a base that
