@@ -105,7 +105,12 @@ cargo clippy && cargo fmt
 coderabbit review --agent         # CodeRabbit's review of local changes (`cr` for short;
                                   # `--base main` for the branch); both dev shells carry it
                                   # (`coderabbit auth login` once). Never `coderabbit update`:
-                                  # the store is read-only, the weekly lock update moves it
+                                  # the store is read-only, the weekly lock update moves it.
+                                  # In Claude Code here, .claude/settings.json's SessionStart
+                                  # hook puts that same build on the Bash tool's PATH, and the
+                                  # project's CodeRabbit skills (.claude/skills/code-review and
+                                  # autofix, from coderabbitai/skills, skills-lock.json) replace
+                                  # the built-in /code-review; the code-review plugin is off
 
 # Inside the flake/devenv shell the workspace's own binaries are on PATH as
 # `wowdps` / `wowdps-history` / `wowdps-mcp` / `wowdps-gui` —
