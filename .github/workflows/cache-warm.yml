@@ -1,0 +1,99 @@
+name: Cache warm
+
+# PR CI (ci.yml) is the gate, and it runs only on pull requests. GitHub
+# scopes an Actions cache to the ref that wrote it: an entry a PR saves is
+# readable by that PR alone, and main is the one scope every PR can read. So
+# with checks on PRs only, every new PR used to start cold, both for
+# rust-cache's target/ and for sccache's crates.
+#
+# This job is not a check. It runs on main, compiles exactly what ci.yml's
+# `ci` job compiles (clippy's check artifacts and the test binaries, in the
+# same devenv shell), gates on nothing (no -D warnings, no test run), and
+# leaves its caches in main's scope for every PR to restore. The
+# dependencies a PR leaves unchanged then come from cache.
+on:
+  push:
+    branches: [main]
+    # Docs-only merges change nothing it compiles.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+# A newer push to main supersedes a warm still running.
+concurrency:
+  group: cache-warm
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  warm:
+    name: warm the cargo caches for PRs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # FlakeHub Cache (OIDC)
+    env:
+      # ci.yml's `ci` job reads what this writes.
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_RW_MODE: READ_WRITE
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The same setup as ci.yml's `ci` job, step for step: the caches are
+      # only shared if the environments are (ci.yml says why each step is
+      # there).
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: true
+          summarize: false
+      - uses: DeterminateSystems/flakehub-cache-action@88740a21e786360ba66bdd8fecabcbf852db3a5a # v3.23.0
+      - name: Install devenv
+        run: nix profile add --inputs-from . nixpkgs#devenv
+      - name: Expose the Actions cache service to sccache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_SERVICE_V2', 'on');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: devenv-${{ hashFiles('flake.lock', 'devenv.lock', 'devenv.yaml', 'devenv.nix', 'nix/dev/**') }}
+          cmd-format: devenv shell -- {0}
+          # Main saves; ci.yml's PR runs only restore.
+          save-if: true
+
+      - name: Compile what PR CI lints (clippy)
+        id: clippy
+        run: devenv shell -- cargo clippy --workspace --all-targets
+
+      - name: Compile what PR CI tests (test binaries, not run)
+        id: build
+        run: devenv shell -- cargo test --workspace --no-run
+
+      - name: Job summary
+        if: always()
+        env:
+          CLIPPY: ${{ steps.clippy.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+        run: |
+          icon() { case "$1" in success) echo "✅";; failure) echo "❌";; *) echo "⏭️";; esac; }
+          hits=$(devenv shell -- sccache --show-stats 2>/dev/null | grep -E "^Cache hits rate  " | tr -s ' ' | cut -d' ' -f4- || true)
+          {
+            echo "### cache warm (main → every PR)"
+            echo ""
+            echo "| compiled | result |"
+            echo "|---|---|"
+            echo "| clippy's check artifacts | $(icon "$CLIPPY") |"
+            echo "| test binaries (not run) | $(icon "$BUILD") |"
+            echo ""
+            echo "sccache hit rate while warming: ${hits:-n/a}"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -2,7 +2,10 @@ name: CI
 
 # PRs are the gate. A merge to main is the tree the PR already proved, so
 # nothing reruns there — the nix package is built on the PR too, and its
-# check phase runs the tests a second time under the sandbox.
+# check phase runs the tests a second time under the sandbox. The one thing
+# that runs on main is cache-warm.yml: it COMPILES what this job compiles
+# (clippy's check artifacts, the test binaries) without gating on anything,
+# so its caches land in main's scope, the only one every PR can read.
 on:
   pull_request:
     branches: [main]
@@ -10,52 +13,112 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# FlakeHub Cache authenticates via GitHub's OIDC tokens.
+# Read-only by default; the jobs that pull from FlakeHub Cache add the OIDC
+# token it authenticates with.
 permissions:
-  id-token: write
   contents: read
 
 jobs:
   ci:
     name: fmt + clippy + test + fixtures
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # FlakeHub Cache (OIDC)
+    env:
+      # sccache (the dev shell's RUSTC_WRAPPER) reads the GitHub Actions
+      # cache; the step that exposes the cache service says how. A PR only
+      # reads it: main writes it (cache-warm.yml), and a PR-scoped entry
+      # would be readable by that PR alone while crowding main's out of the
+      # 10 GB budget.
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_RW_MODE: READ_ONLY
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # Every check runs inside the flake dev shell: the exact
-      # flake.lock-pinned toolchain developers use locally, so CI can never
-      # fail on a lint or rustc the pin does not have (and the shell brings
-      # the GUI's build deps — pkg-config, libxkbcommon, libxcb, fontconfig —
-      # and gawk for the fixture check, replacing the apt stand-ins). FlakeHub
-      # Cache serves the store paths, so the shell is a download, not a
-      # build. The installer's own job summary (timeline chart) is noise;
-      # ours below says what actually matters.
-      - uses: DeterminateSystems/nix-installer-action@v23
+      # Every check runs inside devenv, the reference dev shell — the one
+      # developers use locally (devenv.nix): the flake.lock-pinned toolchain,
+      # so CI can never fail on a lint or rustc the pin does not have, and the
+      # GUI's build deps (pkg-config, libxkbcommon, libxcb, fontconfig) and
+      # gawk for the fixture check. flake.nix's shell mirrors it; the contract
+      # step below proves the mirror on every PR. FlakeHub Cache serves the
+      # store paths, so the shell is a download, not a build. The installer's
+      # own job summary (timeline chart) is noise; ours below says what
+      # actually matters.
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
         with:
           determinate: true
           summarize: false
-      - uses: DeterminateSystems/flakehub-cache-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@88740a21e786360ba66bdd8fecabcbf852db3a5a # v3.23.0
 
-      # The cache holds build scripts and test binaries LINKED in the flake
-      # shell, against its nixpkgs' glibc, but its default key (rustc
+      # The devenv CLI from the flake's own pinned nixpkgs: the version that
+      # wrote devenv.lock (update-locks.yml runs `devenv update` with it).
+      - name: Install devenv
+        run: nix profile add --inputs-from . nixpkgs#devenv
+
+      # Two cargo caches, layered. rust-cache restores the whole target/;
+      # sccache (the dev shell's RUSTC_WRAPPER, nix/dev/env.nix) keeps each
+      # compiled crate, so a dependency that a Cargo.lock change leaves alone
+      # is a download even where target/ is not. A nixpkgs or rust-overlay
+      # bump misses both, as it must: the linker and the sysroot are in
+      # every sccache key. Its GitHub Actions backend needs the runner's
+      # cache service, which only an action can read; this exports what
+      # mozilla-actions/sccache-action would, without downloading a second
+      # sccache (the shell's is the one that runs).
+      - name: Expose the Actions cache service to sccache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_SERVICE_V2', 'on');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      # The cache holds build scripts and test binaries LINKED in the dev
+      # shell, against its nixpkgs' glibc, but rust-cache's own key (rustc
       # version + Cargo.lock) does not move when nixpkgs does: a PR whose
       # cache predated a nixpkgs bump restored build scripts whose loader no
       # longer existed ("could not execute process … No such file or
-      # directory", #79 after #80). flake.lock in the key starts a fresh one.
-      - uses: Swatinem/rust-cache@v2
+      # directory", #79 after #80). So the shared-key carries the locks and
+      # the environment's sources: when they change, the cache starts fresh
+      # (and main can save it; an unchanged key never saves again).
+      # rust-cache's `key` input is ignored once `shared-key` is set.
+      #
+      # It asks rustc for its version through `cmd-format`, in the dev shell:
+      # outside it, the runner's rustup would download today's nightly to
+      # answer (rust-toolchain.toml names the channel), and the key would
+      # move every day.
+      #
+      # The cache a PR restores is main's: cache-warm.yml saves it under the
+      # same shared-key, and a PR's own saves are switched off — a PR-scoped
+      # entry is readable by that PR alone, and would only crowd main's out
+      # of the 10 GB budget.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: ${{ hashFiles('flake.lock') }}
+          shared-key: devenv-${{ hashFiles('flake.lock', 'devenv.lock', 'devenv.yaml', 'devenv.nix', 'nix/dev/**') }}
+          cmd-format: devenv shell -- {0}
+          save-if: false
+
+      # The environment itself, before any cargo: devenv's contract, then the
+      # flake shell's — the same checks, which include the values the two
+      # must share so a switch between them rebuilds nothing.
+      - name: Dev shell contract (devenv, and its flake mirror)
+        id: contract
+        run: |
+          devenv test
+          nix develop -c wowdps-dev-contract
 
       - name: cargo fmt
         id: fmt
-        run: nix develop -c cargo fmt --check
+        run: devenv shell -- cargo fmt --check
 
       # One GUI (GPUI Kit, crates/gui), so one cargo invocation covers the
       # whole workspace, GUI included: there is no second GUI whose crate
       # features a workspace build could unify.
       - name: cargo clippy
         id: clippy
-        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+        run: devenv shell -- cargo clippy --workspace --all-targets -- -D warnings
 
       # The GUI's real-text tests open a headless window, and GPUI's headless
       # renderer wants a wgpu adapter even when nothing is captured. The
@@ -67,19 +130,20 @@ jobs:
         run: |
           mesa=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa.out)
           VK_DRIVER_FILES="$mesa/share/vulkan/icd.d/lvp_icd.x86_64.json" \
-            nix develop -c cargo test --workspace
+            devenv shell -- cargo test --workspace
 
       - name: Fixture check (parser-independent golden totals)
         id: fixtures
-        run: nix develop -c crates/core/fixtures/verify.sh
+        run: devenv shell -- crates/core/fixtures/verify.sh
 
       - name: Fixture negative control (corrupt.txt must FAIL)
         id: fixtures-neg
-        run: "! nix develop -c crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
+        run: "! devenv shell -- crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
 
       - name: Job summary
         if: always()
         env:
+          CONTRACT: ${{ steps.contract.outcome }}
           FMT: ${{ steps.fmt.outcome }}
           CLIPPY: ${{ steps.clippy.outcome }}
           TEST: ${{ steps.test.outcome }}
@@ -87,14 +151,19 @@ jobs:
           FIXTURES_NEG: ${{ steps.fixtures-neg.outcome }}
         run: |
           icon() { case "$1" in success) echo "✅";; failure) echo "❌";; *) echo "⏭️";; esac; }
-          rustc_v=$(nix develop -c rustc --version 2>/dev/null || echo "dev shell unavailable")
+          rustc_v=$(devenv shell -- rustc --version 2>/dev/null | tail -1 || true)
+          hits=$(devenv shell -- sccache --show-stats 2>/dev/null | grep -E "^Cache hits rate  " | tr -s ' ' | cut -d' ' -f4- || true)
+          : "${rustc_v:=dev shell unavailable}"
           {
             echo "### fmt + clippy + test + fixtures"
             echo ""
-            echo "Toolchain (flake.lock-pinned dev shell): \`${rustc_v}\`"
+            echo "Toolchain (devenv, flake.lock-pinned): \`${rustc_v}\`"
+            echo ""
+            echo "sccache hit rate this run: ${hits:-n/a}"
             echo ""
             echo "| check | result |"
             echo "|---|---|"
+            echo "| dev shell contract (devenv + flake mirror) | $(icon "$CONTRACT") |"
             echo "| \`cargo fmt --check\` | $(icon "$FMT") |"
             echo "| \`cargo clippy -D warnings\` | $(icon "$CLIPPY") |"
             echo "| \`cargo test\` | $(icon "$TEST") |"
@@ -105,13 +174,18 @@ jobs:
   nix:
     name: nix build (daemon/TUI package)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # FlakeHub Cache (OIDC)
     steps:
-      - uses: actions/checkout@v7
-      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
         with:
           determinate: true
           summarize: false
-      - uses: DeterminateSystems/flakehub-cache-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@88740a21e786360ba66bdd8fecabcbf852db3a5a # v3.23.0
       # This job builds only the daemon/TUI package; the GUI (`.#wowdps-gui`,
       # its own dependency layer) builds and tests in the dev shell the ci
       # job runs in. Two derivations (crane):
@@ -147,17 +221,19 @@ jobs:
       # rust-toolchain.toml would otherwise steer rustup to nightly here.
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install system dependencies
         run: |
           sudo apt-get update
           # libfontconfig-dev: the GUI's font-kit probes it from a build
           # script, which clippy runs; nothing here links.
           sudo apt-get install -y pkg-config libxkbcommon-dev libfontconfig-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # No distro libduckdb here: the history crate is the one workspace
       # member with a native dependency, and it builds only in the flake
       # shell (system-linked, never bundled). The canary still covers every
