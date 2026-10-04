@@ -7,7 +7,10 @@ remain the record of what already shipped and why.
 Ground rules that every item inherits: CONTRACT.md stays binding (a wire-shape
 change bumps `PROTO_VERSION`), the dependency policy holds (model zero-dep;
 core/proto/daemon stdlib only), and the daemon never becomes an event store —
-it stores *summaries* it can derive, not raw events.
+it stores *summaries* it can derive, not raw events. One exception, scoped and
+signed off: the fight replay's capture (item 2a), a filtered, simplified
+per-pull record of positions and hostile events, kept because a replay cannot
+be summarised any further.
 
 ## 1. History store + analytics (daemon, then MCP)
 
@@ -122,15 +125,84 @@ In order of payoff:
 - **Cooldown and buff uptime bars** on the timeline graph, from
   `SPELL_AURA_APPLIED`/`REMOVED` and `SPELL_CAST_SUCCESS`.
 - **Boss phase markers** on the compare graph, so the timeline has landmarks.
+  Item 2a's phase layer produces them.
 - **History graphs** over item 1: best-kill table, progression per boss,
   DPS trend per spec, keystone trends.
 - **Replay scrubbing.** The R12 timeline already buckets per second; a slider
-  shows the meter as it stood at second N.
+  shows the meter as it stood at second N. (The meter at a second, not item
+  2a's fight replay; the two share the ribbon's playhead.)
 - **Share/export.** One key renders the current screen to PNG (the headless
   render path the tests use already exists) and exports a fight summary as JSON.
 
 Overlay gets only what fits its surface (death recap, markers); the rest is
 window-only, like the talent viewer.
+
+## 2a. Fight replay (follow-on to items 1 and 2)
+
+**Status: research plan written 2026-10-04 (`docs/plan-fight-replay.md`);
+nothing built.** The plan's sixteen research questions come first, then
+`docs/spec-fight-replay.md`.
+
+**Why.** A meter says who did what; a replay says where. Most wipes are
+positional: a puddle dropped in the raid, a soak missed, a line stood in.
+The log already holds the answer. Every advanced line carries a unit's
+position, facing and map, about sixteen times a second per player on a real
+raid kill, and the parser finds that block today and throws the position
+away. Replays built on the Warcraft Logs API map each boss's events by
+hand. Ours is the general version: built locally and live with no upload,
+drawn on the game's own map for every encounter, and generic layers serve
+every boss before any curation.
+
+**Shape** (the user's decisions, 2026-10-04):
+
+- **A mode of the pull view.** The rail, fight header and ribbon stay; the
+  ribbon becomes the scrubber, with phases as bands. The meter and inspector
+  give way to the room's map and a side panel.
+- **Five layers, generic first.**
+  - (0) The log alone: everyone moving, health, boss casts, enemy debuffs,
+    tethers, and a hit map with every enemy hit at the victim's exact
+    position.
+  - (1) The game's tables: room art and its world-to-image transform,
+    portraits, the Encounter Journal's abilities and stage names, spell
+    shapes.
+  - (2) Inferred mechanics: puddles, soaks, lines to the boss. Area
+    triggers are not in the log, so each rule is scored against the damage
+    it explains.
+  - (3) Phases.
+  - (4) Per-boss verdicts.
+
+  Layers 0–1 serve every encounter; 3–4 are curated for the current tier
+  only.
+- **Capture once, interpret at will.** When a boss pull ends (wipes
+  included), the daemon builds a capture from the log off the hub thread:
+  tracks plus the hostile event stream. It is stored in the history store
+  for good, outside retention. Mechanics, phases and verdicts are computed
+  from the capture and the tier's versioned definitions, never the log. A new
+  tier or a curation fix re-interprets every stored fight with no
+  re-processing. Re-capture from the log is an explicit, per-fight regrade.
+- **A sticky off switch.** With replays off the daemon runs no capture jobs.
+  The live meter never parses positions in either case. The switch is a
+  daemon-owned setting, so it lands with, or brings forward, item 3's config
+  reload.
+- **Local only.** No Warcraft Logs key, not even for research checks: phase
+  rules are checked against hand-labelled pulls.
+- **New contract surface.** Ruling R27 (positions), a `positions.txt`
+  fixture, a chunked `GetReplay` / `Replay` pair (a `PROTO_VERSION` bump), a
+  replay tier in the store, and generators for the maps (`maps.bin`) and the
+  journal (`encounters.json`), both per-machine caches. An mcp `positions`
+  tool gives the coach "where" questions.
+
+**Order.** The plan's research first: position attribution, coordinates and
+gaps; then capture size and speed. Permanence makes a season's size a gate
+before any format is fixed. Then the map art, the journal and spell
+geometry; then the spec; then layers 0–1 for every encounter. Per-boss
+work (layers 2–4) follows for the current tier once the map draws.
+
+**Later: import from Warcraft Logs.** Paste a fight URL, fetch its events
+with positions into the same capture format, and replay another guild's
+pull beside your own. It waits because every user would need their own API
+key. Imported fights are kept apart and never count as yours. This is a
+download for comparison; an upload target stays not planned.
 
 ## 3. Settings page + config reload
 
