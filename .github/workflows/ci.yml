@@ -36,7 +36,15 @@ jobs:
           summarize: false
       - uses: DeterminateSystems/flakehub-cache-action@main
 
+      # The cache holds build scripts and test binaries LINKED in the flake
+      # shell, against its nixpkgs' glibc, but its default key (rustc
+      # version + Cargo.lock) does not move when nixpkgs does: a PR whose
+      # cache predated a nixpkgs bump restored build scripts whose loader no
+      # longer existed ("could not execute process … No such file or
+      # directory", #79 after #80). flake.lock in the key starts a fresh one.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ hashFiles('flake.lock') }}
 
       - name: cargo fmt
         id: fmt
