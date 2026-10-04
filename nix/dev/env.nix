@@ -27,7 +27,7 @@ rec {
   libraries = [
     (lib.getLib pkgs.duckdb)
   ]
-  ++ lib.optionals pkgs.stdenv.isLinux [
+  ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
     pkgs.wayland
     pkgs.libxkbcommon
     pkgs.vulkan-loader

@@ -36,7 +36,7 @@ pkgs.writeShellScriptBin "wowdps-dev-contract" (
       }
     done
   ''
-  + lib.optionalString pkgs.stdenv.isLinux ''
+  + lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
     # xkbcommon, fontconfig and xcb: what the GUI's GPUI links.
     for pc in xkbcommon fontconfig xcb; do
       pkg-config --exists "$pc" || {
