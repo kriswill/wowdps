@@ -1,0 +1,25 @@
+code-review: install it as /code-rabbit-review, beside the built-in.
+
+Upstream (coderabbitai/skills) names this skill `code-review`, the name
+of Claude Code's own /code-review (the code-review plugin), and claims to
+be the default for any review request. Installed under that name it
+shadowed the built-in. Rename it in its frontmatter — tools/skills-update.sh
+installs the directory as code-rabbit-review — and leave a plain review
+request to the built-in.
+
+Applied over the vendored copy by tools/skills-update.sh; git apply
+skips this text before the first diff header.
+
+diff --git a/.claude/skills/code-review/SKILL.md b/.claude/skills/code-review/SKILL.md
+index 219bc39..677a715 100644
+--- a/.claude/skills/code-review/SKILL.md
++++ b/.claude/skills/code-review/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+-name: code-review
+-description: "Run CodeRabbit CLI reviews, retrieve saved local or GitHub PR fix prompts, and interpret CodeRabbit authentication and review output. Use for CodeRabbit review commands, committed/uncommitted or directory scopes, and CodeRabbit runbooks. Default code-review skill: also trigger for explicit code/PR/quality/security review requests or when a review is needed."
++name: code-rabbit-review
++description: "Run CodeRabbit CLI reviews, retrieve saved local or GitHub PR fix prompts, and interpret CodeRabbit authentication and review output. Use for CodeRabbit review commands, committed/uncommitted or directory scopes, and CodeRabbit runbooks. Invoke as /code-rabbit-review, or when CodeRabbit is named; a plain code review request is the built-in /code-review's."
+ metadata:
+   version: "0.1.0"
+ ---
