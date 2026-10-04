@@ -46,7 +46,7 @@ in
 
   # What the flake shell adds to mirror devenv, the reference shell: the
   # clang devenv's languages.rust puts on PATH (CC=clang, CXX=clang++), and
-  # a shellHook that also exports devenv's linker script.
+  # a shellHook that also exports the linker devenv names.
   inherit (env) flakeShellHook flakePackages;
 
   # Everything both shells install EXCEPT the Rust toolchain and okf.

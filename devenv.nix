@@ -1,10 +1,10 @@
-# Devenv twin of flake.nix's devShells.default — the same environment, entered
-# via devenv's native cd hook (trust once with `devenv allow`) instead of
-# `nix develop`. The environment ITSELF lives in nix/dev/, imported by
-# both, so the two can no longer drift; what stays here is only what devenv
-# plumbs differently: its Rust toolchain and its okf and llm-agents inputs.
-# Even the contract `devenv test` asserts is shared — it is an executable both
-# shells carry.
+# The reference dev shell, locally and in CI; flake.nix's devShells.default
+# mirrors it. Entered via devenv's native cd hook (trust once with `devenv
+# allow`). The environment ITSELF lives in nix/dev/, imported by both; what
+# stays here is only what devenv plumbs differently: its Rust toolchain and
+# its okf and llm-agents inputs. Even the contract `devenv test` asserts is
+# shared — it is an executable both shells carry, and it fails if the mirror
+# drifts.
 {
   pkgs,
   lib,
@@ -41,9 +41,10 @@ in
 
   env = shared.env;
 
-  # Last, after devenv's own setup: the pinned CC and PKG_CONFIG_PATH
-  # (nix/dev/env.nix) — flake.nix runs the same hook as mkShell's shellHook.
-  enterShell = shared.shellHook;
+  # Last (mkAfter), after every enterShell the languages.* modules add: the
+  # pinned PKG_CONFIG_PATH (nix/dev/env.nix) — flake.nix runs the same hook
+  # as mkShell's shellHook.
+  enterShell = lib.mkAfter shared.shellHook;
 
   # The contract `devenv test` asserts. It lives in nix/dev/contract.nix as an
   # executable both shells carry (`nix develop -c wowdps-dev-contract` is the

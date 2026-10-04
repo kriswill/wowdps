@@ -249,32 +249,40 @@
         ''
       );
 
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          packages = (devShellFor pkgs).packages ++ [
-            # rustc, cargo, clippy, rustfmt, rust-analyzer, rust-src and
-            # llvm-tools — everything rust-toolchain.toml lists. devenv reads
-            # the same file through its own `languages.rust`.
-            (toolchainFor pkgs)
-            # okf (scaffold | index | validate | viz) over docs/OKF, the OKF
-            # knowledge bundle — see .claude/skills/knowledge-bundle. It
-            # reaches this shell through the flake's own input and devenv's
-            # through devenv.yaml's, which is why it is not in the shared file.
-            (okfFor pkgs)
-            # coderabbit / cr, the CodeRabbit review CLI — the same split as
-            # okf: this shell's llm-agents input, devenv's mirrored one.
-            (coderabbitFor pkgs)
-          ]
-          # The clang devenv's languages.rust brings (its setup hook sets
-          # CC=clang and CXX=clang++), mirrored.
-          ++ (devShellFor pkgs).flakePackages;
-          env = (devShellFor pkgs).env;
-          # devenv is the reference shell; this one mirrors what its
-          # languages.rust adds (nix/dev/env.nix): the clang on PATH, and —
-          # last, after stdenv's own setup — its linker script and the pinned
-          # PKG_CONFIG_PATH. `wowdps-dev-contract` checks the mirror.
-          shellHook = (devShellFor pkgs).flakeShellHook;
-        };
-      });
+      devShells = forAllSystems (
+        pkgs:
+        let
+          shell = devShellFor pkgs;
+        in
+        {
+          default = pkgs.mkShell {
+            packages =
+              shell.packages
+              ++ [
+                # rustc, cargo, clippy, rustfmt, rust-analyzer, rust-src and
+                # llvm-tools — everything rust-toolchain.toml lists. devenv reads
+                # the same file through its own `languages.rust`.
+                (toolchainFor pkgs)
+                # okf (scaffold | index | validate | viz) over docs/OKF, the OKF
+                # knowledge bundle — see .claude/skills/knowledge-bundle. It
+                # reaches this shell through the flake's own input and devenv's
+                # through devenv.yaml's, which is why it is not in the shared file.
+                (okfFor pkgs)
+                # coderabbit / cr, the CodeRabbit review CLI — the same split as
+                # okf: this shell's llm-agents input, devenv's mirrored one.
+                (coderabbitFor pkgs)
+              ]
+              # The clang devenv's languages.rust brings (its setup hook sets
+              # CC=clang and CXX=clang++), mirrored.
+              ++ shell.flakePackages;
+            env = shell.env;
+            # devenv is the reference shell; this one mirrors what its
+            # languages.rust adds (nix/dev/env.nix): the clang on PATH, and —
+            # last, after stdenv's own setup — its linker and the pinned
+            # PKG_CONFIG_PATH. `wowdps-dev-contract` checks the mirror.
+            shellHook = shell.flakeShellHook;
+          };
+        }
+      );
     };
 }
