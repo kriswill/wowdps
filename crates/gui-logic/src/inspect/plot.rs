@@ -55,13 +55,17 @@ impl Curve {
     }
 }
 
-/// A span the player spent dead (R23): from the death to the rez, or to
-/// the fight's end, and what to say of it ("died 5:45, rezzed by X").
+/// A death on the graph (R23): the moment they died and, when the fight
+/// saw it, the moment they were alive again, with what each rule says
+/// ("died 5:45"; "alive 6:02, rezzed by X").
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dead {
     pub at_ms: i64,
-    pub end_ms: i64,
+    /// Raised or seen alive while the fight was on; `None` when they stayed
+    /// dead to its end.
+    pub back_ms: Option<i64>,
     pub words: String,
+    pub back_words: String,
 }
 
 /// A figure as the hover reads it: a rate whole with its commas, a

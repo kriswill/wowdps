@@ -1,5 +1,18 @@
 # Log
 
+## 2026-10-03
+
+- **Update** — [R23 Death spans](r23.md): the Overall merge closes an open
+  death in either order — the daemon's mid-visit attach absorbs the earlier
+  prefix into the live Overall; a cast is proof of life in any log.
+- **Update** — [R9 Deaths & recap](r9.md): a Feign Death (`UNIT_DIED`'s trailing
+  `unconsciousOnDeath` 1) is no death — `Other` in the parser, no combat in the
+  scanner; `sample.txt` holds one.
+- **Update** — [R23 Death spans](r23.md): a death ends at its first sight alive
+  (an advanced-block health report above zero, or a cast), never at damage
+  dealt; an Overall carries an open death into the next member; `open` on the
+  mark (v41) ([decision](../decisions/a-death-ends-at-first-sight.md)).
+
 ## 2026-10-02
 
 - **Update** — [R1 Damage](r1.md): the amount leaves the overkill out on every ledger;

@@ -19,10 +19,11 @@ pub const RATE_BUCKET_MS: u32 = 10_000;
 
 pub const RATE_POINTS: u32 = 40;
 
-/// "died 5:45", "died 5:45, rezzed by Gennar" — an R23 death span as the
-/// hatch and the head word it. `names` resolves the rezzer.
-pub fn death_words(m: &Mark, roster: &Roster) -> String {
-    let mut words = format!("died {}", mmss(m.at_ms.max(0) as u32));
+/// "alive 6:02", "alive 6:02, rezzed by Gennar", "alive 6:02,
+/// Reincarnation" — the other end of an R23 death span, at `back_ms`, as
+/// its rule says it. `roster` names the rezzer.
+pub fn alive_words(m: &Mark, back_ms: i64, roster: &Roster) -> String {
+    let mut words = format!("alive {}", mmss(back_ms.max(0) as u32));
     let spell = m
         .label
         .strip_prefix("Death (")
@@ -41,35 +42,35 @@ pub fn death_words(m: &Mark, roster: &Roster) -> String {
     words
 }
 
-/// The deaths on a timeline (R23), as the plot hatches them: from the
-/// death to the rez that ended it, or — with none — to the fight's end.
-/// R23 also closes a span at the first thing only the living do, and a
-/// dead warlock's DoTs still tick in their name: without a rez the span's
-/// own end is a guess, and the hatch does not draw one.
+/// The deaths on a timeline (R23), as the plot draws them: a rule where
+/// they died and one where they were alive again — raised, or seen alive
+/// (a heal or a hit landing on them, a cast of theirs) — when that came
+/// before `end_ms`, the fight's end on the graph's axis. A span still
+/// `open` when the fight was read (v41) never came back, and a rez after
+/// the fight's end (a Mass Resurrection after a wipe) is not this fight's.
 pub fn dead_spans(
     t: &Timeline,
     end_ms: u32,
     who: Option<&str>,
     roster: &Roster,
 ) -> Vec<plot::Dead> {
+    let whose = |words: String| match who {
+        Some(who) => format!("{who} {words}"),
+        None => words,
+    };
     t.marks
         .iter()
         .filter(|m| m.kind == MarkKind::Death)
         .map(|m| {
-            let words = death_words(m, roster);
-            let rezzed = !m.src.is_empty() || m.label.starts_with("Death (");
-            let end = if rezzed {
-                m.at_ms + m.dur_ms.max(0)
-            } else {
-                i64::from(end_ms)
-            };
+            let back_ms =
+                Some(m.at_ms + m.dur_ms.max(0)).filter(|&back| !m.open && back < i64::from(end_ms));
             plot::Dead {
                 at_ms: m.at_ms,
-                end_ms: end.min(i64::from(end_ms)),
-                words: match who {
-                    Some(who) => format!("{who} {words}"),
-                    None => words,
-                },
+                back_ms,
+                words: whose(format!("died {}", mmss(m.at_ms.max(0) as u32))),
+                back_words: back_ms
+                    .map(|back| whose(alive_words(m, back, roster)))
+                    .unwrap_or_default(),
             }
         })
         .collect()
@@ -121,12 +122,13 @@ pub fn window_of(shown: Option<(u32, u32)>, span: u32) -> (u32, u32) {
     shown.filter(|(lo, hi)| hi > lo).unwrap_or((0, span))
 }
 
-/// The fight's span on the graph's axis: its duration, or the timeline's
-/// own length where that is longer (a visit's Σ runs the visit's clock).
+/// The fight's span on the graph's axis — the ribbon's own
+/// ([`crate::ribbon::fight_span`]): its wall clock, or the timeline's own
+/// length where that is longer. A visit's Σ spans what it holds, never its
+/// `duration_ms` (a key's is the key timer, penalties and all).
 pub fn span_of(app: &ClientState, t: &Timeline) -> u32 {
-    let clock = app.duration_ms().max(0) as u64;
-    let grid = t.buckets.len() as u64 * u64::from(t.bucket_ms);
-    clock.max(grid).clamp(1, u64::from(u32::MAX)) as u32
+    let grid = t.buckets.len() as i64 * i64::from(t.bucket_ms);
+    crate::ribbon::fight_span(app, grid) as u32
 }
 
 /// The highest point of `curves` inside `window`.
@@ -194,4 +196,71 @@ pub fn stack_series(app: &ClientState) -> Option<(String, Vec<AbilitySeries>, bo
 pub fn stack_keys(app: &ClientState) -> Option<(String, Vec<String>)> {
     let (context, series, _) = stack_series(app)?;
     Some((context, series.into_iter().map(|s| s.key).collect()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wowdps_model::Row;
+
+    fn death(at_ms: i64, dur_ms: i64, label: &str, src: &str, open: bool) -> Mark {
+        Mark {
+            at_ms,
+            kind: MarkKind::Death,
+            label: label.to_string(),
+            spell_id: 0,
+            dur_ms,
+            src: src.to_string(),
+            open,
+        }
+    }
+
+    /// R23 on the graph: a death says when, its return says when and who
+    /// raised them; one still open when the fight was read (v41) has no
+    /// return, nor does a rez that came after the fight's end.
+    #[test]
+    fn a_death_and_its_return_in_words() {
+        let mut roster = Roster::default();
+        roster.observe(&[Row {
+            key: "Player-1-0P".into(),
+            label: "Gennar-Proudmoore-US".into(),
+            ..Row::default()
+        }]);
+        let t = Timeline {
+            bucket_ms: 1000,
+            buckets: Vec::new(),
+            marks: vec![
+                death(45_000, 5_100, "Death", "", false),
+                death(120_000, 4_300, "Death (Intercession)", "Player-1-0P", false),
+                death(200_000, 2_000, "Death (Reincarnation)", "", false),
+                death(250_000, 50_000, "Death", "", true),
+                death(
+                    280_000,
+                    30_000,
+                    "Death (Mass Resurrection)",
+                    "Player-1-0P",
+                    false,
+                ),
+            ],
+        };
+        let dead = dead_spans(&t, 300_000, None, &roster);
+        let said: Vec<(&str, Option<i64>, &str)> = dead
+            .iter()
+            .map(|d| (d.words.as_str(), d.back_ms, d.back_words.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            vec![
+                ("died 0:45", Some(50_100), "alive 0:50"),
+                ("died 2:00", Some(124_300), "alive 2:04, rezzed by Gennar"),
+                ("died 3:20", Some(202_000), "alive 3:22, Reincarnation"),
+                ("died 4:10", None, ""),
+                ("died 4:40", None, ""),
+            ]
+        );
+        // A comparison names whose death each rule is.
+        let pair = dead_spans(&t, 300_000, Some("Tranqlock"), &roster);
+        assert_eq!(pair[0].words, "Tranqlock died 0:45");
+        assert_eq!(pair[0].back_words, "Tranqlock alive 0:50");
+    }
 }

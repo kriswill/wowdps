@@ -420,6 +420,7 @@ fn every_mark_kind_roundtrips_with_its_caster() {
                     spell_id: 10060,
                     dur_ms: 15_000,
                     src: "Player-1-0A".to_string(),
+                    open: false,
                 }],
             },
             ..CompareSide::default()

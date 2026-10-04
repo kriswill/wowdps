@@ -84,7 +84,6 @@ pub static NAVY: LazyLock<Def> = LazyLock::new(|| Def {
         health_track: Color::rgba(1.0, 1.0, 1.0, 0.07),
         on_class: INK_DARK.alpha(0.85),
         death_line: Color::hex(0xFF5C63),
-        death_hatch: Color::hex(0xFF5C63),
         par_timed: Color::hex(0x58D08A),
         par_over: Color::hex(0xFF5C63),
         drawer_edge: Color::TRANSPARENT,

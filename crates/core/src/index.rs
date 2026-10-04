@@ -943,11 +943,13 @@ fn is_combat(event: &str, rest: &[u8]) -> bool {
             };
             kind.eq_ignore_ascii_case(b"DEBUFF")
         }
-        // Only player deaths record (Deaths view).
+        // Only player deaths record (Deaths view) — and a Feign Death (the
+        // trailing `unconsciousOnDeath` 1) is none: the parser makes it
+        // `Other`, so it is no combat here either.
         "UNIT_DIED" => {
-            let f = split_fields(rest, 8);
+            let f = split_fields(rest, 10);
             let guid = f.get(5).copied().unwrap_or(b"");
-            if guid.is_empty() || guid == b"0000000000000000" {
+            if guid.is_empty() || guid == b"0000000000000000" || f.get(9) == Some(&&b"1"[..]) {
                 return false;
             }
             let flags = f.get(7).map_or(0, |s| ascii_u32_hex(s));
@@ -1323,6 +1325,13 @@ mod tests {
                 0,
                 10,
                 r#"SPELL_AURA_REMOVED,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,132404,"Shield Block",0x1,BUFF"#,
+            ),
+            // A Hunter's Feign Death (`unconsciousOnDeath` 1): no death, so
+            // not the combat its real twin below is.
+            at(
+                0,
+                11,
+                r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-1-A,"Ana",0x511,0x0,1"#,
             ),
         ];
         let idx = scan_str(&quiet);

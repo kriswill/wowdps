@@ -288,7 +288,9 @@ and contributes to nothing.
   role-spell table (`role_spells.rs`) therefore curates aura ids, never cast ids.
 - `SPELL_SUMMON` — 12 fields, spell prefix, no advanced block.
 - `UNIT_DIED` — **10 fields**: nil source (`0000000000000000,nil,0x80000000,0x80000000`),
-  then the dying unit, then a single trailing `0`.
+  then the dying unit, then a single trailing `unconsciousOnDeath`: `0` on a real
+  death, `1` on a Hunter's Feign Death (and on some creatures that go down
+  without dying, a boss among them) — which the parser reads as `Other`, no death.
 - `ENCOUNTER_START` — `id, "name", difficultyID, groupSize, instanceID`
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
 - `COMBATANT_INFO` — `guid, faction, <22 stat scalars>, currentSpecID(field 25),
@@ -380,8 +382,10 @@ Parse failures: **4 / 114 275 modeled lines (0.0035 %)**, all one shape (below).
 
 ### Corrections the real log forced on this document
 
-1. `UNIT_DIED` is **10** fields — a single trailing `0`, not `recapID` +
-   `unconsciousOnDeath`.
+1. `UNIT_DIED` is **10** fields — a single trailing `unconsciousOnDeath`, not
+   `recapID` + `unconsciousOnDeath`. It reads `0` on nearly every line; `1` is a
+   Hunter's Feign Death (104 player lines over eight real logs, every one a
+   Hunter's, 2026-10-03).
 2. raidFlags are **`0x80000000`** for "no marker", not `0x0`. That exceeds
    `i32::MAX`: parse flags as `u32`. Unit flags reach 5 hex digits (`0x10a48`).
 3. School fields mix formats *on the same line*: `SPELL_INTERRUPT` had

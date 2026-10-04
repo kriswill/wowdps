@@ -1,5 +1,10 @@
 # Log
 
+## 2026-10-03
+
+- **Update** — [sample.txt](sample.md): a Feign Death for its hunter at
+  20:08:29.5, the R9 negative control (his deaths stay 1).
+
 ## 2026-10-02
 
 - **Update** — [taken.txt](taken.md): a third segment — a boar pull with a 40 s

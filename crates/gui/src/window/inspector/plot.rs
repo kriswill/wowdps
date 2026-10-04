@@ -2,8 +2,9 @@
 //! iced window's `inspector/plot.rs`): one canvas with the curve to itself
 //! — an area in the player's class colour, two lines on one scale for a
 //! comparison, an ability over its ghost, or R26's stacked bands — a time
-//! axis in minutes, a death hatched from the moment to the rez, and the
-//! lanes of spans under it, a comparison's split in two.
+//! axis in minutes, a death as a rule where they died and one where they
+//! were alive again, and the lanes of spans under it, a comparison's split
+//! in two.
 //!
 //! Where everything stands is gui-logic's `inspect::geometry`, laid out at
 //! zoom 1 exactly as the iced window lays it out; this component measures
@@ -19,13 +20,13 @@
 //! lanes ([`Input::height`]), as iced's `Plot::height()` does.
 //!
 //! The delights, each gone under reduced motion so the picture is iced's:
-//! - a zoom glides — the axis, the curves, the hatches and the spans slide
-//!   to the new window over 220 ms (ease-out);
+//! - a zoom glides — the axis, the curves, the deaths' rules and the spans
+//!   slide to the new window over 220 ms (ease-out);
 //! - the crosshair glows, with a dot where it meets each curve;
 //! - a drag in flight shows its edges in gold and the window it selects.
 
 mod curves;
-mod hatch;
+mod deaths;
 mod lanes;
 mod tip;
 
@@ -294,7 +295,7 @@ fn glide(id: &ElementId, to: (u32, u32), window: &mut Window, cx: &mut App) -> (
 }
 
 /// The frame painted in the iced canvas's order: the baseline, the
-/// hatches, the stack, the curves, the hatches' word patches, the lanes,
+/// deaths' rules, the stack, the curves, their words' patches, the lanes,
 /// a drag, the crosshair, the words, the tooltip over all.
 fn paint(f: &Frame, b: Bounds<Pixels>, hitbox: &Hitbox, window: &mut Window, cx: &mut App) {
     let pen = Pen {
@@ -313,10 +314,10 @@ fn paint(f: &Frame, b: Bounds<Pixels>, hitbox: &Hitbox, window: &mut Window, cx:
     };
     let shaper = tip::Shaper::new(window, pen, f.ui.clone());
     let measure = |s: &str, size: f32, face: geo::Face| shaper.width(s, size, face);
-    // The hatches' words, placed once: their band is what the curves
+    // The deaths' words, placed once: their band is what the curves
     // peak under.
-    let hatches = g.hatch_labels(w, &measure);
-    let top = geo::Plot::top_of(&hatches);
+    let words = g.death_labels(w, &measure);
+    let top = geo::Plot::top_of(&words);
 
     // The baseline, a hairline.
     let left = g.left();
@@ -329,10 +330,10 @@ fn paint(f: &Frame, b: Bounds<Pixels>, hitbox: &Hitbox, window: &mut Window, cx:
         ),
         crate::theme::hsla(pen.t.line),
     ));
-    hatch::stripes(&g, w, pen, window);
+    deaths::rules(&g, w, pen, window);
     curves::bands(&g, w, top, pen, window);
     curves::lines(&g, w, top, pen, window);
-    hatch::patches(&hatches, pen, window);
+    deaths::patches(&words, pen, window);
     let lit = match hover {
         Some(Hover::Span(l, i)) => Some((l, i)),
         _ => None,

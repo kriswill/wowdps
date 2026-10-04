@@ -280,24 +280,26 @@ fn a_pair_s_lanes_split_the_track_between_the_two() {
 /// it, and a second death's words that would overlap the first's drop to a
 /// second row — never printed over them.
 #[test]
-fn hatch_words_keep_a_band_over_the_curves() {
+fn death_words_keep_a_band_over_the_curves() {
     let mut o = owned((0, 4_000), Vec::new());
     assert_eq!(
-        Plot::top_of(&o.plot().hatch_labels(400.0, &measure)),
+        Plot::top_of(&o.plot().death_labels(400.0, &measure)),
         PEAK_INSET
     );
     o.dead.push(Dead {
         at_ms: 1_000,
-        end_ms: 4_000,
+        back_ms: None,
         words: "Tranqlock died 0:01".into(),
+        back_words: String::new(),
     });
     o.dead.push(Dead {
         at_ms: 1_200,
-        end_ms: 4_000,
+        back_ms: None,
         words: "Swampert died 0:01".into(),
+        back_words: String::new(),
     });
     let p = o.plot();
-    let words = p.hatch_labels(400.0, &measure);
+    let words = p.death_labels(400.0, &measure);
     assert_eq!(words.len(), 2);
     assert!(!words[0].rect().overlaps(&words[1].rect()), "{words:?}");
     let top = Plot::top_of(&words);
@@ -307,6 +309,90 @@ fn hatch_words_keep_a_band_over_the_curves() {
     );
     assert_eq!(p.y_of(p.peak, top), top);
     assert_eq!(p.y_of(0.0, top), PLOT_H);
+}
+
+/// A death draws two rules — where they died in the bad ink, where they
+/// were alive again in the good — and nothing between; one that never
+/// came back draws only the first. Deaths take the words' band before any
+/// return does, so a return close behind its death (or the next one's)
+/// gives way rather than pushing a death's words out.
+#[test]
+fn a_death_is_two_rules_and_its_return_gives_way() {
+    let mut o = owned((0, 10_000), Vec::new());
+    o.dead = vec![
+        Dead {
+            at_ms: 1_000,
+            back_ms: Some(6_000),
+            words: "died 0:01".into(),
+            back_words: "alive 0:06".into(),
+        },
+        Dead {
+            at_ms: 8_000,
+            back_ms: None,
+            words: "died 0:08".into(),
+            back_words: String::new(),
+        },
+    ];
+    let p = o.plot();
+    let rules = p.rules(1_000.0);
+    assert_eq!(
+        rules,
+        vec![
+            (100.0, "died 0:01", Ink3::Bad, 0),
+            (800.0, "died 0:08", Ink3::Bad, 1),
+            (600.0, "alive 0:06", Ink3::Good, 0),
+        ]
+    );
+    let words = p.death_labels(1_000.0, &measure);
+    assert_eq!(words.len(), 3, "room for all three: {words:?}");
+    assert_eq!(words[2].ink, Ink3::Good);
+
+    // Zoomed past the first death: its return's rule stands alone.
+    o.window = (5_000, 10_000);
+    assert_eq!(
+        o.plot().rules(1_000.0),
+        vec![
+            (600.0, "died 0:08", Ink3::Bad, 1),
+            (200.0, "alive 0:06", Ink3::Good, 0)
+        ]
+    );
+
+    // Three rules within a few px: both rows go to the deaths, and the
+    // return between them has nowhere left to stand.
+    o.window = (0, 10_000);
+    o.dead = vec![
+        Dead {
+            at_ms: 1_000,
+            back_ms: Some(1_100),
+            words: "died 0:01".into(),
+            back_words: "alive 0:01".into(),
+        },
+        Dead {
+            at_ms: 1_200,
+            back_ms: None,
+            words: "died 0:01".into(),
+            back_words: String::new(),
+        },
+    ];
+    let words = o.plot().death_labels(1_000.0, &measure);
+    assert_eq!(words.len(), 2, "{words:?}");
+    assert!(words.iter().all(|l| l.ink == Ink3::Bad));
+
+    // At the plot's end a death's words still fit after its rule while its
+    // return's must stand before theirs: never on the death's row, where
+    // they would read "alive 0:09, rezzed by Lumen died 0:09".
+    o.dead = vec![Dead {
+        at_ms: 9_300,
+        back_ms: Some(9_400),
+        words: "died 0:09".into(),
+        back_words: "alive 0:09, rezzed by Lumen".into(),
+    }];
+    let words = o.plot().death_labels(1_000.0, &measure);
+    assert_eq!(words.len(), 2, "{words:?}");
+    let (died, back) = (&words[0], &words[1]);
+    assert!(died.x > 930.0, "the death's words after its rule");
+    assert!(back.x + back.width < 940.0, "the return's before its own");
+    assert_ne!(died.y, back.y, "on another row: {words:?}");
 }
 
 /// A drag of 3 px or more is a window; less is a click; backwards still
@@ -353,10 +439,10 @@ fn a_tooltip_hides_the_labels_under_it() {
     );
 }
 
-/// The spline stays inside the plot and ends on every point; the stripes
-/// fill a death's stretch and nothing outside it; the stack's bands sum.
+/// The spline stays inside the plot and ends on every point; the stack's
+/// bands sum.
 #[test]
-fn curves_bands_and_stripes_hold_their_shape() {
+fn curves_and_bands_hold_their_shape() {
     let pts = [(0.0, 90.0), (10.0, 0.0), (20.0, 96.0), (30.0, 10.0)];
     let segs = smooth(&pts, PLOT_H);
     assert_eq!(segs.len(), 3);
@@ -367,12 +453,6 @@ fn curves_bands_and_stripes_hold_their_shape() {
         }
     }
     assert!(smooth(&pts[..1], PLOT_H).is_empty());
-    let s = stripes(100.0, 160.0, PLOT_H);
-    assert!(!s.is_empty());
-    for (a, b) in &s {
-        assert!(a.0 >= 100.0 - 0.01 && b.0 <= 160.0 + 0.01, "{a:?} {b:?}");
-    }
-    assert!(stripes(100.0, 100.0, PLOT_H).is_empty());
 
     let mut o = owned((0, 3_000), Vec::new());
     o.curves = vec![

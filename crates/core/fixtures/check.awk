@@ -785,9 +785,11 @@ ev == "SPELL_AURA_REFRESH" { dot_aura(1); aura_apply(1); shield_aura(ev); debuff
 ev == "SPELL_AURA_REMOVED" { dot_aura(0); aura_remove(); shield_aura(ev); debuff_aura(ev); next }
 ev == "SPELL_AURA_APPLIED_DOSE" || ev == "SPELL_AURA_REMOVED_DOSE" { debuff_aura(ev); next }   # R21: 14 fields, the trailer is the level
 
-# Deaths: players only (a pet death is not a player death)
+# Deaths: players only (a pet death is not a player death), and never a
+# Hunter's Feign Death — the trailing unconsciousOnDeath field is 1 (R9)
 ev == "UNIT_DIED" {
     if (!isPlayerFlags($8)) next
+    if ($10 + 0 == 1) next
     note(cur, $6, "deaths", 1)
     next
 }

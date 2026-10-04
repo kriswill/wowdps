@@ -152,6 +152,9 @@ Segment total damage **139 600**.
   that trusts the flags grows a phantom "unknown player" row.
 - **Deaths = 3** (P1, P3, P2). **Sharptooth the pet dies at 20:08:33 and must NOT be
   counted** — a pet death is not a player death. If you see 4, the flag check is wrong.
+- **Kael'thar's `UNIT_DIED` at 20:08:29.5 ends in `1`**: a Hunter's Feign Death
+  (`unconsciousOnDeath`), no death. His deaths stay **1**, his recap window is the
+  one frozen at 20:08:36; if he shows 2, the trailing field is being ignored.
 - The 22 000 `SPELL_PERIODIC_DAMAGE` at 20:08:28 has a **nil source**
   (`0000000000000000,nil,0x80000000`). It gets no meter row and must not crash the
   parser.

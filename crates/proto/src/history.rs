@@ -1680,20 +1680,36 @@ pub fn mark_json(m: &Mark) -> Json {
         // item marks) so the SQL column keeps one shape, like `misses`;
         // a pre-v24 file without the key reads empty.
         "src": Json::str(&*m.src),
+        // v41: the span had not closed when the fight was read (a player
+        // still dead at its end), written on every mark for the same one
+        // shape; a file without the key reads false.
+        "open": Json::Bool(m.open),
     }
 }
 
 /// `None` on an unknown kind code (the mark is dropped, not the list).
 pub fn mark_from(m: &Json) -> Option<Mark> {
+    let kind = u32_of(m, "kind")
+        .and_then(|k| u8::try_from(k).ok())
+        .and_then(MarkKind::from_code)?;
+    let src = str_of(m, "src").unwrap_or_default().to_string();
+    let label = str_of(m, "label").unwrap_or_default().to_string();
+    // A record written before v41 says nothing of `open`. Its death marks
+    // closed by the old R23 rule — at damage dealt in their name, or at a
+    // member's end in a Σ — so an unrezzed one's end is no sighting: read it
+    // as never closed, as the graph did then. A rez (a rezzer, or a self-rez's
+    // "Death (Reincarnation)") is a real end, and every other kind reads
+    // closed.
+    let rezzed = !src.is_empty() || label.starts_with("Death (");
+    let open = bool_of(m, "open").unwrap_or(kind == MarkKind::Death && !rezzed);
     Some(Mark {
         at_ms: i64_of(m, "at_ms").unwrap_or(0),
-        kind: u32_of(m, "kind")
-            .and_then(|k| u8::try_from(k).ok())
-            .and_then(MarkKind::from_code)?,
-        label: str_of(m, "label").unwrap_or_default().to_string(),
+        kind,
+        label,
         spell_id: u32_of(m, "spell_id").unwrap_or(0),
-        src: str_of(m, "src").unwrap_or_default().to_string(),
+        src,
         dur_ms: i64_of(m, "dur_ms").unwrap_or(0),
+        open,
     })
 }
 

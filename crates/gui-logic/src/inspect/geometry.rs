@@ -66,11 +66,11 @@ pub const LABEL_W: f32 = 74.0;
 pub const LABEL_GAP: f32 = 8.0;
 pub const LEFT: f32 = LABEL_W + LABEL_GAP;
 /// Axis ticks (`.iaxis span{font-size:11px}`), lane labels (`.lane-l{font-
-/// size:12px}`), a hatch's words (`.hatch b{11px 600}`) and the tooltip's
-/// (`.tip{font-size:13px;padding:5px 8px;radius:6px}`).
+/// size:12px}`), a death's words (the prototype's `.hatch b{11px 600}`) and
+/// the tooltip's (`.tip{font-size:13px;padding:5px 8px;radius:6px}`).
 pub const TICK_PX: f32 = 11.0;
 pub const LANE_PX: f32 = 12.0;
-pub const HATCH_PX: f32 = 11.0;
+pub const DEATH_PX: f32 = 11.0;
 pub const TIP_PX: f32 = 13.0;
 pub const TIP_PAD: (f32, f32) = (8.0, 5.0);
 pub const TIP_LINE: f32 = 17.0;
@@ -94,29 +94,26 @@ pub const TICK_FIRST: f32 = 0.001;
 pub const TICK_LAST: f32 = 0.96;
 /// A press-release wander below this is a click, not a zoom window.
 pub const DRAG_MIN_PX: f32 = 3.0;
-/// The hatch's stripes (`repeating-linear-gradient(135deg, … 0 4px,
-/// transparent 4px 8px)`): 4 px of ink and 4 px of air measured ACROSS the
-/// 45° stripes — 8√2 px apart along the row, a stroke 4 px wide.
-pub const STRIPE_STEP: f32 = 8.0 * std::f32::consts::SQRT_2;
-pub const STRIPE_W: f32 = 4.0;
-/// The hatch's ink (`rgba(255,92,99,.16)`) and its dashed edge
-/// (`border-left:1.5px dashed`), and the patch its words sit on.
-pub const HATCH_ALPHA: f32 = 0.16;
-pub const HATCH_EDGE: f32 = 1.5;
-pub const HATCH_DASH: [f32; 2] = [3.0, 3.0];
-pub const HATCH_PATCH_ALPHA: f32 = 0.85;
+/// A death's two rules, the moment they died in the bad ink and the moment
+/// they were alive again in the good — each the prototype's hatch edge
+/// (`border-left:1.5px dashed`); the stretch between is left clear, as one
+/// fill per death stacked into a darker wall wherever deaths overlapped —
+/// and the patch their words sit on.
+pub const DEATH_RULE: f32 = 1.5;
+pub const DEATH_DASH: [f32; 2] = [3.0, 3.0];
+pub const DEATH_PATCH_ALPHA: f32 = 0.85;
 /// The patch reaches this far past the words on every side, its corners
 /// rounded this much.
-pub const HATCH_PATCH_PAD: f32 = 3.0;
-pub const HATCH_PATCH_RADIUS: f32 = 3.0;
-/// A hatch's words stand this far from its edge (`.hatch b{left:5px}`) and
-/// this far under the plot's top; a second row of them — two deaths whose
-/// words would overlap — one line and this much more under the first.
-pub const HATCH_WORDS_X: f32 = 5.0;
-pub const HATCH_WORDS_Y: f32 = 1.0;
-pub const HATCH_ROW_GAP: f32 = 1.0;
+pub const DEATH_PATCH_PAD: f32 = 3.0;
+pub const DEATH_PATCH_RADIUS: f32 = 3.0;
+/// A rule's words stand this far from it (`.hatch b{left:5px}`) and this
+/// far under the plot's top; a second row of them — two rules whose words
+/// would overlap — one line and this much more under the first.
+pub const DEATH_WORDS_X: f32 = 5.0;
+pub const DEATH_WORDS_Y: f32 = 1.0;
+pub const DEATH_ROW_GAP: f32 = 1.0;
 /// The air between the words' band and the highest a curve is drawn.
-pub const HATCH_BAND_GAP: f32 = 2.0;
+pub const DEATH_BAND_GAP: f32 = 2.0;
 /// The scale in the lanes' gutter (`.iaxis span{font-size:11px}`): the
 /// peak at the plot's top, 0 at its baseline, right-aligned to the gutter's
 /// label column so they end [`LABEL_GAP`] before the plot.
@@ -189,6 +186,8 @@ pub enum Face {
 pub enum Ink3 {
     Quiet,
     Bad,
+    /// A death's other end: alive again.
+    Good,
     Ink,
     Ink2,
 }
@@ -319,7 +318,7 @@ impl Plot<'_> {
     }
 
     /// The plot's y for a value: the peak `top` under the plot's top (a
-    /// few px, or under the hatches' words — [`Plot::top_of`]).
+    /// few px, or under the deaths' words — [`Plot::top_of`]).
     pub fn y_of(&self, v: f64, top: f32) -> f32 {
         if self.peak <= 0.0 {
             return self.plot_h;
@@ -327,12 +326,12 @@ impl Plot<'_> {
         self.plot_h - (v / self.peak).clamp(0.0, 1.0) as f32 * (self.plot_h - top)
     }
 
-    /// Where the peak is drawn, under the hatches' words `hatches` when
-    /// there are any — so a curve never runs through them.
-    pub fn top_of(hatches: &[Label]) -> f32 {
-        hatches
+    /// Where the peak is drawn, under the deaths' words `words` when there
+    /// are any — so a curve never runs through them.
+    pub fn top_of(words: &[Label]) -> f32 {
+        words
             .iter()
-            .map(|l| l.y + l.px * LINE + HATCH_BAND_GAP)
+            .map(|l| l.y + l.px * LINE + DEATH_BAND_GAP)
             .fold(PEAK_INSET, f32::max)
     }
 
@@ -538,40 +537,76 @@ impl Plot<'_> {
         })
     }
 
-    /// The hatches' words (`.hatch b`): after the dashed edge, as the
-    /// prototype sets them — or before it, when a death late in the fight
-    /// would run its words off the plot. Words that would overlap words
-    /// already placed (a pair who both died, a player who died twice)
-    /// drop to a second row; with no room there either, they are left
-    /// out rather than printed through the others.
-    pub fn hatch_labels(&self, w: f32, measure: Measure) -> Vec<Label> {
+    /// Every death's rules inside the window, as (canvas x, words, ink,
+    /// which death): the moment they died in the bad ink, then — after
+    /// every death — the moment each was alive again in the good, for a
+    /// death that ended before the fight did (R23: raised, or seen alive).
+    pub fn rules(&self, w: f32) -> Vec<(f32, &str, Ink3, usize)> {
         let left = self.left();
-        let line = HATCH_PX * LINE;
+        let died = self
+            .dead
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.at_ms, d.words.as_str(), Ink3::Bad, i));
+        let back = self
+            .dead
+            .iter()
+            .enumerate()
+            .filter_map(|(i, d)| Some((d.back_ms?, d.back_words.as_str(), Ink3::Good, i)));
+        died.chain(back)
+            .map(|(at, words, ink, i)| (self.x_of(at as f64, w), words, ink, i))
+            .filter(|&(x, ..)| (left..=w).contains(&x))
+            .collect()
+    }
+
+    /// The deaths' words (the prototype's `.hatch b`), each after its rule
+    /// — or before it, when a rule late in the fight would run its words
+    /// off the plot. Words that would overlap words already placed (a pair
+    /// who both died, a player who died twice, a return close behind its
+    /// death) drop to a second row; with no room there either they are
+    /// left out rather than printed through the others. Every death is
+    /// placed before any return, so a death never loses its words to one,
+    /// and a return never stands BEFORE its own death's words on their row
+    /// (near the plot's end, where a death's words still fit after its rule
+    /// and its return's must go before theirs): it would read "alive 30:11
+    /// died 29:57", so it takes the other row.
+    pub fn death_labels(&self, w: f32, measure: Measure) -> Vec<Label> {
+        let left = self.left();
+        let line = DEATH_PX * LINE;
         let mut placed: Vec<Label> = Vec::new();
-        for d in self.dead {
-            let x1 = self.x_of(d.at_ms as f64, w).clamp(left, w);
-            let x2 = self.x_of(d.end_ms as f64, w).clamp(left, w);
-            if x2 <= x1 {
+        // Where each death's own words went, by its index in `dead`.
+        let mut died_at: Vec<Option<(f32, f32)>> = vec![None; self.dead.len()];
+        for (rule, words, ink, i) in self.rules(w) {
+            if words.is_empty() {
                 continue;
             }
-            let tw = measure(&d.words, HATCH_PX, Face::Semibold);
-            let x = if x1 + HATCH_WORDS_X + tw > w {
-                (x1 - HATCH_WORDS_X - tw).max(left)
+            let tw = measure(words, DEATH_PX, Face::Semibold);
+            let x = if rule + DEATH_WORDS_X + tw > w {
+                (rule - DEATH_WORDS_X - tw).max(left)
             } else {
-                x1 + HATCH_WORDS_X
+                rule + DEATH_WORDS_X
             };
-            let rows = [HATCH_WORDS_Y, HATCH_WORDS_Y + line + HATCH_ROW_GAP];
+            let own = (ink == Ink3::Good)
+                .then(|| died_at.get(i).copied().flatten())
+                .flatten();
+            let rows = [DEATH_WORDS_Y, DEATH_WORDS_Y + line + DEATH_ROW_GAP];
             let free = rows.into_iter().find(|&y| {
                 let rect = Rect::new(x, y, tw, line);
-                placed.iter().all(|l| !l.rect().overlaps(&rect))
+                let reversed = own.is_some_and(|(dx, dy)| dy == y && x < dx);
+                !reversed && placed.iter().all(|l| !l.rect().overlaps(&rect))
             });
             if let Some(y) = free {
+                if ink == Ink3::Bad
+                    && let Some(slot) = died_at.get_mut(i)
+                {
+                    *slot = Some((x, y));
+                }
                 placed.push(Label {
-                    words: d.words.clone(),
+                    words: words.to_string(),
                     x,
                     y,
-                    px: HATCH_PX,
-                    ink: Ink3::Bad,
+                    px: DEATH_PX,
+                    ink,
                     face: Face::Semibold,
                     width: tw,
                 });
@@ -611,14 +646,14 @@ impl Plot<'_> {
         .collect()
     }
 
-    /// Everything the plot says besides a tooltip: the hatches' words, the
+    /// Everything the plot says besides a tooltip: the deaths' words, the
     /// scale, the axis's ticks (the first from its left edge, one near the
     /// end back from it) and the lanes' labels — less whatever the tooltip
     /// for `hover` would cover, so no label prints through it.
     pub fn labels(&self, hover: Option<Hover>, w: f32, measure: Measure) -> Vec<Label> {
         let left = self.left();
         let plot_w = (w - left).max(1.0);
-        let mut out = self.hatch_labels(w, measure);
+        let mut out = self.death_labels(w, measure);
         out.extend(self.scale_labels(Self::top_of(&out), measure));
         let axis_y = self.plot_h + AXIS_GAP + AXIS_WORDS_Y;
         for t in ticks(self.window, plot_w) {
@@ -768,23 +803,6 @@ pub fn smooth(pts: &[(f32, f32)], plot_h: f32) -> Vec<[(f32, f32); 3]> {
             [c1, c2, p2]
         })
         .collect()
-}
-
-/// A death's "/" stripes between `x1` and `x2`, each cut to the span: from
-/// `(s, bottom)` up to `(s + H, top)`, kept where it is between the two.
-pub fn stripes(x1: f32, x2: f32, plot_h: f32) -> Vec<((f32, f32), (f32, f32))> {
-    let mut out = Vec::new();
-    let mut s = x1 - plot_h;
-    while s < x2 {
-        let t0 = ((x1 - s) / plot_h).clamp(0.0, 1.0);
-        let t1 = ((x2 - s) / plot_h).clamp(0.0, 1.0);
-        if t1 > t0 {
-            let at = |t: f32| (s + t * plot_h, plot_h - t * plot_h);
-            out.push((at(t0), at(t1)));
-        }
-        s += STRIPE_STEP;
-    }
-    out
 }
 
 /// The graph's states, for the shots and tests of every crate that draws it.

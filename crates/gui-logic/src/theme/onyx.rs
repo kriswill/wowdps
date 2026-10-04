@@ -63,7 +63,6 @@ pub static ONYX: LazyLock<Def> = LazyLock::new(|| Def {
         on_class: INK_DARK.alpha(0.85),
         // A death is told by its skull and its words; the marks recede.
         death_line: Color::hex(0x5C6168),
-        death_hatch: Color::rgba(1.0, 1.0, 1.0, 0.375),
         par_timed: Color::hex(0xB8BCC3),
         par_over: Color::hex(0xFF5D5D),
         drawer_edge: Color::hex(0x34373D),

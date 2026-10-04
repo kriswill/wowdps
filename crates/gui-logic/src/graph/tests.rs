@@ -335,6 +335,7 @@ fn each_view_draws_the_marks_about_its_metric() {
         spell_id: HEALTHSTONE,
         dur_ms: 0,
         src: String::new(),
+        open: false,
     };
     let potion = Mark {
         label: "Potion of Unwavering Focus".into(),
