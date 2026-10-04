@@ -16,7 +16,9 @@ repository.workspace = true
 # nixpkgs library (flake.nix sets DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR and
 # patches the rpath); never `bundled`, whose build would cost CI minutes.
 # The crate version encodes the library version (1.10504 = DuckDB 1.5.4)
-# and must move with `pkgs.duckdb`.
+# and must move with `pkgs.duckdb`; tests/duckdb_version.rs fails by name
+# when the two drift (a dependabot bump ahead of nixpkgs, or a nixpkgs bump
+# that leaves the pin behind).
 
 [dependencies]
 wowdps-model = { path = "../model" }
