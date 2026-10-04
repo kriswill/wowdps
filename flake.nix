@@ -134,7 +134,7 @@
           # LD_LIBRARY_PATH into the RUNPATH, so one list serves both (nix's
           # fixup then shrinks the RUNPATH to what the binary links, which
           # is why the package still runs through its wrapper).
-          guiLibraries = lib.optionals pkgs.stdenv.isLinux [
+          guiLibraries = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
             pkgs.wayland
             pkgs.libxkbcommon
             pkgs.vulkan-loader
@@ -152,7 +152,7 @@
             ];
             buildInputs =
               guiLibraries
-              ++ lib.optionals pkgs.stdenv.isLinux [
+              ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
                 pkgs.libxcb
                 pkgs.fontconfig
               ];
@@ -195,12 +195,12 @@
               # reads. The render guard and the shots are ignored tests, run
               # by hand (crates/gui/SHOTS.md).
               cargoTestExtraArgs = "-p wowdps-gui";
-              preCheck = lib.optionalString pkgs.stdenv.isLinux ''
+              preCheck = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
                 export VK_DRIVER_FILES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.uname.processor}.json
                 export VK_ICD_FILENAMES=$VK_DRIVER_FILES
                 export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }}
               '';
-              postInstall = lib.optionalString pkgs.stdenv.isLinux ''
+              postInstall = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
                 wrapProgram $out/bin/wowdps-gui \
                   --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath guiLibraries}
               '';

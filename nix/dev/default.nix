@@ -51,7 +51,7 @@ in
     # The GUI's GPUI links libxkbcommon at build time, with libxcb for its
     # X11 backend, and fontconfig (font-kit's yeslogic-fontconfig-sys
     # probe).
-    ++ lib.optionals pkgs.stdenv.isLinux [
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
       pkgs.pkg-config
       pkgs.libxkbcommon
       pkgs.fontconfig
