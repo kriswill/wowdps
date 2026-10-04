@@ -43,6 +43,13 @@ These come from the user and shape every section below.
    events, replay it, and compare against another guild's pull. That import
    needs a key, so it waits. The capture format is designed now so the import
    can land in it (§6).
+8. **The room turns to the user's picture of it.** The game's north is a
+   convention of its map files. Players think of a room as "boss at the
+   top" or "we came in at the bottom". The map rotates, starting from a
+   default derived from data, and the user's own angle sticks per
+   encounter. Rotation is a view setting only: the capture, the
+   interpretation and the mcp answers stay in world coordinates.
+   (`docs/replay-assets.md` §4, "Orientation".)
 
 ## 0. The approach, and what makes it general
 
@@ -406,6 +413,16 @@ There are two levels, and only one needs the log:
     exists.
   - **Drawing.** The map is one canvas, painting images and paths in order
     as the talent panes do.
+  - **Rotation (decision 8).** One view transform turns the floor, the
+    positions and the shapes together about the room's centre.
+    - Discs, icons and text stay upright. Facing ticks, cones and lines
+      turn with the world.
+    - A small north mark keeps the game's own north readable, so a call
+      made in game terms still makes sense.
+    - The user's angle is saved in config per encounter (and per floor,
+      for a fight that changes floors). Difficulty never matters, since
+      the room is the same in every mode.
+    - The keys and gestures are the spec's call.
 - **Overlay and TUI.** Nothing in v1.
 - **MCP.** A `positions` (or `replay`) tool for the coach: a player's
   distance to the boss at a time, where someone died, who stood in a given
@@ -416,6 +433,13 @@ There are two levels, and only one needs the log:
 
 Each has a method and an exit criterion. Q1–Q3 decide feasibility and are
 cheap. Run them first. Nothing here uses the Warcraft Logs API (decision 6).
+
+**Findings so far.** `docs/replay-assets.md` (2026-10-04) answers Q4, Q5
+and Q10 and part of Q6 against build 12.1.0.69933. It also covers two
+questions this list missed:
+
+- how to resolve the current season from the client's own tables
+- how difficulties change encounter data (they never change the room)
 
 **Q1 — Who a sample describes.** Extend FORMAT-NOTES' attribution table to
 every family that carries a block: casts, energizes, drains, heals,
@@ -428,6 +452,15 @@ horizontal, the sign of each axis, and facing's zero and direction. Method:
 a pull with known geometry (a tank facing a boss, where facing ≈ the angle to
 the boss) and positions plotted over Q4's art. Exit: one transform function,
 tested against a real pull.
+
+*Progress (2026-10-04, `docs/replay-assets.md` §4).*
+
+- **Positions.** `position_x` is world X (up the game's map) and
+  `position_y` is world Y (left). This is verified on the Coiled Altar
+  pull.
+- **Facing.** One data point so far: facing 0 = +X, increasing toward +Y.
+  Zul'jan faced 3.16 rad, back at a raid that stood on −X, but one pull is
+  not yet a tank-and-boss test.
 
 **Q3 — Gaps and the units nobody touches.** Find what the long gaps are
 (death, out of range, phased), how dense bosses and adds are when nobody hits
@@ -498,7 +531,15 @@ Exit: compile-on-close confirmed or replaced, sizes signed off.
 discs, shapes and lines, playing. GPUI re-renders the whole view that asks
 for a frame (the live-dot pulse cost 5.7 % of a core). Spike the replay as
 its own entity driven by a timer, so a playing frame does not re-render the
-window. Exit: CPU at 1× and 4× under a budget the user signs off.
+window.
+
+GPUI draws images axis-aligned only (`PolychromeSprite` has no transform),
+so a rotated floor is resampled on the CPU into a viewport-sized image.
+That same pass upscales the floor and fades its edges
+(`docs/replay-assets.md` §4, "Rotating without edges").
+
+Exit: CPU at 1× and 4× under a budget the user signs off, and a rotate
+drag within it.
 
 **Q13 — The curation format.** Phases, mechanic kinds and verdicts as data,
 versioned per tier, with a generator that proves each entry against a
