@@ -40,7 +40,9 @@ Needs the network (github.com and the npm registry).
   loads a refreshed skill without its patches. Even then the new folders
   and lock are first copied beside their targets (a swap directory under
   `.claude/`, outside `skills/`) and swapped in by rename, so a failed copy
-  changes nothing either. When a patch no longer
+  changes nothing either. A rename failing mid-swap (a full disk, a
+  permission changed under it) is not rolled back: the swap directory is
+  kept with the skills it replaced, named on stderr, to restore by hand. When a patch no longer
   applies, the script stops with git's reason and keeps the scratch
   project, named on stderr. Upstream moved under the patch: rebase it
   against the new files there, or delete it once upstream carries the fix.

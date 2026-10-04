@@ -28,7 +28,16 @@ skills=(autofix code-review)
 
 # Its own repository, so git apply resolves the patches' paths from it.
 stage=$(mktemp -d)
-trap 'echo "skills-update: stopped; the checkout is untouched (scratch project: $stage)" >&2' ERR
+stopped() {
+  if ((${backups:-0})); then
+    echo "skills-update: stopped mid-swap; the skills it replaced are in" \
+      "$swap (scratch project: $stage)" >&2
+  else
+    echo "skills-update: stopped; the checkout is untouched (scratch" \
+      "project: $stage)" >&2
+  fi
+}
+trap stopped ERR
 git init -q "$stage"
 cp skills-lock.json "$stage/"
 (cd "$stage" && bunx skills add coderabbitai/skills --skill "${skills[@]}" \
@@ -43,9 +52,12 @@ done
 # Copy the results beside their targets, then swap them in by rename, so a
 # failed copy leaves the checkout as it was. The swap directory sits on the
 # checkout's filesystem but outside .claude/skills, where Claude Code would
-# load a half-copied skill.
+# load a half-copied skill. Once an old skill has been moved into it, it
+# holds the only copy, so a failure from then on keeps it to restore from
+# by hand; nothing rolls back on its own.
 swap=$(mktemp -d .claude/skills-update.XXXXXX)
-trap 'rm -rf "$swap"' EXIT
+backups=0
+trap '((backups)) || rm -rf "$swap"' EXIT
 for skill in "${skills[@]}"; do
   cp -R "$stage/.claude/skills/$skill" "$swap/$skill"
 done
@@ -53,8 +65,9 @@ cp "$stage/skills-lock.json" "$swap/skills-lock.json"
 for skill in "${skills[@]}"; do
   if [[ -e ".claude/skills/$skill" ]]; then
     mv ".claude/skills/$skill" "$swap/$skill.old"
+    backups=1
   fi
   mv "$swap/$skill" ".claude/skills/$skill"
 done
 mv "$swap/skills-lock.json" skills-lock.json
-rm -rf "$stage"
+rm -rf "$swap" "$stage"
