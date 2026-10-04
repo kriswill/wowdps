@@ -327,22 +327,23 @@ fn the_rows_tier_carries_the_uptime_rollup_and_the_coarse_series() {
 }
 
 #[test]
-fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
+fn a_stored_fight_answers_the_taken_drill_and_both_uptime_halves() {
     let (_tmp, store, fights, facts, kill, trash) = spans_store();
     let kill_fight = fight(&fights, BOSS);
     let seg = &kill_fight.segment;
 
-    // The Taken drill's timeline is the coarse series with the marks.
+    // The Taken drill's timeline: the kill keeps the series tier, so it is
+    // the live 1 s curve with the marks (v42); the rows tier's coarse one
+    // answers once the details go (`a_tier_2_healing_drill_falls_back…`).
     let sf = store
         .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
         .unwrap();
     assert_eq!(sf.tier, 3);
     let bd = sf.breakdown.as_ref().expect("the Taken drill");
     let tl = bd.timeline.as_ref().expect("a timeline again (4b)");
-    assert_eq!(tl.bucket_ms, COARSE_BUCKET_MS);
-    assert_eq!(tl.bucket_ms, 10_000);
-    assert_eq!(*tl, seg.taken_timeline(WARRIOR).coarsen(10));
-    assert_eq!(tl.buckets[0], 22_000);
+    assert_eq!(tl.bucket_ms, 1_000);
+    assert_eq!(*tl, seg.taken_timeline(WARRIOR));
+    assert_eq!(tl.coarsen(10).buckets[0], 22_000);
     assert!(bd.mitigation.is_some(), "the 2b record still rides");
     // The Healing drill on tier 3 keeps the details tier's 1 s series.
     let heal = store
@@ -488,17 +489,27 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
     let a = store
         .stored_fight(&trash, View::Taken, Some(WARRIOR), None)
         .unwrap();
-    let b = store.derived_fight(trash_fight, facts, View::Taken, Some(WARRIOR), None);
+    let mut b = store.derived_fight(trash_fight, facts, View::Taken, Some(WARRIOR), None);
     // A Trash fight stores no details tier (tier 2) and no series while
     // `derived_fight` always has the parse in hand (tier 3, its seconds
-    // too) — pre-existing; the Taken drill answers from the rows tier and
-    // is identical either way.
+    // too) — pre-existing; the Taken drill answers its lists from the rows
+    // tier either way, and (v42) its curve from the seconds where it has
+    // them: the live 1 s one, where the stored trash keeps the 10 s.
+    if let Some(bd) = b.breakdown.as_mut() {
+        assert_eq!(
+            bd.timeline.as_ref(),
+            Some(&trash_fight.segment.taken_timeline(WARRIOR))
+        );
+        bd.timeline = a.breakdown.as_ref().and_then(|x| x.timeline.clone());
+    }
     assert_eq!((a.tier, b.tier), (2, 3));
     assert_eq!((a.series, b.series), (false, true));
+    assert_eq!((a.abilities, b.abilities), (false, true));
     assert_eq!(
         StoredFight {
             tier: 3,
             series: true,
+            abilities: true,
             ..a.clone()
         },
         b
@@ -553,17 +564,26 @@ fn a_tier_2_healing_drill_falls_back_to_the_coarse_series() {
     let tl = bd.timeline.expect("heal10");
     assert_eq!(tl, seg.heal_timeline(PRIEST).coarsen(10));
     assert_eq!(tl.bucket_ms, COARSE_BUCKET_MS);
-    // The Taken drill is the same on either tier.
+    // The Taken drill keeps its lists on either tier; its curve is the
+    // coarse 10 s one once the details (and with them the series) go.
+    let low = demoted
+        .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
+        .unwrap()
+        .breakdown
+        .unwrap();
+    let high = store
+        .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
+        .unwrap()
+        .breakdown
+        .unwrap();
     assert_eq!(
-        demoted
-            .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
-            .unwrap()
-            .breakdown,
-        store
-            .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
-            .unwrap()
-            .breakdown
+        (&low.by_spell, &low.by_target, low.mitigation),
+        (&high.by_spell, &high.by_target, high.mitigation)
     );
+    let coarse = low.timeline.expect("the coarse taken series");
+    assert_eq!(coarse.bucket_ms, COARSE_BUCKET_MS);
+    assert_eq!(coarse, seg.taken_timeline(WARRIOR).coarsen(10));
+    assert_eq!(coarse.buckets[0], 22_000);
     // A player with no coarse block has no Healing drill on tier 2.
     assert!(
         demoted
@@ -828,7 +848,11 @@ fn a_regrade_back_fills_a_pre_4b_record_and_keeps_its_pin() {
     let sf = reopened
         .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
         .unwrap();
-    assert_eq!(sf.breakdown.unwrap().timeline.unwrap().buckets[0], 22_000);
+    assert_eq!(
+        sf.breakdown.unwrap().timeline.unwrap(),
+        kill_fight.segment.taken_timeline(WARRIOR),
+        "the rewrite keeps the series tier: the 1 s curve"
+    );
     assert!(!sf.uptime.is_empty());
     assert!(close(
         trend_of(&reopened, WARRIOR, TrendMeasure::AmUptime)

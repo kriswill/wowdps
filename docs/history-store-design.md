@@ -141,9 +141,10 @@ Retention runs on the history thread after every write. It is count-based per *g
 | `history_enabled` | true | Write at all. Disabled answers every query empty; `Status` says why. |
 | `history_dir` | XDG | Override the lake root. The DuckDB binary reads the same key, so SQL always sees the lake the daemon writes. |
 | `history_store_trash` | false | Also store trash segments and a key's members as their own records. |
-| `history_keep_per_encounter` | 200 | Cards and rows kept per group. Over the cap, the oldest unprotected fights are unlinked (details, rows, card). |
-| `history_keep_details_per_encounter` | 10 | Details kept per group. Over the cap, the oldest unprotected details are unlinked; the card and rows stay. |
+| `history_keep_per_encounter` | 200 | Cards and rows kept per group beyond the protected set. Over the cap, the oldest unprotected fights are unlinked (details, rows, card). |
+| `history_keep_details_per_encounter` | 10 | Details kept per group beyond the protected set. Over the cap, the oldest unprotected details are unlinked; the card and rows stay. |
 | `history_details_min_wipe_secs` | 60 | A wipe at least this long gets details at write time; kills always do, aborted fights and shorter wipes never. |
+| `history_keep_kills_whole` | true | v42: every boss kill and timed key is in the protected set (details and series kept all season). `false` and the caps count them again. |
 | `history_characters` | "" | "Name-Realm, …" that are the owner. Empty means inferred (section 8). |
 
 <picture>
@@ -151,7 +152,9 @@ Retention runs on the history thread after every write. It is count-based per *g
   <img alt="A raid night's pulls and what retention keeps" src="assets/history-store/night-light.svg">
 </picture>
 
-The important asymmetry, softened since the first cut: details are written for every kill and for wipes lasting at least `history_details_min_wipe_secs` (default 60 s), never for aborted fights or shorter wipes. Pinning a short wipe protects its card and rows from eviction but cannot conjure the timelines that were never written; a long wipe's details count against the details cap like a kill's and, being rarely protected, are the first demoted. Section 11 returns to this.
+The important asymmetry, softened since the first cut: details are written for every kill and for wipes lasting at least `history_details_min_wipe_secs` (default 60 s), never for aborted fights or shorter wipes. Pinning a short wipe protects its card and rows from eviction but cannot conjure the timelines that were never written; a long wipe's details count against the details cap and, being rarely protected, are the first demoted. Section 11 returns to this.
+
+> Since v42 (2026-10-03) every boss kill and every timed key is in the protected set — kept whole, details and series, for the season (a season's archive is later work) — and the two caps count the unprotected fights alone, so a farmed boss's kills no longer squeeze its wipes' details out, and an older kill no longer loses its details to ten newer ones. A kill, timed key or pinned fight that an older build left short of its details, or a series file in an older format, is rewritten from its log at start, one at a time while the history thread is idle.
 
 > Since roadmap 1a step 2b the owner's best per spec covers a third measure — a Tank spec's best `mitigated_pct`, kills only — and every best has a floor: a measure of 0 or an aborted fight protects nothing. On the real store the floor unprotected four dead cards and demoted none.
 

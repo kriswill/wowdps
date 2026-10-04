@@ -323,6 +323,8 @@ impl Bridge {
             death,
             boss,
             range,
+            spell: None,
+            pair: None,
         });
         wait(client, |msg| match msg {
             DaemonMsg::Fight { req_id: got, fight } if got == req_id => Some(Ok(fight)),

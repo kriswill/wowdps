@@ -20,7 +20,7 @@ use wowdps_proto::wire;
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
     HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
-    SegmentRef, StoredFight, StoredUptime, TrendBucket, TrendMeasure,
+    SegmentRef, StoredFight, StoredPair, StoredUptime, TrendBucket, TrendMeasure,
 };
 
 /// xorshift64, fixed seed. Deterministic and dependency-free.
@@ -426,6 +426,14 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     }],
                 }),
                 series: true,
+                abilities: true,
+                // v42: a stored comparison, so its trailing decoder is under
+                // mutation too.
+                pair: Some(StoredPair {
+                    a: compare_side("Player-1-A"),
+                    b: CompareSide::default(),
+                    range: Some((0, u32::MAX)),
+                }),
             }),
         },
         // v26: the last answer tag with every row field distinct, so the

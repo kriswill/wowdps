@@ -5,10 +5,14 @@
 //! same rows in its series tier and windows them here too — so a stored
 //! pull's zoom answers exactly what the live one did.
 
-use crate::{Class, Row, Spec};
+use crate::{AbilitySeries, Class, Row, Spec, SpellTree};
 
 /// The grid every series is bucketed on (R12's): one second.
 pub const BUCKET_MS: i64 = 1_000;
+
+/// The longest grid a curve keeps: six hours of seconds. A second past it
+/// (a clock that jumped) is in no curve, live or stored.
+pub const MAX_BUCKETS: usize = 21_600;
 
 /// One second of one row: what landed in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -43,6 +47,194 @@ impl SeriesRow {
             None => self.key.clone(),
         }
     }
+}
+
+/// v42: one Damage ability's targets second by second — every enemy name
+/// it landed on, keyed as the opened ability's target rows are, each
+/// row wearing the ability's school. What an opened ability's target list
+/// windows ([`window_rows`]) and its graph stacks ([`rank_curves`]), live
+/// and stored alike.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpellTargets {
+    /// The by-ability row's key ("spell" or "spell\0pet").
+    pub key: String,
+    pub targets: Vec<SeriesRow>,
+}
+
+/// v42: one target's whole-fight tally of one ability.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TargetTally {
+    pub target: String,
+    pub amount: u64,
+    /// Overkill on damage, overheal on healing.
+    pub extra: u64,
+    pub count: u64,
+    pub crits: u64,
+}
+
+/// v42: one ability's whole-fight targets, as tallies — what an opened
+/// ability's target list says over the whole fight ([`target_rows`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpellTallies {
+    /// The by-ability row's key ("spell" or "spell\0pet").
+    pub key: String,
+    pub school: u32,
+    pub targets: Vec<TargetTally>,
+}
+
+/// `cells`' amounts added onto `into` on the grid — second i at index i,
+/// `into` grown to the last second a cell names — what one by-ability row
+/// draws.
+pub fn add_cells(into: &mut Vec<u64>, cells: &[SeriesCell]) {
+    for c in cells {
+        let i = c.bucket as usize;
+        if i >= MAX_BUCKETS {
+            continue;
+        }
+        if into.len() <= i {
+            into.resize(i + 1, 0);
+        }
+        if let Some(slot) = into.get_mut(i) {
+            *slot += c.amount;
+        }
+    }
+}
+
+/// The curve of the row keyed `key` among `rows`; empty when none is.
+pub fn curve_of(rows: &[SeriesRow], key: &str) -> Vec<u64> {
+    let mut out = Vec::new();
+    if let Some(r) = rows.iter().find(|r| r.key == key) {
+        add_cells(&mut out, &r.cells);
+    }
+    out
+}
+
+/// R26 (step 2): the curves a drill's graph stacks — the `top` largest
+/// entries of the ability tree over `rows` (a group's members summed, a
+/// row alone), largest first (ties by key), each the sum of its rows'
+/// curves, which `curve` gives by row key. An entry whose curve is all
+/// zero is left out. The ONE ranking, live and stored.
+pub fn stack(
+    rows: &[Row],
+    tree: &SpellTree,
+    top: usize,
+    curve: impl Fn(&str) -> Vec<u64>,
+) -> Vec<AbilitySeries> {
+    let mut entries: Vec<(u64, crate::TreeEntry)> = tree
+        .entries(rows)
+        .into_iter()
+        .map(|e| {
+            let sum = e
+                .members
+                .iter()
+                .filter_map(|&i| rows.get(i))
+                .map(|r| r.amount)
+                .sum();
+            (sum, e)
+        })
+        .collect();
+    entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.key.cmp(&b.1.key)));
+    entries
+        .into_iter()
+        .take(top)
+        .filter_map(|(_, e)| {
+            let mut buckets: Vec<u64> = Vec::new();
+            for r in e.members.iter().filter_map(|&i| rows.get(i)) {
+                let c = curve(&r.key);
+                if buckets.len() < c.len() {
+                    buckets.resize(c.len(), 0);
+                }
+                for (s, v) in buckets.iter_mut().zip(&c) {
+                    *s += v;
+                }
+            }
+            buckets.iter().any(|b| *b > 0).then_some(AbilitySeries {
+                key: e.key,
+                buckets,
+            })
+        })
+        .collect()
+}
+
+/// R26 (step 2): the `top` largest of `curves` by their sum, largest first
+/// (ties by key), an all-zero one left out — an opened ability's stack by
+/// target.
+pub fn rank_curves(
+    curves: impl IntoIterator<Item = (String, Vec<u64>)>,
+    top: usize,
+) -> Vec<AbilitySeries> {
+    let mut ranked: Vec<(u64, AbilitySeries)> = curves
+        .into_iter()
+        .map(|(key, buckets)| (buckets.iter().sum(), AbilitySeries { key, buckets }))
+        .filter(|(sum, _)| *sum > 0)
+        .collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.key.cmp(&b.1.key)));
+    ranked.into_iter().take(top).map(|(_, s)| s).collect()
+}
+
+/// R26 (step 2) / v42: an opened ability's stack by target — its per-target
+/// rows' curves ranked by [`rank_curves`], live and stored.
+pub fn target_stack(targets: &[SeriesRow], top: usize) -> Vec<AbilitySeries> {
+    rank_curves(
+        targets.iter().map(|r| {
+            let mut curve = Vec::new();
+            add_cells(&mut curve, &r.cells);
+            (r.key.clone(), curve)
+        }),
+        top,
+    )
+}
+
+/// v17: an opened ability's whole-fight targets as rows — `pct` of the
+/// ability's own total, no rate, every row wearing the ability's school
+/// and the player's class and spec, largest first (ties by label).
+pub fn target_rows(
+    tallies: &[TargetTally],
+    school: u32,
+    class: Option<Class>,
+    spec: Option<Spec>,
+) -> Vec<Row> {
+    let total: u64 = tallies.iter().map(|t| t.amount).sum();
+    let mut rows: Vec<Row> = tallies
+        .iter()
+        .map(|t| Row {
+            key: t.target.clone(),
+            label: t.target.clone(),
+            amount: t.amount,
+            extra: t.extra,
+            count: t.count,
+            crits: t.crits,
+            pct: if total > 0 {
+                t.amount as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            },
+            class,
+            spec,
+            school,
+            ..Row::default()
+        })
+        .collect();
+    rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
+    rows
+}
+
+/// v12: a windowed comparison side's total — `rows` (a window's, from
+/// [`window_rows`]) summed, `per_sec` over `secs`; the caller names whose.
+pub fn total_of(rows: &[Row], secs: f64) -> Row {
+    let mut total = Row::default();
+    for r in rows {
+        total.amount += r.amount;
+        total.extra += r.extra;
+        total.count += r.count;
+        total.crits += r.crits;
+    }
+    total.per_sec = if secs > 0.0 {
+        total.amount as f64 / secs
+    } else {
+        0.0
+    };
+    total
 }
 
 /// A zoom window snapped OUT to the grid — `lo` down, `hi` up to a bucket

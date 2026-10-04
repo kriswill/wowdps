@@ -78,7 +78,10 @@ zoom). The mcp's `stored_fight` takes `from_secs` / `to_secs`.
 Measured on the real night: 408 KB for the 7-minute kill beside its 752 KB
 details file, 563 KB beside 865 KB for a 10-minute one — the tier adds
 about 55–65% of a kept kill's details.[^spec] Older fights gain it only
-through a regrade, while their logs exist. The format byte leaves room for
+through a regrade, while their logs exist. v42 ([Boss Kills And Timed Keys
+Are Kept Whole](stored-pulls-kept-whole.md)) moved the format to 2, keeping
+the per-ability targets measured here and left out, keeps every kill's and
+timed key's tier all season, and rewrites stale ones at start. The format byte leaves room for
 compression without a migration. The binding text is CONTRACT.md's v39
 row.[^contract]
 

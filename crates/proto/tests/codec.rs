@@ -12,7 +12,7 @@ use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
     HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
-    SegmentRef, StoredFight, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    SegmentRef, StoredFight, StoredPair, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// R12: one comparison side, with every marker kind represented.
@@ -320,6 +320,8 @@ fn client_msgs() -> Vec<ClientMsg> {
             death: None,
             boss: Some("Vexamus".to_string()),
             range: Some((5_000, 9_000)),
+            spell: Some("Fireball\u{0}Imp".to_string()),
+            pair: Some("Player-1-B".to_string()),
         },
         ClientMsg::PinFight {
             req_id: 6,
@@ -858,6 +860,13 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 raid: Some(raid()),
                 // v39: the series tier is on disk.
                 series: true,
+                abilities: true,
+                // v42: a stored comparison, both sides and a window.
+                pair: Some(StoredPair {
+                    a: compare_side("Player-1-A"),
+                    b: compare_side("Player-1-B"),
+                    range: Some((1_000, 61_000)),
+                }),
             }),
         },
         DaemonMsg::Fight {
@@ -1043,7 +1052,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 41, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 42, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1347,12 +1356,15 @@ fn golden_bytes_pin_the_encoding() {
         death: None,
         boss: None,
         range: None,
+        spell: Some("F".to_string()),
+        pair: None,
     };
     assert_eq!(
         hex(&get_fight.encode()),
         // v28 (R9): the death index rides between drill and boss; v39 the
-        // window after it (one presence byte, `None`).
-        "110000000905000000 03000000782d31 05 00 00 00 00".replace(' ', "")
+        // window after it (one presence byte, `None`); v42 the ability (a
+        // present string) and the pair (`None`).
+        "180000000905000000 03000000782d31 05 00 00 00 00 01 0100000046 00".replace(' ', "")
     );
     let changed = DaemonMsg::HistoryChanged {
         fight_id: "x-1".to_string(),
@@ -1600,14 +1612,20 @@ fn golden_bytes_pin_the_encoding() {
                 shields,
                 raid: None,
                 series: false,
+                abilities: false,
+                pair: None,
             }),
         }
         .encode();
         // v35 put the raid timeline's presence byte behind all of them —
-        // `00` here, pinned on its own below — and v39 the series flag
-        // after it; both are cut off, so every tail these checks read ends
-        // where it did.
-        assert_eq!(frame.last(), Some(&0), "series: false closes the frame");
+        // `00` here, pinned on its own below — v39 the series flag after
+        // it and v42 the pair's presence byte after that; all are cut off,
+        // so every tail these checks read ends where it did.
+        assert_eq!(frame.last(), Some(&0), "pair: None closes the frame");
+        frame.pop();
+        assert_eq!(frame.last(), Some(&0), "abilities: false before it");
+        frame.pop();
+        assert_eq!(frame.last(), Some(&0), "series: false before that");
         frame.pop();
         assert_eq!(frame.last(), Some(&0), "raid: None before it");
         frame.pop();
@@ -1948,15 +1966,18 @@ fn golden_bytes_pin_the_encoding() {
                 shields: Vec::new(),
                 raid,
                 series: false,
+                abilities: false,
+                pair: None,
             }),
         }
         .encode()
     };
     let (got, bare) = (hex(&fight(Some(small_raid))[4..]), hex(&fight(None)[4..]));
-    // v39: the series flag closes the frame after the raid.
-    let head = bare.strip_suffix("00000000 00 00".replace(' ', "").as_str());
+    // v39: the series flag closes the frame after the raid, and v42 the
+    // abilities flag and the pair's presence byte after that.
+    let head = bare.strip_suffix("00000000 00 00 00 00".replace(' ', "").as_str());
     assert_eq!(
-        head.map(|h| format!("{h}00000000{tail}00")),
+        head.map(|h| format!("{h}00000000{tail}000000")),
         Some(got),
         "shields 0, then the raid"
     );

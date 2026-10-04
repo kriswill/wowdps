@@ -467,7 +467,8 @@ fn the_rows_tier_carries_taken_as_its_seventh_view_for_every_fight() {
                 // R18 (step 4b): the taken curve is back — the live 1 s
                 // series coarsened to the rows tier's 10 s, marks kept;
                 // `None` only for a player who wrote no coarse block
-                // (nothing taken, nothing healed, no mark).
+                // (nothing taken, nothing healed, no mark). v42: a fight
+                // that keeps the series tier answers the live 1 s itself.
                 let coarse = fight.segment.taken_timeline(guid).coarsen(10);
                 let any = coarse.buckets.iter().any(|b| *b != 0)
                     || fight
@@ -477,11 +478,19 @@ fn the_rows_tier_carries_taken_as_its_seventh_view_for_every_fight() {
                         .iter()
                         .any(|b| *b != 0)
                     || !coarse.marks.is_empty();
-                assert_eq!(
-                    b.timeline,
-                    any.then_some(coarse),
-                    "{log} {id} {guid}: the coarse taken series (4b)"
-                );
+                if sf.series {
+                    assert_eq!(
+                        b.timeline,
+                        Some(fight.segment.taken_timeline(guid)),
+                        "{log} {id} {guid}: the 1 s taken series (v42)"
+                    );
+                } else {
+                    assert_eq!(
+                        b.timeline,
+                        any.then_some(coarse),
+                        "{log} {id} {guid}: the coarse taken series (4b)"
+                    );
+                }
             }
         }
         assert!(stored >= 1, "{log}: {stored} fights stored");
@@ -512,6 +521,8 @@ fn the_stored_taken_rows_equal_the_live_snapshot_through_the_mock() {
         death: None,
         boss: None,
         range: None,
+        spell: None,
+        pair: None,
     });
     let [
         DaemonMsg::Fight {
@@ -525,17 +536,12 @@ fn the_stored_taken_rows_equal_the_live_snapshot_through_the_mock() {
     assert_eq!(f.rows, live, "stored Taken rows are the live rows");
     let b = f.breakdown.clone().expect("the stored Taken drill");
     // R18 (v24): the live drill carries the 1 s taken timeline; the stored
-    // one answers from the rows tier, which (step 4b) holds it coarsened
-    // to 10 s with the same marks — everything else is identical.
+    // kill answers it too off the series tier (v42) — where the rows tier
+    // alone holds it coarsened to 10 s with the same marks (step 4b).
     let live_tl = live_drill.timeline.clone().expect("the live 1 s series");
     assert_eq!(live_tl.bucket_ms, 1_000);
-    let stored_tl = b.timeline.clone().expect("the coarse series (4b)");
-    assert_eq!(stored_tl.bucket_ms, 10_000);
-    assert_eq!(stored_tl, live_tl.coarsen(10));
-    let live_drill = Breakdown {
-        timeline: Some(live_tl.coarsen(10)),
-        ..live_drill
-    };
+    assert!(f.series, "the kill keeps the series tier");
+    assert_eq!(b.timeline, Some(live_tl));
     assert_eq!(b, live_drill, "the stored drill IS the live drill");
 }
 
@@ -935,9 +941,9 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
             by_spell,
             by_target,
             mitigation: seg.mitigation(guid),
-            // R18 (step 4b): the coarse taken series rides the rows tier
-            // (every player here took damage, so every one has a block).
-            timeline: Some(seg.taken_timeline(guid).coarsen(10)),
+            // v42: the kill keeps the series tier, so its curve is the live
+            // 1 s one — the demoted store below answers the coarse one.
+            timeline: Some(seg.taken_timeline(guid)),
             // R21 (step 6): the unconditioned per-id baseline rides the
             // rows tier for every player who took a hit or a miss.
             stack_base: seg.stack_base(guid),
@@ -981,9 +987,14 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
             .stored_fight(&kill, View::Taken, Some(guid), None)
             .unwrap();
         assert_eq!(sf.tier, 2, "rows only");
+        // R18 (step 4b): the coarse taken series rides the rows tier
+        // (every player here took damage, so every one has a block).
         assert_eq!(
             sf.breakdown.as_ref(),
-            Some(&expect(guid)),
+            Some(&Breakdown {
+                timeline: Some(seg.taken_timeline(guid).coarsen(10)),
+                ..expect(guid)
+            }),
             "{guid} at tier 2"
         );
         // Damage still needs the details tier, so its drill is gone.
@@ -1401,8 +1412,23 @@ fn synth_card(
     }
 }
 
-/// Synthetic cards in a store that keeps one per group, then one real write
-/// so retention runs over all of them. Returns the surviving starts.
+/// The same cards as arena matches — wins and losses, no boss kill — which
+/// v42 does not keep whole, so the fastest-win and best-measure protections
+/// still decide what survives.
+fn in_arena(cards: &[FightCard]) -> Vec<FightCard> {
+    cards
+        .iter()
+        .map(|c| FightCard {
+            kind: wowdps_proto::history::FightKind::Arena,
+            ..c.clone()
+        })
+        .collect()
+}
+
+/// Synthetic cards in a store that keeps none per group beyond the protected
+/// set (v42: the cap counts the unprotected alone, so 0 asks exactly "is it
+/// protected?"), then one real write so retention runs over all of them.
+/// Returns the surviving starts.
 fn survivors(cards: &[FightCard]) -> Vec<i64> {
     let mut backend = MemBackend::new();
     for c in cards {
@@ -1417,7 +1443,7 @@ fn survivors(cards: &[FightCard]) -> Vec<i64> {
     let mut store = Store::open(
         backend,
         Retention {
-            keep_per_encounter: 1,
+            keep_per_encounter: 0,
             characters: vec!["Ana-Realm".to_string()],
             ..Retention::default()
         },
@@ -1478,10 +1504,20 @@ fn the_protected_set_keeps_a_tanks_best_mitigated_pct() {
             false,
         ),
     ];
+    // v42: every kill is kept whole — the best mitigated_pct (oldest) and
+    // the fastest kill (newest) among them.
     assert_eq!(
         survivors(&cards),
+        vec![1_000, 2_000, 3_000],
+        "every kill, whatever its measures"
+    );
+    // An arena win is no boss kill, so the protections still decide it: the
+    // best mitigated_pct (oldest) and the fastest win (newest), the middle
+    // one neither.
+    assert_eq!(
+        survivors(&in_arena(&cards)),
         vec![1_000, 3_000],
-        "the best mitigated_pct (oldest) and the fastest kill (newest)"
+        "the best mitigated_pct (oldest) and the fastest win (newest)"
     );
 
     // A wipe is not a personal best: with the best-pct pull aborted, and
@@ -1528,7 +1564,7 @@ fn the_protected_set_keeps_a_tanks_best_mitigated_pct() {
     );
 
     // The measure is a TANK's: the same numbers on a Fire Mage protect
-    // nothing, so only the fastest kill survives.
+    // nothing — moot since v42, which keeps every kill whole.
     let cards = [
         synth_card(
             1_000,
@@ -1566,6 +1602,13 @@ fn the_protected_set_keeps_a_tanks_best_mitigated_pct() {
     ];
     assert_eq!(
         survivors(&cards),
+        vec![1_000, 2_000, 3_000],
+        "kills are kept whole, best or not"
+    );
+    // And in the arena the measure is a TANK's: on a Fire Mage the same
+    // numbers protect nothing, so only the fastest win survives.
+    assert_eq!(
+        survivors(&in_arena(&cards)),
         vec![3_000],
         "a DPS's mitigation is no best"
     );

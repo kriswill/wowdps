@@ -35,6 +35,9 @@ pub struct Config {
     /// A wipe this long (seconds) or longer gets a details file too;
     /// shorter wipes (and aborted fights) never do.
     pub history_details_min_wipe_secs: u64,
+    /// v42: every boss kill and timed key is kept whole — never demoted or
+    /// evicted, details and series alike — so the caps count the rest.
+    pub history_keep_kills_whole: bool,
     /// "Name-Realm, …" that are "me"; empty = infer from COMBATANT_INFO.
     pub history_characters: Vec<String>,
 }
@@ -53,6 +56,7 @@ impl Default for Config {
             history_keep_per_encounter: 200,
             history_keep_details_per_encounter: 10,
             history_details_min_wipe_secs: 60,
+            history_keep_kills_whole: true,
             history_characters: Vec::new(),
         }
     }
@@ -179,6 +183,11 @@ impl Config {
                         cfg.history_details_min_wipe_secs = n;
                     }
                 }
+                "history_keep_kills_whole" => {
+                    if let Some(b) = parse_bool(value) {
+                        cfg.history_keep_kills_whole = b;
+                    }
+                }
                 // The reader has no list type: one comma-separated string.
                 "history_characters" => {
                     if let Some(s) = parse_string(value) {
@@ -288,6 +297,9 @@ overlay_exit_grace_secs = 60
         assert_eq!(cfg.history_details_min_wipe_secs, 90);
         assert_eq!(cfg.history_keep_details_per_encounter, 4);
         assert_eq!(Config::default().history_details_min_wipe_secs, 60);
+        // v42: kills and timed keys are kept whole unless told otherwise.
+        assert!(Config::default().history_keep_kills_whole);
+        assert!(!Config::parse("history_keep_kills_whole = false\n").history_keep_kills_whole);
         // Wrong type: the default stands.
         let cfg = Config::parse(r#"history_details_min_wipe_secs = "ninety""#);
         assert_eq!(cfg.history_details_min_wipe_secs, 60);

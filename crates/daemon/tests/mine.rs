@@ -151,6 +151,8 @@ fn a_stored_fight_marks_its_rows_when_it_answers() {
         death: None,
         boss: None,
         range: None,
+        spell: None,
+        pair: None,
     });
     let fight = replies.into_iter().find_map(|m| match m {
         DaemonMsg::Fight { fight, .. } => fight,

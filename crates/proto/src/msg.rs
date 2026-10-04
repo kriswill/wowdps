@@ -15,7 +15,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 41;
+pub const PROTO_VERSION: u16 = 42;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -150,6 +150,18 @@ pub enum ClientMsg {
         /// as a live drill does (v38); anywhere else the drill is whole and
         /// the echo `None`.
         range: Option<(u32, u32)>,
+        /// v42: the second drill level on a stored pull — one ability of the
+        /// drilled player, by its by-spell row key, as `Cursor::Segment.spell`
+        /// names it. A fight that keeps the series tier answers it as the
+        /// live drill does: on Damage the ability's own curve, its targets
+        /// (windowed with `range`) and their stack; on Healing its targets.
+        spell: Option<String>,
+        /// v42: a COMPARISON on a stored pull — the second player of the
+        /// pair, `drill` the first, compared on `view` (`Cursor::Compare`'s
+        /// pair). Answered as `StoredFight::pair`, with `range` windowing its
+        /// tables where the series tier stands behind them and `spell` the
+        /// ability both sides draw.
+        pair: Option<String>,
     },
     /// v20: protect (or release) a stored fight from retention.
     PinFight {
@@ -429,6 +441,25 @@ pub struct StoredFight {
     /// `Breakdown.range`). False everywhere else: a zoom there is the
     /// reader's own, and the lists stay the whole pull.
     pub series: bool,
+    /// v42: the series tier holds what opens an ability — each ability's
+    /// targets (format 2): `GetFight.spell` answers its targets and their
+    /// stack. False with `series` from a format-1 file whose log is gone
+    /// (its windows and stack still answer), and everywhere `series` is.
+    pub abilities: bool,
+    /// v42: the comparison `GetFight.pair` asked for — both players' sides
+    /// in the pair's order, as a live `CompareSnapshot` carries them. `None`
+    /// without a pair, and on a fight whose details tier is gone (tier < 3:
+    /// the abilities a side lists are not kept).
+    pub pair: Option<StoredPair>,
+}
+
+/// v42: a stored fight's comparison — the two sides and the window their
+/// tables answer (echoed only where the series tier windows them).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredPair {
+    pub a: CompareSide,
+    pub b: CompareSide,
+    pub range: Option<(u32, u32)>,
 }
 
 /// v25: one uptime cell with the TARGET it sits on (the cell's own `src`
@@ -2144,6 +2175,14 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
     wire::put_opt(buf, f.raid.as_ref(), put_raid);
     // v39: the series tier is on disk: a drill answers a window.
     wire::put_bool(buf, f.series);
+    // v42: the tier opens an ability.
+    wire::put_bool(buf, f.abilities);
+    // v42: the comparison a pair asked for, trailing.
+    wire::put_opt(buf, f.pair.as_ref(), |b, p| {
+        put_compare_side(b, &p.a);
+        put_compare_side(b, &p.b);
+        put_range(b, p.range);
+    });
 }
 
 /// v26: `ShieldRow` = u32 spell_id | string label | u64 applied | u64
@@ -2183,6 +2222,14 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
         shields: rd.vec(get_shield_row)?,
         raid: rd.opt(get_raid)?,
         series: rd.bool()?,
+        abilities: rd.bool()?,
+        pair: rd.opt(|r| {
+            Ok(StoredPair {
+                a: get_compare_side(r)?,
+                b: get_compare_side(r)?,
+                range: get_range(r)?,
+            })
+        })?,
     })
 }
 
@@ -2348,6 +2395,8 @@ impl ClientMsg {
                 death,
                 boss,
                 range,
+                spell,
+                pair,
             } => {
                 wire::put_u32(&mut body, *req_id);
                 wire::put_str(&mut body, fight_id);
@@ -2356,6 +2405,9 @@ impl ClientMsg {
                 wire::put_opt(&mut body, death.as_ref(), |b, d| wire::put_u32(b, *d));
                 put_opt_str(&mut body, boss.as_deref());
                 put_range(&mut body, *range);
+                // v42: the ability and the pair, trailing.
+                put_opt_str(&mut body, spell.as_deref());
+                put_opt_str(&mut body, pair.as_deref());
                 T_GET_FIGHT
             }
             ClientMsg::PinFight {
@@ -2425,6 +2477,8 @@ impl ClientMsg {
                 death: rd.opt(|r| r.u32())?,
                 boss: rd.opt(|r| r.string())?,
                 range: get_range(&mut rd)?,
+                spell: rd.opt(|r| r.string())?,
+                pair: rd.opt(|r| r.string())?,
             },
             T_PIN_FIGHT => ClientMsg::PinFight {
                 req_id: rd.u32()?,

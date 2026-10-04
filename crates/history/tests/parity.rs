@@ -139,6 +139,7 @@ fn start_over_with(
             keep_per_encounter: 200,
             keep_details_per_encounter: 10,
             details_min_wipe_secs: 60,
+            keep_kills_whole: true,
             characters: Vec::new(),
             cache_dir: None,
             addon_dir,
@@ -192,6 +193,8 @@ fn fetch_fight(
         death: None,
         boss: None,
         range: None,
+        spell: None,
+        pair: None,
     });
     let deadline = Instant::now() + DEADLINE;
     while Instant::now() < deadline {
@@ -2966,7 +2969,13 @@ fn the_span_views_answer_the_r18_fixture() {
             .breakdown
             .as_ref()
             .and_then(|b| b.timeline.as_ref())
-            .expect("the stored Taken drill carries the coarse series");
+            .expect("the stored Taken drill carries the taken series");
+        // v42: a fight that keeps the series tier answers the live 1 s
+        // curve; coarsened, it is the rows tier's 10 s one.
+        let timeline = match timeline.bucket_ms {
+            1_000 => timeline.coarsen(10),
+            _ => timeline.clone(),
+        };
         assert_eq!(timeline.bucket_ms, 10_000);
         assert_eq!(
             timeline.buckets, taken10,

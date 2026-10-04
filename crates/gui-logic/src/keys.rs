@@ -415,8 +415,11 @@ pub fn sheet_groups(surface: Surface) -> Vec<(&'static str, Vec<&'static Binding
 pub struct Inert {
     /// Home or the talent viewer is up: nothing of a pull's is on it.
     pub covered: bool,
-    /// The pull on the stage is a stored one.
-    pub stored: bool,
+    /// The pull on the stage is a stored one, and what the window offers on
+    /// it (v42, `history::Stored::offered`) — `None` for a pull of the log.
+    pub stored: Option<crate::history::Kept>,
+    /// A pin or a pair is up: `v` lets it go, whatever the store kept.
+    pub comparing: bool,
     /// The inspector has the keys.
     pub inspecting: bool,
     /// The store holds a card of the pull to pin.
@@ -429,8 +432,9 @@ pub struct Inert {
 }
 
 /// The keys the `?` sheet dims: what the pull on the stage cannot answer
-/// on its surface — a stored pull keeps no comparison, no enemies' view
-/// and no ability's own curve — `p` where the store holds no card of it to
+/// on its surface — a stored pull keeps no enemies' view, a comparison
+/// only with its details and an ability's own curve only with its seconds
+/// (v42) — `p` where the store holds no card of it to
 /// pin, Enter on the Deaths table beside the inspector, which hands the
 /// keyless recap nothing, and `f` in a narrow window, whose inspector has
 /// nowhere wider to go.
@@ -439,9 +443,12 @@ pub fn inert_keys(i: Inert) -> Vec<&'static str> {
     if i.covered {
         return keys;
     }
-    if i.stored {
-        keys.extend(["E", "v"]);
-        if i.inspecting {
+    if let Some(kept) = i.stored {
+        keys.push("E");
+        if !kept.details && !i.comparing {
+            keys.push("v");
+        }
+        if i.inspecting && !kept.abilities {
             keys.push("enter");
         }
     }
@@ -577,8 +584,8 @@ mod tests {
         assert_eq!(Surface::of(false, false, false, &app), Surface::Meter);
     }
 
-    /// The dimmed keys: a stored pull's comparison and enemies (and Enter
-    /// when the inspector has the keys), `p` with no card, Enter beside
+    /// The dimmed keys: a stored pull's enemies, and its comparison and
+    /// Enter in the inspector where the store kept no details or seconds, `p` with no card, Enter beside
     /// the Deaths table — and nothing over Home or the viewer.
     #[test]
     fn inert_keys_are_what_the_pull_cannot_answer() {
@@ -589,12 +596,26 @@ mod tests {
         assert!(inert_keys(pull).is_empty());
         assert_eq!(inert_keys(Inert::default()), vec!["p"]);
         let stored = Inert {
-            stored: true,
+            stored: Some(crate::history::Kept::default()),
             inspecting: true,
             deaths_table_beside: true,
             ..pull
         };
         assert_eq!(inert_keys(stored), vec!["E", "v", "enter"]);
+        let whole = Inert {
+            stored: Some(crate::history::Kept::ALL),
+            ..stored
+        };
+        assert_eq!(
+            inert_keys(whole),
+            vec!["E", "enter"],
+            "a kept kill compares and opens; Enter beside the Deaths table stays inert"
+        );
+        let pinned = Inert {
+            comparing: true,
+            ..stored
+        };
+        assert_eq!(inert_keys(pinned), vec!["E", "enter"], "v lets a pin go");
         let beside = Inert {
             deaths_table_beside: true,
             ..pull
