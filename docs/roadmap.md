@@ -192,11 +192,11 @@ every boss before any curation.
   journal (`encounters.json`), both per-machine caches. An mcp `positions`
   tool gives the coach "where" questions.
 
-**Order.** The plan's research first: position attribution, coordinates and
-gaps; then capture size and speed. Permanence makes a season's size a gate
-before any format is fixed. Then the map art, the journal and spell
-geometry; then the spec; then layers 0–1 for every encounter. Per-boss
-work (layers 2–4) follows for the current tier once the map draws.
+**Order.** Milestone phases, each ending in a feel review on real pulls (plan
+§7). Phase 0 is the platform gate: GPUI, proven at 144 Hz in the real
+window, or a web view. The dots then move on the real floor (Phase 1),
+before what hit whom (2), storage for good (3), the game's tables (4),
+inferred mechanics and phases (5) and the tier's verdicts (6).
 
 **Later: import from Warcraft Logs.** Paste a fight URL, fetch its events
 with positions into the same capture format, and replay another guild's

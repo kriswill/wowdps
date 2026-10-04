@@ -590,17 +590,196 @@ Research for when it starts:
 - The point cost of one pull against a personal key's hourly budget.
 - The API's terms for local, personal use.
 
-## 7. Order
+## 7. Milestones (2026-10-04)
 
-1. **Q1–Q3.** Cheap; they decide whether positions are trustworthy.
-2. **Q11's capture time and size.** Permanence makes size a gate, so it is
-   measured before any format is fixed.
-3. **Q4–Q6.** Game data; layer 1 stands on them.
-4. **Q12, Q15, Q16.** Drawing cost, capture contents, the off switch.
-5. **The spec**, covering capture, layers 0–1, the mode and the
-   architecture.
-6. **Q7–Q10 and Q13**, alongside layers 0–1's build: per-mechanic and
-   per-boss work for the current tier, which can start once the map draws.
+The work ships in phases. Each phase ends in something a person can run on
+real pulls and judge **by feel**, and that review steers the next phase's
+UX and scope. Each phase gets an *As built* note and a refined next step,
+the way `docs/plan-gui-new.md` did. Research questions attach to the phase
+that needs them rather than all running first.
+
+**We are not starting from nothing.**
+
+- The research above, and `docs/replay-assets.md`.
+- An existing web replay that does this well. Its feel is the benchmark:
+  - playback that never stutters
+  - a zoom anchored at the pointer
+  - a wheel the map captures
+  - overlays that scale with the floor
+  - a mechanic timeline under the map
+  - a "now" panel tied to the clock
+  - follow and trails
+
+  Q14 still holds: none of its code, art or words.
+
+**The platform targets.** 144 Hz on the user's main monitor (DP-3 runs at
+143.98 Hz; the portrait DP-1 at 60). macOS and Windows later, so the replay
+adds nothing Linux-only. (The daemon's unix socket and the overlay's layer
+shell are their own porting work.)
+
+### Phase 0 — the platform gate: GPUI, or a web view?
+
+The reason for GPUI was smooth 120 Hz-plus motion without an Electron
+shell, in Rust end to end. This phase proves that holds for a replay before
+any production code is written.
+
+**What the sources say (gpui-pre 0.3.7 and Kit 0.7.0, read 2026-10-04):**
+
+- **Frame pacing.** On Wayland, GPUI paces frames from the compositor's
+  frame callbacks, with Mailbox presentation. So it can draw at 144 Hz
+  where the monitor does. GPUI has Metal on macOS and DirectX on Windows
+  (`gpui-pre-macos`, `gpui-pre-windows`); Zed runs at 120 Hz on ProMotion
+  Macs.
+- **Cached views.** An entity embedded with `.cached(style)` reuses its
+  last frame unless notified, and `request_animation_frame` notifies only
+  the view that asks.
+- **But the root view re-renders every frame.** Its element is laid out
+  and prepainted each draw. The window is one root view today
+  (`CLAUDE.md`: one endless pulse idled the window at 5.7% of a core). So
+  the replay needs the window's heavy parts — rail, header, ribbon, side
+  panel — as cached entities, and a cheap root.
+- **Primitives that fit:**
+  - quads with corner radii, for discs and rings (cheap, anti-aliased)
+  - paths, for cones, lines and trails
+  - images, for the floor and icons, clipped round by corner radii
+  - monochrome SVG sprites, which take a transform: facing arrows and
+    glyphs can rotate
+  - shaped text, cached per line
+- **Primitives that don't fit:**
+  - Images cannot rotate. The floor is CPU-resampled per angle
+    (`docs/replay-assets.md` §4); during a drag that is a new texture per
+    frame, so `drop_image` hygiene matters.
+  - There are no custom shaders (no forks).
+  - The cost of many paths per frame (trails!) at 144 Hz is unknown.
+
+**What a web view would mean:**
+
+- **No embedding on Linux.** Kit has no web view. wry, the library Tauri
+  uses, embeds as a child window only on X11. Under Wayland it needs a GTK
+  container, so in a GPUI window it would be a separate window or the
+  system browser. That breaks decision 1, because the rail, header and
+  ribbon would no longer frame it. On macOS and Windows it embeds.
+- **Three engines to tune feel against:** WebKitGTK, WKWebView and
+  WebView2. WebKitGTK's high-refresh behaviour is unverified.
+- **A bridge.** The daemon speaks a binary protocol on a unix socket that
+  a page cannot open. That means either a proxy in the GUI, or an HTTP or
+  WebSocket server in a stdlib-only daemon.
+- **Two implementations to keep in parity.** The codec, interpolation,
+  transform and geometry would be ported to TypeScript (or built to wasm).
+- **A dependency-policy exception.** A web view plus a JS toolchain needs
+  its own decision record.
+- **The upside:** a mature 2D canvas, hot reload, and the benchmark itself
+  is a web page.
+
+**Leaning: GPUI.** It keeps the replay inside the pull view on every
+platform, keeps one Rust implementation under the borrow checker, and adds
+no runtime or toolchain. The spike decides with numbers, not leaning.
+
+**The spike.** A GPUI prototype in the real window shell, the rest of the
+window as cached entities. It runs on one real pull: the Coiled Altar
+slice, whose tracks are written by a throwaway tool to a scratch file, so
+the GUI still never parses a log. It draws:
+
+- the rotated floor (CPU resample)
+- 25 discs with spec icons
+- the boss
+- about 20 shapes and lines
+- 10 s trails
+
+The interactions are play at 1× and 4×, scrub, zoom anchored at the
+pointer, and a rotate drag.
+
+- **Measured:** frame time (p50/p99), dropped frames and CPU at 144 Hz on
+  DP-3, plus the rotate drag's resample cost.
+- **Felt:** the user plays, scrubs, zooms and rotates.
+- **Exit:** numbers and feel signed off, and GPUI or a web view chosen in
+  a decision record. If a web view, the phases below are re-planned around
+  the bridge.
+- **Answers:** Q12.
+
+### Phase 1 — the dots move on the real floor
+
+- **Capture v0, built on demand.** Built from the log when a pull is
+  opened in replay mode, and held in memory: tracks for players, pets,
+  bosses and adds, plus deaths. It is not stored yet, so the format can
+  change freely until the feel settles.
+  - Parser: `pos_hint`, passive.
+  - R27 drafted, with the `positions.txt` fixture and its parity gate.
+  - Proto: `GetReplay`, chunked, with the version bump.
+- **Floors.** The current season's dungeon-map floors from a first
+  generator, and the yard grid without them.
+- **The mode switch** in the fight header, and the ribbon as scrubber:
+  play, pause and speeds.
+- **Follow a player.** j/k, and the stage's selection carries over.
+- **Rotation.** The data default and the per-encounter override
+  (decision 8).
+- **Answers:** Q1–Q4, Q11's capture time.
+- **The human test.** Does the room read? Do the movements read? Is the
+  default orientation right? How do scrub, play, zoom and rotate feel?
+- **Steers:** disc size, names, trails, the default zoom, the panel's
+  contents.
+
+### Phase 2 — what hit whom (layer 0)
+
+- **Boss cast lanes.** `SPELL_CAST_START`, filtered by `EncounterEvent`
+  (Blizzard's own alert list).
+- **Health.** Boss and player health.
+- **The hit map.** Each hostile hit at its victim's exact position.
+- **Debuffs and tethers.** Badges and rings on the players carrying a
+  debuff, and tethers between linked units.
+- **Deaths.** A skull jumps the clock to five seconds before; the recap
+  follows.
+- **The status panel**, at the playhead.
+- **Answers:** Q7's bare-hit-map half, Q8.
+- **The human test.** Can you explain a death from the map alone?
+- **Steers:** which layers are on by default, density, and colours per
+  theme.
+
+### Phase 3 — kept for good
+
+- **The capture tier.** `replay/<id>.bin` in the history store, captured in
+  the background when the encounter closes.
+- **Controls.** The sticky off switch, re-capture through regrade, and
+  stored pulls replaying.
+- **Answers:** Q11's sizes for a season, Q15, Q16.
+- **The human test.** Replay last week's pull, and turn capture off
+  mid-night.
+- **Steers:** what is captured by default (every pull, or kills), and
+  the capture's contents.
+
+### Phase 4 — the game's tables (layer 1)
+
+- **The encounters manifest.** Stage names, portraits and journal icons.
+- **Spell shapes drawn where the tables give them.** Circles and cones,
+  difficulty-aware through the fallback chain.
+- **Answers:** Q5, Q6.
+- **The human test.** Do the shapes match what the game showed?
+- **Steers:** which shapes to draw, and how a known shape looks against an
+  inferred one.
+
+### Phase 5 — inferred mechanics and phases (layers 2–3)
+
+- **Inferred ground effects.** Puddles, soaks and lines, each drawn as
+  inferred and carrying its measured confidence.
+- **Phases.** Bands on the ribbon, from per-boss rules plus the generic
+  fallback, checked against hand-labelled pulls.
+- **Answers:** Q7, Q9, Q10.
+- **The human test.** Do the phases match memory? Are the inferred shapes
+  trustworthy?
+
+### Phase 6 — verdicts for the current tier (layer 4)
+
+- **The definitions format.** Two bosses written fully, then the rest of
+  the tier.
+- **The mcp positions tool** for the coach.
+- **Answers:** Q13.
+- **The human test.** Are the verdicts fair, and useful after a wipe?
+
+### Spike, any time after Phase 1 — the sharp floor
+
+A render of the floor's WMO groups (`docs/replay-assets.md` §4, §9).
+
+- **The human test.** Is it worth it next to the dungeon map?
 
 ## Risks
 
