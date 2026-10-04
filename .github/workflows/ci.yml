@@ -2,7 +2,10 @@ name: CI
 
 # PRs are the gate. A merge to main is the tree the PR already proved, so
 # nothing reruns there — the nix package is built on the PR too, and its
-# check phase runs the tests a second time under the sandbox.
+# check phase runs the tests a second time under the sandbox. The one thing
+# that runs on main is cache-warm.yml: it COMPILES what this job compiles
+# (clippy's check artifacts, the test binaries) without gating on anything,
+# so its caches land in main's scope, the only one every PR can read.
 on:
   pull_request:
     branches: [main]
@@ -65,9 +68,16 @@ jobs:
       # longer existed ("could not execute process … No such file or
       # directory", #79 after #80). The lock files in the key start a fresh
       # one.
+      #
+      # The cache a PR restores is main's: cache-warm.yml saves it under the
+      # same shared-key and key, and a PR's own saves are switched off — a
+      # PR-scoped entry is readable by that PR alone, and would only crowd
+      # main's out of the 10 GB budget.
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: devenv-workspace
           key: ${{ hashFiles('flake.lock', 'devenv.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # The environment itself, before any cargo: devenv's contract, then the
       # flake shell's — the same checks, which include the values the two

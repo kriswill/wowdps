@@ -89,6 +89,17 @@ caches are layered[^ci]:
   change. Its token comes from `mozilla-actions/sccache-action`, whose own
   binary and annotation go unused.
 
+**Main warms both caches for every PR.** GitHub scopes an Actions cache to
+the ref that wrote it. A PR's entries are readable by that PR alone, and
+main's scope is the only one every PR can read. With checks on PRs only
+(the repository's rule), every new PR started cold.
+
+`cache-warm.yml` is the one exception, by the user's call (2026-10-04). It
+runs on each push to main (not docs-only ones), sets up exactly as the `ci`
+job does, and compiles what that job compiles: clippy's check artifacts,
+and the test binaries without running them. It gates on nothing. Both jobs
+share one rust-cache `shared-key` and `key`, and only main saves.
+
 ## Consequences
 
 **Measured after the change.** Alternating devenv, a clean `nix develop`,
@@ -106,4 +117,4 @@ Landed on `build/devenv-reference-shell`.
 
 [^env]: `nix/dev/env.nix`: `pinned`, `rustLinker` (the mirror), `flakeShellHook`, `flakePackages`, `rustcWrapper`.
 [^contract]: `nix/dev/contract.nix`: the shared-values block and the Linux linker/compiler checks.
-[^ci]: `.github/workflows/ci.yml`: the ci job's devenv install, sccache-action, rust-cache key and contract step.
+[^ci]: `.github/workflows/ci.yml`: the ci job's devenv install, sccache-action, rust-cache key and contract step; `.github/workflows/cache-warm.yml`: the main-only warm.
