@@ -161,9 +161,10 @@ log ui_map_id ─ UiMap (Type 4, a dungeon floor; UiMapGroupMember: FloorIndex, 
   region. The log already names the floor, so the row to use is the first
   match on (`MapID`, `UiMapID`).
 - **Verified on a real pull.** For The Coiled Altar the region is x 980–1755,
-  y ±581.25, which is exactly the art's 3:2. The Heroic kill's samples all
-  land on the altar's platform. The pull's centre maps to (0.49, 0.76) and
-  the journal's boss pin is (0.50, 0.77).
+  y ±581.25, which is exactly the art's 3:2. A plot of the Heroic kill's
+  samples (every eighth per unit) lands on the altar's platform. The
+  pull's centre maps to (0.49, 0.76) and the journal's boss pin is (0.50,
+  0.77).
 - **Resolution is the constraint.** About 0.86 px per yard: 1002 px over
   1162.5 yd. The pull covers about 112 × 106 yd, which is roughly 95 px of
   art. The art itself is a parchment illustration with a frame and a title.
@@ -321,7 +322,7 @@ So the coverage has to come from the floor sources themselves.
 - **Room margins to the frame range from 40 to 259 yd** across this
   season's raid and Altar of Fangs bosses:
   - Zul'jan 40, Rav'i 96, Sentinels 101, Ula'tek 117.
-  - Nine of twelve exceed 100 yd.
+  - Ten of twelve exceed 100 yd; only Zul'jan and Rav'i fall short.
 - **Masking the frame.** Mask it out (about 30 px on three sides, 75 px at
   the top) and feather the art into the background. A room-sized rotated
   view then never shows an edge for most bosses. Near the frame, or zoomed

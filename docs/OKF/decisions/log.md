@@ -1,5 +1,28 @@
 # Log
 
+## 2026-10-04
+
+- **Creation** — [A Fight Replay Captured Once And Interpreted Per Tier](fight-replay-captured-once.md):
+  roadmap item 2a's research plan — a replay mode of the pull view built on
+  the positions every advanced line carries, captured once in the background
+  and kept for good, mechanics, phases and verdicts re-interpreted per tier,
+  local only, a sticky off switch.
+- **Creation** — [Scope The Replay's Game Data To The Season The Client Names](replay-data-from-the-season.md):
+  draft — the current season resolved from the keystone pool and the
+  journal's "Current Season" tier, checked against the user's logs; encounter
+  data keyed by difficulty through the client's fallback chain, rooms never;
+  per-machine caches; the hotfix cache an open gap.
+- **Creation** — [Draw The Replay's Room From The Game's Own Floors](replay-floors-from-game-files.md):
+  draft — the dungeon map per floor for v1, its transform verified on a real
+  kill; the minimap render where floors don't stack; a render of the floor's
+  WMO groups as the route to sharp rooms; prior art compared, nothing borrowed.
+- **Creation** — [The Replay's Room Turns To The User, Without Edges](replay-room-turns-without-edges.md):
+  plan decision 8 — a view rotation with a default from the room's walls and
+  the raid-to-boss bearing, the user's angle kept per encounter; the floor
+  resampled on the CPU because GPUI draws images axis-aligned.
+- **Update** — [No Forked Or Patched GPUI](no-gpui-forks.md): the replay's
+  rotated floor as another design-around.
+
 ## 2026-10-03
 
 - **Creation** — [Boss Kills And Timed Keys Are Kept Whole, And A Stored Pull Answers As A Live One](stored-pulls-kept-whole.md):

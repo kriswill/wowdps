@@ -55,7 +55,14 @@ Some designs are more roundabout than a patch would make them: a
 full-length transparent strip, input regions tracked by hand. Tests can
 observe only what Kit's harness exposes; there is no visible-text getter,
 and a canvas is one target. In return a GPUI bump is a `cargo update`, the
-test suite and the guard, with nothing to rebase. The rule is a strong
+test suite and the guard, with nothing to rebase.
+
+The replay's rotated floor is another case: GPUI draws images
+axis-aligned only, so the floor is resampled on the CPU rather than
+patching a transform into the image sprite
+([The Replay's Room Turns To The User, Without Edges](replay-room-turns-without-edges.md)).
+
+The rule is a strong
 lean, not an absolute ban: an exception would be its own decision record
 with the cost written down. Landed in the policy in `4d33cee`.
 

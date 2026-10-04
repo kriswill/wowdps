@@ -1,5 +1,11 @@
 # Log
 
+## 2026-10-04
+
+- **Update** — [wowdps-extract](extract.md): stub upgraded with its seams — tables
+  by FileDataID, the unread hotfix cache, per-machine outputs, the planned
+  replay generators ([decision](../decisions/replay-data-from-the-season.md)).
+
 ## 2026-10-03
 
 - **Update** — [wowdps-history](history.md): `tests/duckdb_version.rs` holds the
