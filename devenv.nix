@@ -21,6 +21,11 @@ in
   # pinned to flake.lock's rev.
   languages.rust.enable = true;
   languages.rust.toolchainFile = ./rust-toolchain.toml;
+  # devenv is the reference shell, locally and in CI: its languages.rust
+  # links through Clang driving ld.lld (`clangLinker`, on by default on Linux)
+  # and puts clang on PATH, whose setup hook sets CC=clang and CXX=clang++.
+  # flake.nix mirrors both (nix/dev/env.nix, `rustLinker`), and the contract
+  # fails if the mirror ever stops being exact.
 
   packages = shared.packages ++ [
     # okf (scaffold | index | validate | viz) over docs/OKF, the OKF
@@ -35,6 +40,10 @@ in
   ];
 
   env = shared.env;
+
+  # Last, after devenv's own setup: the pinned CC and PKG_CONFIG_PATH
+  # (nix/dev/env.nix) — flake.nix runs the same hook as mkShell's shellHook.
+  enterShell = shared.shellHook;
 
   # The contract `devenv test` asserts. It lives in nix/dev/contract.nix as an
   # executable both shells carry (`nix develop -c wowdps-dev-contract` is the

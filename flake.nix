@@ -264,8 +264,16 @@
             # coderabbit / cr, the CodeRabbit review CLI — the same split as
             # okf: this shell's llm-agents input, devenv's mirrored one.
             (coderabbitFor pkgs)
-          ];
+          ]
+          # The clang devenv's languages.rust brings (its setup hook sets
+          # CC=clang and CXX=clang++), mirrored.
+          ++ (devShellFor pkgs).flakePackages;
           env = (devShellFor pkgs).env;
+          # devenv is the reference shell; this one mirrors what its
+          # languages.rust adds (nix/dev/env.nix): the clang on PATH, and —
+          # last, after stdenv's own setup — its linker script and the pinned
+          # PKG_CONFIG_PATH. `wowdps-dev-contract` checks the mirror.
+          shellHook = (devShellFor pkgs).flakeShellHook;
         };
       });
     };

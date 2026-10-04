@@ -5,9 +5,13 @@
 # asking the next person to remember the other one. This directory is that
 # agreement, and each shell adds only what it alone can plumb: its Rust
 # toolchain, and its `okf` (the two reach it through different inputs).
+# devenv is the reference shell, locally and in CI; the flake shell also
+# mirrors what devenv's languages.rust adds on its own (env.nix).
 #
 #   wrappers.nix  the commands about this repo — generators, workspace binaries
-#   env.nix       DUCKDB_* and the dlopened libraries behind LD_LIBRARY_PATH
+#   env.nix       DUCKDB_*, the dlopened libraries behind LD_LIBRARY_PATH, the
+#                 pinned PKG_CONFIG_PATH, the flake's mirror of devenv's clang
+#                 and linker, sccache
 #   contract.nix  what a shell must deliver, as a runnable check
 {
   pkgs,
@@ -19,6 +23,12 @@ let
   contract = import ./contract.nix {
     inherit pkgs lib;
     commands = wrappers.names;
+    inherit (env)
+      pinned
+      rustcWrapper
+      rustLinker
+      rustLinkerVar
+      ;
   };
 in
 {
@@ -29,6 +39,15 @@ in
   # variables without wanting a shell.
   inherit (env) duckdbEnv;
   inherit (env) env;
+
+  # Run LAST by devenv (`enterShell`): it exports the pinned PKG_CONFIG_PATH
+  # over what the shell's own setup wrote (env.nix says why).
+  inherit (env) shellHook;
+
+  # What the flake shell adds to mirror devenv, the reference shell: the
+  # clang devenv's languages.rust puts on PATH (CC=clang, CXX=clang++), and
+  # a shellHook that also exports devenv's linker script.
+  inherit (env) flakeShellHook flakePackages;
 
   # Everything both shells install EXCEPT the Rust toolchain and okf.
   packages =
@@ -47,6 +66,9 @@ in
       pkgs.gawk
       # libduckdb for `wowdps-history` (see env.nix).
       pkgs.duckdb
+      # The compiler cache RUSTC_WRAPPER names, on PATH for its
+      # `--show-stats` (see env.nix).
+      pkgs.sccache
     ]
     # The GUI's GPUI links libxkbcommon at build time, with libxcb for its
     # X11 backend, and fontconfig (font-kit's yeslogic-fontconfig-sys
