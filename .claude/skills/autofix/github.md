@@ -116,6 +116,8 @@ gh pr view "$pr_number" --json comments,reviews --jq '
 
 ## 4. Post Summary Comment
 
+Post this only after the fix commit is pushed. While the commit is still local, post nothing (SKILL.md Step 10).
+
 Use the same `pr_number` from Section 1:
 
 ```bash

@@ -285,7 +285,7 @@ If all deferred (no commit): Skip this step.
 
 ### Step 10: Post Summary
 
-**If at least one fix was applied:** Post one success summary comment on the PR:
+**If at least one fix was applied and the Step 9 `git push` succeeded:** Post one success summary comment on the PR:
 
 ```bash
 gh pr comment "$pr_number" --body "$(cat <<'EOF'
@@ -304,6 +304,8 @@ The latest autofix changes are on the `<branch-name>` branch.
 EOF
 )"
 ```
+
+**If fixes were committed but not pushed** (the user declined the push, or it failed): Post no PR comment. The commit is not on GitHub, so a comment naming it would point at nothing. Tell the user instead that the fixes are committed locally as `<commit-sha>` on `<branch-name>` and still need a push.
 
 **If no fixes were applied:** Skip the success comment, or post a neutral review summary instead:
 

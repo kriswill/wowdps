@@ -1,0 +1,47 @@
+autofix: post the PR success comment only after the push.
+
+Upstream (coderabbitai/skills) asks "Push changes?" in Step 9 and then
+posts its success comment in Step 10 whatever the answer was, so a
+declined or failed push left the PR a comment naming a commit GitHub
+never received. Gate the comment on a successful push, and say what to
+do instead while the commit is still local. Found by CodeRabbit's own
+review of this repo; drop this patch once upstream carries the fix.
+
+Applied over the vendored copy by tools/skills-update.sh; git apply
+skips this text before the first diff header.
+
+diff --git a/.claude/skills/autofix/SKILL.md b/.claude/skills/autofix/SKILL.md
+index fd42eea..5e0de36 100644
+--- a/.claude/skills/autofix/SKILL.md
++++ b/.claude/skills/autofix/SKILL.md
+@@ -285,7 +285,7 @@ If all deferred (no commit): Skip this step.
+ 
+ ### Step 10: Post Summary
+ 
+-**If at least one fix was applied:** Post one success summary comment on the PR:
++**If at least one fix was applied and the Step 9 `git push` succeeded:** Post one success summary comment on the PR:
+ 
+ ```bash
+ gh pr comment "$pr_number" --body "$(cat <<'EOF'
+@@ -305,6 +305,8 @@ EOF
+ )"
+ ```
+ 
++**If fixes were committed but not pushed** (the user declined the push, or it failed): Post no PR comment. The commit is not on GitHub, so a comment naming it would point at nothing. Tell the user instead that the fixes are committed locally as `<commit-sha>` on `<branch-name>` and still need a push.
++
+ **If no fixes were applied:** Skip the success comment, or post a neutral review summary instead:
+ 
+ ```bash
+diff --git a/.claude/skills/autofix/github.md b/.claude/skills/autofix/github.md
+index dbd18d7..d86f34e 100644
+--- a/.claude/skills/autofix/github.md
++++ b/.claude/skills/autofix/github.md
+@@ -116,6 +116,8 @@ gh pr view "$pr_number" --json comments,reviews --jq '
+ 
+ ## 4. Post Summary Comment
+ 
++Post this only after the fix commit is pushed. While the commit is still local, post nothing (SKILL.md Step 10).
++
+ Use the same `pr_number` from Section 1:
+ 
+ ```bash

@@ -110,7 +110,11 @@ coderabbit review --agent         # CodeRabbit's review of local changes (`cr` f
                                   # hook puts that same build on the Bash tool's PATH, and the
                                   # project's CodeRabbit skills (.claude/skills/code-review and
                                   # autofix, from coderabbitai/skills, skills-lock.json) replace
-                                  # the built-in /code-review; the code-review plugin is off
+                                  # the built-in /code-review; the code-review plugin is off.
+                                  # Never edit those files alone: a local fix is a patch in
+                                  # .claude/skills/patches/, and tools/skills-update.sh
+                                  # refreshes them and re-applies every patch (never
+                                  # `bunx skills update`: it symlinks them for every agent)
 
 # Inside the flake/devenv shell the workspace's own binaries are on PATH as
 # `wowdps` / `wowdps-history` / `wowdps-mcp` / `wowdps-gui` —

@@ -20,3 +20,4 @@ The game-data generators and census scripts under tools/ — regenerated once pe
 * [gen-talent-art](gen-talent-art.md) - Regenerate ~/.local/share/wowdps/talent-art.bin: the talent UI's own artwork cropped from the client's texture atlases — per-spec pane background paintings, each hero tree's round medallion, and the golden medallion ring.
 * [gen-talent-trees](gen-talent-trees.md) - Regenerate the talent-tree dataset from the LOCAL game install.
 * [overlay-replay](overlay-replay.md) - Replays a real combat log, at speed, into an isolated daemon while an overlay follows it on a headless Hyprland output — the stand-in for a raid night without the game, and the measure of an overlay's cost under live load.
+* [skills-update](skills-update.md) - Refreshes the vendored CodeRabbit skills (.claude/skills/autofix and code-review, from coderabbitai/skills) and re-applies this repo's patches over them, so a local fix to an upstream skill survives every refresh.
