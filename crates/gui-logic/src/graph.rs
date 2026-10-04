@@ -538,6 +538,7 @@ pub mod samples {
             spell_id: 0,
             dur_ms,
             src: String::new(),
+            open: false,
         }
     }
 

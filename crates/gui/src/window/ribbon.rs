@@ -31,7 +31,7 @@ use gpui_kit::{
 use wowdps_gui_logic::axis::minute_ticks;
 use wowdps_gui_logic::deaths::{Pick, is_mine, selected};
 use wowdps_gui_logic::labels::display_name;
-use wowdps_gui_logic::ribbon::{peak_words, rates, skull_words, span_of, word};
+use wowdps_gui_logic::ribbon::{fight_span, peak_words, rates, skull_words, word};
 use wowdps_model::fmt::{commas, duration};
 use wowdps_model::{Class, LustWindow, View};
 
@@ -150,7 +150,7 @@ impl Ribbon {
             .then(|| selected(app, raid))
             .flatten();
         let owner = gui.death_owner(raid);
-        let span = span_of(raid, app.duration_ms());
+        let span = fight_span(app, 0);
         let (step_ms, rate) = rates(&raid.series, raid.bucket_ms.max(1), span);
         let skulls = raid
             .deaths

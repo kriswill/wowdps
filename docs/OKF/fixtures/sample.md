@@ -16,7 +16,7 @@ Goldens live in `sample.expected.md` (worked by hand) and `sample.expected.tsv` 
 
 ## Gate
 
-`crates/core/tests/fixture_totals.rs` against `sample.expected.tsv`; `verify.sh` recomputes the goldens with gawk independently of the parser. The same TSV also carries the R17 `taken` … `stagger_ticked` rows.
+`crates/core/tests/fixture_totals.rs` against `sample.expected.tsv`; `verify.sh` recomputes the goldens with gawk independently of the parser. The same TSV also carries the R17 `taken` … `stagger_ticked` rows. Its hunter's Feign Death at 20:08:29.5 (`UNIT_DIED` ending in `1`) is the [R9](../rulings/r9.md) negative control: no death, so a count of 2 for him means the trailing field was ignored.
 
 ## Source
 

@@ -1417,6 +1417,15 @@ pub struct Mark {
     /// buff, the cooldown. On an item mark, the item's OWNER (the player the
     /// mark is drawn for); empty only on records written before that.
     pub src: String,
+    /// v41: a SPAN — an R18 role aura, an R23 death — that had not closed
+    /// when the timeline was read: the aura still on, the player still
+    /// dead, so `dur_ms` runs to the segment's close rather than to
+    /// anything that ended it. A death that is not `open` ended where
+    /// `dur_ms` says: they were raised or seen alive then. Item marks
+    /// never set it (their 0 above already says "never came off"). A record
+    /// written before it reads an unrezzed death open (the old close was a
+    /// guess) and everything else closed.
+    pub open: bool,
 }
 
 /// One player's fight timeline (R12): damage bucketed on a fixed grid, plus
@@ -2159,6 +2168,7 @@ mod tests {
             spell_id: 132404,
             dur_ms: 6_000,
             src: "Player-1-A".into(),
+            open: false,
         };
         let t = Timeline {
             bucket_ms: 1000,

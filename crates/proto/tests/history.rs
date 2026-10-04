@@ -51,6 +51,7 @@ fn timeline() -> Timeline {
             spell_id: 7,
             dur_ms: 9,
             src: String::new(),
+            open: false,
         }],
     }
 }
@@ -393,6 +394,7 @@ fn player_coarse() -> PlayerCoarse {
                 spell_id: 7,
                 dur_ms: 9,
                 src: String::new(),
+                open: false,
             },
             Mark {
                 at_ms: 1_000,
@@ -401,6 +403,7 @@ fn player_coarse() -> PlayerCoarse {
                 spell_id: 2565,
                 dur_ms: 6_000,
                 src: "Player-1-A".to_string(),
+                open: false,
             },
         ],
     }
@@ -486,7 +489,7 @@ const UPTIME_GOLDEN: &str = r#"{"guid":"Player-1-A","cells":[{"spell_id":2565,"l
 
 /// Step 4b: one player's coarse block — the 10 s buckets (no `bucket_ms`,
 /// it is fixed) and marks in the details tier's shape (`kind` the code).
-const COARSE_GOLDEN: &str = r#"{"guid":"Player-1-A","taken10":[22000,0,5],"heal10":[0,700],"marks":[{"at_ms":250,"kind":0,"label":"T","spell_id":7,"dur_ms":9,"src":""},{"at_ms":1000,"kind":4,"label":"Shield Block","spell_id":2565,"dur_ms":6000,"src":"Player-1-A"}]}"#;
+const COARSE_GOLDEN: &str = r#"{"guid":"Player-1-A","taken10":[22000,0,5],"heal10":[0,700],"marks":[{"at_ms":250,"kind":0,"label":"T","spell_id":7,"dur_ms":9,"src":"","open":false},{"at_ms":1000,"kind":4,"label":"Shield Block","spell_id":2565,"dur_ms":6000,"src":"Player-1-A","open":false}]}"#;
 
 // Step 5 (R20): one shielder's ledger on the rows tier.
 const SHIELDS_GOLDEN: &str = r#"{"guid":"Player-1-A","rows":[{"spell_id":17,"label":"Power Word: Shield","applied":4000,"consumed":3000,"wasted":1000,"count":2,"unknown":0},{"spell_id":47753,"label":"Divine Aegis","applied":0,"consumed":0,"wasted":0,"count":1,"unknown":1}]}"#;
@@ -509,7 +512,7 @@ const ANNOTATION_GOLDEN: &str = r#"{"schema":1,"ts_utc_ms":1722000000000,"kind":
 
 // v24 (R18): every mark writes `src` — empty for item marks — so the SQL
 // column keeps one shape.
-const TIMELINE_GOLDEN: &str = r#"{"bucket_ms":1000,"buckets":[0,5,10],"marks":[{"at_ms":250,"kind":0,"label":"T","spell_id":7,"dur_ms":9,"src":""}]}"#;
+const TIMELINE_GOLDEN: &str = r#"{"bucket_ms":1000,"buckets":[0,5,10],"marks":[{"at_ms":250,"kind":0,"label":"T","spell_id":7,"dur_ms":9,"src":"","open":false}]}"#;
 
 #[test]
 fn golden_documents_pin_the_file_format() {
@@ -1408,6 +1411,7 @@ fn a_rows_document_without_spans_reads_empty_and_the_blocks_round_trip() {
                 spell_id: 0,
                 dur_ms: 0,
                 src: String::new(),
+                open: false,
             }],
         }
     );
@@ -1484,12 +1488,59 @@ fn timeline_marks_carry_their_caster_and_tolerate_older_and_newer_files() {
         spell_id: 395152,
         dur_ms: 10_000,
         src: "Player-1-0E".to_string(),
+        open: false,
     });
     let line = timeline_json(&t).to_line();
     assert!(line.contains(
-        r#""kind":6,"label":"Ebon Might","spell_id":395152,"dur_ms":10000,"src":"Player-1-0E"}"#
+        r#""kind":6,"label":"Ebon Might","spell_id":395152,"dur_ms":10000,"src":"Player-1-0E","open":false}"#
     ));
     assert_eq!(timeline_from(Some(&json::parse(&line).unwrap())), t);
+
+    // v41: a death still open at the fight's end round-trips as open; a file
+    // written before the key reads its unrezzed deaths open (the old rule's
+    // end was a guess) and everything else closed.
+    let mut dead = timeline();
+    dead.marks.push(Mark {
+        at_ms: 4000,
+        kind: MarkKind::Death,
+        label: "Death".to_string(),
+        spell_id: 0,
+        dur_ms: 26_000,
+        src: String::new(),
+        open: true,
+    });
+    let line = timeline_json(&dead).to_line();
+    assert!(line.contains(r#""dur_ms":26000,"src":"","open":true}"#));
+    assert_eq!(timeline_from(Some(&json::parse(&line).unwrap())), dead);
+    let pre = json::parse(&line.replace(r#","open":true"#, "")).unwrap();
+    assert_eq!(timeline_from(Some(&pre)), dead, "an unrezzed death: open");
+    let rezzed = |label: &str, src: &str| {
+        let mut t = timeline();
+        t.marks.push(Mark {
+            at_ms: 4000,
+            kind: MarkKind::Death,
+            label: label.to_string(),
+            spell_id: 0,
+            dur_ms: 6_000,
+            src: src.to_string(),
+            open: false,
+        });
+        let line = timeline_json(&t).to_line().replace(r#","open":false"#, "");
+        assert!(!line.contains("open"));
+        timeline_from(Some(&json::parse(&line).unwrap()))
+    };
+    let battle = rezzed("Death (Rebirth)", "Player-1-0D");
+    assert!(
+        battle.marks.iter().all(|m| !m.open),
+        "a battle rez ended it"
+    );
+    let ankh = rezzed("Death (Reincarnation)", "");
+    assert!(ankh.marks.iter().all(|m| !m.open), "so did a self-rez");
+    let old = json::parse(&TIMELINE_GOLDEN.replace(r#","open":false"#, "")).unwrap();
+    assert!(
+        timeline_from(Some(&old)).marks.iter().all(|m| !m.open),
+        "no other kind reads open"
+    );
 
     // A PR #12 file: the same document without `src`.
     let old = json::parse(TIMELINE_GOLDEN.replace(r#","src":"""#, "").as_str()).unwrap();

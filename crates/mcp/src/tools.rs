@@ -133,7 +133,12 @@ pub fn catalog() -> Vec<Tool> {
                           marks on it: trinket uses/procs, consumables, and (R18) the curated \
                           role auras — active_mitigation, defensive, external_buff, \
                           support_buff, cooldown, healing_cooldown (v34) — each with active_secs and, for a role \
-                          aura, `caster` (the giver's guid; a self-cast names the player). \
+                          aura, `caster` (the giver's guid; a self-cast names the player) — \
+                          and a `death` mark per death (R23): active_secs is how long they \
+                          stayed dead, to the rez (label \"Death (<spell>)\", caster the rezzer) \
+                          or to the first line that showed them alive again; `open: true` on \
+                          any mark still running at the fight's end — on a death, they never \
+                          came back. \
                           With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
                           hits they took, each with `kind` (damage = it removed health; gain = a \
@@ -3874,6 +3879,11 @@ fn mark_json(m: &Mark) -> Json {
     if !m.src.is_empty() {
         o.push(("caster".to_string(), Json::str(m.src.clone())));
     }
+    // v41: still running when the fight was read — its active_secs runs to
+    // the fight's end; on a death, they never came back.
+    if m.open {
+        o.push(("open".to_string(), Json::Bool(true)));
+    }
     Json::Obj(o)
 }
 
@@ -4193,6 +4203,7 @@ mod tests {
             spell_id: 1,
             dur_ms,
             src: String::new(),
+            open: false,
         };
         let cases = [
             (MarkKind::TrinketUse, 0, "trinket_use"),
@@ -4223,6 +4234,13 @@ mod tests {
         let j = mark_json(&pi);
         assert_eq!(j.get("caster").and_then(Json::as_str), Some("Player-1-0A"));
         assert_eq!(j.get("kind").and_then(Json::as_str), Some("external_buff"));
+        assert!(j.get("open").is_none(), "absent unless still running");
+        // v41: a death they never came back from says so.
+        let mut dead = m(MarkKind::Death, 40_000);
+        dead.open = true;
+        let j = mark_json(&dead);
+        assert_eq!(j.get("kind").and_then(Json::as_str), Some("death"));
+        assert_eq!(j.get("open").and_then(Json::as_bool), Some(true));
 
         // 1 s buckets re-bucketed to 10 s: a partial last chunk keeps its
         // own span.

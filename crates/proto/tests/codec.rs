@@ -40,6 +40,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: u32::MAX,
                     dur_ms: i64::MAX,
                     src: String::new(),
+                    open: false,
                 },
                 Mark {
                     at_ms: 0,
@@ -48,6 +49,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 0,
                     dur_ms: 0,
                     src: String::new(),
+                    open: false,
                 },
                 Mark {
                     at_ms: i64::MAX,
@@ -56,6 +58,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 1_282_741,
                     dur_ms: 30_000,
                     src: String::new(),
+                    open: false,
                 },
                 // v13: the external-buff arm.
                 Mark {
@@ -65,6 +68,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 2825,
                     dur_ms: 40_000,
                     src: String::new(),
+                    open: false,
                 },
             ],
         },
@@ -494,6 +498,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         spell_id: 11,
                         dur_ms: 20_000,
                         src: String::new(),
+                        open: false,
                     }],
                 }),
                 // v16: the drilled ability's own curve rides along too.
@@ -1038,7 +1043,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 40, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 41, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1119,6 +1124,7 @@ fn golden_bytes_pin_the_encoding() {
                     spell_id: 7,
                     dur_ms: 9,
                     src: String::new(),
+                    open: false,
                 }],
             },
         }),
@@ -1144,14 +1150,16 @@ fn golden_bytes_pin_the_encoding() {
         // presence byte — two bytes apiece, 0x0109 to 0x010d.
         // v40: SegmentInfo grew a trailing i64 combat_ms — eight `00` bytes
         // after the encounter's presence byte, 0x010d to 0x0115.
-        "150100008901000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000010000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa0000000000000002010000005007000000090000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // v41: Mark grew a trailing bool `open` — one `00` after the mark's
+        // empty src, 0x0115 to 0x0116 (the run after it is all zeros).
+        "160100008901000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000010000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000000000000201000000500700000009000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 
     // v24 (R18): a role-kind mark with its caster. Placed on side `b` so the
     // frame TAIL is the mark itself followed by five `00` presence bytes
     // (b.spell_timeline, b.mitigation since v29, range, source, status) — the
     // pin needs no wall of zeroed-Row bytes. Layout: i64 at_ms | u8 kind |
-    // str label | u32 spell_id | i64 dur_ms | str src.
+    // str label | u32 spell_id | i64 dur_ms | str src | bool open (v41).
     let role = DaemonMsg::CompareSnapshot {
         seq: 1,
         segment: SegmentRef::Live,
@@ -1187,6 +1195,7 @@ fn golden_bytes_pin_the_encoding() {
                     spell_id: 2565,
                     dur_ms: 6000,
                     src: "Player-1-0A".to_string(),
+                    open: false,
                 }],
             },
         }),
@@ -1201,11 +1210,23 @@ fn golden_bytes_pin_the_encoding() {
         "050a0000",                         // spell_id 2565
         "7017000000000000",                 // dur_ms 6000
         "0b000000506c617965722d312d3041",   // src "Player-1-0A"
+        "00",                               // open (v41): it closed
         "0000000000"                        // spell_timeline / mitigation (v29) /
                                             // range / source / status: None
     );
     let got = hex(&role.encode());
     assert!(got.ends_with(tail), "{got}");
+    // v41: a span still open when the fight was read — a player still
+    // dead at its end — is the one `01` before the tail.
+    let mut open = role.clone();
+    let DaemonMsg::CompareSnapshot { b, .. } = &mut open else {
+        panic!("a compare snapshot")
+    };
+    b.timeline.marks[0].open = true;
+    assert!(
+        hex(&open.encode()).ends_with(&tail.replacen("304100", "304101", 1)),
+        "an open span's flag"
+    );
     // Every role kind takes the code the model assigns; nothing else moved.
     for (kind, code) in [
         (MarkKind::ActiveMitigation, "04"),

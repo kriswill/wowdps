@@ -109,6 +109,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: u32::MAX,
                     dur_ms: i64::MAX,
                     src: String::new(),
+                    open: false,
                 },
                 Mark {
                     at_ms: 300,
@@ -117,6 +118,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 2825,
                     dur_ms: 0,
                     src: String::new(),
+                    open: false,
                 },
                 // v24 (R18): role-kind marks carry their caster.
                 Mark {
@@ -126,6 +128,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 2565,
                     dur_ms: 6000,
                     src: guid.to_string(),
+                    open: false,
                 },
                 Mark {
                     at_ms: 500,
@@ -134,6 +137,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 871,
                     dur_ms: 8000,
                     src: guid.to_string(),
+                    open: false,
                 },
                 Mark {
                     at_ms: 600,
@@ -142,6 +146,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 395152,
                     dur_ms: 10_000,
                     src: "Player-1-0E".to_string(),
+                    open: false,
                 },
                 Mark {
                     at_ms: 700,
@@ -150,6 +155,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 190319,
                     dur_ms: 0,
                     src: guid.to_string(),
+                    open: false,
                 },
                 Mark {
                     at_ms: 800,
@@ -158,6 +164,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     spell_id: 200183,
                     dur_ms: 20_000,
                     src: guid.to_string(),
+                    open: false,
                 },
             ],
         },

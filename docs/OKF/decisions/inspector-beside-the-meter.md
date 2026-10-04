@@ -105,8 +105,10 @@ prototype's 10 s buckets (finer only when the stretch on show is too
 short to hold forty — a zoom, a short pull — and the top line says the
 bucket) drawn through a Catmull-Rom spline, minute ticks over the fight's
 span, a death hatched to its rez or — with none — to the fight's end
-(R23 also closes a span at the first living act, and a dead warlock's
-DoTs tick on) with its words in a band the curves peak under (a second
+(since v41 two rules instead, where they died and where they were alive
+again, with the stretch between clear —
+[A Death Ends Where They Are First Seen Alive](a-death-ends-at-first-sight.md))
+with its words in a band the curves peak under (a second
 death's words a row down rather than over the first's), and four lanes
 under it: cooldowns, items, externals (someone else's defensive
 included), defensives — each row as tall as its label's line (19.6 px

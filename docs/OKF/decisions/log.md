@@ -2,6 +2,14 @@
 
 ## 2026-10-03
 
+- **Creation** — [A Death Ends Where They Are First Seen Alive](a-death-ends-at-first-sight.md):
+  v41 — R23 ends a death at the rez or the first advanced-block health report
+  above zero, never at damage dealt in their name (a real +15's imps
+  imploded 65 ms after their warlock died); an Overall carries a wipe's open
+  deaths into the next member; `Mark::open` on the wire; the inspector draws a
+  death and its return as red and green rules, the hatch gone.
+- **Update** — [An Inspector Beside The Meter](inspector-beside-the-meter.md):
+  its hatched death replaced by the two rules.
 - **Creation** — [Themes Are Data A Config Can Name, And Onyx Is The Second](themes-as-config-data.md):
   a registry of named themes (navy — the old gold —, onyx, frost) chosen in the
   ⚙ card, every token group a config.toml table that overrides a built-in or

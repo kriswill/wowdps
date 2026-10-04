@@ -94,11 +94,9 @@ pub struct WindowTokens: Color {
     health_track,
     /// Ink on a class colour: the tag on a crest drawn without art.
     on_class,
-    /// A death on a timeline: the hairline up from a skull on the ribbon, and
-    /// the stripes of the inspector graph's hatch (at their own alpha times
-    /// this one's); the hatch's dashed edge and its words stay `bad`.
+    /// A death on a timeline: the hairline up from a skull on the ribbon (the
+    /// inspector graph's rules and their words wear `bad` and `good`).
     death_line,
-    death_hatch,
     /// A key's run against its timers on Home: timed, and over.
     par_timed,
     par_over,

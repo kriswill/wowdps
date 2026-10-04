@@ -113,8 +113,9 @@ fn lanes(own: Color) -> Vec<Row> {
 fn dead() -> Vec<Dead> {
     vec![Dead {
         at_ms: 145_000,
-        end_ms: 190_000,
-        words: "died 2:25, rezzed by Lumen".to_string(),
+        back_ms: Some(190_000),
+        words: "died 2:25".to_string(),
+        back_words: "alive 3:10, rezzed by Lumen".to_string(),
     }]
 }
 

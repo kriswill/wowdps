@@ -3181,6 +3181,7 @@ fn mark(at_ms: i64, kind: MarkKind, label: &str, spell_id: u32, dur_ms: i64, src
         spell_id,
         dur_ms,
         src: src.to_string(),
+        open: false,
     }
 }
 

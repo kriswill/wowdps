@@ -223,6 +223,7 @@ mod tests {
             spell_id: 0,
             dur_ms,
             src: src.to_string(),
+            open: false,
         }
     }
 

@@ -49,6 +49,7 @@ impl Shaper {
         hsla(match role {
             Ink3::Quiet => t.ink_3_text,
             Ink3::Bad => t.bad,
+            Ink3::Good => t.good,
             Ink3::Ink => t.ink,
             Ink3::Ink2 => t.ink_2,
         })

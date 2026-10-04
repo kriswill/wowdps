@@ -1305,6 +1305,10 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             dst: unit_at(f, 5),
             spell: spell.unwrap_or_default(),
         }),
+        // R9 amendment: the trailing field is `unconsciousOnDeath`, 1 on a
+        // Hunter's Feign Death — a player who did not die, so no death at
+        // all (the index scanner drops it from `is_combat` the same way).
+        "UNIT_DIED" if get(f, 9) == Some("1") => with_hint(Event::Other),
         "UNIT_DIED" => with_hint(Event::Death {
             unit: unit_at(f, 5),
         }),
@@ -2362,6 +2366,20 @@ mod tests {
         };
         assert_eq!(unit.name, "Dawgoneefour-Proudmoore-US");
         assert_eq!(unit.flags, 0x2114);
+    }
+
+    /// The trailing field is `unconsciousOnDeath`: 1 on a Hunter's Feign
+    /// Death (every player in eight real logs who wrote it was a Hunter), who
+    /// did not die — no `Death`, so no death counted, recap frozen or span
+    /// opened. A creature that goes down "unconscious" is no death either.
+    #[test]
+    fn feign_death_is_no_death() {
+        let feign = parse(
+            r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-60-0F5EEDCE,"Kyarrix-Stormrage-US",0x514,0x80000000,1"#,
+        );
+        assert_eq!(feign, Event::Other);
+        let missing = parse(&format!("UNIT_DIED,{NIL_UNIT},{PLAYER}"));
+        assert!(matches!(missing, Event::Death { .. }), "no field, a death");
     }
 
     // ---- real-log corrections (validator, verified against build 12.0.7) ----

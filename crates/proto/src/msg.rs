@@ -15,7 +15,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 40;
+pub const PROTO_VERSION: u16 = 41;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -1120,7 +1120,8 @@ fn mark_kind_from(b: u8) -> Result<MarkKind> {
 }
 
 /// `Mark` = i64 at_ms | u8 kind | string label | u32 spell_id | i64 dur_ms |
-/// string src (v24, trailing: the caster's guid, empty for item marks).
+/// string src (v24: the caster's guid, empty for item marks) | bool open
+/// (v41, trailing: the span had not closed when the timeline was read).
 fn put_mark(buf: &mut Vec<u8>, m: &Mark) {
     wire::put_i64(buf, m.at_ms);
     wire::put_u8(buf, mark_kind_code(m.kind));
@@ -1128,6 +1129,7 @@ fn put_mark(buf: &mut Vec<u8>, m: &Mark) {
     wire::put_u32(buf, m.spell_id);
     wire::put_i64(buf, m.dur_ms);
     wire::put_str(buf, &m.src);
+    wire::put_bool(buf, m.open);
 }
 
 fn get_mark(rd: &mut Reader) -> Result<Mark> {
@@ -1138,6 +1140,7 @@ fn get_mark(rd: &mut Reader) -> Result<Mark> {
         spell_id: rd.u32()?,
         dur_ms: rd.i64()?,
         src: rd.string()?,
+        open: rd.bool()?,
     })
 }
 
