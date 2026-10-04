@@ -19,43 +19,75 @@ jobs:
   ci:
     name: fmt + clippy + test + fixtures
     runs-on: ubuntu-latest
+    env:
+      # sccache (the dev shell's RUSTC_WRAPPER) stores to the GitHub Actions
+      # cache; the sccache-action step exports the token it needs.
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v7
 
-      # Every check runs inside the flake dev shell: the exact
-      # flake.lock-pinned toolchain developers use locally, so CI can never
-      # fail on a lint or rustc the pin does not have (and the shell brings
-      # the GUI's build deps — pkg-config, libxkbcommon, libxcb, fontconfig —
-      # and gawk for the fixture check, replacing the apt stand-ins). FlakeHub
-      # Cache serves the store paths, so the shell is a download, not a
-      # build. The installer's own job summary (timeline chart) is noise;
-      # ours below says what actually matters.
+      # Every check runs inside devenv, the reference dev shell — the one
+      # developers use locally (devenv.nix): the flake.lock-pinned toolchain,
+      # so CI can never fail on a lint or rustc the pin does not have, and the
+      # GUI's build deps (pkg-config, libxkbcommon, libxcb, fontconfig) and
+      # gawk for the fixture check. flake.nix's shell mirrors it; the contract
+      # step below proves the mirror on every PR. FlakeHub Cache serves the
+      # store paths, so the shell is a download, not a build. The installer's
+      # own job summary (timeline chart) is noise; ours below says what
+      # actually matters.
       - uses: DeterminateSystems/nix-installer-action@v23
         with:
           determinate: true
           summarize: false
       - uses: DeterminateSystems/flakehub-cache-action@main
 
-      # The cache holds build scripts and test binaries LINKED in the flake
+      # The devenv CLI from the flake's own pinned nixpkgs: the version that
+      # wrote devenv.lock (update-locks.yml runs `devenv update` with it).
+      - name: Install devenv
+        run: nix profile install --inputs-from . nixpkgs#devenv
+
+      # Two cargo caches, layered. rust-cache restores the whole target/ for
+      # an unchanged key; sccache (the dev shell's RUSTC_WRAPPER,
+      # nix/dev/env.nix) keeps each compiled crate in the GitHub Actions
+      # cache, so when that key moves — a Cargo.lock, flake.lock or
+      # devenv.lock change — most crates are still a download. Its backend
+      # needs the runner's cache token, which only an action can read: this
+      # one exports it (its own sccache binary and stats note go unused; the
+      # summary reports the shell's).
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
+
+      # The cache holds build scripts and test binaries LINKED in the dev
       # shell, against its nixpkgs' glibc, but its default key (rustc
       # version + Cargo.lock) does not move when nixpkgs does: a PR whose
       # cache predated a nixpkgs bump restored build scripts whose loader no
       # longer existed ("could not execute process … No such file or
-      # directory", #79 after #80). flake.lock in the key starts a fresh one.
+      # directory", #79 after #80). The lock files in the key start a fresh
+      # one.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ hashFiles('flake.lock') }}
+          key: ${{ hashFiles('flake.lock', 'devenv.lock') }}
+
+      # The environment itself, before any cargo: devenv's contract, then the
+      # flake shell's — the same checks, which include the values the two
+      # must share so a switch between them rebuilds nothing.
+      - name: Dev shell contract (devenv, and its flake mirror)
+        id: contract
+        run: |
+          devenv test
+          nix develop -c wowdps-dev-contract
 
       - name: cargo fmt
         id: fmt
-        run: nix develop -c cargo fmt --check
+        run: devenv shell -- cargo fmt --check
 
       # One GUI (GPUI Kit, crates/gui), so one cargo invocation covers the
       # whole workspace, GUI included: there is no second GUI whose crate
       # features a workspace build could unify.
       - name: cargo clippy
         id: clippy
-        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+        run: devenv shell -- cargo clippy --workspace --all-targets -- -D warnings
 
       # The GUI's real-text tests open a headless window, and GPUI's headless
       # renderer wants a wgpu adapter even when nothing is captured. The
@@ -67,19 +99,20 @@ jobs:
         run: |
           mesa=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa.out)
           VK_DRIVER_FILES="$mesa/share/vulkan/icd.d/lvp_icd.x86_64.json" \
-            nix develop -c cargo test --workspace
+            devenv shell -- cargo test --workspace
 
       - name: Fixture check (parser-independent golden totals)
         id: fixtures
-        run: nix develop -c crates/core/fixtures/verify.sh
+        run: devenv shell -- crates/core/fixtures/verify.sh
 
       - name: Fixture negative control (corrupt.txt must FAIL)
         id: fixtures-neg
-        run: "! nix develop -c crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
+        run: "! devenv shell -- crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
 
       - name: Job summary
         if: always()
         env:
+          CONTRACT: ${{ steps.contract.outcome }}
           FMT: ${{ steps.fmt.outcome }}
           CLIPPY: ${{ steps.clippy.outcome }}
           TEST: ${{ steps.test.outcome }}
@@ -87,14 +120,18 @@ jobs:
           FIXTURES_NEG: ${{ steps.fixtures-neg.outcome }}
         run: |
           icon() { case "$1" in success) echo "✅";; failure) echo "❌";; *) echo "⏭️";; esac; }
-          rustc_v=$(nix develop -c rustc --version 2>/dev/null || echo "dev shell unavailable")
+          rustc_v=$(devenv shell -- rustc --version 2>/dev/null | tail -1 || echo "dev shell unavailable")
+          hits=$(devenv shell -- sccache --show-stats 2>/dev/null | grep -E "^Cache hits rate  " | tr -s ' ' | cut -d' ' -f4- || true)
           {
             echo "### fmt + clippy + test + fixtures"
             echo ""
-            echo "Toolchain (flake.lock-pinned dev shell): \`${rustc_v}\`"
+            echo "Toolchain (devenv, flake.lock-pinned): \`${rustc_v}\`"
+            echo ""
+            echo "sccache hit rate this run: ${hits:-n/a}"
             echo ""
             echo "| check | result |"
             echo "|---|---|"
+            echo "| dev shell contract (devenv + flake mirror) | $(icon "$CONTRACT") |"
             echo "| \`cargo fmt --check\` | $(icon "$FMT") |"
             echo "| \`cargo clippy -D warnings\` | $(icon "$CLIPPY") |"
             echo "| \`cargo test\` | $(icon "$TEST") |"
