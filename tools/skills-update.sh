@@ -40,9 +40,21 @@ for patch in "$root"/.claude/skills/patches/*.patch; do
   echo "applied ${patch#"$root"/}"
 done
 
+# Copy the results beside their targets, then swap them in by rename, so a
+# failed copy leaves the checkout as it was. The swap directory sits on the
+# checkout's filesystem but outside .claude/skills, where Claude Code would
+# load a half-copied skill.
+swap=$(mktemp -d .claude/skills-update.XXXXXX)
+trap 'rm -rf "$swap"' EXIT
 for skill in "${skills[@]}"; do
-  rm -rf ".claude/skills/$skill"
-  cp -R "$stage/.claude/skills/$skill" .claude/skills/
+  cp -R "$stage/.claude/skills/$skill" "$swap/$skill"
 done
-cp "$stage/skills-lock.json" skills-lock.json
+cp "$stage/skills-lock.json" "$swap/skills-lock.json"
+for skill in "${skills[@]}"; do
+  if [[ -e ".claude/skills/$skill" ]]; then
+    mv ".claude/skills/$skill" "$swap/$skill.old"
+  fi
+  mv "$swap/$skill" ".claude/skills/$skill"
+done
+mv "$swap/skills-lock.json" skills-lock.json
 rm -rf "$stage"

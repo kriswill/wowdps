@@ -37,7 +37,10 @@ Needs the network (github.com and the npm registry).
   apply will not write through a symlink.
 - **All or nothing.** The checkout changes only after the install and
   every patch have succeeded in the scratch project, so Claude Code never
-  loads a refreshed skill without its patches. When a patch no longer
+  loads a refreshed skill without its patches. Even then the new folders
+  and lock are first copied beside their targets (a swap directory under
+  `.claude/`, outside `skills/`) and swapped in by rename, so a failed copy
+  changes nothing either. When a patch no longer
   applies, the script stops with git's reason and keeps the scratch
   project, named on stderr. Upstream moved under the patch: rebase it
   against the new files there, or delete it once upstream carries the fix.
