@@ -2,8 +2,9 @@
 # via devenv's native cd hook (trust once with `devenv allow`) instead of
 # `nix develop`. The environment ITSELF lives in nix/dev/, imported by
 # both, so the two can no longer drift; what stays here is only what devenv
-# plumbs differently: its Rust toolchain and its okf input. Even the contract
-# `devenv test` asserts is shared — it is an executable both shells carry.
+# plumbs differently: its Rust toolchain and its okf and llm-agents inputs.
+# Even the contract `devenv test` asserts is shared — it is an executable both
+# shells carry.
 {
   pkgs,
   lib,
@@ -27,6 +28,10 @@ in
     # (devenv.yaml). The flake shell reaches the same CLI through its own
     # input, which is why this one package is not in nix/dev/.
     inputs.okf.packages.${pkgs.stdenv.hostPlatform.system}.okf
+    # coderabbit / cr, the CodeRabbit review CLI (`coderabbit review
+    # --agent`), from the llm-agents input — the flake shell reaches it
+    # through its own, as it does okf.
+    inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.coderabbit-cli
   ];
 
   env = shared.env;
