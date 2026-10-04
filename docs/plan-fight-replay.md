@@ -697,6 +697,67 @@ pointer, and a rotate drag.
   the bridge.
 - **Answers:** Q12.
 
+**As built (2026-10-04, numbers in; the feel test is next).**
+
+The spike is `crates/gui/examples/replay_spike.rs`, on branch
+`spike/replay-phase0`.
+
+- **Its window.** A 1440 × 900 shell: the rail, the header, the ribbon's
+  curve and the raid frames are cached views. A playhead view and the
+  replay canvas are told every frame. The raid frames are told at most 10
+  times a second.
+- **The clock.** It ticks from GPUI's frame callback (`on_next_frame`), so
+  it paces with the compositor.
+- **Its inputs.** One real Heroic Coiled Altar kill, pseudonymized, in
+  `~/.local/share/wowdps/design-shots/replay-spike/` (outside the
+  repository; `run-spike.sh` builds and opens it): 25 players, both bosses
+  and their adds, 228k samples.
+- **What it draws.** Spec-icon discs, the bosses with a health arc and a
+  facing tick, 4 s or 10 s trails, Sever cones, hit rings and a north mark,
+  over either floor, CPU-resampled at the view's angle.
+- **Where it was measured.** On a 144 Hz headless Hyprland output, on an
+  RTX 5080 with 24 cores, by its scripted bench (`--bench`):
+
+| Part | Frame rate | Interval p50 / p99 | Replay render + paint | Process CPU |
+| --- | --- | --- | --- | --- |
+| 1×, whole raid, 4 s trails | 143.9 fps | 6.94 / 7.18 ms | 0.34 ms | 14% of a core |
+| 4×, following, 10 s trails, hits | 144.0 fps | 6.94 / 7.21 ms | 0.51 ms | 18% |
+| Turning every frame, full-resolution floor | 143.9 fps | 6.94 / 7.19 ms | 2.5 ms (resample 2.0 ms on 8 threads) | 242% |
+| Turning every frame, half-resolution floor (what a drag draws) | 144.0 fps | 6.95 / 7.19 ms | 0.59 ms (resample 0.29 ms) | 42% |
+| Paused | one frame drawn | — | — | 0.5% |
+
+**What the numbers say.**
+
+- **Playback is free of jitter at 144 Hz.** It costs about a sixth of one
+  core, because the root renders every frame (5,761 times in the run) but
+  is a cheap skeleton over cached views.
+- **The floor's resample is the one hot path.** Two fixes made it fit:
+  - a load-time pass that does the tint, desaturation and premultiply once
+  - a per-frame walk that steps the affine view incrementally, in
+    fixed-point bilinear
+
+  A turn or zoom in motion then draws a half-resolution floor with no
+  margin, and settles to one full-resolution resample 150 ms after it
+  stops.
+- **The minimap's empty grey is keyed by a flood fill from the border**,
+  not by colour. Keying by colour punched holes in the stone wherever the
+  texture happened to match.
+
+**What the screenshots say** (for the feel test to confirm):
+
+- The dungeon map reads cleaner than the minimap at room zoom, about
+  5 px/yd.
+- With every name on, the melee stack is an unreadable pile of labels.
+
+**The feel test (2026-10-04, the user, on DP-3):** "the animations are
+working, and the replay looks map accurate."
+
+The one criticism was the floor going blurry as the view zooms. Real-ESRGAN
+4× at extraction fixes it for the dungeon map. Measured in the spike (a
+third floor, `--floor uimap4`), the carved detail is crisp at 11 px per
+yard. Re-rendering the room's geometry remains the route to a sharp true
+floor (`docs/replay-assets.md` §4, "Sharper floors").
+
 ### Phase 1 — the dots move on the real floor
 
 - **Capture v0, built on demand.** Built from the log when a pull is

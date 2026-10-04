@@ -280,6 +280,69 @@ the interpretation.
   the boss", "12 yd from the boss"). Those stay true at any angle. The
   plan's mcp positions tool should answer the same way.
 
+### Sharper floors: uprezzing at extraction (2026-10-04)
+
+The Phase 0 feel test passed, with one criticism: the floor goes blurry as
+the view zooms in. The replay's room view is about 5 px per yard by default
+and more when zoomed. The dungeon map is 0.86 px per yard, and the game
+itself never magnifies it past 2.14× (`UiMapArtStyleLayer.MaxScale`, with
+no higher-detail layer for dungeon floors). So the art has to gain
+resolution before it ships to the GUI. There are two routes, both run once
+at extraction.
+
+**Upscale the dungeon map with a super-resolution model: works now.**
+
+- **The tool.** Real-ESRGAN's `realesrgan-x4plus`, through
+  `realesrgan-ncnn-vulkan` 0.2.0 (nixpkgs, MIT, the model BSD-3), turns a
+  1002 × 668 floor into 4008 × 2672 (3.4 px per yard).
+- **Speed.** About 4 s on the RTX 5080. It needs `-t 128`: the default
+  tile size lost the Vulkan device.
+- **Measured in the spike at 11 px per yard.** The original is mush at 13×
+  magnification. The 4× floor, magnified 3×, shows crisp carved rings and
+  stone joints.
+- **Why it works here.** The parchment art is line art, which these models
+  sharpen without inventing much.
+- **It does not work on the minimap render.** At 1 px per yard there is no
+  detail to recover. Edges sharpen, but the venom pool and debris become
+  invented blobs.
+- **How the generator would do it:**
+  1. stitch each current-season floor
+  2. hand it to the upscaler when it is on `PATH` (the dev shell can carry
+     it, as it carries `okf`)
+  3. read the result back, compress it, and store it in the per-machine
+     floor cache
+
+  Without the tool, the cache holds the plain floor.
+- **Storage.** A 4× floor is 43 MB as RGBA, so a season's 24 floors would
+  be about 1 GB. They need block compression: BC1 at half a byte per pixel
+  is about 5.4 MB a floor, or about 130 MB a season. Decoding means
+  sharing `blp.rs`'s DXT decoder with gui-logic, and only the floor on
+  show is decoded.
+- **Stays per-machine.** The upscaled art is still Blizzard's, so it never
+  lands in the repository.
+
+**Re-render the room's geometry: the real fix, and the spike after Phase
+1.**
+
+- **The detail exists.** The Coiled Altar room's floor materials sample
+  textures of 512² to 2048² px that repeat every 4 to 13 yd: roughly 40 to
+  150 texture pixels per yard. The minimap render sits at about 1.
+- **So a re-render is genuine detail, not invented.** A top-down
+  orthographic render of the floor's WMO groups (§4, "The room's own
+  geometry") at 6–10 px per yard needs no model at all.
+- **What it takes:**
+  - the group meshes and their UV sets
+  - the materials. This build's main floor shader, type 23, blends
+    `MOMT`'s second and third textures, and a new `MOMX` chunk sits beside
+    them, so its format still has to be worked out.
+  - the baked vertex colours
+  - backface culling, which drops ceilings without any Z
+  - the props (M2 doodads), optional at first
+
+**At runtime, either way.** The CPU resample can switch from bilinear to a
+Catmull-Rom kernel for its settled frame. And the zoom stops where the
+floor stops resolving: about 3× the floor's own pixels per yard.
+
 ### Rotating without edges
 
 At any angle but a multiple of 90°, a rectangular floor image swings its
