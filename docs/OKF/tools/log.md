@@ -2,6 +2,10 @@
 
 ## 2026-10-03
 
+- **Update** — [skills-update](skills-update.md): installs upstream's
+  `code-review` as `code-rabbit-review` (`as` in the script, a frontmatter
+  patch), so Claude Code's own `/code-review` plugin is no longer shadowed;
+  the project no longer turns that plugin off.
 - **Creation** — [skills-update](skills-update.md): refreshes the vendored
   CodeRabbit skills and re-applies this repo's patches over them, starting
   with autofix's push gate.

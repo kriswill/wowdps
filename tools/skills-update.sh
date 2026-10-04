@@ -2,9 +2,11 @@
 # Refresh the vendored CodeRabbit skills, then lay this repo's patches over
 # them.
 #
-# .claude/skills/{autofix,code-review} are coderabbitai/skills as
+# .claude/skills/{autofix,code-rabbit-review} are coderabbitai/skills as
 # `bunx skills add` copied them (skills-lock.json records the source and
-# hash). Local fixes never live in those files alone: each is a patch in
+# hash, under upstream's names) — `code-review` installed as
+# code-rabbit-review, so it never shadows Claude Code's own /code-review.
+# Local fixes never live in those files alone: each is a patch in
 # .claude/skills/patches/, so a refresh cannot lose one. The script
 # installs the upstream files exactly as first added (Claude Code only,
 # copied) into a scratch project, applies every patch there in name order,
@@ -24,7 +26,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 root=$PWD
+# Upstream's names, as `skills add` installs them and the patches address
+# them; `as` maps one this repo installs under another name.
 skills=(autofix code-review)
+declare -A as=([code-review]=code-rabbit-review)
+named() { echo "${as[$1]:-$1}"; }
 
 # Its own repository, so git apply resolves the patches' paths from it.
 stage=$(mktemp -d)
@@ -59,15 +65,20 @@ swap=$(mktemp -d .claude/skills-update.XXXXXX)
 backups=0
 trap '((backups)) || rm -rf "$swap"' EXIT
 for skill in "${skills[@]}"; do
-  cp -R "$stage/.claude/skills/$skill" "$swap/$skill"
+  cp -R "$stage/.claude/skills/$skill" "$swap/$(named "$skill")"
 done
 cp "$stage/skills-lock.json" "$swap/skills-lock.json"
 for skill in "${skills[@]}"; do
-  if [[ -e ".claude/skills/$skill" ]]; then
-    mv ".claude/skills/$skill" "$swap/$skill.old"
-    backups=1
-  fi
-  mv "$swap/$skill" ".claude/skills/$skill"
+  to=$(named "$skill")
+  # Its local name, and upstream's — what an install before the rename
+  # left — both moved aside.
+  for old in "$to" "$skill"; do
+    if [[ -e ".claude/skills/$old" ]]; then
+      mv ".claude/skills/$old" "$swap/$old.old"
+      backups=1
+    fi
+  done
+  mv "$swap/$to" ".claude/skills/$to"
 done
 mv "$swap/skills-lock.json" skills-lock.json
 rm -rf "$swap" "$stage"

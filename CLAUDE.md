@@ -108,9 +108,11 @@ coderabbit review --agent         # CodeRabbit's review of local changes (`cr` f
                                   # the store is read-only, the weekly lock update moves it.
                                   # In Claude Code here, .claude/settings.json's SessionStart
                                   # hook puts that same build on the Bash tool's PATH, and the
-                                  # project's CodeRabbit skills (.claude/skills/code-review and
-                                  # autofix, from coderabbitai/skills, skills-lock.json) replace
-                                  # the built-in /code-review; the code-review plugin is off.
+                                  # project's CodeRabbit skills (autofix, and upstream's
+                                  # code-review installed as .claude/skills/code-rabbit-review,
+                                  # from coderabbitai/skills, skills-lock.json) sit beside the
+                                  # built-in: /code-rabbit-review is CodeRabbit's, /code-review
+                                  # the code-review plugin's (and a plain review request).
                                   # Never edit those files alone: a local fix is a patch in
                                   # .claude/skills/patches/, and tools/skills-update.sh
                                   # refreshes them and re-applies every patch (never

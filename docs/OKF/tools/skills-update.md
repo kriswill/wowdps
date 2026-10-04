@@ -1,7 +1,7 @@
 ---
 type: Tool
 title: skills-update
-description: Refreshes the vendored CodeRabbit skills (.claude/skills/autofix and code-review, from coderabbitai/skills) and re-applies this repo's patches over them, so a local fix to an upstream skill survives every refresh.
+description: Refreshes the vendored CodeRabbit skills (.claude/skills/autofix, and upstream's code-review installed as code-rabbit-review, from coderabbitai/skills) and re-applies this repo's patches over them, so a local fix to an upstream skill survives every refresh.
 resource: tools/skills-update.sh
 tags: [tool, dev]
 status: stable
@@ -15,6 +15,11 @@ replaces the checkout's skill folders and `skills-lock.json`. The install
 is `bunx skills add coderabbitai/skills --skill autofix code-review -a
 claude-code --copy -y`: Claude Code only, copied rather than symlinked.
 `skills-lock.json` keeps upstream's hash, so it never records a patch.
+A skill can be installed under a local name (`as` in the script):
+upstream's `code-review` lands as `.claude/skills/code-rabbit-review`,
+so it sits beside Claude Code's own `/code-review` (the code-review
+plugin) instead of shadowing it; the patches still address upstream's
+paths, and the lock keeps upstream's names.
 Needs the network (github.com and the npm registry).
 
 ## Source
@@ -31,6 +36,8 @@ Needs the network (github.com and the npm registry).
   first diff header (git apply skips it) saying why it exists and when to
   drop it. The first one, `autofix-push-gate.patch`, stops autofix from
   posting its PR success comment when the fix commit was never pushed.
+  `code-rabbit-review-name.patch` renames the CodeRabbit review skill in
+  its frontmatter and drops upstream's claim to every review request.
 - **Not `bunx skills update`.** For each project skill it runs
   `skills add -y` with no agent and no `--copy`. Under `-y` that means every
   agent installed on the machine, symlinked from `.agents/skills`, and git
