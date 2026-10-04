@@ -4,9 +4,10 @@
 
 - **Creation** — [devenv Is The Reference Shell, And The Flake Shell Mirrors It](devenv-is-the-reference-shell.md):
   devenv for local builds and CI; the flake shell mirrors devenv's clang
-  and linker script to the same store path, PKG_CONFIG_PATH pinned in both,
+  and linker to the same store path, PKG_CONFIG_PATH pinned in both,
   sccache wraps rustc, the contract checks the mirror — cargo had rebuilt all
-  567 crates on every switch while the two drifted.
+  567 crates on every switch while the two drifted. CI keeps both cargo
+  caches in main's scope (cache-warm.yml) and PRs only read them.
 - **Creation** — [A Fight Replay Captured Once And Interpreted Per Tier](fight-replay-captured-once.md):
   roadmap item 2a's research plan — a replay mode of the pull view built on
   the positions every advanced line carries, captured once in the background

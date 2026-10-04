@@ -14,8 +14,7 @@ name: Cache warm
 on:
   push:
     branches: [main]
-    # Docs-only merges change nothing it compiles ([skip ci] skips those
-    # too; this says so without relying on a commit message).
+    # Docs-only merges change nothing it compiles.
     paths-ignore:
       - "docs/**"
       - "**/*.md"
@@ -27,7 +26,6 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  id-token: write # FlakeHub Cache (OIDC)
   contents: read
 
 env:
@@ -37,29 +35,39 @@ jobs:
   warm:
     name: warm the cargo caches for PRs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # FlakeHub Cache (OIDC)
     env:
-      # Must match ci.yml's `ci` job: rust-cache folds the job's environment
-      # into its key, and sccache writes where this says.
+      # ci.yml's `ci` job reads what this writes.
       SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_RW_MODE: READ_WRITE
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # The same setup as ci.yml's `ci` job, step for step: the cache keys
-      # are only shared if the environments are.
-      - uses: DeterminateSystems/nix-installer-action@v23
+      # The same setup as ci.yml's `ci` job, step for step: the caches are
+      # only shared if the environments are (ci.yml says why each step is
+      # there).
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
         with:
           determinate: true
           summarize: false
-      - uses: DeterminateSystems/flakehub-cache-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@88740a21e786360ba66bdd8fecabcbf852db3a5a # v3.23.0
       - name: Install devenv
-        run: nix profile install --inputs-from . nixpkgs#devenv
-      - uses: mozilla-actions/sccache-action@v0.0.11
+        run: nix profile add --inputs-from . nixpkgs#devenv
+      - name: Expose the Actions cache service to sccache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          disable_annotations: true
-      - uses: Swatinem/rust-cache@v2
+          script: |
+            core.exportVariable('ACTIONS_CACHE_SERVICE_V2', 'on');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: devenv-workspace
-          key: ${{ hashFiles('flake.lock', 'devenv.lock') }}
+          shared-key: devenv-${{ hashFiles('flake.lock', 'devenv.lock', 'devenv.yaml', 'devenv.nix', 'nix/dev/**') }}
+          cmd-format: devenv shell -- {0}
           # Main saves; ci.yml's PR runs only restore.
           save-if: true
 

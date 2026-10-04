@@ -32,8 +32,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # create-pull-request pushes with the app token it is handed,
+          # never with this checkout's credentials.
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - run: nix flake update
       # The devenv CLI comes from the freshly locked nixpkgs rev, so the
       # lock it writes is the one that rev's devenv considers valid.
@@ -55,12 +59,16 @@ jobs:
           la=$(jq -r '.nodes[.nodes[.root].inputs."llm-agents"].locked.rev' flake.lock)
           sed -i "s|github:numtide/llm-agents.nix/[0-9a-f]*|github:numtide/llm-agents.nix/$la|" devenv.yaml
           nix shell "github:NixOS/nixpkgs/$rev#devenv" --command devenv update
-      - uses: actions/create-github-app-token@v3
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
           client-id: ${{ vars.LOCK_APP_CLIENT_ID }}
           private-key: ${{ secrets.LOCK_APP_PRIVATE_KEY }}
-      - uses: peter-evans/create-pull-request@v8
+          # Only what create-pull-request needs: push the branch, open and
+          # label the PR — not everything the installation may do.
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
           # Only the lock artifacts — never `.devenv/` state or anything
