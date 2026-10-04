@@ -302,9 +302,9 @@ impl TalentViewer {
 
 /// What every piece of the viewer draws with: the theme's window and
 /// talent tokens, its face, and the tree's fit.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Paint {
-    pub def: &'static Def,
+    pub def: std::sync::Arc<Def>,
     pub t: TalentTokens,
     /// The trees' scale: 1 when they fit, less (to `MIN_FIT`) when not.
     pub s: f32,
@@ -325,7 +325,7 @@ impl Paint {
     /// Words that wrap at their container's width.
     pub fn words(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> gpui_kit::Div {
         div()
-            .font_family(self.def.faces.ui)
+            .font_family(crate::theme::face(&self.def.faces.ui))
             .text_size(px(size))
             .text_color(color)
             .child(text.into())
@@ -334,11 +334,48 @@ impl Paint {
     /// `text` at `size` in the window's face and `color`.
     pub fn text(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> gpui_kit::Div {
         div()
-            .font_family(self.def.faces.ui)
+            .font_family(crate::theme::face(&self.def.faces.ui))
             .text_size(px(size))
             .text_color(color)
             .whitespace_nowrap()
             .child(text.into())
+    }
+
+    /// A corner the viewer draws at `v` px, at the theme's shape.
+    pub fn r(&self, v: f32) -> gpui_kit::Pixels {
+        px(self.def.shape.radius(v))
+    }
+
+    /// A pill's corner, `v` its half-height, at the theme's shape.
+    pub fn pill(&self, v: f32) -> gpui_kit::Pixels {
+        px(self.def.shape.pill(v))
+    }
+
+    /// The tooltip's face: its box in `tip` inside `tip_edge`, and, where
+    /// the theme is glass, a faint sheen down it and the specular rim
+    /// along its top (the window's `W::float`).
+    pub fn tip_face<E: Styled>(&self, el: E) -> E {
+        let el = el.border_1().border_color(self.c(|t| t.tip_edge));
+        if !self.def.effects.glass {
+            return el.bg(self.c(|t| t.tip));
+        }
+        let w = &self.def.window;
+        let sheen = w
+            .glass_sheen
+            .over(self.t.tip.alpha(1.0))
+            .alpha(self.t.tip.a);
+        el.bg(gpui_kit::linear_gradient(
+            180.,
+            gpui_kit::linear_color_stop(hsla(sheen), 0.),
+            gpui_kit::linear_color_stop(self.c(|t| t.tip), 0.30),
+        ))
+        .shadow(vec![gpui_kit::BoxShadow {
+            color: hsla(w.glass_rim),
+            offset: gpui_kit::point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        }])
     }
 }
 
@@ -370,9 +407,10 @@ impl Render for TalentViewer {
             .build
             .as_ref()
             .is_none_or(|b| content_width(b) * s <= avail + 0.5);
+        let t = def.talents;
         let p = Paint {
-            def,
-            t: def.talents,
+            def: std::sync::Arc::clone(&def),
+            t,
             s,
         };
         let motion = self.motion(window, cx);
@@ -507,17 +545,16 @@ impl Render for TalentViewer {
             .on_action(cx.listener(|this, _: &CloseTalents, _, cx| this.apply(Msg::Close, cx)))
             .on_action(cx.listener(|this, _: &FlipTab, _, cx| this.apply(Msg::ToggleTab, cx)))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.drop_files(paths, cx)))
-            .drag_over::<ExternalPaths>(move |style, _, _, _| {
-                style
-                    .border_color(hsla(p.t.gold))
-                    .bg(hsla(p.t.gold.alpha(0.04)))
+            .drag_over::<ExternalPaths>({
+                let taken = p.t.taken;
+                move |style, _, _, _| style.border_color(hsla(taken)).bg(hsla(taken.alpha(0.04)))
             })
             .size_full()
             .p(px(10.))
             .border_1()
             .border_color(hsla(wowdps_gui_logic::theme::Color::TRANSPARENT))
             .bg(p.w(|t| t.ground))
-            .font_family(def.faces.ui)
+            .font_family(crate::theme::face(&def.faces.ui))
             .line_height(gpui_kit::relative(1.3))
             .text_color(ink)
             .child(body)
@@ -627,7 +664,7 @@ impl TalentViewer {
             provenance = provenance.child(p.text("from combat log", 12., p.w(|t| t.good)));
         }
         if ui.edited {
-            provenance = provenance.child(p.text("edited", 12., p.w(|t| t.gold_dim)));
+            provenance = provenance.child(p.text("edited", 12., p.w(|t| t.label_ink)));
         }
         let copied = self
             .copied_until
@@ -648,7 +685,7 @@ impl TalentViewer {
             pane::pane(pane::PaneArgs {
                 index: i,
                 model: Rc::clone(model),
-                paint: *p,
+                paint: p.clone(),
                 picker: ui.picker,
                 hover: self.pane_hover.get(i).copied().flatten(),
                 motion,
@@ -663,13 +700,13 @@ impl TalentViewer {
                 .gap(px(8. * s))
                 .w(px(model.w.max(160.0) * s))
                 .children(icon.map(|i| img(i).size(px(20. * s))))
-                .child(p.text(name.to_uppercase(), 13. * s, p.c(|t| t.gold)))
+                .child(p.text(name.to_uppercase(), 13. * s, p.c(|t| t.taken)))
                 .child(div().flex_1())
                 .child(p.text(
                     label,
                     12. * s,
                     if full {
-                        p.c(|t| t.gold)
+                        p.c(|t| t.taken)
                     } else {
                         p.w(|t| t.ink_2)
                     },
@@ -798,7 +835,7 @@ fn hero_column(
                 .children(art::ring().map(|r| img(r).absolute().size(px(ring_d)))),
         );
     }
-    col = col.child(p.text(hero_name.to_uppercase(), 14. * p.s, p.c(|t| t.gold)));
+    col = col.child(p.text(hero_name.to_uppercase(), 14. * p.s, p.c(|t| t.taken)));
     if let (Some(pane), Some(model)) = (pane, model) {
         let (label, full) = logic::points_label(model.points, model.cap);
         col = col
@@ -806,7 +843,7 @@ fn hero_column(
                 label,
                 12. * p.s,
                 if full {
-                    p.c(|t| t.gold)
+                    p.c(|t| t.taken)
                 } else {
                     p.w(|t| t.ink_2)
                 },
@@ -817,7 +854,7 @@ fn hero_column(
                     .bg(p.c(|t| t.plate))
                     .border_1()
                     .border_color(p.c(|t| t.plate_edge))
-                    .rounded(px(10.))
+                    .rounded(p.r(10.))
                     .child(pane),
             );
     }
@@ -840,7 +877,7 @@ fn chip(
         .cursor_pointer()
         .py(px(3.))
         .px(px(8.))
-        .rounded(px(8.))
+        .rounded(p.pill(8.))
         .bg(p.c(|t| if selected { t.chip_on } else { t.chip }))
         .border_1()
         .border_color(p.c(|t| {
@@ -869,5 +906,5 @@ fn chip(
 
 /// The badge text's font: the window's face.
 pub(crate) fn face(p: &Paint) -> gpui_kit::Font {
-    font(p.def.faces.ui)
+    font(crate::theme::face(&p.def.faces.ui))
 }

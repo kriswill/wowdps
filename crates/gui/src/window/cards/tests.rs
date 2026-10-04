@@ -105,8 +105,39 @@ fn the_options_write_one_key_each(cx: &mut TestAppContext) {
     rig.gui
         .read_with(cx, |g, _| assert_eq!(g.cfg.chrome, "class"));
     assert_eq!(Config::load().chrome, "class");
-    press(cx, &rig, "chrome-gold");
-    assert_eq!(Config::load().chrome, "gold");
+    press(cx, &rig, "chrome-theme");
+    assert_eq!(Config::load().chrome, "theme");
+    // A theme chip writes `theme` and repaints the window in it, the
+    // chrome its own accent; pressing it again changes nothing.
+    press(cx, &rig, "theme-onyx");
+    assert_eq!(Config::load().theme, "onyx");
+    cx.update(|cx| {
+        let look = crate::theme::Look::global(cx);
+        assert_eq!(look.def.name, "onyx");
+        assert_eq!(
+            look.accent.base,
+            wowdps_gui_logic::theme::ONYX.window.accent
+        );
+    });
+    press(cx, &rig, "theme-onyx");
+    assert_eq!(Config::load().theme, "onyx");
+    // A class chrome keeps its class through a theme switch.
+    rig.gui
+        .update(cx, |g, _| g.cfg.character_class = Some("Priest".into()));
+    press(cx, &rig, "chrome-class");
+    let class_accent = cx.update(|cx| crate::theme::Look::global(cx).accent);
+    assert_eq!(
+        class_accent,
+        wowdps_gui_logic::theme::class_accent(wowdps_model::Class::Priest)
+    );
+    press(cx, &rig, "theme-navy");
+    assert_eq!(Config::load().theme, "navy");
+    cx.update(|cx| {
+        let look = crate::theme::Look::global(cx);
+        assert_eq!(look.def.name, "navy");
+        assert_eq!(look.accent, class_accent, "the class chrome held");
+    });
+    press(cx, &rig, "chrome-theme");
     // A key the card never touched is the file's own: a zoom saved
     // meanwhile survives every write.
     Config::store(|c| c.zoom = 1.7);

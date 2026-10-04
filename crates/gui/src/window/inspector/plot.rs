@@ -46,7 +46,7 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::inspect::geometry::{self as geo, DRAG_MIN_PX, Hover};
 use wowdps_gui_logic::inspect::lanes::Row as LaneRow;
-use wowdps_gui_logic::theme::WindowTokens;
+use wowdps_gui_logic::theme::{DataTokens, Effects, Shape, WindowTokens};
 
 pub use wowdps_gui_logic::inspect::plot::{Curve, Dead};
 
@@ -150,7 +150,7 @@ pub fn plot(id: impl Into<ElementId>, input: Input, w: &W) -> Plot {
     Plot {
         id: id.into(),
         input,
-        w: *w,
+        w: w.clone(),
         on_range: None,
         state: None,
     }
@@ -179,7 +179,10 @@ struct Frame {
     shown: (u32, u32),
     zoom: f32,
     t: WindowTokens,
-    ui: &'static str,
+    ui: gpui_kit::SharedString,
+    shape: Shape,
+    fx: Effects,
+    data: DataTokens,
     on_range: Option<OnRange>,
     state: Entity<State>,
     /// Reduced motion: the parity pixels, no delights.
@@ -192,14 +195,18 @@ impl Frame {
     }
 }
 
-/// Where everything is painted from: the canvas's origin, the zoom, the
-/// tokens and the face — every geometry unit times `z`.
+/// Where everything is painted from: the canvas's origin, the zoom and
+/// the tokens — every geometry unit times `z`. The face is the shaper's.
 #[derive(Clone, Copy)]
 pub(super) struct Pen {
     pub o: Point<Pixels>,
     pub z: f32,
     pub t: WindowTokens,
-    pub ui: &'static str,
+    /// The theme's corners and effects.
+    pub shape: Shape,
+    pub fx: Effects,
+    /// The data hues: the stack's rest is drawn by them.
+    pub data: DataTokens,
 }
 
 impl Pen {
@@ -213,6 +220,11 @@ impl Pen {
 
     pub fn px(&self, v: f32) -> Pixels {
         px(v * self.z)
+    }
+
+    /// A corner the design draws at `v`, at the theme's shape.
+    pub fn r(&self, v: f32) -> Pixels {
+        px(self.shape.radius(v) * self.z)
     }
 }
 
@@ -229,7 +241,10 @@ impl RenderOnce for Plot {
             shown,
             zoom: self.w.zoom,
             t: self.w.t,
-            ui: self.w.ui,
+            ui: self.w.ui.clone(),
+            shape: self.w.shape,
+            fx: self.w.fx,
+            data: self.w.data,
             on_range: self.on_range,
             state,
             still: cx.reduce_motion(),
@@ -286,7 +301,9 @@ fn paint(f: &Frame, b: Bounds<Pixels>, hitbox: &Hitbox, window: &mut Window, cx:
         o: b.origin,
         z: f.zoom,
         t: f.t,
-        ui: f.ui,
+        shape: f.shape,
+        fx: f.fx,
+        data: f.data,
     };
     let w = f32::from(b.size.width) / f.zoom;
     let g = f.geo();
@@ -294,7 +311,7 @@ fn paint(f: &Frame, b: Bounds<Pixels>, hitbox: &Hitbox, window: &mut Window, cx:
         let s = f.state.read(cx);
         (s.hover, s.drag)
     };
-    let shaper = tip::Shaper::new(window, pen);
+    let shaper = tip::Shaper::new(window, pen, f.ui.clone());
     let measure = |s: &str, size: f32, face: geo::Face| shaper.width(s, size, face);
     // The hatches' words, placed once: their band is what the curves
     // peak under.
@@ -337,6 +354,16 @@ fn paint(f: &Frame, b: Bounds<Pixels>, hitbox: &Hitbox, window: &mut Window, cx:
     }
     if let Some(Hover::Plot(x)) = hover {
         curves::crosshair(&g, w, x, top, f.still, pen, window);
+    }
+    // The reticle, where the theme frames its instruments: an L at each
+    // corner of the plot, its scale and axis words outside them.
+    if pen.fx.brackets {
+        crate::window::instruments::paint_brackets(
+            window,
+            pen.rect(left, 0.0, (w - left).max(0.0), g.plot_h),
+            pen.z,
+            crate::theme::hsla(pen.t.bracket),
+        );
     }
     for l in g.labels(hover, w, &measure) {
         shaper.paint_label(&l, window, cx);

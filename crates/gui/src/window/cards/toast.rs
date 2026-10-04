@@ -7,9 +7,9 @@
 
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, TestSupportExt as _, Window, div};
-use wowdps_gui_logic::theme::SHADOW_TOAST;
 
 use super::super::Gui;
+use super::super::w::Floating;
 use super::super::w::{REGULAR, W};
 use super::{BORDER, enter};
 
@@ -29,14 +29,12 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Opt
         .test_support()
         .py(w.z(PAD.0 - BORDER))
         .px(w.z(PAD.1 - BORDER))
-        .bg(w.c(|t| t.raise))
         .border(w.z(1.))
-        .border_color(w.c(|t| t.edge))
-        .rounded(w.z(RADIUS))
-        .shadow(vec![w.shadow(SHADOW_TOAST)])
+        .rounded(w.r(RADIUS))
+        .floating(w, w.c(|t| t.raise), w.c(|t| t.edge), w.shadows.toast)
         .child(
             div()
-                .font_family(w.ui)
+                .font_family(w.ui.clone())
                 .font_weight(REGULAR)
                 .text_size(w.z(PX))
                 .text_color(w.c(|t| t.ink))

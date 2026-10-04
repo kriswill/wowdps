@@ -14,11 +14,12 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::home::{CharLine, FOLLOW, played_note};
 use wowdps_gui_logic::labels::display_name;
-use wowdps_gui_logic::theme::{AA_CONTRAST, SHADOW_MENU, class_text_on};
+use wowdps_gui_logic::theme::{AA_CONTRAST, class_text_on};
 
 use super::super::Gui;
 use super::super::chrome::{class_icon, hairline};
-use super::super::top_bar::PICKER_END;
+use super::super::top_bar::picker_end;
+use super::super::w::Floating;
 use super::super::w::{REGULAR, SEMIBOLD, W};
 use super::{BORDER, enter};
 use crate::theme::hsla;
@@ -114,11 +115,9 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         .test_support()
         .occlude()
         .py(w.z(PAD_Y - BORDER))
-        .bg(w.c(|t| t.surface))
         .border(w.z(1.))
-        .border_color(w.c(|t| t.edge))
-        .rounded(w.z(RADIUS))
-        .shadow(vec![w.shadow(SHADOW_MENU)])
+        .rounded(w.r(RADIUS))
+        .floating(w, w.c(|t| t.surface), w.c(|t| t.edge), w.shadows.menu)
         .child(list);
     // A press on the scrim — anywhere but a row — closes the menu.
     div()
@@ -140,7 +139,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
             div()
                 .absolute()
                 .top(w.z(w.pitch.top_bar))
-                .right(w.z(PICKER_END))
+                .right(w.z(picker_end(w)))
                 .ml(w.z(SIDE))
                 .child(enter("picker-enter", card, w, window, cx)),
         )
@@ -203,7 +202,7 @@ fn row(
         .aria_selected(on)
         .w_full()
         .flex()
-        .rounded(w.z(ROW_RADIUS))
+        .rounded(w.r(ROW_RADIUS))
         .cursor_pointer()
         .when(on, |d| d.bg(w.c(|t| t.raise)))
         .when(!on, |d| d.hover(|s| s.bg(w.c(|t| t.hover))))

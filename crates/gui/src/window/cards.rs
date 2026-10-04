@@ -33,7 +33,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, KeyDownEvent, Task, Window};
 use wowdps_gui_logic::keys::{Inert, Surface, inert_keys};
 use wowdps_gui_logic::labels::display_name;
-use wowdps_gui_logic::theme::{Chrome, class_accent};
+use wowdps_gui_logic::theme::{Chrome, Def, class_accent};
 use wowdps_gui_logic::toast::{TOAST_FOR, pinned_player, stored_refusal};
 use wowdps_model::{Action, Screen, View};
 
@@ -155,25 +155,52 @@ impl Gui {
         cx.notify();
     }
 
-    /// The chrome: the game's gold, or the owner's class when the window
-    /// knows it — the character played last, else the class the config
-    /// remembers of them.
+    /// The chrome: the theme's own accent, or the owner's class when the
+    /// window knows it — the character played last, else the class the
+    /// config remembers of them.
     pub(crate) fn set_chrome(&mut self, chrome: Chrome, cx: &mut Context<Self>) {
         let name = chrome.name().to_string();
         self.cfg.chrome = name.clone();
         wowdps_gui_logic::config::Config::store(|c| c.chrome = name);
+        self.repaint(cx);
+    }
+
+    /// The theme, by name: written to the config alone (the overlay, which
+    /// watches the file, follows), and the window repainted in it with the
+    /// chrome it had.
+    pub(crate) fn set_theme(&mut self, name: &str, cx: &mut Context<Self>) {
+        if self.cfg.theme == name {
+            return;
+        }
+        self.cfg.theme = name.to_string();
+        let stored = name.to_string();
+        wowdps_gui_logic::config::Config::store(|c| c.theme = stored);
+        self.repaint(cx);
+    }
+
+    /// The theme the config names, from the registry the window started
+    /// with (the config's own `[themes]` included).
+    pub(crate) fn theme_def(&self, cx: &App) -> Def {
+        theme::Themes::global(cx).named(&self.cfg.theme).clone()
+    }
+
+    /// Apply the configured theme and chrome. A class chrome wears the
+    /// owner's class when the window knows it — learned once and held: a
+    /// class chrome picked now wears it, and the session's next word keeps
+    /// it.
+    fn repaint(&mut self, cx: &mut Context<Self>) {
+        let chrome = self.cfg.chrome();
         let class = self
             .played(cx)
             .and_then(|p| p.class)
             .or_else(|| self.cfg.character_class());
         let accent = match chrome {
-            Chrome::Class => class.map(|c| class_accent(Some(c))),
-            Chrome::Gold => None,
+            Chrome::Class => class.map(class_accent),
+            Chrome::Theme => None,
         };
-        // The owner's class is learned once and held: a class chrome
-        // picked now wears it, and the session's next word keeps it.
         self.learned = chrome == Chrome::Class && class.is_some();
-        theme::apply(self.cfg.theme(), accent, cx);
+        let def = self.theme_def(cx);
+        theme::apply(&def, accent, cx);
         cx.notify();
     }
 

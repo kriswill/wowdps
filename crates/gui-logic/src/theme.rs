@@ -7,32 +7,42 @@ use wowdps_model::Class;
 
 mod color;
 mod defs;
+mod frost;
 mod metrics;
+mod navy;
+mod onyx;
+mod registry;
 mod talent_tokens;
+mod text;
+mod tokens;
 
 pub use color::*;
 pub use defs::*;
 pub use metrics::*;
+pub use registry::{Registry, theme_toml};
 pub use talent_tokens::*;
+pub use text::Text;
 
 // ---- the chrome -----------------------------------------------------------
 
 /// What the window's chrome — the active tab's underline, a pressed chip's
-/// border — is drawn in. `Gold` needs nobody, so it is right on the first
-/// frame; `Class` is the owner's class colour, remembered in the config
-/// beside the locked character so it is right on the first frame too.
+/// border — is drawn in. `Theme` is the theme's own accent (`navy`'s gold,
+/// `onyx`'s white) and needs nobody, so it is right on the first frame;
+/// `Class` is the owner's class colour, remembered in the config beside
+/// the locked character so it is right on the first frame too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Chrome {
     #[default]
-    Gold,
+    Theme,
     Class,
 }
 
 impl Chrome {
     /// An unknown name is not an error, as with [`Density::from_name`].
+    /// `gold` is what `theme` was called when the only theme was gold.
     pub fn from_name(s: &str) -> Option<Self> {
         match s {
-            "gold" => Some(Chrome::Gold),
+            "theme" | "gold" => Some(Chrome::Theme),
             "class" => Some(Chrome::Class),
             _ => None,
         }
@@ -40,7 +50,7 @@ impl Chrome {
 
     pub fn name(self) -> &'static str {
         match self {
-            Chrome::Gold => "gold",
+            Chrome::Theme => "theme",
             Chrome::Class => "class",
         }
     }
@@ -119,9 +129,14 @@ mod tests {
     }
 
     #[test]
-    fn chrome_names_round_trip_and_default_to_gold() {
-        assert_eq!(Chrome::default(), Chrome::Gold);
-        for c in [Chrome::Gold, Chrome::Class] {
+    fn chrome_names_round_trip_and_default_to_the_theme_s() {
+        assert_eq!(Chrome::default(), Chrome::Theme);
+        assert_eq!(
+            Chrome::from_name("gold"),
+            Some(Chrome::Theme),
+            "the old name"
+        );
+        for c in [Chrome::Theme, Chrome::Class] {
             assert_eq!(Chrome::from_name(c.name()), Some(c));
         }
         assert_eq!(Chrome::from_name("purple"), None);

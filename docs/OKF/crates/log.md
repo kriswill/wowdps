@@ -1,5 +1,11 @@
 # Log
 
+## 2026-10-03
+
+- **Update** — [wowdps-gui](gui.md) and [wowdps-gui-logic](gui-logic.md): named
+  themes chosen in the ⚙ card, `[themes]` in config.toml, onyx and its faces
+  ([decision](../decisions/themes-as-config-data.md)).
+
 ## 2026-10-01
 
 - **Update** — [wowdps-gui](gui.md): the inspector widened over the stage and

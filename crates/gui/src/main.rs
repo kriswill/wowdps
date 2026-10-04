@@ -50,6 +50,9 @@ Usage:
                          (follow_game = false in the config disables this;
                          game_match sets the window class/title substring to
                          look for)
+  wowdps-gui --print-theme <name>
+                         print every key of a theme as config.toml tables, to
+                         copy into ~/.config/wowdps/config.toml and edit
   wowdps-gui --help      show this message
 
 The GUI is a client: the wowdps daemon owns the log. To meter a specific file
@@ -64,14 +67,19 @@ pull rail and the ribbon respond to the mouse.
 
 Configuration lives in ~/.config/wowdps/config.toml (zoom for both; edge,
 offset, panel size, monitor, follow_game, game_match for the overlay;
-theme = \"gold\" or \"frost\", chrome = \"gold\" or \"class\", density,
-home_on_start for the window) and is updated when you drag the tab or zoom.";
+theme = \"onyx\" (the default), \"navy\" or \"frost\" (also chosen in the window's options),
+chrome = \"theme\" or \"class\", density, home_on_start for the window) and
+is updated when you drag the tab or zoom. [themes.<name>] tables override a
+theme's colours, faces, sizes, corners and effects, or define a theme of
+your own (`base = \"onyx\"` to start from one); --print-theme shows them all.";
 
 fn main() -> ExitCode {
     let mut overlay = false;
-    for arg in std::env::args().skip(1) {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--overlay" => overlay = true,
+            "--print-theme" => return print_theme(args.next()),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
@@ -84,13 +92,25 @@ fn main() -> ExitCode {
     }
 
     let cfg = config::Config::load();
+    // Every theme the config can choose; what its [themes] got wrong is
+    // said once, here, and otherwise left out.
+    let themes = cfg.themes();
+    for warning in &themes.warnings {
+        eprintln!(
+            "wowdps-gui: {}: {warning}",
+            config::Config::path().display()
+        );
+    }
+    let def = themes.named(&cfg.theme).clone();
     // The overlay's output, chosen before the app starts: under Hyprland it
     // may wait for the game window to map, a wait no frame should take.
     let output = overlay.then(|| overlay::choose_output(&cfg)).flatten();
     // A class chrome wears the class of the character played last, as the
-    // config remembers it; none known yet is the neutral accent.
+    // config remembers it; none known yet is the theme's own accent.
     let chrome = (cfg.chrome() == Chrome::Class)
-        .then(|| wowdps_gui_logic::theme::class_accent(cfg.character_class()));
+        .then(|| cfg.character_class())
+        .flatten()
+        .map(wowdps_gui_logic::theme::class_accent);
     if overlay {
         // Replace any running overlay, of either GUI, before touching the
         // daemon: the takeover socket is unversioned and shared, so two
@@ -124,7 +144,8 @@ fn main() -> ExitCode {
         gpui_kit::init(cx);
         keys::bind(cx);
         fonts(cx);
-        theme::apply(cfg.theme(), chrome, cx);
+        theme::Themes::set(themes, cx);
+        theme::apply(&def, chrome, cx);
         let fail = move |e: String, cx: &mut gpui_kit::App| {
             *failed.borrow_mut() = Some(e);
             cx.quit();
@@ -155,4 +176,40 @@ fn fonts(cx: &mut gpui_kit::App) {
     if let Err(e) = cx.text_system().add_fonts(faces) {
         eprintln!("wowdps-gui: the bundled fonts did not load: {e}");
     }
+}
+
+/// `--print-theme <name>`: every key of the theme the config would draw
+/// for `name` (its own overrides included), as `[themes.<name>]` tables.
+fn print_theme(name: Option<String>) -> ExitCode {
+    let cfg = config::Config::load();
+    let themes = cfg.themes();
+    let Some(name) = name else {
+        let names: Vec<&str> = themes.themes().iter().map(|d| d.name.as_str()).collect();
+        eprintln!(
+            "wowdps-gui: --print-theme takes a theme: {}",
+            names.join(", ")
+        );
+        return ExitCode::from(2);
+    };
+    for warning in &themes.warnings {
+        eprintln!(
+            "wowdps-gui: {}: {warning}",
+            config::Config::path().display()
+        );
+    }
+    let Some(def) = themes.get(&name) else {
+        let names: Vec<&str> = themes.themes().iter().map(|d| d.name.as_str()).collect();
+        eprintln!(
+            "wowdps-gui: no theme is named {name:?}: {}",
+            names.join(", ")
+        );
+        return ExitCode::from(2);
+    };
+    println!(
+        "# The {} theme, every key. Keep [themes.{}] to override it, or rename\n\
+         # the tables (and give it a `label`) to make a theme of your own.\n",
+        def.label, def.name
+    );
+    print!("{}", wowdps_gui_logic::theme::theme_toml(def, &def.name));
+    ExitCode::SUCCESS
 }

@@ -13,49 +13,35 @@ use wowdps_model::fmt::human;
 use wowdps_model::{GraphMode, Mark, MarkKind, Timeline, View};
 use wowdps_proto::CompareSide;
 
-use crate::theme::{Color, GOLD};
+use crate::theme::{Color, DataTokens};
 
 // ---- marks ----------------------------------------------------------------
 
-/// Marker colours. Distinct hues rather than shades: at graph width these
-/// bars are one or two pixels wide, and a shade difference is invisible.
-pub const USE: Color = Color::rgb(1.0, 0.85, 0.35);
-pub const PROC: Color = Color::rgb(0.45, 0.85, 1.0);
-/// A consumable wears the overlay's green.
-pub const CONSUMABLE: Color = GOLD.overlay.good;
-/// v13: externals (Bloodlust, Power Infusion) — violet, nothing else is.
-pub const EXTERNAL: Color = Color::rgb(0.85, 0.55, 1.0);
-/// R18: active mitigation AND defensives — coral. Both are "the player
-/// pressed something to take less"; the legend key and the hover name tell
-/// them apart, a second warm hue would not at bar width.
-pub const MITIGATION: Color = Color::rgb(1.0, 0.45, 0.40);
-/// R18: support buffs on the player (Ebon Might, Prescience) — teal.
-pub const SUPPORT: Color = Color::rgb(0.35, 0.90, 0.80);
-/// R18: an offensive cooldown's window — the External bar's twin (a burst
-/// window either way), so it stays in the violet family but steps to
-/// indigo: a hue away from EXTERNAL's lavender, not a shade of it.
-pub const COOLDOWN: Color = Color::rgb(0.50, 0.40, 1.0);
-/// R23: the window the player spent DEAD — bone grey, the one mark that is
-/// not something they pressed. Deliberately colourless: every other bar is
-/// a hue that means "look here", and this one means "nothing happened
-/// here".
-pub const DEAD: Color = Color::rgb(0.62, 0.62, 0.66);
-/// v34: a healing cooldown's window — spring green, a hue away from
-/// CONSUMABLE's green and SUPPORT's teal: the healing graph's own burst
-/// window, never confused with a potion beside it.
-pub const HEALING_CD: Color = Color::rgb(0.55, 1.0, 0.45);
-
-pub fn mark_color(kind: MarkKind) -> Color {
+/// A mark's colour, from the theme's data hues (`DataTokens`' `mark_*`).
+/// Distinct hues rather than shades: at graph width these bars are one or
+/// two pixels wide, and a shade difference is invisible. In `navy`: a
+/// trinket use gold, a proc sky blue, a consumable the overlay's green;
+/// externals (Bloodlust, Power Infusion) violet, nothing else is; active
+/// mitigation AND defensives coral — both are "the player pressed
+/// something to take less", the legend key and the hover name tell them
+/// apart, a second warm hue would not at bar width; support buffs (Ebon
+/// Might, Prescience) teal; an offensive cooldown indigo, the External
+/// bar's twin (a burst window either way) a hue away from its lavender;
+/// the window spent DEAD (R23) bone grey, the one mark that is not
+/// something they pressed and so deliberately colourless; a healing
+/// cooldown spring green, a hue away from the consumable's green and the
+/// support teal.
+pub fn mark_color(kind: MarkKind, data: &DataTokens) -> Color {
     match kind {
-        MarkKind::TrinketUse => USE,
-        MarkKind::TrinketProc => PROC,
-        MarkKind::Consumable => CONSUMABLE,
-        MarkKind::External => EXTERNAL,
-        MarkKind::ActiveMitigation | MarkKind::Defensive => MITIGATION,
-        MarkKind::SupportBuff => SUPPORT,
-        MarkKind::Cooldown => COOLDOWN,
-        MarkKind::Death => DEAD,
-        MarkKind::HealingCooldown => HEALING_CD,
+        MarkKind::TrinketUse => data.mark_use,
+        MarkKind::TrinketProc => data.mark_proc,
+        MarkKind::Consumable => data.mark_consumable,
+        MarkKind::External => data.mark_external,
+        MarkKind::ActiveMitigation | MarkKind::Defensive => data.mark_mitigation,
+        MarkKind::SupportBuff => data.mark_support,
+        MarkKind::Cooldown => data.mark_cooldown,
+        MarkKind::Death => data.mark_dead,
+        MarkKind::HealingCooldown => data.mark_healing_cd,
     }
 }
 

@@ -174,7 +174,7 @@ fn take(input: Input, pointer: Option<Pointer>, motion: bool, path: Option<&Path
 fn inspector_plot_shots() {
     let dir = std::env::var_os("WOWDPS_SHOTS_DIR").map(PathBuf::from);
     let named = |name: &str| dir.as_ref().map(|d| d.join(format!("plot-{name}.png")));
-    for s in samples::all() {
+    for s in samples::all_in(&crate::testkit::shots_theme().data) {
         let (name, pointer) = (s.name, s.pointer.map(|(x, y)| Pointer::Rest(x, y)));
         take(input(s), pointer, false, named(name).as_deref());
     }
@@ -185,7 +185,7 @@ fn inspector_plot_shots() {
         return;
     }
     let sample = |name: &str| {
-        samples::all()
+        samples::all_in(&crate::testkit::shots_theme().data)
             .into_iter()
             .find(|s| s.name == name)
             .expect("a sample of that name")

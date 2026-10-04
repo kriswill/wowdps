@@ -75,11 +75,14 @@ pub fn bands(g: &geo::Plot<'_>, w: f32, top: f32, pen: Pen, window: &mut Window)
         if let Ok(path) = area.build() {
             window.paint_path(path, hsla(band.color));
         }
+        // The panel's gap over every band — or, over the rest where the
+        // theme draws one, the line of the player's whole curve.
+        let line = Some(pen.data.stack_other_edge).filter(|c| band.rest && c.a > 0.0);
         let mut edge = stroke(pen.px(STACK_GAP));
         edge.move_to(at(pen, *first));
         smooth(&mut edge, &band.upper, g.plot_h, pen);
         if let Ok(path) = edge.build() {
-            window.paint_path(path, hsla(pen.t.surface));
+            window.paint_path(path, hsla(line.unwrap_or(pen.t.surface)));
         }
     }
 }
@@ -104,7 +107,7 @@ pub fn lines(g: &geo::Plot<'_>, w: f32, top: f32, pen: Pen, window: &mut Window)
         }
         let (width, color) = match c.ink {
             Ink::Ghost => (GHOST_W, c.color.alpha(GHOST_ALPHA)),
-            Ink::Area | Ink::Line | Ink::Dashed | Ink::Stack => (CURVE_W, c.color),
+            Ink::Area | Ink::Line | Ink::Dashed | Ink::Stack | Ink::StackRest => (CURVE_W, c.color),
         };
         let mut line = stroke(pen.px(width));
         if c.ink == Ink::Dashed {
@@ -139,7 +142,7 @@ pub fn drag(
     if still {
         return;
     }
-    let gold = pen.t.gold.alpha(XHAIR_ALPHA);
+    let gold = pen.t.accent.alpha(XHAIR_ALPHA);
     for x in [lo, hi] {
         window.paint_quad(fill(
             pen.rect(x - HAIRLINE / 2.0, 0.0, HAIRLINE, g.plot_h),
@@ -164,7 +167,7 @@ pub fn drag(
         (x, DRAG_WORDS.1),
         TICK_PX,
         Face::Semibold,
-        hsla(pen.t.gold),
+        hsla(pen.t.accent),
         window,
         cx,
     );
@@ -182,7 +185,7 @@ pub fn crosshair(
     pen: Pen,
     window: &mut Window,
 ) {
-    let gold = pen.t.gold;
+    let gold = pen.t.accent;
     let rule = |window: &mut Window, width: f32, alpha: f32| {
         let mut p = stroke(pen.px(width));
         p.move_to(pen.at(x, 0.0));

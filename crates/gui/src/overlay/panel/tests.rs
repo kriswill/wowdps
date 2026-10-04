@@ -279,6 +279,43 @@ fn the_overlay_opens_on_the_newest_pull_and_steps_to_the_kill(cx: &mut TestAppCo
     });
 }
 
+/// A theme switched in the window reaches the overlay through the config:
+/// a config naming another theme repaints it, one naming the theme on show
+/// (its own save of a drag, say) changes nothing, and a config's own
+/// `[themes]` come with it.
+#[gpui_kit::test]
+fn the_overlay_follows_the_config_s_theme(cx: &mut TestAppContext) {
+    use wowdps_gui_logic::theme::{NAVY, ONYX};
+    let rig = kill(cx);
+    let worn = |cx: &mut TestAppContext| cx.update(|cx| crate::theme::Look::global(cx).def);
+    cx.update(|cx| crate::theme::apply(&NAVY, None, cx));
+    let read = |text: &str| -> Config {
+        std::fs::write(Config::path(), text).expect("the test's config is written");
+        Config::load()
+    };
+    rig.overlay
+        .update(cx, |o, cx| o.take_theme(read("theme = \"onyx\"\n"), cx));
+    assert_eq!(*worn(cx), *ONYX);
+    rig.overlay.update(cx, |o, cx| {
+        o.take_theme(read("theme = \"onyx\"\nzoom = 2.0\n"), cx)
+    });
+    assert_eq!(*worn(cx), *ONYX, "nothing to repaint");
+    rig.overlay.update(cx, |o, cx| {
+        o.take_theme(
+            read("theme = \"mine\"\n[themes.mine]\nbase = \"onyx\"\n[themes.mine.overlay]\nyellow = \"#ff0000\"\n"),
+            cx,
+        )
+    });
+    let mine = worn(cx);
+    assert_eq!(mine.name, "mine");
+    assert_eq!(
+        mine.overlay.yellow,
+        wowdps_gui_logic::theme::Color::hex(0xFF0000)
+    );
+    rig.overlay
+        .read_with(cx, |o, _| assert_eq!(o.cfg.theme, "mine"));
+}
+
 #[gpui_kit::test]
 fn the_view_name_cycles_and_its_menu_picks(cx: &mut TestAppContext) {
     let rig = kill(cx);
@@ -1075,10 +1112,11 @@ fn states() -> Vec<Shot> {
 
 /// One state's picture: a fresh overlay over its fixture, reached as a
 /// user would reach it, motion settled, on the iced guard's backdrop.
-fn render(shot: &Shot) -> image::RgbaImage {
+fn render(shot: &Shot, def: &'static wowdps_gui_logic::theme::Def) -> image::RgbaImage {
     own_config();
     let mut cx = testkit::headless();
     cx.update(|cx| cx.set_reduce_motion(true));
+    cx.update(|cx| crate::theme::apply(def, None, cx));
     cx.update(|cx| {
         let faces = wowdps_gui_logic::fonts::FONTS
             .iter()
@@ -1122,7 +1160,7 @@ fn overlay_shots() {
         {
             continue;
         }
-        let pic = render(&shot);
+        let pic = render(&shot, testkit::shots_theme());
         if let Some(dir) = &dir {
             let path = dir.join(format!("overlay-{}.png", shot.name));
             pic.save(&path).expect("png written");
@@ -1145,7 +1183,7 @@ fn overlay_render_guard() {
     let mut failed = Vec::new();
     for shot in &states {
         crate::images::without_art(true);
-        let pic = render(shot);
+        let pic = render(shot, &wowdps_gui_logic::theme::NAVY);
         crate::images::without_art(false);
         if let Err(e) = crate::guard::check("overlay", shot.name, &pic) {
             failed.push(e);

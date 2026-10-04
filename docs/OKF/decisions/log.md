@@ -1,5 +1,15 @@
 # Log
 
+## 2026-10-03
+
+- **Creation** — [Themes Are Data A Config Can Name, And Onyx Is The Second](themes-as-config-data.md):
+  a registry of named themes (navy — the old gold —, onyx, frost) chosen in the
+  ⚙ card, every token group a config.toml table that overrides a built-in or
+  defines a theme of one's own; corners as one scale, effects off in navy; onyx
+  the black-dial chronograph with its own faces, glass, brackets and sub-dial.
+- **Update** — [Gold Chrome, Tabular Barlow, And A Look Per Surface](gold-chrome-and-a-look-per-surface.md):
+  its gold chrome is now navy's own accent, `chrome = "theme"`.
+
 ## 2026-10-02
 
 - **Creation** — [Count And Clock The Way The Game's Own Meter Does](match-the-game-meter.md):

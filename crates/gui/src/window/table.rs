@@ -239,7 +239,7 @@ fn heads(
         .child(w.text(
             if m.enemies { "Enemy" } else { "Player" },
             w.size.label,
-            w.c(|t| t.gold_dim),
+            w.c(|t| t.label_ink),
             REGULAR,
         ));
     if m.paused {
@@ -265,17 +265,21 @@ fn heads(
             .items_center()
             .justify_end()
             .gap(w.z(ARROW_GAP))
-            .child(w.words(head, grid.head_px(), REGULAR));
+            .child(w.words(head, grid.head_px(w.size.label), REGULAR));
         if let Some(desc) = sorted {
             let arrow = if desc {
                 Glyph::ArrowDown
             } else {
                 Glyph::ArrowUp
             };
-            words = words.child(glyph(arrow, w.z(grid.head_px()), w.c(|t| t.gold)));
+            words = words.child(glyph(
+                arrow,
+                w.z(grid.head_px(w.size.label)),
+                w.c(|t| t.accent),
+            ));
         }
         line = line.child(if head.is_empty() {
-            words.text_color(w.c(|t| t.gold_dim)).into_any_element()
+            words.text_color(w.c(|t| t.label_ink)).into_any_element()
         } else {
             div()
                 .id(ElementId::from((
@@ -285,11 +289,11 @@ fn heads(
                 .test_support()
                 .cursor_pointer()
                 .text_color(if sorted.is_some() {
-                    w.c(|t| t.gold)
+                    w.c(|t| t.accent)
                 } else {
-                    w.c(|t| t.gold_dim)
+                    w.c(|t| t.label_ink)
                 })
-                .hover(|s| s.text_color(w.c(|t| t.gold)))
+                .hover(|s| s.text_color(w.c(|t| t.accent)))
                 .child(words)
                 .on_mouse_down(
                     MouseButton::Left,
@@ -357,7 +361,7 @@ fn row_line(
     let name = div()
         .flex_shrink(1.)
         .min_w_0()
-        .font_family(w.ui)
+        .font_family(w.ui.clone())
         .font_weight(if selected { MEDIUM } else { REGULAR })
         .text_size(w.z(w.size.name))
         .text_color(if selected {
@@ -422,18 +426,22 @@ fn row_line(
         cx,
     );
     let color = bar_color(w, r);
-    let (tail, head) = if selected { (0.55, 1.0) } else { (0.16, 0.55) };
+    let (tail, head) = if selected {
+        (w.bars.lit_from, w.bars.lit_to)
+    } else {
+        (w.bars.rest_from, w.bars.rest_to)
+    };
     let bar = div()
         .w_full()
         .h(w.z(BAR_H))
         .flex_none()
-        .rounded(w.z(2.))
+        .rounded(w.r(2.))
         .bg(w.c(|t| t.track))
         .child(
             div()
                 .h_full()
                 .w(relative(frac))
-                .rounded(w.z(2.))
+                .rounded(w.r(2.))
                 .when(frac > 0.0, |d| {
                     d.bg(linear_gradient(
                         90.,
@@ -450,7 +458,7 @@ fn row_line(
         .flex_col()
         .gap(w.z(1.))
         .overflow_hidden()
-        .rounded(w.z(3.))
+        .rounded(w.r(3.))
         .when(selected, |d| d.bg(w.c(|t| t.raise)))
         .child(content)
         .child(bar);
@@ -466,7 +474,7 @@ fn row_line(
         .items_center()
         .gap(w.z(RANK_GAP))
         .pl(w.z(ROW_LEAD))
-        .rounded(w.z(3.))
+        .rounded(w.r(3.))
         .cursor_pointer();
     // The selection raises the whole line; while the keys are in the
     // inspector it steps back to the hover's weight.
@@ -536,7 +544,7 @@ fn name_tags(
             div()
                 .id(ElementId::Name(letter.into()))
                 .w(w.z(PIN_W))
-                .child(w.text(letter, PIN_PX, w.c(|t| t.gold_dim), SEMIBOLD)),
+                .child(w.text(letter, PIN_PX, w.c(|t| t.label_ink), SEMIBOLD)),
             words,
         ));
     }
@@ -558,7 +566,7 @@ pub fn you_tag(class: Option<Class>, w: &W) -> Div {
         .flex_none()
         .flex()
         .justify_center()
-        .rounded(w.z(4.))
+        .rounded(w.r(4.))
         .border(w.z(1.))
         .border_color(edge)
         .child(
@@ -637,7 +645,7 @@ fn total(m: &Meter, cols: &[Col], grid: Grid, who: f32, w: &W) -> impl IntoEleme
                         .child(
                             div()
                                 .truncate()
-                                .font_family(w.ui)
+                                .font_family(w.ui.clone())
                                 .text_size(w.z(w.size.frame))
                                 .text_color(w.c(|t| t.ink_2))
                                 .child(label),

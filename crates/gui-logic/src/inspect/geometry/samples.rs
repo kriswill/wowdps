@@ -9,8 +9,8 @@ use wowdps_model::Class;
 use super::{AXIS_GAP, AXIS_H, LANE_GAP, LANE_ROW, LANES_TOP, PLOT_H};
 use crate::inspect::lanes::{Lane, Row, Span};
 use crate::inspect::plot::{Curve, Dead, Ink};
-use crate::inspect::stack::{HUES, OTHER};
 use crate::theme::Color;
+use crate::theme::{DataTokens, NAVY};
 
 /// The width every sample is drawn at: the wide inspector's (520) less its
 /// 16 px sides.
@@ -163,8 +163,13 @@ fn pair_lanes(a: Color, b: Color) -> Vec<Row> {
 
 /// Every state, by name: the curve alone; with its lanes; zoomed; the
 /// pointer on the plot and on a span; a comparison (two classes, then one
-/// class dashed); an ability over its ghost; the stack.
+/// class dashed); an ability over its ghost; the stack — its hues `navy`'s.
 pub fn all() -> Vec<Sample> {
+    all_in(&NAVY.data)
+}
+
+/// [`all`], the stack in `data`'s hues: a theme's own, for its shots.
+pub fn all_in(data: &DataTokens) -> Vec<Sample> {
     let lock = Color::of_class(Class::Warlock);
     let mage = Color::of_class(Class::Mage);
     let own = vec![curve("", lock, rate(1.0, 0.0), Ink::Area)];
@@ -198,7 +203,7 @@ pub fn all() -> Vec<Sample> {
     ];
     let stacked: Vec<Curve> = ["Chaos Bolt", "Incinerate", "Wither", "Infernal"]
         .iter()
-        .zip(HUES)
+        .zip(data.stack())
         .enumerate()
         .map(|(i, (name, hue))| {
             curve(
@@ -210,9 +215,9 @@ pub fn all() -> Vec<Sample> {
         })
         .chain(std::iter::once(curve(
             "Other",
-            OTHER,
+            data.stack_other,
             rate(0.08, 2.0),
-            Ink::Stack,
+            Ink::StackRest,
         )))
         .collect();
     let stack_peak = (0..FIGHT_MS / BUCKET_MS)

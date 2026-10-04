@@ -42,7 +42,7 @@ const LOW: f32 = 0.15;
 const CRIT: f32 = 0.03;
 const HP_MIN: f32 = 0.015;
 const KILL_ALPHA: f32 = 0.09;
-const HP_TRACK_ALPHA: f32 = 0.07;
+// The health strip's track is the theme's `health_track`.
 const HP_DIM: f32 = 0.5;
 const INSIGHT_MARGIN: (f32, f32) = (10.0, 16.0);
 const INSIGHT_PAD: (f32, f32) = (8.0, 10.0);
@@ -60,7 +60,7 @@ struct Cols {
 
 /// `words`' one-line width at `size` in the window's face and `weight`.
 fn text_w(window: &Window, w: &W, words: &str, size: f32, weight: FontWeight) -> f32 {
-    let mut f = font(w.ui);
+    let mut f = font(w.ui.clone());
     f.weight = weight;
     let run = TextRun {
         len: words.len(),
@@ -125,7 +125,7 @@ impl Cols {
 pub fn view(r: &Recap, fit: Fit, w: &W, window: &mut Window, _cx: &Context<Gui>) -> Div {
     let cols = Cols::of(r, fit, w, window);
     let head = |words: &'static str, width: Option<f32>| {
-        let t = w.text(words, TOP_PX, w.c(|t| t.gold_dim), REGULAR);
+        let t = w.text(words, TOP_PX, w.c(|t| t.label_ink), REGULAR);
         match width {
             Some(width) => div()
                 .w(w.z(width))
@@ -172,11 +172,11 @@ pub fn view(r: &Recap, fit: Fit, w: &W, window: &mut Window, _cx: &Context<Gui>)
                         .test_support()
                         .py(w.z(INSIGHT_PAD.0))
                         .px(w.z(INSIGHT_PAD.1))
-                        .rounded(w.z(INSIGHT_RADIUS))
+                        .rounded(w.r(INSIGHT_RADIUS))
                         .bg(hsla(wash))
                         .flex()
                         .flex_wrap()
-                        .font_family(w.ui)
+                        .font_family(w.ui.clone())
                         .text_size(w.z(INSIGHT_PX))
                         .children(words.into_iter().map(|(s, b)| {
                             div()
@@ -235,7 +235,7 @@ fn line(r: &Recap, e: &Row, kill: bool, cols: &Cols, w: &W) -> Div {
     }
     // A heal reporting 0 is the killing blow's report filled in: unknown.
     let hp = e.hp.filter(|(cur, _)| !(e.gain && *cur == 0));
-    let track = gl::Color::WHITE.alpha(HP_TRACK_ALPHA);
+    let track = w.t.health_track;
     let health = match hp {
         Some((cur, max)) => {
             let p = (cur as f32 / max.max(1) as f32).clamp(0.0, 1.0);
@@ -251,13 +251,13 @@ fn line(r: &Recap, e: &Row, kill: bool, cols: &Cols, w: &W) -> Div {
                 .w(w.z(cols.hp))
                 .h(w.z(HP_H))
                 .flex_none()
-                .rounded(w.z(HP_RADIUS))
+                .rounded(w.r(HP_RADIUS))
                 .bg(hsla(track))
                 .child(
                     div()
                         .h_full()
                         .w(relative(shown))
-                        .rounded(w.z(HP_RADIUS))
+                        .rounded(w.r(HP_RADIUS))
                         .when(shown > 0.0, |d| d.bg(fill)),
                 )
         }
@@ -274,8 +274,8 @@ fn line(r: &Recap, e: &Row, kill: bool, cols: &Cols, w: &W) -> Div {
                 div()
                     .flex_1()
                     .h(w.z(HP_H))
-                    .rounded(w.z(HP_RADIUS))
-                    .bg(hsla(track.alpha(HP_TRACK_ALPHA * HP_DIM))),
+                    .rounded(w.r(HP_RADIUS))
+                    .bg(hsla(track.alpha(track.a * HP_DIM))),
             ),
     };
     let mut row = div()

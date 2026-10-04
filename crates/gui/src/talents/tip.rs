@@ -83,7 +83,7 @@ pub(crate) fn tooltip(
             None => row,
         }
     });
-    div()
+    let tip = div()
         .id("talent-tip")
         .test_support()
         .absolute()
@@ -94,13 +94,10 @@ pub(crate) fn tooltip(
         .opacity(arrive)
         .pt(px(7.0))
         .px(px(logic::TIP_PAD_X))
-        .rounded(px(4.0))
-        .bg(p.c(|t| t.tip))
-        .border_1()
-        .border_color(p.c(|t| t.tip_edge))
-        .font_family(p.def.faces.ui)
+        .rounded(p.r(4.0))
+        .font_family(crate::theme::face(&p.def.faces.ui))
         .flex()
         .flex_col()
-        .children(rows)
-        .into_any_element()
+        .children(rows);
+    p.tip_face(tip).into_any_element()
 }

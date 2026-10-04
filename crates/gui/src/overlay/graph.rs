@@ -27,7 +27,7 @@ use wowdps_gui_logic::graph::{
     self as gg, ICON_BAND, ICON_SIZE, Plot, curve, for_view, hover_line, kinds_shown, mark_name,
     mmss, mode_word, peak_of, probe_line, view_window,
 };
-use wowdps_gui_logic::theme::{Color, OverlayTokens};
+use wowdps_gui_logic::theme::{Color, DataTokens, OverlayTokens};
 use wowdps_model::{Class, GraphMode, MarkKind, Timeline};
 use wowdps_proto::ClientState;
 
@@ -75,6 +75,8 @@ pub struct Graph {
     /// The instant every graph sharing the echo marks.
     pub probe: Option<usize>,
     pub t: OverlayTokens,
+    /// The theme's data hues: the marks' colours.
+    pub data: DataTokens,
 }
 
 /// A stroke whose joins never spike: GPUI exports no round join, and a
@@ -194,7 +196,7 @@ impl Graph {
                 oy,
                 x2 - x1,
                 h,
-                hsla(gg::mark_color(m.kind).alpha(a)),
+                hsla(gg::mark_color(m.kind, &self.data).alpha(a)),
             );
         }
         // Each marker's line drops from its icon and stops where it meets
@@ -214,7 +216,7 @@ impl Graph {
                 at(x, 0.0),
                 at(x, hang),
                 width,
-                hsla(gg::mark_color(m.kind).alpha(a)),
+                hsla(gg::mark_color(m.kind, &self.data).alpha(a)),
             );
         }
 
@@ -295,7 +297,7 @@ impl Graph {
                 }
                 None => window.paint_quad(fill(
                     r,
-                    hsla(gg::mark_color(m.kind).alpha(if recede { 0.3 } else { 0.9 })),
+                    hsla(gg::mark_color(m.kind, &self.data).alpha(if recede { 0.3 } else { 0.9 })),
                 )),
             }
             if hit {
@@ -459,7 +461,7 @@ pub fn legend(
 ) -> Div {
     let dim = ov.c(|t| t.dim);
     let focus = ov.c(|t| t.yellow);
-    let swatch = |kind: MarkKind| ov.words("▌", 11., hsla(gg::mark_color(kind)));
+    let swatch = |kind: MarkKind| ov.words("▌", 11., hsla(gg::mark_color(kind, &ov.data)));
     if let Some((kind, name, details)) = hover {
         return div()
             .flex()
@@ -589,6 +591,7 @@ pub fn drill(
             hover,
             probe,
             t: ov.t,
+            data: ov.data,
         },
         None => Graph {
             plot: Plot::new(&t, mode, peak_of(&[&t], mode, window), window, spans),
@@ -598,6 +601,7 @@ pub fn drill(
             hover,
             probe,
             t: ov.t,
+            data: ov.data,
         },
     };
     let legend = legend(ov, mode, shown, reading, rate, hovered, &kinds);

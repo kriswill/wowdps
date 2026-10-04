@@ -243,7 +243,7 @@ mod render_probe {
     #[ignore = "needs a wgpu adapter; run by hand: cargo test -p wowdps-gui render_probe -- --ignored"]
     fn the_meter_renders_to_pixels() {
         let mut cx = testkit::headless();
-        cx.update(|cx| crate::theme::apply(&wowdps_gui_logic::theme::GOLD, None, cx));
+        cx.update(|cx| crate::theme::apply(&wowdps_gui_logic::theme::NAVY, None, cx));
         let (window, probe) = testkit::open_headless(&mut cx, size(px(420.), px(240.)), |_, cx| {
             cx.new(Probe::new)
         });

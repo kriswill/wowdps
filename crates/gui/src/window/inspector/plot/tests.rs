@@ -12,7 +12,7 @@ use gpui_kit::{
     div, point, px, size,
 };
 use wowdps_gui_logic::inspect::geometry::{Hover, samples};
-use wowdps_gui_logic::theme::GOLD;
+use wowdps_gui_logic::theme::NAVY;
 
 use super::{Input, State, plot};
 use crate::testkit;
@@ -75,7 +75,7 @@ fn rig(cx: &mut TestAppContext, name: &str, zoomable: bool) -> Rig {
     let (r, s) = (ranges.clone(), state.clone());
     let input = input(name);
     let (window, host) = testkit::open(cx, size(px(560.), px(320.)), move |_, cx| {
-        crate::theme::apply(&GOLD, None, cx);
+        crate::theme::apply(&NAVY, None, cx);
         cx.new(|cx| {
             cx.observe(&s, |_, _, cx| cx.notify()).detach();
             Host {

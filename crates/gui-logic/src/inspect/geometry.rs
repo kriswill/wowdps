@@ -246,6 +246,8 @@ pub struct Band {
     pub color: Color,
     pub upper: Vec<(f32, f32)>,
     pub lower: Vec<(f32, f32)>,
+    /// The rest ("Other"): its upper edge is the whole curve.
+    pub rest: bool,
 }
 
 /// Everything the graph draws, borrowed: the window on show, its one
@@ -492,7 +494,7 @@ impl Plot<'_> {
                     self.curves
                         .iter()
                         .filter(|c| c.ink != Ink::Ghost)
-                        .map(|c| (c.ink == Ink::Stack).then_some(c.color)),
+                        .map(|c| c.ink.is_stack().then_some(c.color)),
                 )
                 .collect(),
             Hover::Span(..) => Vec::new(),
@@ -707,7 +709,7 @@ impl Plot<'_> {
     pub fn bands(&self, w: f32, top: f32) -> Vec<Band> {
         let mut out = Vec::new();
         let mut base: Vec<f64> = Vec::new();
-        for c in self.curves.iter().filter(|c| c.ink == Ink::Stack) {
+        for c in self.curves.iter().filter(|c| c.ink.is_stack()) {
             let mut sum = base.clone();
             if sum.len() < c.points.len() {
                 sum.resize(c.points.len(), 0.0);
@@ -728,6 +730,7 @@ impl Plot<'_> {
                     color: c.color,
                     upper,
                     lower,
+                    rest: c.ink == Ink::StackRest,
                 });
             }
             base = sum;
@@ -738,7 +741,7 @@ impl Plot<'_> {
     /// The curves a line is drawn for — every one but the stack's bands —
     /// ghosts first, so a focus reads on top of its context.
     pub fn lines(&self) -> Vec<&Curve> {
-        let mut order: Vec<&Curve> = self.curves.iter().filter(|c| c.ink != Ink::Stack).collect();
+        let mut order: Vec<&Curve> = self.curves.iter().filter(|c| !c.ink.is_stack()).collect();
         order.sort_by_key(|c| c.ink != Ink::Ghost);
         order
     }

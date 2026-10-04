@@ -28,7 +28,7 @@ pub fn paint(
                 pen.rect(left, g.track_y(li), (w - left).max(0.0), LANE_H),
                 hsla(pen.t.lane_track),
             )
-            .corner_radii(pen.px(TRACK_RADIUS)),
+            .corner_radii(pen.r(TRACK_RADIUS)),
         );
         for (si, s) in row.spans.iter().enumerate() {
             let Some(r) = g.span_rect(li, s, w) else {
@@ -45,7 +45,7 @@ pub fn paint(
             let half = SPAN_EDGE / 2.0;
             window.paint_quad(quad(
                 pen.rect(r.x - half, r.y - half, r.w + SPAN_EDGE, r.h + SPAN_EDGE),
-                pen.px(radius + half),
+                pen.r(radius + half),
                 hsla(s.color.alpha(if on { 1.0 } else { SPAN_ALPHA })),
                 pen.px(SPAN_EDGE),
                 hsla(if on { pen.t.span_lit } else { pen.t.surface }),

@@ -44,7 +44,7 @@ impl Field {
         Self {
             base: div().id(id),
             state: state.clone(),
-            w: *w,
+            w: w.clone(),
             size: w.size.frame,
         }
     }
@@ -89,7 +89,7 @@ impl RenderOnce for Field {
             .flex()
             .items_center()
             .min_w_0()
-            .font_family(w.ui)
+            .font_family(w.ui.clone())
             .text_size(w.z(self.size))
             .line_height(relative(LINE))
             .text_color(w.c(|t| t.ink))

@@ -106,6 +106,15 @@ pub fn open<V: Render>(
         .expect("a test window opens")
 }
 
+/// The theme the shot tests draw in: `WOWDPS_SHOTS_THEME` names a built-in
+/// (`onyx`, `frost`, …), else `navy`. The render guard never reads it.
+pub fn shots_theme() -> &'static wowdps_gui_logic::theme::Def {
+    std::env::var("WOWDPS_SHOTS_THEME")
+        .ok()
+        .and_then(|name| wowdps_gui_logic::theme::builtin(&name))
+        .unwrap_or(&wowdps_gui_logic::theme::NAVY)
+}
+
 /// An app with the platform's real text system and the headless renderer.
 pub fn headless() -> HeadlessAppContext {
     let mut cx = HeadlessAppContext::with_platform(

@@ -17,25 +17,16 @@
 //!
 //! Window-only.
 
-use crate::theme::Color;
+use crate::theme::{Color, DataTokens};
 use wowdps_model::{AbilitySeries, Timeline};
 
 use super::plot;
 
-/// The six hues, in the order that passes: blue, orange, aqua, violet,
-/// magenta, green.
-pub const HUES: [Color; 6] = [
-    Color::hex(0x3987E5),
-    Color::hex(0xD95926),
-    Color::hex(0x199E70),
-    Color::hex(0x9085E9),
-    Color::hex(0xD55181),
-    Color::hex(0x008300),
-];
-
-/// The "Other" band: neutral, so it reads as the rest and never as an
-/// entity of its own. 3.0:1 on the surface, the marks' floor.
-pub const OTHER: Color = Color::hex(0x5A6479);
+// The six hues, in the order that passes, and the "Other" band — neutral,
+// so it reads as the rest and never as an entity of its own, 3.0:1 on the
+// surface, the marks' floor — are the theme's data tokens (`stack_1` …
+// `stack_6`, `stack_other`; `navy`: blue, orange, aqua, violet, magenta,
+// green).
 
 /// Which slot each stacked curve's key sits in, for one context (a player,
 /// a view, an open ability).
@@ -86,11 +77,17 @@ pub fn context(player: &str, view: wowdps_model::View, spell: Option<&str>) -> S
 
 /// The hue `key` wears in `context` — its seated slot, else its place
 /// among `keys` (a snapshot the window has not seated yet).
-pub fn hue(slots: &Slots, context: &str, keys: &[String], key: &str) -> Option<Color> {
+pub fn hue(
+    slots: &Slots,
+    context: &str,
+    keys: &[String],
+    key: &str,
+    data: &DataTokens,
+) -> Option<Color> {
     let at = slots
         .slot(context, key)
         .or_else(|| keys.iter().position(|k| k == key))?;
-    HUES.get(at).copied()
+    data.stack().get(at).copied()
 }
 
 /// The stacked curves over `whole` — one band per series in slot order,
@@ -105,6 +102,7 @@ pub fn curves(
     context: &str,
     name: impl Fn(&str) -> String,
     cut: impl Fn(&Timeline) -> (Vec<f64>, u32),
+    data: &DataTokens,
 ) -> Vec<plot::Curve> {
     let keys: Vec<String> = series.iter().map(|s| s.key.clone()).collect();
     let mut seated: Vec<(usize, &AbilitySeries)> = series
@@ -127,7 +125,7 @@ pub fn curves(
         let (points, bucket_ms) = cut(&as_timeline(s.buckets.clone()));
         out.push(plot::Curve {
             name: name(&s.key),
-            color: hue(slots, context, &keys, &s.key).unwrap_or(OTHER),
+            color: hue(slots, context, &keys, &s.key, data).unwrap_or(data.stack_other),
             points,
             bucket_ms,
             ink: plot::Ink::Stack,
@@ -137,10 +135,10 @@ pub fn curves(
         let (points, bucket_ms) = cut(&as_timeline(rest));
         out.push(plot::Curve {
             name: "Other".to_string(),
-            color: OTHER,
+            color: data.stack_other,
             points,
             bucket_ms,
-            ink: plot::Ink::Stack,
+            ink: plot::Ink::StackRest,
         });
     }
     out
@@ -200,11 +198,22 @@ mod tests {
                 t.bucket_ms,
             )
         };
-        let c = curves(&series, &whole, &slots, "p", |k| k.to_uppercase(), cut);
+        let data = crate::theme::NAVY.data;
+        let c = curves(
+            &series,
+            &whole,
+            &slots,
+            "p",
+            |k| k.to_uppercase(),
+            cut,
+            &data,
+        );
         let names: Vec<&str> = c.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["SMALL", "BIG", "Other"], "slot order, Other on top");
-        assert_eq!(c[0].color, HUES[0]);
+        assert_eq!(c[0].color, data.stack_1);
+        assert_eq!(c[2].color, data.stack_other);
         assert_eq!(c[2].points, vec![4.0, 8.0, 17.0]);
-        assert!(c.iter().all(|c| c.ink == plot::Ink::Stack));
+        assert!(c.iter().all(|c| c.ink.is_stack()));
+        assert_eq!(c[2].ink, plot::Ink::StackRest, "Other is the rest");
     }
 }

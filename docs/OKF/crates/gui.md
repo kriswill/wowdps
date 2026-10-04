@@ -60,10 +60,11 @@ key fires while a text field has the keys; the window-local gestures are
 `Go(Gesture)`; menus switch the root to `Modal`, and a field's own keys bind
 on `Filter > Input` or `Palette > Input`.
 
-**One theme definition.** gui-logic's `theme::Def` (`gold`, `frost`) feeds
-Kit's `Theme` slot by slot and the app's `Look`, so no surface draws a
-literal colour — [the Look decision](../decisions/gold-chrome-and-a-look-per-surface.md)
-generalised; class chrome is an accent over any theme
+**One theme definition at a time.** gui-logic's `theme::Def` (`navy`, `onyx`,
+`frost`, or a config's own — [themes as config data](../decisions/themes-as-config-data.md))
+feeds Kit's `Theme` slot by slot and the app's `Look`, so no surface draws a
+literal colour, face, corner or effect — [the Look decision](../decisions/gold-chrome-and-a-look-per-surface.md)
+generalised; the ⚙ card switches it and the overlay follows the config; class chrome is an accent over any theme
 ([one accent](../decisions/one-accent-from-the-class-color.md)). Kit's
 styled `Input` decides its own placeholder colour and text size, so the
 palette and the row filter use `window/field.rs`, Kit's unstyled input

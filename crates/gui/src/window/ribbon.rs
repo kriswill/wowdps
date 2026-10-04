@@ -3,10 +3,12 @@
 //! tabs. One canvas: the whole group's rate for the view on screen as an
 //! area of the ink fading from 26 % to 2 % under a line of it, its peak
 //! named at the top-left, the minute ticks under it, the lust windows as a
-//! faint wash with their name, and a skull at every death in the dead
-//! player's class colour on a faint red hairline, the owner's labelled
+//! faint wash, and a skull at every death in the dead player's class colour
+//! on a faint hairline (the theme's `death_line`), the owner's labelled
 //! "you". A skull is a press away from its recap; anywhere else on the plot
-//! the pointer reads the time and the rate under a gold crosshair.
+//! the pointer reads the time and the rate under the accent's crosshair —
+//! and, inside a lust window, its name: a word on the ribbon either hid the
+//! curve's crest or was struck out by it.
 //!
 //! GPUI paints a canvas's text and shapes in the order written (spike S8),
 //! so the words sit over the curve with no tricks; the plates under the
@@ -22,9 +24,9 @@ use std::rc::Rc;
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, BorderStyle, Bounds, Context, Font, FontWeight, Hsla, MouseButton, MouseMoveEvent,
-    PathBuilder, Pixels, Point, SharedString, TestSupportExt as _, TextAlign, TextRun, Window,
-    canvas, div, fill, font, linear_color_stop, linear_gradient, point, px, quad, size,
+    App, Bounds, Context, Font, FontWeight, Hsla, MouseButton, MouseMoveEvent, PathBuilder, Pixels,
+    Point, SharedString, TestSupportExt as _, TextAlign, TextRun, Window, canvas, div, fill, font,
+    linear_color_stop, linear_gradient, point, px, size,
 };
 use wowdps_gui_logic::axis::minute_ticks;
 use wowdps_gui_logic::deaths::{Pick, is_mine, selected};
@@ -35,7 +37,7 @@ use wowdps_model::{Class, LustWindow, View};
 
 use super::Gui;
 use super::paint::fill_disc;
-use super::w::{MEDIUM, REGULAR, SEMIBOLD, W};
+use super::w::{REGULAR, SEMIBOLD, W};
 use crate::theme::hsla;
 
 /// The ribbon's height (`.ribbon{height:86px}`, 74 at 820 px and under),
@@ -60,11 +62,10 @@ const AREA_TOP: f32 = 0.26;
 const AREA_FOOT: f32 = 0.02;
 const LINE_ALPHA: f32 = 0.8;
 const LINE_W: f32 = 1.4;
-/// A lust window's wash and edge, and its name's offset.
+/// A lust window's wash and edge (its name is the tooltip's, under the
+/// pointer).
 const BAND_ALPHA: f32 = 0.05;
 const BAND_EDGE_ALPHA: f32 = 0.18;
-const BAND_WORDS_X: f32 = 5.0;
-const BAND_WORDS_Y: f32 = -1.0;
 /// A death: its box, the reach a press has, the skull, the outline an
 /// enemy's wears, how far past the plot's foot it stands, and its hairline.
 const SKULL_BOX: f32 = 16.0;
@@ -342,8 +343,7 @@ pub fn view(
         (H, MARGIN)
     };
     let z = w.zoom;
-    let t = w.t;
-    let ui = w.ui;
+    let look = w.clone();
     let ribbon = Rc::new(ribbon);
     let painted = Rc::clone(&seen);
     let drawn = Rc::clone(&ribbon);
@@ -358,7 +358,7 @@ pub fn view(
                 w: f32::from(b.size.width),
                 narrow,
             };
-            paint(&geo, hover, b, t, ui, window, cx);
+            paint(&geo, hover, b, &look, window, cx);
         },
     )
     .size_full();
@@ -434,11 +434,11 @@ fn paint(
     geo: &Geo<'_>,
     hover: Option<Hover>,
     b: Bounds<Pixels>,
-    t: wowdps_gui_logic::theme::WindowTokens,
-    ui: &'static str,
+    look: &W,
     window: &mut Window,
     cx: &mut App,
 ) {
+    let (t, ui) = (look.t, &look.ui);
     let z = geo.z;
     let w = geo.w;
     let at = |x: f32, y: f32| point(b.origin.x + px(x), b.origin.y + px(y));
@@ -456,6 +456,13 @@ fn paint(
 
     // The rule over the ribbon.
     stroke(window, (0.0, 0.5), (w, 0.5), z, hsla(t.line));
+
+    // The chapter ring, where the theme draws one: a fine tick up from the
+    // foot every ten seconds (the buckets' grid), a longer one each
+    // minute — thinned to every 30 s or minute when they would crowd.
+    if look.fx.fine_ticks {
+        chapter_ring(geo, foot, &stroke, hsla(t.dial), window);
+    }
 
     // The lust windows: a faint wash of the ink, its left edge a rule.
     for l in &geo.r.lust {
@@ -507,7 +514,7 @@ fn paint(
     // The deaths: a faint red hairline up the plot, the skull on the foot
     // in the dead player's colour — glowing when hovered or open; an
     // enemy's in outline.
-    let bad = hsla(t.bad);
+    let death_line = hsla(t.death_line);
     let line_h = z * if geo.narrow {
         MARK_LINE_H_NARROW
     } else {
@@ -532,7 +539,7 @@ fn paint(
             (cx_, (low - line_h).max(top)),
             (cx_, low),
             z,
-            bad.opacity(alpha),
+            death_line.opacity(alpha),
         );
         let color = hsla(
             s.class
@@ -582,17 +589,17 @@ fn paint(
         f32::from(line.width)
     };
     let tip = hover.and_then(|h| tip_of(geo, h, t, ui, window));
-    let labels = labels(geo, t, window, &measure, tip.as_ref().map(|t| t.rect));
+    let labels = labels(geo, look, window, &measure, tip.as_ref().map(|t| t.rect));
     for l in labels.iter().filter(|l| l.cover) {
         let (x, y, w_, h) = l.plate(z);
         let ground = ground_at(geo, x + z * PLATE_PAD, t);
         window.paint_quad(
             fill(Bounds::new(at(x, y), size(px(w_), px(h))), ground)
-                .corner_radii(px(PLATE_RADIUS * z)),
+                .corner_radii(px(look.shape.radius(PLATE_RADIUS) * z)),
         );
     }
     if let Some(Hover::Plot(x)) = hover {
-        let gold = hsla(t.gold);
+        let gold = hsla(t.accent);
         for (width, a) in XHAIR_GLOW {
             stroke(window, (x, top), (x, foot), width * z, gold.opacity(a));
         }
@@ -611,16 +618,28 @@ fn paint(
             cx,
         );
     }
+    // The reticle, where the theme frames its instruments: an L at each
+    // corner of the plot.
+    if look.fx.brackets {
+        crate::window::instruments::paint_brackets(
+            window,
+            Bounds::new(at(0.0, top), size(px(w), px(foot - top))),
+            z,
+            hsla(t.bracket),
+        );
+    }
     if let Some(tip) = tip {
         let (x, y, w_, h) = tip.rect;
-        window.paint_quad(quad(
+        super::paint::paint_float(
+            window,
             Bounds::new(at(x, y), size(px(w_), px(h))),
-            px(TIP_RADIUS * z),
-            hsla(t.surface),
+            px(look.shape.radius(TIP_RADIUS) * z),
             px(z),
+            hsla(t.surface),
             hsla(t.edge),
-            BorderStyle::Solid,
-        ));
+            &t,
+            look.fx.glass,
+        );
         let mut tx = x + z * TIP_PAD.0;
         for (s, color, weight) in tip.pieces {
             let line = shape(window, &s, z * TIP_PX, weight, color, ui);
@@ -660,11 +679,14 @@ fn shape(
     size: f32,
     weight: FontWeight,
     color: Hsla,
-    ui: &'static str,
+    ui: &SharedString,
 ) -> gpui_kit::ShapedLine {
     let run = TextRun {
         len: s.len(),
-        font: Font { weight, ..font(ui) },
+        font: Font {
+            weight,
+            ..font(ui.clone())
+        },
         color,
         background_color: None,
         underline: None,
@@ -685,7 +707,7 @@ fn tip_of(
     geo: &Geo<'_>,
     hover: Hover,
     t: wowdps_gui_logic::theme::WindowTokens,
-    ui: &'static str,
+    ui: &SharedString,
     window: &mut Window,
 ) -> Option<Tip> {
     let z = geo.z;
@@ -694,21 +716,30 @@ fn tip_of(
         Hover::Plot(x) => {
             let ms = geo.ms_at(x);
             let v = geo.rate_at(x);
-            (
-                vec![
-                    (duration(i64::from(ms)), ink, SEMIBOLD),
-                    (
-                        format!(
-                            "  {} {}",
-                            geo.r.word.to_lowercase(),
-                            commas(v.max(0.0).round() as u64)
-                        ),
-                        ink,
-                        REGULAR,
+            let mut pieces = vec![
+                (duration(i64::from(ms)), ink, SEMIBOLD),
+                (
+                    format!(
+                        "  {} {}",
+                        geo.r.word.to_lowercase(),
+                        commas(v.max(0.0).round() as u64)
                     ),
-                ],
-                None,
-            )
+                    ink,
+                    REGULAR,
+                ),
+            ];
+            // The lust names itself only here, under the pointer: a word on
+            // the ribbon either hid the curve's crest or was struck out by it.
+            let at = i64::from(ms);
+            if let Some(band) = geo
+                .r
+                .lust
+                .iter()
+                .find(|l| l.at_ms <= at && at < l.at_ms + l.dur_ms)
+            {
+                pieces.push((format!(", under {}", band.label), hsla(t.ink_2), REGULAR));
+            }
+            (pieces, None)
         }
         Hover::Skull(i) => {
             let s = geo.r.skulls.get(i)?;
@@ -755,13 +786,12 @@ fn tip_of(
 /// covers (the iced ribbon's placement pass).
 fn labels(
     geo: &Geo<'_>,
-    t: wowdps_gui_logic::theme::WindowTokens,
+    look: &W,
     window: &mut Window,
     measure: &dyn Fn(&mut Window, &str, f32, FontWeight) -> f32,
     tip: Option<(f32, f32, f32, f32)>,
 ) -> Vec<Label> {
-    let z = geo.z;
-    let w = geo.w;
+    let (z, w, t) = (geo.z, geo.w, look.t);
     let quiet = hsla(t.ink_3_text);
     let mut out: Vec<Label> = Vec::new();
     let label = |window: &mut Window, words: String, px_: f32, color: Hsla, weight: FontWeight| {
@@ -789,7 +819,7 @@ fn labels(
             }
         }
     };
-    let tick = z * wowdps_gui_logic::theme::SIZES.tick;
+    let tick = z * look.size.tick;
     let line = tick * LINE;
     let above = z * if geo.narrow {
         YOU_ABOVE_NARROW
@@ -819,19 +849,6 @@ fn labels(
         );
         let top = (z * PEAK_X, geo.top());
         place(&mut out, l, &[top, (top.0, top.1 + line)]);
-    }
-    for band in &geo.r.lust {
-        let l = Label {
-            cover: false,
-            ..label(window, band.label.clone(), tick, quiet, MEDIUM)
-        };
-        let x = geo.x_of(band.at_ms as f64) + z * BAND_WORDS_X;
-        let spots = [
-            (x, geo.top() + z * BAND_WORDS_Y),
-            (x, geo.top() + line),
-            (x, geo.top() + 2.0 * line),
-        ];
-        place(&mut out, l, &spots);
     }
     let axis_y = geo.height() - z * (AXIS_BOTTOM + AXIS_H);
     for t_ in minute_ticks(geo.r.span_ms, w / z) {
@@ -910,6 +927,41 @@ fn smooth(
         path.cubic_bezier_to(at(p2.0, p2.1), at(c1.0, c1.1), at(c2.0, c2.1));
     }
 }
+
+/// A stroke from one point to another, `width` wide, in a colour.
+type Stroke<'a> = dyn Fn(&mut Window, (f32, f32), (f32, f32), f32, Hsla) + 'a;
+
+/// The ribbon's chapter ring (`effects.fine_ticks`): a fine tick up from the
+/// foot every ten seconds — the buckets the curve is cut in — and one twice
+/// as tall each minute, thinned to every 30 s, then every minute, while
+/// ten-second ones would stand closer than `CHAPTER_MIN` apart.
+fn chapter_ring(geo: &Geo<'_>, foot: f32, stroke: &Stroke<'_>, color: Hsla, window: &mut Window) {
+    let (z, span) = (geo.z, geo.r.span_ms.max(1) as f64);
+    let gap = |step: i64| geo.x_of(step as f64) - geo.x_of(0.0);
+    let Some(step) = [10_000_i64, 30_000, 60_000]
+        .into_iter()
+        .find(|s| gap(*s) >= CHAPTER_MIN * z)
+    else {
+        return;
+    };
+    let mut at = 0_i64;
+    while (at as f64) <= span {
+        let x = geo.x_of(at as f64).round() + 0.5;
+        let (h, a) = if at % 60_000 == 0 {
+            (CHAPTER_MINUTE, 1.0)
+        } else {
+            (CHAPTER_TICK, 0.7)
+        };
+        stroke(window, (x, foot), (x, foot - h * z), z, color.opacity(a));
+        at += step;
+    }
+}
+
+/// The chapter ring's ticks: the least gap between two, a ten-second
+/// tick's height and a minute's.
+const CHAPTER_MIN: f32 = 4.0;
+const CHAPTER_TICK: f32 = 2.5;
+const CHAPTER_MINUTE: f32 = 5.0;
 
 #[cfg(test)]
 mod tests {

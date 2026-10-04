@@ -27,7 +27,8 @@ pub fn stripes(g: &geo::Plot<'_>, w: f32, pen: Pen, window: &mut Window) {
             p.line_to(pen.at(b.0, b.1));
         }
         if let Ok(path) = p.build() {
-            window.paint_path(path, hsla(pen.t.bad.alpha(HATCH_ALPHA)));
+            let hatch = pen.t.death_hatch;
+            window.paint_path(path, hsla(hatch.alpha(hatch.a * HATCH_ALPHA)));
         }
         let mut edge =
             PathBuilder::stroke(pen.px(HATCH_EDGE)).dash_array(&HATCH_DASH.map(|v| px(v * pen.z)));
@@ -53,7 +54,7 @@ pub fn patches(hatches: &[Label], pen: Pen, window: &mut Window) {
                 ),
                 hsla(pen.t.surface.alpha(HATCH_PATCH_ALPHA)),
             )
-            .corner_radii(pen.px(HATCH_PATCH_RADIUS)),
+            .corner_radii(pen.r(HATCH_PATCH_RADIUS)),
         );
     }
 }

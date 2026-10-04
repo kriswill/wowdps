@@ -47,8 +47,8 @@ pub fn under_bar(ov: &Ov, color: Hsla, frac: f32, content: Div, height: Pixels) 
     let bar = div()
         .w(share(frac))
         .h_full()
-        .rounded(px(2.))
-        .when(frac > 0.0, |b| b.bg(bar_ramp(color)));
+        .rounded(ov.r(2.))
+        .when(frac > 0.0, |b| b.bg(bar_ramp(color, &ov.bars)));
     div()
         .w_full()
         .h(height)
@@ -56,14 +56,14 @@ pub fn under_bar(ov: &Ov, color: Hsla, frac: f32, content: Div, height: Pixels) 
         .flex_col()
         .gap(ov.z(1.))
         .overflow_hidden()
-        .rounded(px(3.))
+        .rounded(ov.r(3.))
         .child(content.flex_1().min_h_0().w_full())
         .child(
             div()
                 .w_full()
                 .h(ov.z(3.))
                 .flex_none()
-                .rounded(px(2.))
+                .rounded(ov.r(2.))
                 .bg(ov.c(|t| t.track))
                 .child(bar),
         )
@@ -114,7 +114,7 @@ pub fn class_icon(
     let art = spec
         .and_then(|s| images::spec_icon(s.id()))
         .or_else(|| class.and_then(images::class_icon));
-    let ring = picked.then(|| ring(d, hsla(Color::WHITE)));
+    let ring = picked.then(|| ring(d, ov.c(|t| t.picked)));
     let base = match art {
         Some(tile) => img(tile)
             .size(d)
@@ -162,9 +162,9 @@ fn disc(ov: &Ov, fill: Color, tag: &'static str, d: Pixels) -> AnyElement {
                 .flex()
                 .items_center()
                 .justify_center()
-                .font_family(ov.mono)
+                .font_family(ov.mono.clone())
                 .text_size(r * 0.9)
-                .text_color(hsla(Color::rgba(0.0, 0.0, 0.0, 0.85)))
+                .text_color(ov.c(|t| t.on_bar))
                 .child(tag),
         )
         .into_any_element()

@@ -10,7 +10,8 @@
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Div, FontWeight, Hsla, Pixels, SharedString, div, px};
 use wowdps_gui_logic::theme::{
-    self as gl, Accent, NARROW_WINDOW, Pitches, Sizes, TILE_WINDOW, WindowTokens, YOU_CONTRAST,
+    self as gl, Accent, Bars, DataTokens, Effects, NARROW_WINDOW, Pitches, Shadows, Shape, Sizes,
+    TILE_WINDOW, WindowTokens, YOU_CONTRAST,
 };
 use wowdps_model::Class;
 
@@ -23,6 +24,11 @@ pub const SEMIBOLD: FontWeight = FontWeight::SEMIBOLD;
 
 /// A scrollbar thumb's corners: iced's default scroller, `border::rounded(2)`.
 const THUMB_RADIUS: f32 = 2.0;
+/// How far the glass's rim stands in from a card's corners (a designed
+/// radius: it shrinks with the theme's corners), and how far down its face
+/// the sheen fades out.
+const RIM_HELD: f32 = 10.0;
+const SHEEN_STOP: f32 = 0.30;
 
 /// How wide the window is, by the prototype's breakpoints (inclusive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,18 +54,27 @@ impl Fit {
 }
 
 /// The window's render context.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct W {
     pub zoom: f32,
     pub t: WindowTokens,
     pub size: Sizes,
     pub pitch: Pitches,
-    /// The chrome: the theme's gold or the owner's class.
+    /// The corners.
+    pub shape: Shape,
+    /// How much class colour a bar shows.
+    pub bars: Bars,
+    /// What the theme adds: glass, brackets, the dial, fine ticks.
+    pub fx: Effects,
+    /// The colours that carry data: stacked bands, marks, glyph squares.
+    pub data: DataTokens,
+    pub shadows: Shadows,
+    /// The chrome: the theme's own accent or the owner's class.
     pub accent: Accent,
-    /// Names and numbers (the tabular Barlow).
-    pub ui: &'static str,
-    /// Encounter titles and the wordmark (Marcellus).
-    pub title: &'static str,
+    /// Names and numbers (a face with tabular digits).
+    pub ui: SharedString,
+    /// Encounter titles and the wordmark.
+    pub title: SharedString,
     /// The window's width at zoom 1, in logical pixels.
     pub width: f32,
 }
@@ -72,9 +87,14 @@ impl W {
             t: look.def.window,
             size: look.def.size,
             pitch: look.def.pitch,
+            shape: look.def.shape,
+            bars: look.def.bars,
+            fx: look.def.effects,
+            data: look.def.data,
+            shadows: look.def.shadows,
             accent: look.accent,
-            ui: look.def.faces.ui,
-            title: look.def.faces.title,
+            ui: crate::theme::face(&look.def.faces.ui),
+            title: crate::theme::face(&look.def.faces.title),
             width,
         }
     }
@@ -96,7 +116,7 @@ impl W {
             rail: None,
             thumb: self.c(|t| t.thumb),
             width: self.z(self.pitch.scroll_lane),
-            radius: self.z(THUMB_RADIUS),
+            radius: self.r(THUMB_RADIUS),
         }
     }
 
@@ -109,6 +129,56 @@ impl W {
             spread_radius: px(0.),
             inset: false,
         }
+    }
+
+    /// A corner the design draws at `v` logical pixels, at the theme's
+    /// shape (`navy`'s exactly; a machined theme's tighter) and the zoom.
+    pub fn r(&self, v: f32) -> Pixels {
+        self.z(self.shape.radius(v))
+    }
+
+    /// A pill's corner, `v` its half-height: a pill at the theme's shape,
+    /// or a squared tag where the theme says chips are.
+    pub fn pill(&self, v: f32) -> Pixels {
+        self.z(self.shape.pill(v))
+    }
+
+    /// The face of a surface that floats over the window — a menu, a card,
+    /// the palette, the sheet, the toast, a tooltip: its `fill` and `edge`
+    /// and `shadow` as the design has them, or, where the theme is glass,
+    /// smoked glass — the theme's translucent `glass` under a faint sheen
+    /// at its top, the same edge, and a specular rim: a hairline along the
+    /// top inside the edge, held in from the corners. GPUI has no backdrop
+    /// blur, so the glass is all but opaque: words behind a card that showed
+    /// through sharp read as a defect, not as glass.
+    pub fn float<E: Styled + ParentElement>(
+        &self,
+        el: E,
+        fill: Hsla,
+        edge: Hsla,
+        shadow: gl::Shadow,
+    ) -> E {
+        let el = el.border_color(edge).shadow(vec![self.shadow(shadow)]);
+        if !self.fx.glass {
+            return el.bg(fill);
+        }
+        let glass = self.t.glass;
+        let sheen = self.t.glass_sheen.over(glass.alpha(1.0)).alpha(glass.a);
+        let held = self.r(RIM_HELD);
+        el.bg(gpui_kit::linear_gradient(
+            180.,
+            gpui_kit::linear_color_stop(hsla(sheen), 0.),
+            gpui_kit::linear_color_stop(hsla(glass), SHEEN_STOP),
+        ))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left(held)
+                .right(held)
+                .h(self.z(1.))
+                .bg(hsla(self.t.glass_rim)),
+        )
     }
 
     /// The accent's base, as GPUI's.
@@ -134,7 +204,7 @@ impl W {
         weight: FontWeight,
     ) -> Div {
         div()
-            .font_family(self.ui)
+            .font_family(self.ui.clone())
             .font_weight(weight)
             .text_size(self.z(size))
             .text_color(color)
@@ -146,7 +216,7 @@ impl W {
     /// of a control whose hover brightens it.
     pub fn words(&self, words: impl Into<SharedString>, size: f32, weight: FontWeight) -> Div {
         div()
-            .font_family(self.ui)
+            .font_family(self.ui.clone())
             .font_weight(weight)
             .text_size(self.z(size))
             .whitespace_nowrap()
@@ -156,7 +226,7 @@ impl W {
     /// One line in the title face (Marcellus).
     pub fn title_text(&self, words: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
         self.text(words, size, color, REGULAR)
-            .font_family(self.title)
+            .font_family(self.title.clone())
     }
 
     /// A class colour as data — a bar, a disc, a skull: `Class::rgb`
@@ -174,6 +244,15 @@ impl W {
         }
     }
 }
+
+/// [`W::float`] in a builder chain: `.floating(w, fill, edge, shadow)`.
+pub trait Floating: Styled + ParentElement + Sized {
+    fn floating(self, w: &W, fill: Hsla, edge: Hsla, shadow: gl::Shadow) -> Self {
+        w.float(self, fill, edge, shadow)
+    }
+}
+
+impl<E: Styled + ParentElement> Floating for E {}
 
 #[cfg(test)]
 mod tests {

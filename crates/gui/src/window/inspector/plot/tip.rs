@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use gpui_kit::{
-    App, BorderStyle, Font, FontWeight, Hsla, ShapedLine, SharedString, TextAlign, TextRun, Window,
-    WindowTextSystem, font, quad,
+    App, Font, FontWeight, Hsla, ShapedLine, SharedString, TextAlign, TextRun, Window,
+    WindowTextSystem, font,
 };
 use wowdps_gui_logic::inspect::geometry::{
     Face, HAIRLINE, Ink3, LINE, Label, SWATCH, SWATCH_RADIUS, TIP_LINE, TIP_PAD, TIP_PX,
@@ -30,13 +30,16 @@ pub fn weight(face: Face) -> FontWeight {
 pub(super) struct Shaper {
     text: Arc<WindowTextSystem>,
     pen: Pen,
+    /// The face its words are set in.
+    ui: SharedString,
 }
 
 impl Shaper {
-    pub fn new(window: &Window, pen: Pen) -> Self {
+    pub fn new(window: &Window, pen: Pen, ui: SharedString) -> Self {
         Self {
             text: window.text_system().clone(),
             pen,
+            ui,
         }
     }
 
@@ -57,7 +60,7 @@ impl Shaper {
             len: s.len(),
             font: Font {
                 weight: weight(face),
-                ..font(self.pen.ui)
+                ..font(self.ui.clone())
             },
             color,
             background_color: None,
@@ -119,14 +122,16 @@ impl Shaper {
         let r = tip.rect;
         // iced strokes the frame centred on the box's edge: half out.
         let half = HAIRLINE / 2.0;
-        window.paint_quad(quad(
+        crate::window::paint::paint_float(
+            window,
             pen.rect(r.x - half, r.y - half, r.w + HAIRLINE, r.h + HAIRLINE),
-            pen.px(TIP_RADIUS + half),
-            hsla(pen.t.surface),
+            pen.r(TIP_RADIUS + half),
             pen.px(HAIRLINE),
+            hsla(pen.t.surface),
             hsla(pen.t.edge),
-            BorderStyle::Solid,
-        ));
+            &pen.t,
+            pen.fx.glass,
+        );
         let inset = tip.inset();
         for (i, (s, role, face)) in tip.lines.iter().enumerate() {
             let y = r.y + TIP_PAD.1 + i as f32 * TIP_LINE;
@@ -141,7 +146,7 @@ impl Shaper {
                         ),
                         hsla(*swatch),
                     )
-                    .corner_radii(pen.px(SWATCH_RADIUS)),
+                    .corner_radii(pen.r(SWATCH_RADIUS)),
                 );
             }
             self.words(

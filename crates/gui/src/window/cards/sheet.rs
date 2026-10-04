@@ -15,10 +15,10 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, Div, MouseButton, TestSupportExt as _, Window, div};
 use wowdps_gui_logic::keys::{Binding, keycaps, sheet_groups};
 use wowdps_gui_logic::labels::sentence;
-use wowdps_gui_logic::theme::SHADOW_SHEET;
 
 use super::super::Gui;
 use super::super::chrome::kbd;
+use super::super::w::Floating;
 use super::super::w::{REGULAR, SEMIBOLD, W};
 use super::{BORDER, enter};
 
@@ -94,11 +94,9 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         .pt(w.z(PAD.0 - BORDER))
         .px(w.z(PAD.1 - BORDER))
         .pb(w.z(PAD.2 - BORDER))
-        .bg(w.c(|t| t.surface))
         .border(w.z(1.))
-        .border_color(w.c(|t| t.edge))
-        .rounded(w.z(RADIUS))
-        .shadow(vec![w.shadow(SHADOW_SHEET)])
+        .rounded(w.r(RADIUS))
+        .floating(w, w.c(|t| t.surface), w.c(|t| t.edge), w.shadows.sheet)
         .child(w.text("Keyboard", w.size.title, w.c(|t| t.ink), SEMIBOLD))
         .child(w.text(
             format!(
@@ -145,7 +143,7 @@ fn group_lines(group: &str, bindings: &[&Binding], inert: &[&str], w: &W) -> Div
     let mut lines = div().flex().flex_col().gap(w.z(LINE_GAP)).child(w.text(
         sentence(group),
         w.size.micro,
-        w.c(|t| t.gold_dim),
+        w.c(|t| t.label_ink),
         SEMIBOLD,
     ));
     for b in bindings {
@@ -170,7 +168,7 @@ fn group_lines(group: &str, bindings: &[&Binding], inert: &[&str], w: &W) -> Div
                     div()
                         .flex_1()
                         .min_w_0()
-                        .font_family(w.ui)
+                        .font_family(w.ui.clone())
                         .font_weight(REGULAR)
                         .text_size(w.z(w.size.sheet_key))
                         .text_color(ink)

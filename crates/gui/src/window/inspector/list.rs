@@ -16,7 +16,7 @@ use gpui_kit::{
     TestSupportExt as _, canvas, div, img, relative,
 };
 use wowdps_gui_logic::glyph::Glyph;
-use wowdps_gui_logic::inspect::list::{FOE, hue, sphere};
+use wowdps_gui_logic::inspect::list::{hue, sphere};
 use wowdps_gui_logic::table::{self as gt, Col, Grid, split_pet};
 use wowdps_gui_logic::{theme as gl, tree};
 use wowdps_model::Row;
@@ -33,7 +33,6 @@ use crate::window::w::{MEDIUM, REGULAR, SEMIBOLD, W};
 /// A row (`.irow{height:29px}`), its bar (`.ibar{height:2px;opacity:.55}`).
 const ROW_H: f32 = 29.0;
 const BAR_H: f32 = 2.0;
-const BAR_ALPHA: f32 = 0.55;
 const KEYED_EDGE: f32 = 2.0;
 /// The ability's square, a person's disc, the gap after either.
 const ICON: f32 = 17.0;
@@ -135,7 +134,7 @@ pub fn view(l: &List, keep: &Keep, w: &W, cx: &Context<Gui>) -> Div {
 /// column — the ability list's sort on a press.
 fn heads(l: &List, cols: &[Col], grid: Grid, w: &W, cx: &Context<Gui>) -> Div {
     let gap = grid.gap();
-    let head_ink = l.head_ink.map_or(w.c(|t| t.gold_dim), hsla);
+    let head_ink = l.head_ink.map_or(w.c(|t| t.label_ink), hsla);
     let mut line = div()
         .flex()
         .items_center()
@@ -145,7 +144,7 @@ fn heads(l: &List, cols: &[Col], grid: Grid, w: &W, cx: &Context<Gui>) -> Div {
         .px(w.z(l.side))
         .child(div().flex_1().min_w_0().overflow_hidden().child(w.text(
             l.head.clone(),
-            grid.head_px(),
+            grid.head_px(w.size.label),
             head_ink,
             if l.head_ink.is_some() {
                 SEMIBOLD
@@ -162,7 +161,7 @@ fn heads(l: &List, cols: &[Col], grid: Grid, w: &W, cx: &Context<Gui>) -> Div {
             .items_center()
             .justify_end()
             .gap(w.z(2.))
-            .child(w.words(c.head(l.view), grid.head_px(), REGULAR));
+            .child(w.words(c.head(l.view), grid.head_px(w.size.label), REGULAR));
         if let Some(desc) = sorted {
             words = words.child(glyph(
                 if desc {
@@ -170,8 +169,8 @@ fn heads(l: &List, cols: &[Col], grid: Grid, w: &W, cx: &Context<Gui>) -> Div {
                 } else {
                     Glyph::ArrowUp
                 },
-                w.z(grid.head_px()),
-                w.c(|t| t.gold),
+                w.z(grid.head_px(w.size.label)),
+                w.c(|t| t.accent),
             ));
         }
         line = line.child(if l.sortable {
@@ -182,16 +181,16 @@ fn heads(l: &List, cols: &[Col], grid: Grid, w: &W, cx: &Context<Gui>) -> Div {
                 )))
                 .cursor_pointer()
                 .text_color(if sorted.is_some() {
-                    w.c(|t| t.gold)
+                    w.c(|t| t.accent)
                 } else {
-                    w.c(|t| t.gold_dim)
+                    w.c(|t| t.label_ink)
                 })
-                .hover(|s| s.text_color(w.c(|t| t.gold)))
+                .hover(|s| s.text_color(w.c(|t| t.accent)))
                 .child(words)
                 .on_mouse_down(MouseButton::Left, on(Press::Sort(c), cx))
                 .into_any_element()
         } else {
-            words.text_color(w.c(|t| t.gold_dim)).into_any_element()
+            words.text_color(w.c(|t| t.label_ink)).into_any_element()
         });
     }
     line
@@ -303,7 +302,7 @@ fn line(
         (None, Bar::Own) => r.class.map_or(w.t.hostile, gl::Color::of_class),
     };
     // A band's hue is its legend: solid, as the band is drawn.
-    let bar_alpha = if hue.is_some() { 1.0 } else { BAR_ALPHA };
+    let bar_alpha = if hue.is_some() { 1.0 } else { w.bars.list };
     let share = (r.amount as f64 / max as f64).clamp(0.0, 1.0) as f32;
     let mut figures = div().flex_none().flex().gap(w.z(grid.gap()));
     for &c in cols {
@@ -356,7 +355,7 @@ fn line(
                 div()
                     .h_full()
                     .w(relative(share))
-                    .rounded(w.z(1.))
+                    .rounded(w.r(1.))
                     .bg(hsla(color.alpha(bar_alpha))),
             ),
         )
@@ -412,12 +411,12 @@ fn spell_words(name: &str, pet: Option<&str>, spell_id: u32, w: &W) -> AnyElemen
             .flex()
             .items_center()
             .justify_center()
-            .rounded(w.z(SQ_RADIUS))
-            .bg(hsla(hue(name)))
+            .rounded(w.r(SQ_RADIUS))
+            .bg(hsla(hue(name, &w.data)))
             .child(w.text(
                 name.chars().next().map(String::from).unwrap_or_default(),
                 LETTER_PX,
-                hsla(gl::Color::rgba(0.0, 0.0, 0.0, 0.6)),
+                w.c(|t| t.shade.alpha(0.6)),
                 SEMIBOLD,
             ))
             .into_any_element(),
@@ -463,7 +462,7 @@ fn person_lead(r: &Row, you: bool, w: &W) -> AnyElement {
     let disc = if r.class.is_some() {
         class_icon(w, r.class, r.spec, w.z(DISC), false)
     } else {
-        foe_disc(w.z(DISC))
+        foe_disc(w.z(DISC), w.data.foe)
     };
     div()
         .flex()
@@ -486,24 +485,28 @@ fn person_lead(r: &Row, you: bool, w: &W) -> AnyElement {
 
 /// A foe's disc, `d` across: the prototype's lit sphere, rasterised once
 /// per size at twice it.
-pub fn foe_disc(d: Pixels) -> AnyElement {
-    img(foe_image(d)).size(d).flex_none().into_any_element()
+pub fn foe_disc(d: Pixels, color: gl::Color) -> AnyElement {
+    img(foe_image(d, color))
+        .size(d)
+        .flex_none()
+        .into_any_element()
 }
 
-fn foe_image(d: Pixels) -> Arc<RenderImage> {
+fn foe_image(d: Pixels, color: gl::Color) -> Arc<RenderImage> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<u32, Arc<RenderImage>>>> = OnceLock::new();
+    type Spheres = HashMap<(u32, String), Arc<RenderImage>>;
+    static CACHE: OnceLock<Mutex<Spheres>> = OnceLock::new();
     let n = (f32::from(d) * 2.0).round().max(2.0) as u32;
     let cache = CACHE.get_or_init(Default::default);
     let mut tiles = cache.lock().unwrap_or_else(|e| e.into_inner());
     tiles
-        .entry(n)
+        .entry((n, color.to_hex()))
         .or_insert_with(|| {
             crate::images::make(wowdps_gui_logic::lazy_tiles::Rgba {
                 w: n,
                 h: n,
-                pixels: sphere(n, FOE),
+                pixels: sphere(n, color),
             })
         })
         .clone()

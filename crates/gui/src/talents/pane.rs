@@ -219,7 +219,7 @@ impl Painter {
         let o = bounds.origin;
         let s = self.paint.s;
         let t = self.paint.t;
-        let gold = hsla(t.gold);
+        let gold = hsla(t.taken);
         let nodes = &self.model.nodes;
 
         // Paths under the tiles: a taken path is gold and carries an
@@ -236,7 +236,7 @@ impl Painter {
             }
             if grown > 0.0 {
                 let tip = point(p.x + (q.x - p.x) * grown, p.y + (q.y - p.y) * grown);
-                self.line(window, p, tip, 2.0, hsla(t.gold.alpha(0.85)));
+                self.line(window, p, tip, 2.0, hsla(t.taken.alpha(0.85)));
             }
             // The arrow arrives over the last stretch of the growth.
             let arrow = ((grown - 0.8) / 0.2).clamp(0.0, 1.0);
@@ -273,7 +273,7 @@ impl Painter {
             let border = if n.granted {
                 t.granted
             } else if n.selected {
-                t.gold
+                t.taken
             } else if n.available {
                 t.available
             } else {
@@ -301,7 +301,14 @@ impl Painter {
             // corner, clear of the paths.
             let (words, [bx, by, bw, bh]) = logic::badge(n);
             let plate = Bounds::new(self.at(o, (bx, by)), size(px(bw * s), px(bh * s)));
-            window.paint_quad(gpui_kit::fill(plate, hsla(t.badge)).corner_radii(px(2. * s)));
+            window.paint_quad(
+                gpui_kit::fill(plate, hsla(t.badge)).corner_radii(px(self
+                    .paint
+                    .def
+                    .shape
+                    .radius(2.)
+                    * s)),
+            );
             let run = TextRun {
                 len: words.len(),
                 font: face(&self.paint),
@@ -372,7 +379,7 @@ impl Painter {
                 let plate = Bounds::new(self.at(o, (x, y)), size(px(w * s), px(h * s)));
                 window.paint_quad(
                     gpui_kit::fill(plate, hsla(t.picker.alpha(t.picker.a * self.fan.max(0.4))))
-                        .corner_radii(px(8. * s)),
+                        .corner_radii(px(self.paint.def.shape.radius(8.) * s)),
                 );
             }
             for (i, (spot, opt)) in spots.iter().zip(node.options.iter()).enumerate() {
@@ -392,7 +399,7 @@ impl Painter {
                 let ring = if hovered {
                     t.hover_ring
                 } else if current {
-                    t.gold
+                    t.taken
                 } else {
                     t.option_ring
                 };

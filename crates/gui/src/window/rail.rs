@@ -12,8 +12,8 @@
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, BoxShadow, Context, Div, MouseButton, PathBuilder, SharedString,
-    TestSupportExt as _, canvas, div, point, px,
+    AnyElement, App, Context, Div, MouseButton, PathBuilder, SharedString, TestSupportExt as _,
+    canvas, div, point, px,
 };
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::home::dungeon_name;
@@ -89,8 +89,6 @@ const PIN_INSET: f32 = 4.0;
 pub const PIN_TIP: &str = "Pinned: retention keeps it (p)";
 /// The rail's scrollbar thumb, down the middle of its lane.
 const SCROLL_THUMB: f32 = 6.0;
-/// The drawer's shadow (`box-shadow:20px 0 50px rgba(0,0,0,.5)`).
-const DRAWER_SHADOW: (f32, f32, f32) = (20.0, 50.0, 0.5);
 
 // ---- the window's rail -----------------------------------------------------------
 
@@ -405,7 +403,7 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
         .cursor_pointer()
         .py(w.z(TOGGLE_PAD.0))
         .px(w.z(TOGGLE_PAD.1))
-        .rounded(w.z(TOGGLE_RADIUS))
+        .rounded(w.r(TOGGLE_RADIUS))
         .when(hide_trash, |d| d.bg(w.c(|t| t.raise)))
         .text_color(if hide_trash {
             w.c(|t| t.ink_2)
@@ -474,7 +472,7 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
             night_pad(w)
                 .id(("night", i))
                 .test_support()
-                .child(w.text(n.label.clone(), LABEL_PX, w.c(|t| t.gold_dim), SEMIBOLD))
+                .child(w.text(n.label.clone(), LABEL_PX, w.c(|t| t.label_ink), SEMIBOLD))
                 .into_any_element(),
         );
         for (v, lines) in visits {
@@ -635,14 +633,7 @@ fn thumb(handle: &crate::scrollbar::Scroll, w: &W) -> impl IntoElement {
 /// takes its own presses, so none reaches the scrim under it.
 pub fn drawer(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
     let rail = panel(gui, w, DRAWER_W, true, cx);
-    let (x, blur, alpha) = DRAWER_SHADOW;
-    let shadow = BoxShadow {
-        color: hsla(wowdps_gui_logic::theme::Color::rgba(0.0, 0.0, 0.0, alpha)),
-        offset: point(w.z(x), px(0.)),
-        blur_radius: w.z(blur),
-        spread_radius: px(0.),
-        inset: false,
-    };
+    let shadow = w.shadow(w.shadows.drawer);
     div()
         .absolute()
         .inset_0()
@@ -667,7 +658,16 @@ pub fn drawer(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
                 .left_0()
                 .shadow(vec![shadow])
                 .occlude()
-                .child(rail),
+                .child(rail)
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right_0()
+                        .w(w.z(1.))
+                        .bg(w.c(|t| t.drawer_edge)),
+                ),
         )
         .into_any_element()
 }
@@ -783,7 +783,7 @@ fn pull_line(
             d.bg(w.c(|t| t.hover))
                 .border(w.z(CURSOR_RING))
                 .border_color(accent)
-                .rounded(w.z(CURSOR_RADIUS))
+                .rounded(w.r(CURSOR_RADIUS))
         })
         .when(!current && !keyed, |d| d.hover(|s| s.bg(w.c(|t| t.hover))))
         .child(body)
@@ -853,7 +853,7 @@ pub(crate) fn mark(m: Mark, w: &W) -> AnyElement {
         Mark::Dash => div()
             .w(w.z(DASH_W))
             .h(w.z(DASH_H))
-            .rounded(w.z(1.))
+            .rounded(w.r(1.))
             .bg(w.c(|t| t.ink_3))
             .into_any_element(),
     };
@@ -877,7 +877,7 @@ fn more_button(w: &W, offer: bool, cx: &mut Context<Gui>) -> AnyElement {
         "Reading the history store…"
     };
     let edge = w.c(|t| t.edge);
-    let (dash, gap, radius, zoom) = (MORE_DASH, MORE_GAP, MORE_RADIUS, w.zoom);
+    let (dash, gap, radius, zoom) = (MORE_DASH, MORE_GAP, w.shape.radius(MORE_RADIUS), w.zoom);
     let frame = canvas(
         |_, _, _| {},
         move |b, (), window, _| {

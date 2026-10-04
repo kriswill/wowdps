@@ -13,19 +13,27 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     App, Div, Hsla, PathBuilder, Pixels, SharedString, canvas, div, point, px, relative,
 };
-use wowdps_gui_logic::theme::{self as gl, OverlayTokens};
+use wowdps_gui_logic::theme::{self as gl, Bars, DataTokens, Effects, OverlayTokens, Shape};
 
 use crate::theme::{Look, hsla};
 
 /// The overlay's render context.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Ov {
     pub zoom: f32,
     pub t: OverlayTokens,
     /// The face of the overlay's words.
-    pub sans: &'static str,
+    pub sans: SharedString,
     /// The face of its numbers.
-    pub mono: &'static str,
+    pub mono: SharedString,
+    /// The corners: the overlay's are the theme's shape too.
+    pub shape: Shape,
+    /// How much class colour a row's bar shows.
+    pub bars: Bars,
+    /// What the theme adds; the overlay wears its glass.
+    pub fx: Effects,
+    /// The colours that carry data: the graph's marks.
+    pub data: DataTokens,
 }
 
 impl Ov {
@@ -34,8 +42,12 @@ impl Ov {
         Self {
             zoom,
             t: look.def.overlay,
-            sans: look.def.faces.overlay,
-            mono: look.def.faces.overlay_num,
+            sans: crate::theme::face(&look.def.faces.overlay),
+            mono: crate::theme::face(&look.def.faces.overlay_num),
+            shape: look.def.shape,
+            bars: look.def.bars,
+            fx: look.def.effects,
+            data: look.def.data,
         }
     }
 
@@ -47,6 +59,66 @@ impl Ov {
     /// A palette colour as GPUI's.
     pub fn c(&self, pick: impl FnOnce(&OverlayTokens) -> gl::Color) -> Hsla {
         hsla(pick(&self.t))
+    }
+
+    /// A corner the iced overlay drew at `v` px (never zoomed), at the
+    /// theme's shape.
+    pub fn r(&self, v: f32) -> Pixels {
+        px(self.shape.radius(v))
+    }
+
+    /// A pill's corner, `v` its half-height, at the theme's shape.
+    pub fn pill(&self, v: Pixels) -> Pixels {
+        px(self.shape.pill(f32::from(v)))
+    }
+
+    /// A card's face (the options card, the view menu): `card` inside a
+    /// `card_edge` hairline as the iced overlay drew it — or, where the
+    /// theme is glass, the card under the panel's sheen with its rim.
+    pub fn card_face<E: Styled>(&self, el: E) -> E {
+        let el = el.border_1().border_color(self.c(|t| t.card_edge));
+        if !self.fx.glass {
+            return el.bg(self.c(|t| t.card));
+        }
+        let card = self.t.card;
+        let sheen = self.t.glass_sheen.over(card.alpha(1.0)).alpha(card.a);
+        el.bg(gpui_kit::linear_gradient(
+            180.,
+            gpui_kit::linear_color_stop(hsla(sheen), 0.),
+            gpui_kit::linear_color_stop(hsla(card), 0.30),
+        ))
+        .shadow(vec![gpui_kit::BoxShadow {
+            color: hsla(self.t.glass_rim),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        }])
+    }
+
+    /// The panel's or the tab's face: the panel colour at `alpha` inside its
+    /// edge, as the iced overlay drew it — or, where the theme is glass,
+    /// the same smoke under a faint sheen with a specular rim along its top
+    /// (an inset hairline), so it reads as glass over the game.
+    pub fn glass<E: Styled>(&self, el: E, alpha: f32) -> E {
+        let fill = self.t.panel.alpha(alpha);
+        let el = el.border_1().border_color(self.c(|t| t.edge));
+        if !self.fx.glass {
+            return el.bg(hsla(fill));
+        }
+        let sheen = self.t.glass_sheen.over(self.t.panel).alpha(alpha);
+        el.bg(gpui_kit::linear_gradient(
+            180.,
+            gpui_kit::linear_color_stop(hsla(sheen), 0.),
+            gpui_kit::linear_color_stop(hsla(fill), 0.30),
+        ))
+        .shadow(vec![gpui_kit::BoxShadow {
+            color: hsla(self.t.glass_rim),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        }])
     }
 
     /// The overlay's scrollbar: a square thumb on its rail.
@@ -62,7 +134,7 @@ impl Ov {
     /// Words in the overlay's face, `size` ×z.
     pub fn words(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
         div()
-            .font_family(self.sans)
+            .font_family(self.sans.clone())
             .text_size(self.z(size))
             .text_color(color)
             .whitespace_nowrap()
@@ -72,7 +144,7 @@ impl Ov {
     /// Numbers in the overlay's monospace face, `size` ×z.
     pub fn nums(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
         div()
-            .font_family(self.mono)
+            .font_family(self.mono.clone())
             .text_size(self.z(size))
             .text_color(color)
             .whitespace_nowrap()
@@ -223,11 +295,11 @@ pub fn circle(path: &mut PathBuilder, cx: Pixels, cy: Pixels, r: Pixels) {
 
 /// A bar's fill as the overlay draws it: a left-to-right ramp of `color`
 /// from 16% to 55%.
-pub fn bar_ramp(color: Hsla) -> gpui_kit::Background {
+pub fn bar_ramp(color: Hsla, bars: &Bars) -> gpui_kit::Background {
     gpui_kit::linear_gradient(
         90.,
-        gpui_kit::linear_color_stop(color.opacity(0.16), 0.),
-        gpui_kit::linear_color_stop(color.opacity(0.55), 1.),
+        gpui_kit::linear_color_stop(color.opacity(bars.rest_from), 0.),
+        gpui_kit::linear_color_stop(color.opacity(bars.rest_to), 1.),
     )
 }
 
@@ -235,3 +307,12 @@ pub fn bar_ramp(color: Hsla) -> gpui_kit::Background {
 pub fn share(frac: f32) -> gpui_kit::DefiniteLength {
     relative(frac.clamp(0.0, 1.0))
 }
+
+/// [`Ov::card_face`] in a builder chain.
+pub trait Card: Styled + Sized {
+    fn card(self, ov: &Ov) -> Self {
+        ov.card_face(self)
+    }
+}
+
+impl<E: Styled> Card for E {}

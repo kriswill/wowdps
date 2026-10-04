@@ -35,10 +35,19 @@ was built under still hold:
 - **Dependencies.** `gpui-kit` is pinned exactly (`=0.7.0`), and its styled
   `gpui-component` layer is restyled per control. No forked or patched GPUI:
   a capability GPUI lacks is designed around or contributed upstream.
-- **Themes.** One theme definition (gui-logic's `theme::Def`: `gold`, the
-  prototype's Tokens and the overlay's palette, and `frost`; config `theme`)
-  feeds both Kit's `Theme` and the app's `Look` (`crates/gui/src/theme.rs`),
-  and no surface draws a literal colour.
+- **Themes.** One theme definition (gui-logic's `theme::Def`: `onyx`, the
+  default (`theme::default_def`: no `theme` key, an unknown name, a user
+  theme with no `base`); `navy` — the prototype's Tokens and the overlay's
+  palette, called `gold` until there were themes, a name config still reads
+  (so a config that says `gold` keeps the old look); and `frost`; config
+  `theme`, chosen in the window's ⚙ card) feeds both Kit's `Theme` and the app's `Look`
+  (`crates/gui/src/theme.rs`). No surface draws a literal colour, face,
+  corner or effect: each comes from the `Def`, and config.toml's
+  `[themes.<name>]` tables override any built-in's tokens or define a theme
+  of the user's own (gui-logic's `theme::Registry`; `wowdps-gui
+  --print-theme <name>` prints every key). Navy's pixels are the prototype's:
+  a new token, effect or corner role must leave them unmoved (the overlay
+  render guard and the Navy window shots are the check).
 - **Tests.** Kit's `gpui_kit::test::TestWindowExt` is the click-through
   harness, over the daemon's mock through the `Session` link (`testkit.rs`).
   Its default `TestAppContext` has a stub text system (every glyph 0.6 em,
@@ -511,10 +520,12 @@ line says nothing rather than a zero. Between the stat line and the tabs the
 **ribbon** (`window/ribbon.rs`, one canvas, 86 px, 74 narrow, its arithmetic
 gui-logic's `ribbon`) draws the raid timeline (R25): the view's raid rate in
 10 s steps (finer in a short pull) as an ink area under a Catmull-Rom line,
-"Raid dps, peak 10.7M", minute ticks, the lust as a faint wash, a skull per
-death in the class colour on a red hairline ("you" over the owner's; an arena
-enemy's in outline), labels set on plates where they fit, a gold crosshair
-that glows, with a dot where it meets the curve, and a tooltip on hover; the
+"Raid dps, peak 10.7M", minute ticks, the lust as a faint wash (its name in
+the tooltip while the pointer is in it — a word on the ribbon hid the crest
+or was struck out by the curve), a skull per death in the class colour on a
+hairline (`death_line`; "you" over the owner's; an arena enemy's in
+outline), labels set on plates where they fit, an accent crosshair that
+glows, with a dot where it meets the curve, and a tooltip on hover; the
 pointer is read through the canvas's painted bounds, and a press on a skull
 is `Gui::open_death` → `ClientState::open_death` (opt-in: the Deaths view
 drilled into that death window, pushed in a narrow window). A stored pull
@@ -786,23 +797,64 @@ leaving caret, IME, scrolling and clipping Kit's; the talent viewer's framed
 import field stays Kit's styled `Input`.
 
 **Chrome and type.** gui-logic's `theme` is the one definition: a `Def`
-(`GOLD`, `FROST`; config `theme`, an unknown name reads `gold`) holds the
+(`NAVY`, `ONYX`, `FROST`, each in its own file under `theme/`; config
+`theme`; an unknown name reads the default, `onyx`, and the old `gold`
+reads `navy`) holds the
 window's `WindowTokens`, the overlay's `OverlayTokens`, the talent viewer's
-`TalentTokens`, the type scale (`Sizes`) and the row pitches (`Pitches`).
+`TalentTokens`, the data hues (`DataTokens`: the stacked bands, the
+lettered squares, the foe, the timeline marks), the `Faces`, the type scale
+(`Sizes`), the row pitches (`Pitches`), the corners (`Shape`: every radius
+times `scale`, a pill capped at `chip`, read through `w.r` / `w.pill`,
+`ov.r`, `p.r`, `pen.r`), the `Bars` (how much class colour a bar shows), the
+`Effects` and the `Shadows`. Every token group
+is written by `theme::tokens!`, so each field is a config key by the same
+name: `[themes.<name>.window|overlay|talents|data|faces|size|pitch|shape|bars|
+effects]`, plus `base`, `label`, `accent_label` and `dark` — `theme::Registry`
+lays a config's tables over the built-ins (a table named for one overrides
+it; any other is a theme of the user's own, from its `base`, the default when
+unsaid), owns what it builds — a theme's words are `theme::Text`, a
+literal or a string shared from the config; the built-ins are lazily built
+statics; the active `Look` holds its `Def` by an `Arc`, so a theme switched
+away from is freed — and words every
+mistake (`did you mean "accent"?`) for stderr and the ⚙ card. The window
+switches theme from the ⚙ card (`Gui::set_theme`, one key through
+`Config::store`, the chrome kept); the overlay polls the config's mtime once
+a second and follows (`Overlay::take_theme`). **Onyx** is a black-dial
+chronograph: true black, lume ink, a grey ramp, white chrome (its chrome
+chip says "White"), Saira Tabular (Saira at width 80, the measure of
+Barlow Semi Condensed) and Michroma, corners at
+0.3 and squared chips, and the four `Effects` `navy` leaves off — `glass`
+(what floats — the cards, the palette, the sheet, the toast, the tooltips,
+the overlay panel — is the `glass` fill under a sheen with an inset
+specular rim: `W::float` / `.floating`, `paint::paint_float` on canvases,
+`Ov::glass`, `Paint::tip_face`), `brackets` (reticle corners round the
+ribbon and the inspector's graph), `dial` (`window/instruments.rs`: the
+inspector's crest in a 60-tick bezel, the player's meter bar wrapped round
+it in their class colour, to a hand) and `fine_ticks` (the ribbon's 10 s chapter ring). Two more
+switches restyle what navy fills: `quiet_press` (a pressed action — "Stop
+comparing" — is a raised key with an accent hairline and a lit bar along its
+foot, not a block of the accent) and the data token `stack_other_edge` (the
+stack's rest, `Ink::StackRest`, drawn as graphite under a steel line: the
+player's whole curve). No colour of navy's is baked anywhere else: a class
+chrome that knows no class yet wears the theme's own accent (the old
+`NEUTRAL` blue is gone), and the graph samples take a theme's hues
+(`samples::all_in`).
 `crates/gui/src/theme.rs` `apply`s it to two targets: Kit's `Theme`, slot by
 slot (the chrome goes to `primary` and `ring`, the prototype's raise to
 `accent` — Kit's slot names are shadcn's), and the `Look` global every
 bespoke surface reads, so `apply` with another definition repaints
 everything (a test samples a Kit component and a bespoke surface across a
 switch). No surface draws a literal colour: a new colour is a token on every
-`Def`. The window wears the prototype's Tokens — ground, surface, raise,
-line, edge, three inks, gold / gold-dim / gold-ink, good, bad, legendary (a
+`Def`. `navy` wears the prototype's Tokens — ground, surface, raise,
+line, edge, three inks, accent / label ink / accent ink (its gold, gold-dim and
+gold-ink), good, bad, legendary (a
 personal best, and nothing else), hover, name-lit, the tick on a checked box
 — under one rule: gold is the interface, class colours are people, green and
 red are outcomes, and no colour is semantic yellow (a live pull is a red dot
 and its word; crit is ink). The chrome is `theme::Chrome`, config `chrome =
-"gold"` (the default) or `"class"`, a plain string like `density` so a typo
-reads gold. A class chrome wears the OWNER's class, learned once from the
+"theme"` (the default, the theme's own accent; the old `"gold"` reads
+as it) or `"class"`, a plain string like `density` so a typo reads the
+theme's. A class chrome wears the OWNER's class, learned once from the
 owner's row and held (`Gui::learn_class`) — rows resort on every snapshot, so
 tinting from the selection would re-colour the whole window on its own — and
 is right on the first frame because the window writes that class whenever it
@@ -826,11 +878,13 @@ Marcellus for encounter titles and the wordmark alone — OFL files under
 `crates/gui-logic/fonts/` (provenance, pinned upstream commits and the
 reproducible fonttools bake in its `README.md`), `include_bytes!`d as
 gui-logic's `fonts::FONTS` and registered with GPUI's text system in
-`main.rs`; the overlay draws in the system UI face and a monospace for its
-numbers (`overlay/ov.rs`), never these. Fonts are assets, not dependencies.
+`main.rs` — every built-in's faces, whatever the theme; `navy`'s overlay
+draws in the system UI face and a monospace for its numbers
+(`overlay/ov.rs`), `onyx`'s in Saira, whose digits are baked tabular the
+same way. Fonts are assets, not dependencies.
 Sizes are the `Def`'s `Sizes` (the Tokens specimens: encounter 27, 22
 narrow; names 15; every figure 14.5; column heads and stat labels 13.5 in
-gold-dim) and `Pitches` (a meter row 32, the top bar 44, by `density`); no
+the label ink; a theme with a wider title face sets its titles smaller) and `Pitches` (a meter row 32, the top bar 44, by `density`); no
 overlay code names either. The window speaks the prototype's words (gui-logic's
 `labels`): sentence case everywhere (`labels::sentence` turns the source's
 "KILL" into "Kill"), the views in the prototype's order and names

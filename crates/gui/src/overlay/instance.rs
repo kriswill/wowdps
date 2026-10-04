@@ -112,10 +112,10 @@ fn item_el(ov: &Ov, item: &Item, selected: Option<usize>) -> Element {
             live,
         } => {
             let fill = match (live, success) {
-                (true, _) => t.yellow.alpha(0.45),
-                (_, Some(true)) => t.good.alpha(0.40),
-                (_, Some(false)) => t.bad.alpha(0.40),
-                (_, None) => Color::rgba(1.0, 1.0, 1.0, 0.08),
+                (true, _) => t.pip_live,
+                (_, Some(true)) => t.pip_kill,
+                (_, Some(false)) => t.pip_wipe,
+                (_, None) => t.pip,
             };
             hit(
                 disc(
@@ -180,7 +180,7 @@ fn pill(ov: &Ov, count: usize) -> AnyElement {
         .px(ov.z(4.))
         .flex()
         .items_center()
-        .rounded(dia / 2.)
+        .rounded(ov.pill(dia / 2.))
         .bg(ov.c(|t| t.bad.alpha(0.22)))
         .border_1()
         .border_color(ov.c(|t| t.card_edge))
@@ -195,7 +195,7 @@ fn gap_line(ov: &Ov, duration_ms: i64, selected: bool, live: bool) -> AnyElement
     let color: Hsla = if live {
         ov.c(|t| t.yellow)
     } else if selected {
-        hsla(Color::rgba(1.0, 1.0, 1.0, 0.9))
+        ov.c(|t| t.pip_lit)
     } else {
         ov.c(|t| t.dim)
     };
@@ -208,7 +208,7 @@ fn gap_line(ov: &Ov, duration_ms: i64, selected: bool, live: bool) -> AnyElement
             div()
                 .w_full()
                 .h(ov.z(if selected { 3.0 } else { 2.0 }))
-                .rounded(px(1.))
+                .rounded(ov.r(1.))
                 .bg(color),
         )
         .into_any_element()

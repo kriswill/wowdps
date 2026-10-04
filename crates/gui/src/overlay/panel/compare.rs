@@ -202,6 +202,7 @@ impl Overlay {
             hover: self.graph_hover.clone(),
             probe: self.graph_probe,
             t: ov.t,
+            data: ov.data,
         };
         let column = div()
             .flex_1()
@@ -322,7 +323,7 @@ impl Overlay {
                 .items_center()
                 .gap(px(4.))
                 .px(px(6.))
-                .rounded(px(3.))
+                .rounded(ov.r(3.))
                 .when(lit, |d| d.bg(ov.c(|t| t.hover)))
                 .child(icon)
                 .child(div().flex_1().min_w_0().overflow_hidden().child(ov.words(

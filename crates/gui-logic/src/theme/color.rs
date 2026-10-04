@@ -54,6 +54,60 @@ impl Color {
         Self { a, ..self }
     }
 
+    /// A colour as a config spells it: `#rgb`, `#rgba`, `#rrggbb` or
+    /// `#rrggbbaa` (the `#` optional, any case). `None` for anything else,
+    /// so a typo is reported, never read as black.
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let hex = s.strip_prefix('#').unwrap_or(s);
+        if !hex.is_ascii() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let digit = |i: usize| hex.get(i..=i).and_then(|d| u8::from_str_radix(d, 16).ok());
+        let byte = |i: usize| {
+            hex.get(i..i + 2)
+                .and_then(|d| u8::from_str_radix(d, 16).ok())
+        };
+        let short = |i: usize| digit(i).map(|d| d * 17);
+        let (r, g, b, a) = match hex.len() {
+            3 => (short(0)?, short(1)?, short(2)?, 255),
+            4 => (short(0)?, short(1)?, short(2)?, short(3)?),
+            6 => (byte(0)?, byte(2)?, byte(4)?, 255),
+            8 => (byte(0)?, byte(2)?, byte(4)?, byte(6)?),
+            _ => return None,
+        };
+        Some(Self::rgba8(r, g, b, a as f32 / 255.0))
+    }
+
+    /// `#rrggbb`, or `#rrggbbaa` when not opaque: what [`Color::parse`]
+    /// reads back (to the nearest 8-bit step).
+    pub fn to_hex(self) -> String {
+        let b = |x: f32| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
+        if b(self.a) == 255 {
+            format!("#{:02x}{:02x}{:02x}", b(self.r), b(self.g), b(self.b))
+        } else {
+            format!(
+                "#{:02x}{:02x}{:02x}{:02x}",
+                b(self.r),
+                b(self.g),
+                b(self.b),
+                b(self.a)
+            )
+        }
+    }
+
+    /// `self` blended `t` (0..=1) of the way toward `other`, alpha too.
+    pub fn mix(self, other: Color, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let m = |a: f32, b: f32| a + (b - a) * t;
+        Self {
+            r: m(self.r, other.r),
+            g: m(self.g, other.g),
+            b: m(self.b, other.b),
+            a: m(self.a, other.a),
+        }
+    }
+
     /// The class's own colour, `Class::rgb` as it is.
     pub fn of_class(class: Class) -> Self {
         let (r, g, b) = class.rgb();
@@ -138,12 +192,6 @@ pub struct Accent {
     pub ink: Color,
 }
 
-/// The accent when a class chrome knows no class yet.
-pub const NEUTRAL: Accent = Accent {
-    base: Color::rgb(0.416, 0.718, 1.0),
-    ink: INK_LIGHT,
-};
-
 /// The class colour moved, if it must be, until ink on it clears [`AA_CONTRAST`].
 ///
 /// Shaman blue (`0x0070DD`) is the case that forces this: at luminance 0.168
@@ -176,9 +224,10 @@ pub fn chrome_base(class: Class) -> Color {
     base
 }
 
-/// The accent for a class chrome; `None` yields [`NEUTRAL`].
-pub fn class_accent(class: Option<Class>) -> Accent {
-    let Some(class) = class else { return NEUTRAL };
+/// The accent for a class chrome. A class chrome that knows no class yet
+/// wears the theme's own accent, never a colour of its own: there is no
+/// class-less accent here for a theme to miss.
+pub fn class_accent(class: Class) -> Accent {
     let base = chrome_base(class);
     let light = base.luminance() > LIGHT_THRESHOLD;
     Accent {
@@ -254,13 +303,12 @@ mod tests {
     #[test]
     fn every_class_clears_aa_on_its_accent() {
         for class in CLASSES {
-            let a = class_accent(Some(class));
+            let a = class_accent(class);
             let c = contrast(a.ink, a.base);
             assert!(c >= AA_CONTRAST, "{class:?}: {c:.2}:1");
             let moved = a.base != Color::of_class(class);
             assert_eq!(moved, class == Class::Shaman, "{class:?} moved: {moved}");
         }
-        assert_eq!(class_accent(None), NEUTRAL);
     }
 
     #[test]
@@ -270,6 +318,25 @@ mod tests {
             assert!(contrast(class_text_on(class, panel, AA_CONTRAST), panel) >= AA_CONTRAST);
             assert!(contrast(class_text_on(class, panel, YOU_CONTRAST), panel) >= YOU_CONTRAST);
         }
+    }
+
+    #[test]
+    fn a_config_spells_a_colour_in_hex() {
+        let c = Color::parse("#0A0E18").map(Color::to_hex);
+        assert_eq!(c.as_deref(), Some("#0a0e18"));
+        assert_eq!(Color::parse("0a0e18"), Some(Color::hex(0x0A0E18)));
+        assert_eq!(Color::parse("#fff"), Some(Color::WHITE));
+        let half = Color::parse("#ffffff80").map(|c| c.a);
+        assert_eq!(half, Some(128.0 / 255.0));
+        assert_eq!(Color::parse("#f008").map(|c| (c.r, c.g)), Some((1.0, 0.0)));
+        for bad in ["", "#", "#12", "#12345", "#ggg", "red", "#1234567", "#ééé"] {
+            assert_eq!(Color::parse(bad), None, "{bad:?}");
+        }
+        let round = Color::rgba8(1, 2, 3, 0.5);
+        assert_eq!(
+            Color::parse(&round.to_hex()).map(Color::to_hex),
+            Some(round.to_hex())
+        );
     }
 
     #[test]

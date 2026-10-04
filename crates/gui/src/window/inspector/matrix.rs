@@ -57,7 +57,7 @@ pub fn matrix(
     }
     let id: ElementId = id.into();
     let delight = !cx.reduce_motion();
-    let gold_dim = w.c(|t| t.gold_dim);
+    let label = w.c(|t| t.label_ink);
     let ink = w.c(|t| t.ink);
     let ink_2 = w.c(|t| t.ink_2);
     let faint = w.c(|t| t.ink_3);
@@ -81,9 +81,9 @@ pub fn matrix(
             )),
         );
         for level in 0..=m.max_level {
-            head = head.child(cell(level.to_string(), gold_dim, LEVEL_W));
+            head = head.child(cell(level.to_string(), label, LEVEL_W));
         }
-        head = head.child(cell("hits".to_string(), gold_dim, HITS_W));
+        head = head.child(cell("hits".to_string(), label, HITS_W));
         let mut table = div().flex().flex_col().gap(w.z(LINE_GAP)).child(head);
         for (ri, r) in m.rows.iter().enumerate() {
             let mut line = div()
@@ -91,7 +91,7 @@ pub fn matrix(
                 .flex()
                 .items_center()
                 .gap(w.z(GAP))
-                .rounded(w.z(WASH_RADIUS))
+                .rounded(w.r(WASH_RADIUS))
                 .when(delight, |d| d.hover(|s| s.bg(w.c(|t| t.hover))))
                 .child(div().flex_1().min_w_0().overflow_hidden().child(w.text(
                     r.label.clone(),
@@ -113,7 +113,7 @@ pub fn matrix(
                         cell(human(*avg), hsla(color), LEVEL_W)
                             .id(ElementId::named_usize(format!("stack-cell-{mi}-{ri}"), li))
                             .test_support()
-                            .rounded(w.z(WASH_RADIUS))
+                            .rounded(w.r(WASH_RADIUS))
                             .when(delight, |d| d.bg(hsla(color.alpha(WASH_ALPHA))))
                             .tooltip(move |window, cx| {
                                 Tooltip::new(words.clone()).build(window, cx)
@@ -166,7 +166,7 @@ fn panel(w: &W) -> Div {
         .bg(w.c(|t| t.surface))
         .border(w.z(1.))
         .border_color(w.c(|t| t.line))
-        .rounded(w.z(RADIUS))
+        .rounded(w.r(RADIUS))
 }
 
 #[cfg(test)]
@@ -177,7 +177,7 @@ mod tests {
         TestAppContext, Window, div, px, size,
     };
     use wowdps_gui_logic::inspect::matrix::{matrices, samples::ledger};
-    use wowdps_gui_logic::theme::GOLD;
+    use wowdps_gui_logic::theme::NAVY;
 
     use super::{Matrix, matrix};
     use crate::testkit;
@@ -201,7 +201,7 @@ mod tests {
         let (d, c, b) = ledger();
         let m = matrices(&d, &c, &b);
         let (window, _) = testkit::open(cx, size(px(520.), px(240.)), move |_, cx| {
-            crate::theme::apply(&GOLD, None, cx);
+            crate::theme::apply(&NAVY, None, cx);
             cx.new(|_| Host(m))
         });
         cx.update_window(window, |_, window, cx| {

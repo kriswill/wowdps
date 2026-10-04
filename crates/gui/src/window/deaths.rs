@@ -97,7 +97,7 @@ fn cells(narrow: bool, w: &W, cells: Vec<Div>) -> Div {
 /// The table: heads, hairline, the deaths, the total.
 pub fn view(t: Table, gui: &Gui, w: &W, cx: &mut Context<Gui>) -> impl IntoElement {
     let narrow = w.narrow();
-    let head = |words: &'static str| w.text(words, w.size.label, w.c(|t| t.gold_dim), REGULAR);
+    let head = |words: &'static str| w.text(words, w.size.label, w.c(|t| t.label_ink), REGULAR);
     let mut heads = vec![head("Time"), head("Player"), head("Killing blow")];
     if !narrow {
         heads.push(head("Hit"));
@@ -168,7 +168,7 @@ pub fn view(t: Table, gui: &Gui, w: &W, cx: &mut Context<Gui>) -> impl IntoEleme
                 .child(
                     div()
                         .truncate()
-                        .font_family(w.ui)
+                        .font_family(w.ui.clone())
                         .text_size(w.z(w.size.frame))
                         .text_color(w.c(|t| t.ink_2))
                         .child(total_words(&t.all)),
@@ -216,7 +216,7 @@ fn line(
             div()
                 .flex_shrink(1.)
                 .min_w_0()
-                .font_family(w.ui)
+                .font_family(w.ui.clone())
                 .font_weight(if on { MEDIUM } else { REGULAR })
                 .text_size(w.z(w.size.name))
                 .text_color(if on {
@@ -240,7 +240,7 @@ fn line(
         div()
             .flex_shrink(1.)
             .min_w_0()
-            .font_family(w.ui)
+            .font_family(w.ui.clone())
             .text_size(w.z(BLOW_PX))
             .text_color(if wd.note {
                 w.c(|t| t.ink_3_text)
@@ -257,7 +257,7 @@ fn line(
                 // one.
                 .flex_shrink(1000.)
                 .min_w_0()
-                .font_family(w.ui)
+                .font_family(w.ui.clone())
                 .text_size(w.z(w.size.small))
                 .text_color(w.c(|t| t.ink_3_text))
                 .truncate()
@@ -298,7 +298,7 @@ fn line(
         .items_center()
         .pl(w.z(LEAD))
         .pr(w.z(TRAIL))
-        .rounded(w.z(3.))
+        .rounded(w.r(3.))
         .cursor_pointer();
     el = if on && !t.keys_away {
         el.bg(w.c(|t| t.raise))

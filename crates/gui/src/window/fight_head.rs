@@ -201,7 +201,7 @@ fn title_line(head: &Head, w: &W, cx: &mut Context<Gui>) -> Div {
         Some(title) => div()
             .flex_shrink(1.)
             .min_w_0()
-            .font_family(w.title)
+            .font_family(w.title.clone())
             .text_size(w.z(title_px))
             .line_height(relative(TITLE_LEADING))
             .text_color(w.c(|t| t.ink))
@@ -285,7 +285,7 @@ fn stat_line(stats: &Stats, w: &W, cx: &mut Context<Gui>) -> gpui_kit::AnyElemen
             .flex()
             .items_end()
             .gap(w.z(PAIR_GAP))
-            .child(w.text(p.label.clone(), w.size.label, w.c(|t| t.gold_dim), REGULAR))
+            .child(w.text(p.label.clone(), w.size.label, w.c(|t| t.label_ink), REGULAR))
             .child(w.text(p.value.clone(), value_px, w.c(|t| t.ink), MEDIUM))
     });
     let chip = stats.you.as_ref().map(|you| you_chip(you, w, cx));
@@ -343,7 +343,7 @@ fn you_chip(you: &You, w: &W, cx: &mut Context<Gui>) -> impl IntoElement {
         .pb(w.z(3. - 1.))
         .pl(w.z(3. - 1.))
         .pr(w.z(10. - 1.))
-        .rounded(w.z(CHIP_H / 2.))
+        .rounded(w.pill(CHIP_H / 2.))
         .border(w.z(1.))
         .border_color(raw.opacity(YOU_EDGE))
         .bg(raw.opacity(YOU_WASH))

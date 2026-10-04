@@ -6,22 +6,12 @@
 use wowdps_model::View;
 
 use crate::table::{Col, Grid};
-use crate::theme::Color;
+use crate::theme::{Color, DataTokens};
 
-/// The stand-in squares' hues, for an ability the icon cache cannot draw
-/// (the prototype's `HUES`): one per name, the same one every time.
-pub const HUES: [Color; 7] = [
-    Color::hex(0xC9844A),
-    Color::hex(0x8F7BD6),
-    Color::hex(0x5FA7D6),
-    Color::hex(0x6FBF73),
-    Color::hex(0xD6C35F),
-    Color::hex(0xB98E6B),
-    Color::hex(0xD07AB5),
-];
-
-/// A foe's disc (`.disc.foe{--c:#8E2C2C}`): a lit sphere of that red.
-pub const FOE: Color = Color::hex(0x8E2C2C);
+// The stand-in squares' hues, for an ability the icon cache cannot draw
+// (the prototype's `HUES`), and a foe's disc (`.disc.foe{--c:#8E2C2C}`, a
+// lit sphere of that red) are the theme's data tokens (`glyph_1` …
+// `glyph_7`, `foe`).
 
 /// Which list, for its columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,14 +108,15 @@ impl Kind {
     }
 }
 
-/// The lettered square's hue for `name`: a stable hash of it into
-/// [`HUES`].
-pub fn hue(name: &str) -> Color {
+/// The lettered square's hue for `name`: a stable hash of it into the
+/// theme's seven (`DataTokens::glyphs`).
+pub fn hue(name: &str, data: &DataTokens) -> Color {
     let h = name
         .chars()
         .fold(0_u32, |h, c| h.wrapping_mul(31).wrapping_add(c as u32));
-    let [first, ..] = HUES;
-    HUES.get(h as usize % HUES.len()).copied().unwrap_or(first)
+    let hues = data.glyphs();
+    let [first, ..] = hues;
+    hues.get(h as usize % hues.len()).copied().unwrap_or(first)
 }
 
 /// The sphere's pixels, `n` × `n` RGBA (straight alpha).
@@ -177,8 +168,9 @@ mod tests {
     #[test]
     fn a_name_takes_a_hue_from_the_seven() {
         let names = ["Demonbolt", "Shadow Bolt", "Hand of Gul'dan", "Implosion"];
-        let hues: Vec<Color> = names.iter().map(|n| hue(n)).collect();
-        assert!(hues.iter().all(|h| HUES.contains(h)));
+        let data = crate::theme::NAVY.data;
+        let hues: Vec<Color> = names.iter().map(|n| hue(n, &data)).collect();
+        assert!(hues.iter().all(|h| data.glyphs().contains(h)));
         assert!(hues.iter().any(|h| *h != hues[0]), "{hues:?}");
     }
 

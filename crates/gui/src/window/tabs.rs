@@ -258,7 +258,7 @@ fn filter_box(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> D
         .items_center()
         .gap(w.z(6.))
         .px(w.z(FILTER_INSET))
-        .rounded(w.z(6.))
+        .rounded(w.r(6.))
         .border(w.z(1.))
         .when(focused, |d| {
             d.bg(w.c(|t| t.ground)).border_color(w.c(|t| t.edge))

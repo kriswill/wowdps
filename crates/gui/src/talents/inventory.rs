@@ -35,7 +35,7 @@ fn item_line(p: &Paint, slot: String, name: String, extras: String, ilvl: String
 }
 
 fn section(p: &Paint, title: &'static str) -> Div {
-    p.text(title, 12., p.w(|t| t.gold_dim))
+    p.text(title, 12., p.w(|t| t.label_ink))
 }
 
 fn scroll(list: Div) -> AnyElement {

@@ -26,17 +26,21 @@ use wowdps_model::fmt::{duration, human, view_name};
 use wowdps_model::{Action, Screen, SegmentId, View};
 use wowdps_proto::{ClientMsg, ClientState};
 
-use super::ov::Ov;
+use super::ov::{Card as _, Ov};
 use super::rows::{self, class_icon, enemy_icon, meter_row, rank_cell, team_divider};
 use super::{drill, graph, instance};
 use crate::ease::bar_frac;
 use crate::session::{Session, SessionEvent};
+use crate::theme::{Look, Themes, own_accent};
+use wowdps_gui_logic::theme::{Chrome, class_accent};
 
 /// One revolution of the staleness radar's hand.
 const RADAR_PERIOD: Duration = Duration::from_millis(2500);
 /// How often the radar redraws while it shows: smooth enough to read as a
 /// sweep, and every frame of it redraws the whole panel.
 const RADAR_FRAME: Duration = Duration::from_millis(100);
+/// How often the overlay looks for a theme switched in the window.
+const THEME_POLL: Duration = Duration::from_secs(1);
 /// Silence after which a live meter shows its radar.
 const STALE_AFTER: Duration = Duration::from_secs(5);
 
@@ -92,6 +96,8 @@ pub struct Overlay {
     /// Hyprland's socket directory, when it is there to ask.
     hypr: Option<std::path::PathBuf>,
     _game: Option<gpui_kit::Task<()>>,
+    /// The config watch that follows a theme switched in the window.
+    _theme_watch: Option<gpui_kit::Task<()>>,
     /// The body's list and the comparison's two tables, scrolled: their
     /// scrollbars read and move them.
     body_scroll: crate::scrollbar::Scroll,
@@ -178,6 +184,7 @@ impl Overlay {
                 wowdps_gui_logic::hypr::socket_dir()
             },
             _game: None,
+            _theme_watch: None,
             graphs: Default::default(),
             _session: subscriptions,
         };
@@ -185,8 +192,60 @@ impl Overlay {
         overlay.follow_game(cx);
         if !cfg!(test) {
             overlay.auto_toggle(cx);
+            overlay.watch_theme(cx);
         }
         overlay
+    }
+
+    /// Follow a theme switched in the window's ⚙ card (the overlay has no
+    /// picker of its own): the config's modified time, polled every
+    /// [`THEME_POLL`], and on a change its `theme`, `themes` and `chrome`
+    /// read again.
+    fn watch_theme(&mut self, cx: &mut Context<Self>) {
+        let path = Config::path();
+        let modified = move || std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let task = cx.spawn(async move |this, cx| {
+            let mut seen = modified();
+            loop {
+                cx.background_executor().timer(THEME_POLL).await;
+                let now = modified();
+                if now == seen {
+                    continue;
+                }
+                seen = now;
+                let disk = Config::load();
+                if this.update(cx, |o, cx| o.take_theme(disk, cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        self._theme_watch = Some(task);
+    }
+
+    /// The theme a config read again names: worn at once when it is not
+    /// the one on show (or the chrome changed), and nothing done when it is
+    /// — the overlay's own saves (a drag, a zoom) touch the file too.
+    pub(crate) fn take_theme(&mut self, disk: Config, cx: &mut Context<Self>) {
+        if disk.load_failed {
+            return;
+        }
+        let themes = disk.themes();
+        let def = themes.named(&disk.theme).clone();
+        let accent = (disk.chrome() == Chrome::Class)
+            .then(|| disk.character_class())
+            .flatten()
+            .map(class_accent);
+        let look = Look::global(cx);
+        let wanted = accent.unwrap_or_else(|| own_accent(&def));
+        self.cfg.theme = disk.theme;
+        self.cfg.themes = disk.themes;
+        self.cfg.chrome = disk.chrome;
+        if *look.def == def && look.accent == wanted {
+            return;
+        }
+        Themes::set(themes, cx);
+        crate::theme::apply(&def, accent, cx);
+        cx.notify();
     }
 
     /// What the split's connection should watch: the watched block's Σ in
@@ -525,18 +584,16 @@ impl Overlay {
                 .child(dot)
                 .child(letter("dps"))
         };
-        div()
+        let tab = div()
             .id("tab")
             .test_support()
             .size_full()
             .flex()
             .items_center()
             .justify_center()
-            .line_height(relative(1.3))
-            .bg(ov.c(|t| t.panel.alpha(0.85)))
-            .border_1()
-            .border_color(ov.c(|t| t.edge))
-            .rounded(px(6.))
+            .line_height(relative(1.3));
+        ov.glass(tab, 0.85)
+            .rounded(ov.r(6.))
             .child(label)
             // The grip: a press here is a click or a drag, decided when it
             // is let go (`surface.rs`).
@@ -562,16 +619,10 @@ impl Overlay {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let instance = self.instance(cx);
-        let frame = div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .p(px(6.))
-            .bg(ov.c(|t| t.panel.alpha(0.92)))
-            .border_1()
-            .border_color(ov.c(|t| t.edge))
-            .rounded(px(6.))
+        let frame = div().size_full().flex().flex_col().gap(px(4.)).p(px(6.));
+        let frame = ov
+            .glass(frame, 0.92)
+            .rounded(ov.r(6.))
             .child(self.header(ov, instance.as_ref(), cx))
             .when_some(instance.as_ref(), |d, (block, pos)| {
                 d.child(self.strip(ov, block, *pos, cx))
@@ -590,7 +641,7 @@ impl Overlay {
             .id("overlay")
             .size_full()
             .relative()
-            .font_family(ov.sans)
+            .font_family(ov.sans.clone())
             .line_height(relative(1.3))
             .child(frame)
             .children(card)
@@ -903,7 +954,7 @@ impl Overlay {
             div()
                 .id(("drill-line", at))
                 .test_support()
-                .rounded(px(3.))
+                .rounded(ov.r(3.))
                 .when(self.row_hover == Some(at), |d| d.bg(hover_wash))
                 .child(el)
                 .on_hover(cx.listener(move |this, over: &bool, _, cx| {
@@ -1003,7 +1054,7 @@ impl Overlay {
                 div()
                     .py(px(2.))
                     .px(px(8.))
-                    .font_family(ov.mono)
+                    .font_family(ov.mono.clone())
                     .text_size(ov.z(9.))
                     .text_color(dim)
                     .child(line),
@@ -1170,7 +1221,7 @@ impl Overlay {
                 .test_support()
                 .flex_1()
                 .min_w_0()
-                .rounded(px(3.))
+                .rounded(ov.r(3.))
                 .when(hovered, |d| d.bg(ov.c(|t| t.hover)))
                 .child(meter_row(ov, &drawn, None, frac))
                 .on_hover(cx.listener(move |this, over: &bool, _, cx| {
@@ -1451,7 +1502,7 @@ impl Overlay {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(2.))
+            .rounded(ov.r(2.))
             .when(on, |d| d.bg(ov.c(|t| t.control)))
             .when(!on, |d| d.border_1().border_color(ov.c(|t| t.text)))
             .when(on, |d| d.child(ov.words("✓", 9., ov.c(|t| t.control_ink))));
@@ -1462,10 +1513,8 @@ impl Overlay {
             .flex_col()
             .gap(ov.z(6.))
             .p(ov.z(8.))
-            .bg(ov.c(|t| t.card))
-            .border_1()
-            .border_color(ov.c(|t| t.card_edge))
-            .rounded(px(4.))
+            .rounded(ov.r(4.))
+            .card(ov)
             .child(ov.words("options", 9., ov.c(|t| t.dim)))
             .child(
                 div()
@@ -1520,7 +1569,7 @@ impl Overlay {
                 .w_full()
                 .py(ov.z(2.))
                 .px(ov.z(5.))
-                .rounded(px(3.))
+                .rounded(ov.r(3.))
                 .when(lit, |d| d.bg(ov.c(|t| t.menu_hover)))
                 .child(ov.words(
                     view_name(v),
@@ -1554,10 +1603,8 @@ impl Overlay {
             .flex_col()
             .gap(ov.z(2.))
             .p(ov.z(8.))
-            .bg(ov.c(|t| t.card))
-            .border_1()
-            .border_color(ov.c(|t| t.card_edge))
-            .rounded(px(4.))
+            .rounded(ov.r(4.))
+            .card(ov)
             .children(items)
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
             .on_hover(cx.listener(|this, over: &bool, _, cx| {
