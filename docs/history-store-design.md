@@ -62,7 +62,7 @@ Every record is keyed by a fight id that can be recomputed from the log alone, s
 
 The Σ mark exists because a visit and its first member can share a millisecond. The log identity is computed lazily at first store rather than when the tailer switches files, because a brand-new log may hold half a line at that moment.
 
-A record is rewritten in exactly three cases: its schema is older than the daemon's; it was *aborted* and the same fight later closes for real (its END arriving after a restart); or a `Regrade` asked for it. Every rewrite carries `pinned` forward, and annotations live in separate files that a rewrite never touches.
+A record is rewritten in five cases: its schema is older than the daemon's; it was *aborted* and the same fight later closes for real (its END arriving after a restart); a `Regrade` asked for it; (v39) it was pinned without the series tier a pin earns; or (v42) the daemon found at start that it is a kill, timed key or pinned fight short of its details, or that its series file is missing, has no series head or is in an older format. The last two read the fight's log again, so they happen only while that log is still on disk; a record whose log is gone stays as it is. Every rewrite carries `pinned` forward, and annotations live in separate files that a rewrite never touches.
 
 ## 4. What is stored: three tiers
 
@@ -154,7 +154,7 @@ Retention runs on the history thread after every write. It is count-based per *g
 
 The important asymmetry, softened since the first cut: details are written for every kill and for wipes lasting at least `history_details_min_wipe_secs` (default 60 s), never for aborted fights or shorter wipes. Pinning a short wipe protects its card and rows from eviction but cannot conjure the timelines that were never written; a long wipe's details count against the details cap and, being rarely protected, are the first demoted. Section 11 returns to this.
 
-> Since v42 (2026-10-03) every boss kill and every timed key is in the protected set — kept whole, details and series, for the season (a season's archive is later work) — and the two caps count the unprotected fights alone, so a farmed boss's kills no longer squeeze its wipes' details out, and an older kill no longer loses its details to ten newer ones. A kill, timed key or pinned fight that an older build left short of its details, or a series file in an older format, is rewritten from its log at start, one at a time while the history thread is idle.
+> Since v42 (2026-10-03) every boss kill and every timed key is in the protected set — kept whole, details and series, for the season (a season's archive is later work) — and the two caps count the unprotected fights alone, so a farmed boss's kills no longer squeeze its wipes' details out, and an older kill no longer loses its details to ten newer ones. A kill, timed key or pinned fight that an older build left short of its details, or a series file in an older format, is rewritten from its log after start, one log's fights at a time while the history thread is idle, and only while that log is still on disk: a fight whose log is gone stays as it is. A series file in a newer format, a later build's, is never rewritten down.
 
 > Since roadmap 1a step 2b the owner's best per spec covers a third measure — a Tank spec's best `mitigated_pct`, kills only — and every best has a floor: a measure of 0 or an aborted fight protects nothing. On the real store the floor unprotected four dead cards and demoted none.
 

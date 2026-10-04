@@ -588,7 +588,7 @@ impl Stored {
                 None => {
                     for _ in 0..2 {
                         if self.state.screen == Screen::Compare {
-                            sent = self.state.clear_compare();
+                            sent.extend(self.state.clear_compare());
                         }
                     }
                 }

@@ -1836,9 +1836,12 @@ impl<B: Backend> Store<B> {
     }
 
     /// v39: the fight keeps the series tier — a stored drill answers a
-    /// zoom window.
+    /// zoom window. v42: in a format this build reads; a file with no
+    /// series head, or a later build's, reads as absent (its entry stays in
+    /// the map, which retention and the rewrite rule walk).
     pub fn has_series(&self, id: &str) -> bool {
-        self.series.contains_key(id)
+        self.series_format(id)
+            .is_some_and(|f| (series_tier::OLDEST..=series_tier::FORMAT).contains(&f))
     }
 
     /// v39: one player's seconds off the series tier — the file's head, its

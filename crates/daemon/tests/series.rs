@@ -946,6 +946,21 @@ fn a_format_one_file_opens_no_ability_and_a_newer_one_is_left_alone() {
         b
     });
     assert_eq!(newer.series_format(&kill), Some(FORMAT + 1));
+    assert!(
+        !newer.has_series(&kill),
+        "a later build's file reads as absent"
+    );
+    let windowed = Ask {
+        range: Some((5_500, 21_200)),
+        ..Ask::of(View::Damage, Some(&guid), None)
+    };
+    let f = newer
+        .stored_fight_in(&newer.mine(), &kill, &windowed)
+        .unwrap();
+    assert!(
+        !f.series && !f.abilities,
+        "no windows offered it cannot answer"
+    );
     assert!(!newer.has_abilities(&kill), "this build cannot read it");
     assert!(
         !newer.wants_rewrite(&kill) && newer.rewrites().is_empty(),
