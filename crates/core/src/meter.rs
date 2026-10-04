@@ -6,10 +6,11 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
-use wowdps_model::series::{SeriesCell, SeriesRow, window_rows};
-use wowdps_model::{
-    AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree, TreeEntry,
+use wowdps_model::series::{
+    SeriesCell, SeriesRow, SpellTallies, SpellTargets, TargetTally, target_rows, target_stack,
+    window_rows,
 };
+use wowdps_model::{AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
     RaidDeath, RaidTimeline, Rez, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
@@ -213,8 +214,9 @@ const BUCKET_MS: i64 = wowdps_model::series::BUCKET_MS;
 
 /// R12: bucket ceiling per actor (~6 hours). A log with a corrupt clock can
 /// name a timestamp far in the future; that must cost a clamp, not a
-/// multi-gigabyte allocation.
-const MAX_BUCKETS: usize = 21_600;
+/// multi-gigabyte allocation. The model's, so a stored curve stops where a
+/// live one does.
+const MAX_BUCKETS: usize = wowdps_model::series::MAX_BUCKETS;
 
 /// R12: item markers kept per player. A fight has a few dozen; the cap is
 /// what stops a pathological log from turning the segment into an event
@@ -397,13 +399,47 @@ fn add_cell(cells: &mut BTreeMap<u32, SeriesCell>, bucket: u32, t: &Tally, extra
     c.crits += t.crits;
 }
 
-/// R26: add `curve` into `sum`, bucket by bucket, growing it to fit.
-fn add_curve(sum: &mut Vec<u64>, curve: &[u64]) {
-    if sum.len() < curve.len() {
-        sum.resize(curve.len(), 0);
-    }
-    for (s, c) in sum.iter_mut().zip(curve) {
-        *s += c;
+/// v42: one ability's targets as `Segment::target_walk` gathers them — its
+/// school, and its seconds per enemy name.
+type TargetWalk = (u32, BTreeMap<String, BTreeMap<u32, SeriesCell>>);
+
+/// v42: a target walk's seconds as the series rows an opened ability's
+/// list windows and stacks: one per enemy name with any second, the
+/// ability's school on each, no spell id.
+fn target_series_rows_of(
+    school: u32,
+    by_name: BTreeMap<String, BTreeMap<u32, SeriesCell>>,
+) -> Vec<SeriesRow> {
+    by_name
+        .into_iter()
+        .filter(|(_, cells)| !cells.is_empty())
+        .map(|(key, cells)| SeriesRow {
+            key,
+            spell_id: 0,
+            school,
+            cells: cells.into_values().collect(),
+        })
+        .collect()
+}
+
+/// v42: a tally walk's targets as one ability's tallies, by name — the
+/// map's order is not deterministic, and the store writes these.
+fn tallies_of(key: String, school: u32, acc: HashMap<String, Tally>) -> SpellTallies {
+    let mut targets: Vec<TargetTally> = acc
+        .into_iter()
+        .map(|(target, t)| TargetTally {
+            target,
+            amount: t.amount,
+            extra: t.extra,
+            count: t.count,
+            crits: t.crits,
+        })
+        .collect();
+    targets.sort_by(|a, b| a.target.cmp(&b.target));
+    SpellTallies {
+        key,
+        school,
+        targets,
     }
 }
 
@@ -2624,34 +2660,11 @@ impl Segment {
         if !matches!(view, View::Damage | View::Healing) {
             return Vec::new();
         }
-        let mut entries: Vec<(u64, TreeEntry)> = tree
-            .entries(rows)
-            .into_iter()
-            .map(|e| {
-                let sum = e
-                    .members
-                    .iter()
-                    .filter_map(|&i| rows.get(i))
-                    .map(|r| r.amount)
-                    .sum();
-                (sum, e)
-            })
-            .collect();
-        entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.key.cmp(&b.1.key)));
-        entries
-            .into_iter()
-            .take(top)
-            .filter_map(|(_, e)| {
-                let mut buckets: Vec<u64> = Vec::new();
-                for r in e.members.iter().filter_map(|&i| rows.get(i)) {
-                    add_curve(&mut buckets, &self.row_curve(player_guid, view, &r.key));
-                }
-                buckets.iter().any(|b| *b > 0).then_some(AbilitySeries {
-                    key: e.key,
-                    buckets,
-                })
-            })
-            .collect()
+        // v42: the model's ranking — the history store stacks a stored
+        // drill through it too, over the series tier's curves.
+        wowdps_model::series::stack(rows, tree, top, |key| {
+            self.row_curve(player_guid, view, key)
+        })
     }
 
     /// R26 (step 2): an open ability's curve split by the enemy it landed
@@ -2667,45 +2680,86 @@ impl Segment {
         spell_key: &str,
         top: usize,
     ) -> Vec<AbilitySeries> {
-        let (want_spell, want_pet) = match spell_key.split_once('\u{0}') {
+        // v42: through the rows the history store keeps, so a stored
+        // ability's stack is this one.
+        target_stack(&self.spell_target_rows(player_guid, spell_key), top)
+    }
+
+    /// v42: one Damage ability's targets second by second — R24's per-unit
+    /// series of the ability by the player (a pet's under "spell\0pet", as
+    /// the by-ability row is keyed), one row per enemy NAME (every hostile
+    /// unit wearing it folds), every row wearing the ability's school and
+    /// `extra` 0 (R24's is what was absorbed, not overkill). What an opened
+    /// ability's target list windows ([`Self::damage_targets_in`]) and its
+    /// graph stacks ([`Self::target_series`]), and what the history store's
+    /// series tier keeps. Hostile units only: R24 keeps no series for a hit
+    /// on anything else.
+    pub fn spell_target_rows(&self, player_guid: &str, spell_key: &str) -> Vec<SeriesRow> {
+        self.target_walk(player_guid, Some(spell_key))
+            .remove(spell_key)
+            .map(|(school, by_name)| target_series_rows_of(school, by_name))
+            .unwrap_or_default()
+    }
+
+    /// v42: every Damage ability of the player with its targets second by
+    /// second ([`Self::spell_target_rows`]), by the by-ability rows' keys —
+    /// what the history store's series tier keeps for an opened ability.
+    /// An ability that landed on no hostile unit is left out.
+    pub fn spell_targets_all(&self, player_guid: &str) -> Vec<SpellTargets> {
+        let mut acc = self.target_walk(player_guid, None);
+        let (rows, _) = self.breakdown(player_guid, View::Damage);
+        rows.into_iter()
+            .filter_map(|r| {
+                let (school, by_name) = acc.remove(&r.key)?;
+                let targets = target_series_rows_of(school, by_name);
+                (!targets.is_empty()).then_some(SpellTargets {
+                    key: r.key,
+                    targets,
+                })
+            })
+            .collect()
+    }
+
+    /// v42: the ONE walk of R24's per-unit series behind an opened
+    /// ability's targets — the player's (pets under "spell\0pet") Damage
+    /// abilities by row key, each with its school (the first nonzero its
+    /// units name, in this walk's order) and its seconds per enemy name;
+    /// `only` keeps one ability, looked up rather than walked. A key's
+    /// hundreds of trash units are walked once for every ability.
+    fn target_walk(&self, player_guid: &str, only: Option<&str>) -> HashMap<String, TargetWalk> {
+        let only = only.map(|k| match k.split_once('\u{0}') {
             Some((s, p)) => (s, Some(p)),
-            None => (spell_key, None),
-        };
-        let mut by_name: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+            None => (k, None),
+        });
+        let mut acc: HashMap<String, TargetWalk> = HashMap::new();
         for (unit, per_attacker) in &self.enemy_series {
+            let mut name: Option<String> = None;
             for (attacker, per_spell) in per_attacker {
                 if self.resolve_owner(attacker) != player_guid {
                     continue;
                 }
                 let pet = (attacker.as_str() != player_guid).then(|| self.label_for(attacker));
-                if pet.as_deref() != want_pet {
-                    continue;
-                }
-                let Some(es) = per_spell.get(want_spell) else {
-                    continue;
+                let picked: Vec<(&String, &EnemySlices)> = match only {
+                    Some((spell, want_pet)) if pet.as_deref() == want_pet => {
+                        per_spell.get_key_value(spell).into_iter().collect()
+                    }
+                    Some(_) => Vec::new(),
+                    None => per_spell.iter().collect(),
                 };
-                let into = by_name.entry(self.label_for(unit)).or_default();
-                for (b, t) in &es.slices {
-                    let i = *b as usize;
-                    if i >= MAX_BUCKETS {
-                        continue;
+                for (spell, es) in picked {
+                    let e = acc.entry(tree_key(spell, pet.as_deref())).or_default();
+                    if e.0 == 0 {
+                        e.0 = es.school;
                     }
-                    if into.len() <= i {
-                        into.resize(i + 1, 0);
-                    }
-                    if let Some(slot) = into.get_mut(i) {
-                        *slot += t.amount;
+                    let name = name.get_or_insert_with(|| self.label_for(unit));
+                    let cells = e.1.entry(name.clone()).or_default();
+                    for (b, t) in &es.slices {
+                        add_cell(cells, *b, t, false);
                     }
                 }
             }
         }
-        let mut ranked: Vec<(u64, AbilitySeries)> = by_name
-            .into_iter()
-            .map(|(key, buckets)| (buckets.iter().sum(), AbilitySeries { key, buckets }))
-            .filter(|(sum, _)| *sum > 0)
-            .collect();
-        ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.key.cmp(&b.1.key)));
-        ranked.into_iter().take(top).map(|(_, s)| s).collect()
+        acc
     }
 
     /// v17: who a drilled ability landed on — per-target rows for one spell
@@ -2713,64 +2767,91 @@ impl Segment {
     /// `pct` is of the SPELL's own total, and every row wears the spell's
     /// school so its bars tint like the ability's.
     pub fn spell_targets(&self, player_guid: &str, spell_key: &str, view: View) -> Vec<Row> {
-        let (want_spell, want_pet) = match spell_key.split_once('\u{0}') {
+        let t = self.spell_tallies(player_guid, spell_key, view);
+        // v42: the model's words, which the history store says a stored
+        // ability's target list in too.
+        target_rows(
+            &t.targets,
+            t.school,
+            self.classes.get(player_guid).copied(),
+            self.specs.get(player_guid).copied(),
+        )
+    }
+
+    /// v42: one ability's whole-fight targets as tallies — the player's and
+    /// their pets' (a pet's under "spell\0pet") by-spell slot on `view`,
+    /// every target it landed on, the school its first slot wears. What
+    /// [`Self::spell_targets`] words and the history store keeps.
+    pub fn spell_tallies(&self, player_guid: &str, spell_key: &str, view: View) -> SpellTallies {
+        self.tally_walk(player_guid, view, Some(spell_key))
+            .remove(spell_key)
+            .map_or_else(
+                || SpellTallies {
+                    key: spell_key.to_string(),
+                    ..SpellTallies::default()
+                },
+                |(school, acc)| tallies_of(spell_key.to_string(), school, acc),
+            )
+    }
+
+    /// v42: every by-ability row of the player on `view` with its whole-fight
+    /// targets ([`Self::spell_tallies`]) — what the history store keeps so a
+    /// stored pull opens an ability as the live one does. One walk of the
+    /// actors for every ability.
+    pub fn spell_tallies_all(&self, player_guid: &str, view: View) -> Vec<SpellTallies> {
+        let mut acc = self.tally_walk(player_guid, view, None);
+        let (rows, _) = self.breakdown(player_guid, view);
+        rows.into_iter()
+            .filter_map(|r| {
+                let (school, by_target) = acc.remove(&r.key)?;
+                let t = tallies_of(r.key, school, by_target);
+                (!t.targets.is_empty()).then_some(t)
+            })
+            .collect()
+    }
+
+    /// v42: the ONE walk of the by-spell slots behind an ability's
+    /// whole-fight targets — the player's (pets under "spell\0pet")
+    /// abilities on `view` by row key, each with its school (the first
+    /// nonzero slot's, in actor order) and its tallies per target; `only`
+    /// keeps one ability, looked up rather than walked.
+    fn tally_walk(
+        &self,
+        player_guid: &str,
+        view: View,
+        only: Option<&str>,
+    ) -> HashMap<String, (u32, HashMap<String, Tally>)> {
+        let only = only.map(|k| match k.split_once('\u{0}') {
             Some((s, p)) => (s, Some(p)),
-            None => (spell_key, None),
-        };
-        let mut acc: HashMap<String, Tally> = HashMap::new();
-        let mut school = 0u32;
+            None => (k, None),
+        });
+        let mut acc: HashMap<String, (u32, HashMap<String, Tally>)> = HashMap::new();
         for actor in self.actors.keys() {
             if self.resolve_owner(actor) != player_guid {
                 continue;
             }
             let pet = (actor.as_str() != player_guid).then(|| self.label_for(actor));
-            if pet.as_deref() != want_pet {
-                continue;
-            }
-            let Some(slot) = self
-                .stats(actor, view)
-                .and_then(|st| st.by_spell.get(want_spell))
-            else {
+            let Some(by_spell) = self.stats(actor, view).map(|st| &st.by_spell) else {
                 continue;
             };
-            if school == 0 {
-                school = slot.school;
-            }
-            for (target, t) in &slot.targets {
-                acc.entry(target.clone()).or_default().merge(t);
+            let picked: Vec<(&String, &SpellSlot)> = match only {
+                Some((spell, want_pet)) if pet.as_deref() == want_pet => {
+                    by_spell.get_key_value(spell).into_iter().collect()
+                }
+                Some(_) => Vec::new(),
+                None => by_spell.iter().collect(),
+            };
+            for (spell, slot) in picked {
+                let e = acc.entry(tree_key(spell, pet.as_deref())).or_default();
+                if e.0 == 0 {
+                    e.0 = slot.school;
+                }
+                for (target, t) in &slot.targets {
+                    e.1.entry(target.clone()).or_default().merge(t);
+                }
             }
         }
-        let total: u64 = acc.values().map(|t| t.amount).sum();
-        let class = self.classes.get(player_guid).copied();
-        let spec = self.specs.get(player_guid).copied();
-        let mut rows: Vec<Row> = acc
-            .into_iter()
-            .map(|(target, t)| Row {
-                key: target.clone(),
-                label: target,
-                amount: t.amount,
-                extra: t.extra,
-                count: t.count,
-                crits: t.crits,
-                per_sec: 0.0,
-                pct: if total > 0 {
-                    t.amount as f64 / total as f64 * 100.0
-                } else {
-                    0.0
-                },
-                class,
-                spec,
-                hp: None,
-                gain: false,
-                spell_id: 0,
-                enemy: false,
-                school,
-                mine: false,
-                offset_ms: None,
-            })
-            .collect();
-        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
-        rows
+        acc
     }
 
     /// R26: how one player's by-ability rows nest — Damage and Healing
@@ -3197,6 +3278,16 @@ impl Segment {
     }
 
     fn timeline_of(&self, map: &HashMap<String, Vec<u64>>, player_guid: &str) -> Timeline {
+        Timeline {
+            bucket_ms: BUCKET_MS as u32,
+            buckets: self.buckets_of(map, player_guid),
+            marks: self.marks_for(player_guid),
+        }
+    }
+
+    /// A per-actor series folded onto the player on the R12 grid — a
+    /// timeline's buckets without its marks.
+    fn buckets_of(&self, map: &HashMap<String, Vec<u64>>, player_guid: &str) -> Vec<u64> {
         let mut buckets: Vec<u64> = Vec::new();
         for (actor, series) in map {
             if self.resolve_owner(actor) != player_guid {
@@ -3209,11 +3300,7 @@ impl Segment {
                 *slot += v;
             }
         }
-        Timeline {
-            bucket_ms: BUCKET_MS as u32,
-            buckets,
-            marks: self.marks_for(player_guid),
-        }
+        buckets
     }
 
     /// The player's item markers (R12) and role spans (R18) merged, rebased
@@ -3540,6 +3627,12 @@ impl Segment {
     /// row, pets folded — with the player's marks and spans.
     pub fn taken_timeline(&self, player_guid: &str) -> Timeline {
         self.timeline_of(&self.taken_series, player_guid)
+    }
+
+    /// v42: [`Self::taken_timeline`]'s buckets alone — what the history
+    /// store's series tier keeps, without building marks it drops.
+    pub fn taken_buckets(&self, player_guid: &str) -> Vec<u64> {
+        self.buckets_of(&self.taken_series, player_guid)
     }
 
     /// R25 (v35): the whole group's fight for a snapshot on `view` — the
@@ -4461,23 +4554,13 @@ impl Segment {
             class,
             spec,
         );
-        let mut total = Row {
+        // v42: the model's sum, which a stored comparison's side takes too.
+        let total = Row {
             key: player_guid.to_string(),
             label: self.label_for(player_guid),
             class,
             spec,
-            ..Row::default()
-        };
-        for r in &rows {
-            total.amount += r.amount;
-            total.extra += r.extra;
-            total.count += r.count;
-            total.crits += r.crits;
-        }
-        total.per_sec = if secs > 0.0 {
-            total.amount as f64 / secs
-        } else {
-            0.0
+            ..wowdps_model::series::total_of(&rows, secs)
         };
         (total, rows)
     }
@@ -4583,8 +4666,8 @@ impl Segment {
         let range = Self::snap_window(Some(range));
         let class = self.classes.get(player_guid).copied();
         let spec = self.specs.get(player_guid).copied();
+        let secs = range.map_or(0.0, |(lo, hi)| (hi - lo).max(0) as f64 / 1000.0);
         let Some(spell_key) = spell_key else {
-            let secs = range.map_or(0.0, |(lo, hi)| (hi - lo).max(0) as f64 / 1000.0);
             return window_rows(
                 &self.target_series_rows(player_guid),
                 range,
@@ -4593,56 +4676,16 @@ impl Segment {
                 spec,
             );
         };
-        let (want_spell, want_pet) = match spell_key.split_once('\u{0}') {
-            Some((s, p)) => (s, Some(p)),
-            None => (spell_key, None),
-        };
-        let mut acc: HashMap<String, Tally> = HashMap::new();
-        let mut school = 0u32;
-        for (unit, per_attacker) in &self.enemy_series {
-            let mut name: Option<String> = None;
-            for (attacker, per_spell) in per_attacker {
-                if self.resolve_owner(attacker) != player_guid {
-                    continue;
-                }
-                let pet = (attacker.as_str() != player_guid).then(|| self.label_for(attacker));
-                if pet.as_deref() != want_pet {
-                    continue;
-                }
-                let Some(es) = per_spell.get(want_spell) else {
-                    continue;
-                };
-                let mut t = Tally::default();
-                for (b, s) in &es.slices {
-                    if Self::bucket_in(range, *b) {
-                        t.merge(s);
-                    }
-                }
-                if t.count == 0 {
-                    continue;
-                }
-                if school == 0 {
-                    school = es.school;
-                }
-                let name = name.get_or_insert_with(|| self.label_for(unit));
-                acc.entry(name.clone()).or_default().merge(&t);
-            }
-        }
-        let rows: Vec<Row> = acc
-            .into_iter()
-            .map(|(target, t)| Row {
-                key: target.clone(),
-                label: target,
-                amount: t.amount,
-                count: t.count,
-                crits: t.crits,
-                class,
-                spec,
-                school,
-                ..Row::default()
-            })
-            .collect();
-        let mut rows = self.finish_window(rows, range);
+        // v42: the opened ability's rows through the same model function
+        // over the rows the history store keeps for it, so a stored window
+        // is this one.
+        let mut rows = window_rows(
+            &self.spell_target_rows(player_guid, spell_key),
+            range,
+            secs,
+            class,
+            spec,
+        );
         // An opened ability's targets carry no rate, as `spell_targets`'.
         for r in &mut rows {
             r.per_sec = 0.0;

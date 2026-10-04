@@ -14,7 +14,7 @@ use wowdps_proto::{
 };
 
 use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
-use crate::history::{HistoryLink, HistoryReq, LogRef};
+use crate::history::{Ask, HistoryLink, HistoryReq, LogRef};
 use crate::loader::{LoadReply, LoadReq};
 use crate::overlay::{Cmd, Supervisor};
 use crate::session::Session;
@@ -411,7 +411,12 @@ fn handle(
                     death,
                     boss,
                     range,
+                    spell,
+                    pair,
                 } => {
+                    // v42: the stack is built for a client that draws it,
+                    // as a live drill's is.
+                    let stacked = crate::engine::wants_series(s.kind);
                     forward_history(
                         history,
                         s,
@@ -419,11 +424,16 @@ fn handle(
                             session: id,
                             req_id,
                             fight_id,
-                            view,
-                            drill,
-                            death,
                             boss,
-                            range,
+                            ask: Box::new(Ask {
+                                view,
+                                drill,
+                                death,
+                                range,
+                                spell,
+                                pair,
+                                stacked,
+                            }),
                         },
                     );
                 }

@@ -244,8 +244,8 @@ Per fight, up to four files in four tiers:
 | --- | --- | --- | --- |
 | `fights/<id>.json` | card, always | identity, encounter, visit/key facts, `start_local_ms`, `tz_min`, `start_utc_ms`, `duration_ms`, `official_ms`, `pars_ms`, `success`, `aborted`, `build`, `project_id`, `log_version`, `owner`, `byte_range`, `pinned`, `best_pct`, `players[]`, `bosses[]` (keys) | ~400 B + 60 B per player |
 | `rows/<id>.json` | rows, always | the seven `View`s' meter rows (all players, no top-n), per-player death recaps (event and attacker rows), and — 1a step 2b — per-player `mitigation[]` (the R17 record, the by-ability list capped at 16 with a struct rollup for the rest, the by-attacker list) | measured 2026-09-03: median ~35 KB, p90 ~208 KB on a 25-player raid (a stored `Row` is ~265 B; recaps are most of it); 2b adds ~90 KB to the p90 file |
-| `details/<id>.json` | detail: written for kills and for wipes of at least `history_details_min_wipe_secs` (60 s; never for aborted fights); retention then keeps bests / pinned and caps the rest | per-player by-spell and by-target breakdowns for Damage and Healing, per-player damage and healing timelines (1 s buckets + marks) | 60–120 KB, ~10 KB per timeline on a 35 min key |
-| `series/<id>.bin` | series (v39): kills, keys and pinned fights, only while their details last | per player, every Damage and Healing ability and every enemy their damage landed on, second by second (amount, overkill or overheal, hits, crits) — what a stored drill's zoom window reads; BINARY (`proto::series`), the one tier sized by seconds × abilities × players, laid out so one player's block is read alone | measured 2026-10-01 on a 25-player Heroic night: 408 KB for a 7-minute kill (752 KB of details), 563 KB for a 10-minute one (865 KB) — about 55–65% of the details file |
+| `details/<id>.json` | detail: written for kills and for wipes of at least `history_details_min_wipe_secs` (60 s; never for aborted fights); retention then keeps every boss kill and timed key (v42), bests and pinned fights, and caps the rest | per-player by-spell and by-target breakdowns for Damage and Healing, per-player damage and healing timelines (1 s buckets + marks), the ability trees (v36), and (v42) `counts[]` — the Interrupts, Crowd control and Dispels drills | 60–120 KB, ~10 KB per timeline on a 35 min key |
+| `series/<id>.bin` | series (v39): kills, keys and pinned fights, only while their details last — which, for a boss kill or a timed key, is the whole season (v42) | per player, every Damage and Healing ability and every enemy their damage landed on, second by second (amount, overkill or overheal, hits, crits) — what a stored drill's zoom window reads — and (format 2, v42) each Damage ability's targets second by second, every ability's whole-fight targets and the 1 s damage taken: what opens an ability, stacks the graph and compares on a stored pull as on a live one; BINARY (`proto::series`), the one tier sized by seconds × abilities × players, laid out so one player's block is read alone | measured 2026-10-01 on a 25-player Heroic night: 408 KB for a 7-minute kill (752 KB of details), 563 KB for a 10-minute one (865 KB) — about 55–65% of the details file; format 2 (2026-10-03) is ~2.1× format 1: 841 KB for a 7-minute 25-player kill, 734 KB for a 30-minute +15 |
 
 `players[]` on the card carries per player: `guid`, `name`, `class`, `spec`,
 `role` (1a step 1: the spec's group-finder role, written for readers that
@@ -263,12 +263,11 @@ wrong build, never loses data, and the write compares bytes first).
 body, tags}` reserved for item 4; no tool writes them yet, but the codec and
 the eviction rule exist from v1.
 
-Excluded on purpose: raw events, spell-of-a-spell timelines and spell target
-lists (derive by reopening the log while it exists; v39's series tier keeps
-each ability's and each target's per-second tallies, never an ability's
-targets), compare windows
-(computed from stored by-spell rows), anything about players not in the
-fight. `per_sec` and `pct` are stored as computed, not recomputed.
+Excluded on purpose: raw events (derive by reopening the log while it
+exists; v39's series tier keeps each ability's and each target's
+per-second tallies and, v42, each ability's targets), compare windows
+(computed from the stored rows and seconds), anything about players not in
+the fight. `per_sec` and `pct` are stored as computed, not recomputed.
 
 Budget: 5 000 fights ≈ 100 MB of cards and rows; details are capped by
 retention (§7).
@@ -310,23 +309,28 @@ $XDG_DATA_HOME/wowdps/history/v1/
 | `history_enabled` | `true` | write at all |
 | `history_dir` | XDG default | override |
 | `history_store_trash` | `false` | §6 |
-| `history_keep_per_encounter` | `200` | cards + rows kept per (encounter id, difficulty) |
-| `history_keep_details_per_encounter` | `10` | details kept per (encounter id, difficulty); demotion is an unlink |
+| `history_keep_per_encounter` | `200` | cards + rows kept per (encounter id, difficulty) beyond the protected set (v42: the cap counts the unprotected alone) |
+| `history_keep_details_per_encounter` | `10` | details kept per (encounter id, difficulty) beyond the protected set; demotion is an unlink |
 | `history_details_min_wipe_secs` | `60` | a wipe at least this long gets a details file at write time (kills always do; aborted fights and shorter wipes never) |
+| `history_keep_kills_whole` | `true` | v42: every boss kill and timed key is in the protected set — details and series all season; `false` and the caps count them again |
 | `history_characters` | `""` | "Name-Realm, …" that are "me" (§9); a bare "Name" matches any realm |
 
 - Eviction runs on the history thread after every write and never touches
-  the **protected set**: pinned fights, annotated fights, the fastest kill per
+  the **protected set**: pinned fights, annotated fights, (v42) every boss
+  kill and every timed key (`Retention::keeps_whole` — kept whole all season;
+  a season's archive is later work), the fastest kill per
   (encounter, difficulty), and the owner's highest `per_sec` per (encounter,
   difficulty, spec) for Damage and Healing and, from 1a step 2b, a Tank
   spec's best `mitigated_pct` on kills — with a floor: a measure of 0 or
   an aborted fight protects nothing (measured on the real store: the floor
   unprotected four dead cards and demoted none). The set is recomputed at
   eviction time. Everything else is oldest-first.
-- The details cap counts every details file in the group — a long wipe's as
-  much as a kill's — so under pressure wipes' details go first: a kill is
-  protected as the fastest (or the owner's best) far more often than a wipe
-  is, and the oldest unprotected file is always the one unlinked. A wipe
+- The caps count the UNPROTECTED fights alone (v42; before, the protected
+  counted too, so a farmed boss's kills squeezed its wipes' details out and
+  older kills lost theirs once ten newer details stood in the group): the
+  newest `history_keep_details_per_encounter` long wipes and over-time keys
+  keep their details, and the oldest unprotected file is always the one
+  unlinked. A wipe
   shorter than `history_details_min_wipe_secs` never had details; a reader
   that finds none applies the same rule to the card to say "never written"
   rather than "demoted" (`stored_fight`'s error text does).
@@ -336,11 +340,20 @@ $XDG_DATA_HOME/wowdps/history/v1/
   go). Pinning a fight that earns it but has none — a wipe, or a fight
   stored before the tier — queues a rewrite from its log, which writes it
   while the log is still on disk; `regrade` backfills older kills the same
-  way. It is the one binary file in the store: JSON would be 1.3 MB for a
+  way. v42: at start the history thread also queues, newest first, every
+  fight `Store::wants_rewrite` names — a kill, timed key or pinned fight
+  short of its details (demoted by an older build), or a series file missing
+  or in an older format — and rewrites them from their logs, a log's
+  fights at a time (one scan per log) while its mailbox is idle; a log no
+  longer on disk skips its fights.
+  It is the one binary file in the store: JSON would be 1.3 MB for a
   7-minute raid kill, and nothing reads it but a window — SQL keeps the
   coarse series, and no fixed answer needs per-second abilities. Its head
-  carries a format byte; a file of another format reads as absent and the
-  pull answers its whole lists.
+  carries a format byte, read once per file at open; a reader takes
+  formats 1–2 (format 1's missing parts read empty, and `abilities` says
+  it opens no ability), any other reads as absent and the pull answers its
+  whole lists. A format NEWER than the build's is a later build's: never
+  rewritten down.
 - Unwritable directory or ENOSPC: the write fails soft, `Status` reports it,
   the daemon lives.
 

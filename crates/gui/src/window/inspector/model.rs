@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use wowdps_gui_logic::glyph::Glyph;
+use wowdps_gui_logic::history::Kept;
 use wowdps_gui_logic::inspect::curves::{
     RATE_BUCKET_MS, curve, dead_spans, peak_in, rate_bucket, span_of, stack_series, window_of,
 };
@@ -384,9 +385,11 @@ pub struct Ctx<'a> {
     pub owner: Option<usize>,
     /// A person list's owner, by rows.
     pub owner_of: &'a dyn Fn(&[Row]) -> Option<usize>,
-    /// The pull on the stage is a stored one: the store keeps no pair and
-    /// no ability's own curve.
-    pub stored: bool,
+    /// The pull on the stage is a stored one, and what the window offers on
+    /// it (v42, `Stored::offered`): a pair where the store kept the
+    /// details, an ability opened where it kept its targets. `None` for a
+    /// pull of the log.
+    pub stored: Option<Kept>,
     /// A stored pull answered without this player's breakdown.
     pub bare: bool,
     /// How the inspector stands: a column beside the meter (or pushed),
@@ -443,8 +446,8 @@ impl Ctx<'_> {
 /// player's breakdown: it keeps a pull's rows longer than its details.
 const BARE: &str = "The history store kept this pull's rows, not this player's breakdown.";
 
-/// What an inert Compare says on a stored pull.
-const NO_COMPARE_TIP: &str = "Comparing needs the pull's log: the store keeps no pair";
+/// What an inert Compare says on a stored pull whose details are gone.
+const NO_COMPARE_TIP: &str = "Comparing needs the pull's details: the store kept its rows alone";
 
 impl Insp {
     /// The inspector for what is on the stage, laid out as it stands.
@@ -543,7 +546,7 @@ fn scoped(cx: &Ctx, head: &str, windowed: bool) -> String {
     };
     match cx.app.drill_shown_range() {
         Some(_) if windowed => format!("{head}, {}–{}", mmss(lo), mmss(hi)),
-        _ if cx.stored => format!("{head}, whole pull"),
+        _ if cx.stored.is_some() => format!("{head}, whole pull"),
         _ => format!("{head}, whole fight"),
     }
 }
@@ -882,13 +885,14 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             "Compare".to_string()
         },
         pressed: pinned,
-        // A stored pull is one player's drill at a time: the store keeps no
-        // comparison to ask for, so Compare stands inert, saying why.
-        press: (!cx.stored).then_some(Press::PinCompare),
-        tip: match (cx.stored, pinned) {
-            (true, _) => NO_COMPARE_TIP,
-            (false, true) => "Stop comparing (v)",
-            (false, false) => "Pin for comparison (v)",
+        // v42: a stored pull compares where the store kept its details;
+        // where it kept the rows alone, Compare stands inert, saying why —
+        // but a pin already up is always let go.
+        press: (pinned || cx.stored.is_none_or(|k| k.details)).then_some(Press::PinCompare),
+        tip: match (cx.stored.is_none_or(|k| k.details), pinned) {
+            (_, true) => "Stop comparing (v)",
+            (false, false) => NO_COMPARE_TIP,
+            (true, false) => "Pin for comparison (v)",
         },
     }];
     acts.push(Act {
@@ -1034,8 +1038,11 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
                 Lead::Spell,
                 bar,
                 // v16: Damage and Healing descend into an ability — on a
-                // pull of the log, whose abilities have curves of their own.
-                if matches!(view, View::Damage | View::Healing) && !cx.stored {
+                // pull of the log, or (v42) a stored one that kept its
+                // seconds, whose abilities have curves of their own.
+                if matches!(view, View::Damage | View::Healing)
+                    && cx.stored.is_none_or(|k| k.abilities)
+                {
                     LinePress::Spell
                 } else {
                     LinePress::Nothing

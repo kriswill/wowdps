@@ -2,6 +2,15 @@
 
 ## 2026-10-03
 
+- **Creation** — [Boss Kills And Timed Keys Are Kept Whole, And A Stored Pull Answers As A Live One](stored-pulls-kept-whole.md):
+  v42 — every boss kill and timed key protected for the season, the caps
+  counting the unprotected alone; series format 2 keeps each ability's
+  targets, its whole-fight tallies and the 1 s damage taken; a stored drill
+  stacks, opens an ability and compares byte for byte as live through
+  `GetFight.spell` / `pair`; stale kept fights rewritten from their logs at
+  start.
+- **Update** — [Stored Pulls Keep Their Seconds In A Binary Series Tier](a-series-tier-for-stored-windows.md):
+  points at v42, which keeps the per-ability targets it measured and left out.
 - **Creation** — [A Death Ends Where They Are First Seen Alive](a-death-ends-at-first-sight.md):
   v41 — R23 ends a death at the rez or the first advanced-block health report
   above zero, never at damage dealt in their name (a real +15's imps

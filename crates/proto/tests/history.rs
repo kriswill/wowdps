@@ -10,8 +10,8 @@ use wowdps_model::{
 };
 use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_proto::history::{
-    Affiliation, Annotation, COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind,
-    FightRows, HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation,
+    Affiliation, Annotation, COARSE_BUCKET_MS, CardPlayer, CountDetail, FightCard, FightDetails,
+    FightKind, FightRows, HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation,
     PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime, Recap, RoleCount, StoredLoadout,
     TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id, fnv64, loadout_hash, log_id,
     mitigation_from, mitigation_json, sigma_id,
@@ -422,6 +422,11 @@ fn details() -> FightDetails {
             heal_timeline: Timeline::default(),
             damage_tree: tree(),
             heal_tree: SpellTree::default(),
+            counts: vec![CountDetail {
+                view: View::Interrupts,
+                spells: vec![row("Counterspell", 2)],
+                targets: vec![row("Spitting Larva", 2)],
+            }],
         }],
         ..Default::default()
     }
@@ -579,8 +584,13 @@ fn golden_documents_pin_the_file_format() {
     );
     // R26 (v36): the trees ride last, the heal one empty.
     assert!(d.contains(r#""damage_tree":{"groups":[{"key":"summon:Summon Water Elemental","label":"Summon Water Elemental","spell_id":31687,"kind":"summon"}],"rows":[{"key":"Waterbolt\u0000Water Elemental","group":"summon:Summon Water Elemental","casts":7,"misses":2,"uptime_ms":12000,"parts":[{"spell_id":31707,"periodic":false,"amount":50,"extra":1,"count":5,"crits":2},{"spell_id":31708,"periodic":true,"amount":10,"extra":0,"count":3,"crits":0}]}]}"#), "{d}");
+    // v42: the count views' drills ride after them.
     assert!(
-        d.ends_with(r#""heal_tree":{"groups":[],"rows":[]}}]}"#),
+        d.contains(r#""heal_tree":{"groups":[],"rows":[]},"counts":[{"view":"interrupts","spells":[{"key":"Counterspell""#),
+        "{d}"
+    );
+    assert!(
+        d.ends_with(r#""targets":[{"key":"Spitting Larva","label":"Spitting Larva-label","amount":2,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}]}]}]}"#),
         "{d}"
     );
 }
@@ -1852,6 +1862,14 @@ fn a_pre_v36_details_file_reads_flat() {
     old.replace_range(at..old.len() - 3, "");
     let parsed = FightDetails::from_json(&json::parse(&old).unwrap()).unwrap();
     assert_eq!(parsed.players[0].damage_tree, SpellTree::default());
+    // v42: and no count views' drills — a pre-v42 file reads as none.
+    assert!(parsed.players[0].counts.is_empty());
+    assert_eq!(
+        details().players[0]
+            .count(View::Interrupts)
+            .map(|c| c.spells.len()),
+        Some(1)
+    );
     assert_eq!(
         parsed.players[0].damage_spells,
         details().players[0].damage_spells

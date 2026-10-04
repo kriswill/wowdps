@@ -564,6 +564,58 @@ fn the_stack_is_the_tree_s_largest_entries() {
     );
 }
 
+/// v42: what the history store keeps to open an ability — every Damage
+/// ability's targets second by second in one pass, and every ability's
+/// whole-fight tallies — is, ability by ability, what the live meter opens
+/// it from, on every fixture's segments and Overalls.
+#[test]
+fn an_ability_s_stored_targets_are_the_live_ones() {
+    let mut checked = 0;
+    for name in FIXTURES {
+        let meter = replay(&read(name));
+        let mut segs: Vec<Segment> = meter.segments().to_vec();
+        for (ordinal, _) in meter.visits().iter().enumerate() {
+            segs.extend(meter.overall(ordinal as u32));
+        }
+        for seg in &segs {
+            for player in seg.rows(View::Damage) {
+                let what = format!("{name} / {} / {}", seg.name, player.label);
+                let (rows, _) = seg.breakdown(&player.key, View::Damage);
+                let all = seg.spell_targets_all(&player.key);
+                for r in &rows {
+                    let one = seg.spell_target_rows(&player.key, &r.key);
+                    let kept = all.iter().find(|s| s.key == r.key);
+                    assert_eq!(
+                        kept.map(|s| &s.targets),
+                        (!one.is_empty()).then_some(&one),
+                        "{what} / {}",
+                        r.key
+                    );
+                    checked += 1;
+                }
+                for view in [View::Damage, View::Healing] {
+                    let (rows, _) = seg.breakdown(&player.key, view);
+                    for t in seg.spell_tallies_all(&player.key, view) {
+                        assert!(rows.iter().any(|r| r.key == t.key), "{what}");
+                        assert_eq!(
+                            wowdps_model::series::target_rows(
+                                &t.targets,
+                                t.school,
+                                player.class,
+                                player.spec
+                            ),
+                            seg.spell_targets(&player.key, &t.key, view),
+                            "{what} / {view:?} / {}",
+                            t.key
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(checked > 0);
+}
+
 // ---- step 3: misses and a DoT's uptime ----------------------------------------
 
 /// The attacker's misses land on the row they name — the Sayaad's dodged

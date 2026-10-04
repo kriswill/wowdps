@@ -1334,7 +1334,7 @@ pub fn wants_raid(kind: ClientKind) -> bool {
 
 /// v36 (R26 step 2): how many curves a drill's stack carries — the window
 /// draws them in six validated hues and folds the rest into "Other".
-const STACKED: usize = 6;
+pub(crate) const STACKED: usize = 6;
 
 /// v36 (R26 step 2): the clients a drill's stacked series is built for —
 /// the window, whose graph stacks them; the mcp, the overlay and the TUI
@@ -1345,7 +1345,7 @@ pub fn wants_series(kind: ClientKind) -> bool {
 
 /// v38: the views a comparison's `range` windows — the two with a sparse
 /// per-spell series behind their tables (R12's damage, R26's healing).
-fn compare_windows(view: View) -> bool {
+pub(crate) fn compare_windows(view: View) -> bool {
     matches!(view, View::Damage | View::Healing)
 }
 

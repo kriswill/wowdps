@@ -702,8 +702,9 @@ fn boss_store(pulls: &[(u32, bool)], cfg: Retention) -> (Store<MemBackend>, Vec<
 
 #[test]
 fn retention_evicts_oldest_first_but_never_the_protected_set() {
-    // Six pulls of one boss: the FASTEST kill is the oldest, the rest wipe
-    // or kill slowly. Keep 3 → the fastest survives, two others go.
+    // Six pulls of one boss: three kills and three wipes. v42: every kill is
+    // kept whole, and the cap counts the wipes alone — keep 1 → the newest
+    // wipe stays, the two older go.
     let pulls = [
         (30, true),
         (90, false),
@@ -715,7 +716,7 @@ fn retention_evicts_oldest_first_but_never_the_protected_set() {
     let (store, ids) = boss_store(
         &pulls,
         Retention {
-            keep_per_encounter: 3,
+            keep_per_encounter: 1,
             keep_details_per_encounter: 10,
             ..Retention::default()
         },
@@ -724,12 +725,16 @@ fn retention_evicts_oldest_first_but_never_the_protected_set() {
     let kept: Vec<i64> = store.cards().iter().map(|c| c.duration_ms).collect();
     assert_eq!(
         kept,
-        vec![30_000, 60_000, 50_000],
-        "fastest kill (oldest) protected; then the newest two"
+        vec![30_000, 80_000, 60_000, 50_000],
+        "every kill kept whole; then the newest wipe"
     );
-    assert_eq!(names(&store, "fights").len(), 3);
-    assert_eq!(names(&store, "rows").len(), 3);
-    assert_eq!(names(&store, "details").len(), 2, "kills 30s and 60s");
+    assert_eq!(names(&store, "fights").len(), 4);
+    assert_eq!(names(&store, "rows").len(), 4);
+    assert_eq!(
+        names(&store, "details").len(),
+        3,
+        "the kills; the 50 s wipe is under the minimum"
+    );
 }
 
 #[test]
@@ -783,15 +788,15 @@ fn wipes_over_the_minimum_get_details_short_and_aborted_ones_do_not() {
 }
 
 #[test]
-fn the_details_cap_demotes_a_wipe_before_a_kill() {
-    // Oldest kill first, then a long wipe: cap 1 → the wipe's details go
-    // even though it is the NEWER file, because the kill is protected as
-    // the fastest; the wipe's card and rows stay.
+fn the_details_cap_demotes_wipes_and_never_a_kill() {
+    // Oldest kill first, then a long wipe: cap 0 → the wipe's details go
+    // even though it is the NEWER file, because the kill is kept whole
+    // (v42; it is the fastest too); the wipe's card and rows stay.
     let pulls = [(100, true), (120, false)];
     let (store, ids) = boss_store(
         &pulls,
         Retention {
-            keep_details_per_encounter: 1,
+            keep_details_per_encounter: 0,
             ..Retention::default()
         },
     );
@@ -816,7 +821,8 @@ fn the_details_cap_demotes_a_wipe_before_a_kill() {
 
 #[test]
 fn a_pin_protects_a_fight_and_details_are_demoted_by_unlink() {
-    let pulls = [(40, true), (35, true), (30, true), (25, true)];
+    // Long wipes: a kill is kept whole (v42) and would need no pin.
+    let pulls = [(100, false), (95, false), (90, false), (85, false)];
     let tmp = Temp::new("pin");
     let path = tmp.join("WoWCombatLog-pin.txt");
     std::fs::write(&path, boss_log(&pulls)).unwrap();
@@ -827,7 +833,7 @@ fn a_pin_protects_a_fight_and_details_are_demoted_by_unlink() {
         keep_details_per_encounter: 1,
         ..Retention::default()
     });
-    // Store the first (slowest, oldest) and pin it, then the rest.
+    // Store the first (oldest) and pin it, then the rest.
     let first = store.store(&fights[0], facts).unwrap();
     assert!(store.pin(&first, true));
     assert!(store.card(&first).unwrap().pinned);
@@ -835,24 +841,23 @@ fn a_pin_protects_a_fight_and_details_are_demoted_by_unlink() {
         store.store(f, facts);
     }
     let durs: Vec<i64> = store.cards().iter().map(|c| c.duration_ms).collect();
-    assert!(
-        durs.contains(&40_000),
-        "the pinned slowest kill survives: {durs:?}"
+    // The cap counts the unprotected alone (v42): of the three after the
+    // pin, the oldest goes.
+    assert_eq!(
+        durs,
+        vec![100_000, 90_000, 85_000],
+        "the pinned wipe survives, then the newest two"
     );
-    assert!(
-        durs.contains(&25_000),
-        "the fastest kill survives: {durs:?}"
-    );
-    // Details: keep 1 beyond the protected set — the pin and the fastest
-    // keep theirs, everything else was demoted by unlink.
+    // Details: keep 1 beyond the protected set — the pin keeps its own,
+    // the newest unprotected keeps its, the other was demoted by unlink.
     let with_details: Vec<i64> = store
         .cards()
         .iter()
         .filter(|c| store.has_details(&c.id))
         .map(|c| c.duration_ms)
         .collect();
-    assert!(with_details.contains(&40_000) && with_details.contains(&25_000));
-    assert!(names(&store, "details").len() <= 3);
+    assert_eq!(with_details, vec![100_000, 85_000]);
+    assert_eq!(names(&store, "details").len(), 2);
     assert!(!store.pin("no-such-fight", true));
     assert!(store.pin(&first, false));
     assert!(!store.card(&first).unwrap().pinned);
@@ -903,8 +908,9 @@ fn an_annotation_file_protects_a_fight() {
         ids.contains(&first.as_str()),
         "annotated wipe kept: {ids:?}"
     );
-    // The cap counts the protected fight too: nothing unprotected fits.
-    assert_eq!(ids.len(), 1, "{ids:?}");
+    // The cap counts the unprotected alone (v42): the newest wipe stays
+    // beside the annotated one.
+    assert_eq!(ids.len(), 2, "{ids:?}");
 }
 
 // ---- who is "me" -----------------------------------------------------------------------
@@ -1287,6 +1293,7 @@ fn options(tmp: &Temp, source: SourceSpec, history_dir: PathBuf) -> DaemonOption
             keep_per_encounter: 200,
             keep_details_per_encounter: 10,
             details_min_wipe_secs: 60,
+            keep_kills_whole: true,
             characters: Vec::new(),
             cache_dir: None,
             addon_dir: None,
@@ -1785,6 +1792,8 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         death: None,
         boss: None,
         range: None,
+        spell: None,
+        pair: None,
     });
     let [
         DaemonMsg::Fight {
@@ -1811,6 +1820,8 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         death: None,
         boss: None,
         range: None,
+        spell: None,
+        pair: None,
     });
     let [
         DaemonMsg::Fight {
@@ -1913,6 +1924,8 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         death: None,
         boss: None,
         range: None,
+        spell: None,
+        pair: None,
     });
     assert!(matches!(
         out.as_slice(),
@@ -2533,6 +2546,8 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
         death: None,
         boss: Some("vexamus".to_string()),
         range: None,
+        spell: None,
+        pair: None,
     });
     let deadline = Instant::now() + DEADLINE;
     let mut answer = None;
@@ -2558,6 +2573,8 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
         death: None,
         boss: Some("Nobody".to_string()),
         range: None,
+        spell: None,
+        pair: None,
     });
     let deadline = Instant::now() + DEADLINE;
     let mut answer = None;
@@ -3510,6 +3527,8 @@ fn pinning_a_wipe_backfills_its_series_from_the_log() {
                 death: None,
                 boss: None,
                 range: Some((0, 10_000)),
+                spell: None,
+                pair: None,
             },
             req_id,
         ) else {
@@ -3550,4 +3569,28 @@ fn pinning_a_wipe_backfills_its_series_from_the_log() {
         "kill + wipe"
     );
     stop(d);
+}
+
+/// v42: a boss kill is kept whole — two kills under a details cap of 0 both
+/// keep their details — unless `history_keep_kills_whole` is off, when the
+/// cap counts them again and the slower, older kill (no fastest, no pin)
+/// is demoted.
+#[test]
+fn a_kill_is_kept_whole_unless_the_config_says_not() {
+    let pulls = [(100, true), (50, true)];
+    let cfg = Retention {
+        keep_details_per_encounter: 0,
+        ..Retention::default()
+    };
+    let (store, ids) = boss_store(&pulls, cfg.clone());
+    assert!(store.has_details(&ids[0]) && store.has_details(&ids[1]));
+    let (store, ids) = boss_store(
+        &pulls,
+        Retention {
+            keep_whole: false,
+            ..cfg
+        },
+    );
+    assert!(!store.has_details(&ids[0]), "the slower kill is demoted");
+    assert!(store.has_details(&ids[1]), "the fastest stays protected");
 }

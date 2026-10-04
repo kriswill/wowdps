@@ -12,7 +12,7 @@ use wowdps_gui_logic::toast::{NO_CARD, NO_STORED_PAIR, NOT_STORED, TOAST_FOR};
 use wowdps_model::{Action, Class, Screen, Spec, View};
 
 use super::super::Place;
-use super::super::rail::tests::{current, earlier_nights, key, rig_over as rail_rig};
+use super::super::rail::tests::{current, key};
 use super::super::tests::{Rig, settle};
 use super::Menu;
 use super::menu::row_id;
@@ -353,14 +353,71 @@ fn a_pin_says_so_until_the_pair_forms(cx: &mut TestAppContext) {
     assert_eq!(toast(cx, &rig), None, "the pair took it back");
 }
 
-/// A stored pull refuses what the store keeps no answer for, with a word:
-/// `v` pins nobody, the enemies' view stays shut.
-#[gpui_kit::test]
-fn a_stored_pull_says_what_it_cannot_answer(cx: &mut TestAppContext) {
-    let rig = rail_rig(cx, earlier_nights(), 1440., 900.);
-    while !matches!(current(cx, &rig), Some(Pull::Stored(_))) {
+/// A scratch directory, removed when dropped — a failing assertion
+/// included.
+struct Scratch(std::path::PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// v42: the window tailing `taken.txt` over a store holding the sample
+/// fixture's night — an older one — with only the tiers `subdirs` on disk
+/// (`tag` names the scratch store), stepped back onto that night's stored
+/// kill, "The Ashen Warden".
+fn older_night(cx: &mut TestAppContext, tag: &str, subdirs: &[&str]) -> (Rig, Scratch) {
+    use wowdps_daemon::history::Backend as _;
+    use wowdps_daemon::mock::MockDaemon;
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("wowdps-gui-{tag}-{}", std::process::id())));
+    let dir = scratch.0.clone();
+    let _ = std::fs::remove_dir_all(&dir);
+    let older = MockDaemon::fixture().with_history();
+    for sub in subdirs {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+        for name in older.history().backend().list(sub) {
+            let bytes = older.history().backend().read(sub, &name).unwrap();
+            std::fs::write(dir.join(sub).join(name), bytes).unwrap();
+        }
+    }
+    let taken = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/fixtures/taken.txt");
+    let mock = MockDaemon::fixture_at(&taken)
+        .with_store_dir(&dir)
+        .with_history();
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let rig = super::super::tests::rig_on(cx, 1440., 900., crate::testkit::MockLink::new(mock));
+    let stored_name = |cx: &mut TestAppContext| {
+        rig.gui.read_with(cx, |g, _| {
+            g.hist
+                .store
+                .stored
+                .as_ref()
+                .and_then(|s| s.card.as_ref())
+                .map(|c| c.name.clone())
+        })
+    };
+    for _ in 0..12 {
+        if stored_name(cx).as_deref() == Some("The Ashen Warden") {
+            break;
+        }
         key(cx, &rig, Action::OlderSegment);
     }
+    assert_eq!(stored_name(cx).as_deref(), Some("The Ashen Warden"));
+    assert!(matches!(current(cx, &rig), Some(Pull::Stored(_))));
+    (rig, scratch)
+}
+
+/// The tiers a store keeps of a pull it demoted: the card and its rows.
+const ROWS_ONLY: [&str; 3] = ["fights", "rows", "loadouts"];
+
+/// A stored pull refuses what the store keeps no answer for, with a word:
+/// on a pull it kept the rows of alone, `v` pins nobody and the enemies'
+/// view stays shut.
+#[gpui_kit::test]
+fn a_stored_pull_says_what_it_cannot_answer(cx: &mut TestAppContext) {
+    let (rig, _scratch) = older_night(cx, "says", &ROWS_ONLY);
     key(cx, &rig, Action::PickCompare);
     assert_eq!(toast(cx, &rig).as_deref(), Some(NO_STORED_PAIR));
     rig.gui.read_with(cx, |g, cx| {
@@ -371,15 +428,13 @@ fn a_stored_pull_says_what_it_cannot_answer(cx: &mut TestAppContext) {
     assert_ne!(view(cx, &rig), View::EnemyTaken);
 }
 
-/// On a stored pull the inspector's Compare stands inert, saying why, and
-/// the enemies' tab stays on the strip leading nowhere — the shapes a
-/// pull of the log gives them, as iced keeps them.
+/// On a stored pull the store kept the rows of alone, the inspector's
+/// Compare stands inert, saying why, and the enemies' tab stays on the
+/// strip leading nowhere — the shapes a pull of the log gives them, as
+/// iced keeps them.
 #[gpui_kit::test]
 fn a_stored_pull_s_compare_and_enemies_tab_stand_inert(cx: &mut TestAppContext) {
-    let rig = rail_rig(cx, earlier_nights(), 1440., 900.);
-    while !matches!(current(cx, &rig), Some(Pull::Stored(_))) {
-        key(cx, &rig, Action::OlderSegment);
-    }
+    let (rig, _scratch) = older_night(cx, "inert", &ROWS_ONLY);
     cx.update_window(rig.window, |_, window, cx| window.render_frame(cx))
         .unwrap();
     rig.gui.read_with(cx, |g, _| {
@@ -390,7 +445,7 @@ fn a_stored_pull_s_compare_and_enemies_tab_stand_inert(cx: &mut TestAppContext) 
             .find(|a| a.glyph == wowdps_gui_logic::glyph::Glyph::Compare)
             .expect("Compare stands on the row");
         assert!(compare.press.is_none(), "inert");
-        assert!(compare.tip.contains("no pair"), "{}", compare.tip);
+        assert!(compare.tip.contains("rows alone"), "{}", compare.tip);
     });
     let before = view(cx, &rig);
     press(cx, &rig, super::super::tabs::tab_id(View::EnemyTaken));
@@ -486,4 +541,55 @@ fn the_sheet_s_columns_follow_its_width() {
     assert_eq!(super::sheet::columns(460., 4), 2);
     assert_eq!(super::sheet::columns(320., 4), 1);
     assert_eq!(super::sheet::columns(1440., 2), 2, "never more than groups");
+}
+
+/// v42: a stored kill is kept whole — the window tailing a newer log over a
+/// store that holds an older night's kill opens it as a stored pull whose
+/// Compare stands live and pins, whose pair forms off the store, and whose
+/// abilities open with curves of their own: no refusal anywhere.
+#[gpui_kit::test]
+fn a_stored_kill_compares_and_opens_an_ability(cx: &mut TestAppContext) {
+    let (rig, scratch) = older_night(
+        cx,
+        "whole",
+        &["fights", "rows", "details", "series", "loadouts"],
+    );
+    cx.update_window(rig.window, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    rig.gui.read_with(cx, |g, _| {
+        let insp = g.insp_frame.as_ref().expect("the inspector");
+        let compare = insp
+            .acts
+            .iter()
+            .find(|a| a.glyph == wowdps_gui_logic::glyph::Glyph::Compare)
+            .expect("Compare stands on the row");
+        assert!(compare.press.is_some(), "live: {}", compare.tip);
+    });
+    // The stack, as a live drill's.
+    rig.gui.read_with(cx, |g, cx| {
+        assert!(!g.fight(cx).drill_series().0.is_empty(), "the stack")
+    });
+    // Pin, move: the pair forms off the store.
+    key(cx, &rig, Action::PickCompare);
+    assert_ne!(toast(cx, &rig).as_deref(), Some(NO_STORED_PAIR));
+    key(cx, &rig, Action::Down);
+    rig.gui.read_with(cx, |g, cx| {
+        let app = g.fight(cx);
+        assert_eq!(app.screen, Screen::Compare);
+        let (a, b) = app.compare_sides().expect("the stored pair");
+        assert_ne!(a.guid, b.guid);
+    });
+    // Let the pair go, then open an ability: the keys to the inspector,
+    // Enter on its first line.
+    key(cx, &rig, Action::PickCompare);
+    key(cx, &rig, Action::Open);
+    key(cx, &rig, Action::Open);
+    assert_eq!(toast(cx, &rig), None, "no refusal");
+    rig.gui.read_with(cx, |g, cx| {
+        let app = g.fight(cx);
+        assert!(app.drill_spell().is_some(), "an ability opened");
+        let b = app.drill_breakdown().expect("its drill");
+        assert!(b.spell_targets.as_ref().is_some_and(|t| !t.is_empty()));
+    });
+    drop(scratch);
 }

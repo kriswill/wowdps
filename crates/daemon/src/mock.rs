@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use wowdps_core::index::{self, load_segment};
 use wowdps_core::meter::meter_from_lines;
 use wowdps_core::tail::TailEvent;
-use wowdps_proto::{ClientMsg, Cursor, DaemonMsg};
+use wowdps_proto::{ClientKind, ClientMsg, Cursor, DaemonMsg};
 
 use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
-use crate::history::{LogFacts, MemBackend, Retention, Store};
+use crate::history::{Ask, LogFacts, MemBackend, Retention, Store};
 use crate::session::stamp;
 
 /// The committed fixture log, resolved from this crate's source tree.
@@ -179,14 +179,22 @@ impl MockDaemon {
                 // The mock has no loader pool: a boss drill answers None.
                 boss: _,
                 range,
+                spell,
+                pair,
             } => {
-                let fight = self.history.stored_fight_ranged(
-                    &fight_id,
+                // It answers as the hub answers a window — the client every
+                // mock snapshot is built for (`Engine::build_segment`).
+                let ask = Ask {
                     view,
-                    drill.as_deref(),
+                    drill,
                     death,
                     range,
-                );
+                    spell,
+                    pair,
+                    stacked: crate::engine::wants_series(ClientKind::Window),
+                };
+                let mine = self.history.mine();
+                let fight = self.history.stored_fight_in(&mine, &fight_id, &ask);
                 out.push(DaemonMsg::Fight { req_id, fight });
             }
             ClientMsg::PinFight {

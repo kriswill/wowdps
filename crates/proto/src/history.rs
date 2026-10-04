@@ -46,6 +46,19 @@ pub const VIEW_KEYS: [(View, &str); 7] = [
     (View::Taken, "taken"),
 ];
 
+/// A stored view's key in [`VIEW_KEYS`] ("" for one never stored).
+fn view_key(view: View) -> &'static str {
+    VIEW_KEYS
+        .iter()
+        .find(|(v, _)| *v == view)
+        .map_or("", |(_, k)| k)
+}
+
+/// The stored view a [`VIEW_KEYS`] key names.
+fn view_named(key: &str) -> Option<View> {
+    VIEW_KEYS.iter().find(|(_, k)| *k == key).map(|(v, _)| *v)
+}
+
 // ---- identity ---------------------------------------------------------------
 
 /// FNV-1a over bytes — the one hash the store uses (log identity, fight
@@ -1382,6 +1395,29 @@ pub struct PlayerDetail {
     pub heal_timeline: Timeline,
     pub damage_tree: SpellTree,
     pub heal_tree: SpellTree,
+    /// v42: the count views' drills — Interrupts, Crowd control and Dispels,
+    /// each the player's by-spell and by-target lists — so a stored pull
+    /// drills (and compares) them as the live meter does. Empty on a
+    /// details file written before v42.
+    pub counts: Vec<CountDetail>,
+}
+
+/// v42: the views [`PlayerDetail::counts`] keeps, in order.
+pub const COUNT_VIEWS: [View; 3] = [View::Interrupts, View::CrowdControl, View::Dispels];
+
+/// v42: one count view's drill of one player.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CountDetail {
+    pub view: View,
+    pub spells: Vec<Row>,
+    pub targets: Vec<Row>,
+}
+
+impl PlayerDetail {
+    /// v42: the player's drill on a count view, when one was kept.
+    pub fn count(&self, view: View) -> Option<&CountDetail> {
+        self.counts.iter().find(|c| c.view == view)
+    }
 }
 
 /// `details/<id>.json` — written for kills and for wipes of at least
@@ -1420,6 +1456,11 @@ impl FightDetails {
                 "heal_timeline": timeline_json(&p.heal_timeline),
                 "damage_tree": spell_tree_json(&p.damage_tree),
                 "heal_tree": spell_tree_json(&p.heal_tree),
+                "counts": Json::Arr(p.counts.iter().map(|c| obj! {
+                    "view": Json::str(view_key(c.view)),
+                    "spells": rows_json(&c.spells),
+                    "targets": rows_json(&c.targets),
+                }).collect()),
             }).collect()),
         }
     }
@@ -1442,6 +1483,22 @@ impl FightDetails {
                             heal_timeline: timeline_from(p.get("heal_timeline")),
                             damage_tree: spell_tree_from(p.get("damage_tree")),
                             heal_tree: spell_tree_from(p.get("heal_tree")),
+                            // v42: absent before, and empty then.
+                            counts: p
+                                .get("counts")
+                                .and_then(Json::as_arr)
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(|c| {
+                                            Some(CountDetail {
+                                                view: view_named(str_of(c, "view")?)?,
+                                                spells: rows_from(c.get("spells")),
+                                                targets: rows_from(c.get("targets")),
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
                         })
                     })
                     .collect()

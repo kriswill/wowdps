@@ -122,6 +122,8 @@ fn a_taken_drill_carries_the_stack_ledger_and_the_stored_one_equals_it() {
             death: None,
             boss: None,
             range: None,
+            spell: None,
+            pair: None,
         });
         let [
             DaemonMsg::Fight {

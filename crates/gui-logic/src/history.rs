@@ -27,7 +27,7 @@
 
 use std::time::{Duration, Instant};
 
-use wowdps_model::{Drill, ListRow, Loadout, SegmentId, SegmentInfo, SegmentKind, View};
+use wowdps_model::{Drill, ListRow, Loadout, Screen, SegmentId, SegmentInfo, SegmentKind, View};
 use wowdps_proto::history::{FightCard, FightKind};
 use wowdps_proto::{
     ClientMsg, ClientState, Cursor, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, ListEntry,
@@ -270,13 +270,43 @@ impl Earlier {
 // ---- a stored pull on the stage ----------------------------------------------
 
 /// What a `GetFight` asks the store for: the view, whose drill, which of
-/// their deaths, and (v39) the zoom window their lists answer.
+/// their deaths, (v39) the zoom window their lists answer, and (v42) the
+/// ability opened in it or the second player of a comparison.
 #[derive(Debug, Clone, PartialEq)]
 struct Want {
     view: View,
     drill: Option<String>,
     death: Option<u32>,
     range: Option<(u32, u32)>,
+    spell: Option<String>,
+    pair: Option<String>,
+}
+
+/// v42: what a stored pull's answer could serve beyond its rows — what the
+/// window offers on it and what it refuses (`toast::stored_refusal`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Kept {
+    /// The details tier: each player's abilities and curves — what a
+    /// comparison's tables are.
+    pub details: bool,
+    /// The series tier beside it — zoom windows and the stacked graph:
+    /// kills, timed keys and pinned pulls keep it.
+    pub series: bool,
+    /// That tier keeps what opens an ability (`StoredFight::abilities`) —
+    /// not a file older than v42 whose log is gone.
+    pub abilities: bool,
+}
+
+impl Kept {
+    /// Everything: what the window offers on a stored pull before the store
+    /// has answered — the answer decides, and an ask it cannot serve backs
+    /// out (`Stored::absorb`) — rather than refusing a kept kill's `v` in
+    /// the instant its first read is out.
+    pub const ALL: Kept = Kept {
+        details: true,
+        series: true,
+        abilities: true,
+    };
 }
 
 /// A stored pull on the stage: its own `ClientState`, fed from `GetFight`.
@@ -307,6 +337,9 @@ pub struct Stored {
     /// The drilled player's logged loadout, as the last answer carried it:
     /// their guid and their build.
     loadout: Option<(String, Loadout)>,
+    /// v42: what the last answer could serve beyond the rows; `None` until
+    /// the store has answered.
+    kept: Option<Kept>,
 }
 
 impl Stored {
@@ -326,8 +359,8 @@ impl Stored {
     ) -> (Self, Vec<ClientMsg>) {
         let mut state = ClientState::new();
         let _ = state.set_follow(true);
-        // v38: the store keeps no per-second abilities: a zoom here is the
-        // graph's alone, and the lists stay the whole pull.
+        // v38: until the store says it keeps the pull's seconds (v39), a
+        // zoom here is the graph's alone, and the lists stay the whole pull.
         let _ = state.set_drill_windows(false);
         state.view = if view.is_stored() { view } else { View::Damage };
         // The row is a placeholder until the card is known: the header reads
@@ -344,7 +377,7 @@ impl Stored {
             log_id: None,
         });
         // The player carries over, their list with them; a spell of theirs
-        // does not — the store keeps no ability's own curve.
+        // does not — another pull's ability need not be this one's.
         state.drill = drill.map(|d| Drill {
             spell: None,
             spell_sel: 0,
@@ -363,6 +396,7 @@ impl Stored {
             missing: false,
             bare: false,
             loadout: None,
+            kept: None,
         };
         let asked = stored.route(sent, next_id);
         (stored, asked)
@@ -386,10 +420,10 @@ impl Stored {
     }
 
     /// What the pull's own state asked for, as the store answers it: its
-    /// newest `Watch` of the meter becomes the `GetFight` for the same
-    /// view, drill, death window and zoom window — now, or, while one is out, when that
-    /// one answers. A comparison's cursor has no stored answer and asks for
-    /// nothing.
+    /// newest `Watch` becomes the `GetFight` for the same view, drill, death
+    /// window, zoom window and (v42) opened ability — and a comparison's
+    /// cursor the `GetFight` for the same pair — now, or, while one is out,
+    /// when that one answers.
     pub fn route(&mut self, sent: Vec<ClientMsg>, next_id: &mut u32) -> Vec<ClientMsg> {
         let Some(want) = sent.into_iter().rev().find_map(|m| match m {
             ClientMsg::Watch(Cursor::Segment {
@@ -397,12 +431,31 @@ impl Stored {
                 drill,
                 death,
                 range,
+                spell,
                 ..
             }) => Some(Want {
                 view,
                 drill,
                 death,
                 range,
+                spell,
+                pair: None,
+            }),
+            // v42: the pair, its first player the drill.
+            ClientMsg::Watch(Cursor::Compare {
+                a,
+                b,
+                view,
+                range,
+                spell,
+                ..
+            }) => Some(Want {
+                view,
+                drill: Some(a),
+                death: None,
+                range,
+                spell,
+                pair: Some(b),
             }),
             _ => None,
         }) else {
@@ -437,6 +490,8 @@ impl Stored {
             death: want.death,
             boss: None,
             range: want.range,
+            spell: want.spell.clone(),
+            pair: want.pair.clone(),
         };
         self.pending = Some((req_id, Some(want)));
         vec![msg]
@@ -496,14 +551,50 @@ impl Stored {
         };
         self.again = false;
         self.missing = false;
-        let Want { view, drill, .. } = want;
-        self.bare = drill.is_some() && fight.breakdown.is_none();
+        let Want {
+            view, drill, pair, ..
+        } = want;
+        self.kept = Some(Kept {
+            details: fight.tier >= 3,
+            series: fight.series,
+            abilities: fight.abilities,
+        });
+        self.bare = pair.is_none() && drill.is_some() && fight.breakdown.is_none();
         self.loadout = drill.zip(fight.loadout);
         let info = info_of(&fight.card);
         self.card = Some(fight.card);
         // v39: a fight that keeps the series tier answers a zoom window as
         // the live drill does; any other's zoom stays the graph's alone.
         let mut sent = self.state.set_drill_windows(fight.series);
+        // v42: a comparison's answer is the pair's snapshot, as a live
+        // comparison's cursor is answered — or, from a store that kept the
+        // pull's rows alone, no pair: the comparison is let go (the window
+        // offers none there, `Kept`; a pull demoted since it asked).
+        if pair.is_some() {
+            match fight.pair {
+                Some(p) => sent.extend(self.state.on_msg(DaemonMsg::CompareSnapshot {
+                    seq: 0,
+                    segment: SegmentRef::Live,
+                    id: Some(segment_id(&self.fight_id)),
+                    info,
+                    view,
+                    a: Box::new(p.a),
+                    b: Box::new(p.b),
+                    range: p.range,
+                    source: Some(source_of(&self.fight_id)),
+                    status: None,
+                })),
+                // The ability first, then the pair: two steps at most.
+                None => {
+                    for _ in 0..2 {
+                        if self.state.screen == Screen::Compare {
+                            sent.extend(self.state.clear_compare());
+                        }
+                    }
+                }
+            }
+            return self.route(sent, next_id);
+        }
         sent.extend(self.state.on_msg(DaemonMsg::Snapshot {
             seq: 0,
             segment: SegmentRef::Live,
@@ -526,6 +617,18 @@ impl Stored {
     /// The drill the stage shows was answered without its breakdown.
     pub fn bare(&self) -> bool {
         self.bare && self.pending.is_none()
+    }
+
+    /// v42: what the store's last answer could serve beyond the rows —
+    /// `None` before it has answered.
+    pub fn kept(&self) -> Option<Kept> {
+        self.kept
+    }
+
+    /// v42: what the window offers on this pull: what the store kept, or —
+    /// before its first answer — everything ([`Kept::ALL`]).
+    pub fn offered(&self) -> Kept {
+        self.kept.unwrap_or(Kept::ALL)
     }
 
     /// `guid`'s logged build, when the last answer carried it.
@@ -961,20 +1064,25 @@ mod tests {
         assert!(!s.state.rows().is_empty(), "the stage keeps what it shows");
         assert!(s.absorb(req_of(&again), None, &mut next).is_empty());
         assert!(s.missing, "evicted since the rail listed it");
-        // A comparison has no stored answer.
+        // v42: a comparison is the store's to answer — the pair rides the
+        // GetFight, its first player the drill.
+        let pair = s.route(
+            vec![ClientMsg::Watch(Cursor::Compare {
+                segment: SegmentRef::Live,
+                a: "a".into(),
+                b: "b".into(),
+                view: View::Damage,
+                range: None,
+                spell: None,
+            })],
+            &mut next,
+        );
         assert!(
-            s.route(
-                vec![ClientMsg::Watch(Cursor::Compare {
-                    segment: SegmentRef::Live,
-                    a: "a".into(),
-                    b: "b".into(),
-                    view: View::Damage,
-                    range: None,
-                    spell: None,
-                })],
-                &mut next
-            )
-            .is_empty()
+            matches!(
+                pair.as_slice(),
+                [ClientMsg::GetFight { drill: Some(a), pair: Some(b), .. }] if a == "a" && b == "b"
+            ),
+            "{pair:?}"
         );
     }
 
@@ -1054,6 +1162,102 @@ mod tests {
         run(&mut mock, &mut w, sent, &mut next);
         let zoom = w.state.set_drill_range(Some((0, 2_000)));
         assert!(w.route(zoom, &mut next).is_empty(), "the graph's own zoom");
+    }
+
+    /// v42: a stored kill is kept whole — its drill comes in stacked, an
+    /// ability opened rides the `GetFight` and comes back with its curve,
+    /// and a pair forms off the store, its sides answered as a live
+    /// comparison's are.
+    #[test]
+    fn a_stored_kill_stacks_opens_an_ability_and_compares() {
+        let mut mock = MockDaemon::fixture().with_history();
+        let kill = mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.kind == FightKind::Encounter && c.success == Some(true))
+            .cloned()
+            .expect("a stored kill");
+        let run =
+            |mock: &mut MockDaemon, s: &mut Stored, mut asked: Vec<ClientMsg>, next: &mut u32| {
+                let mut all = Vec::new();
+                for _ in 0..6 {
+                    let mut replies = Vec::new();
+                    for m in std::mem::take(&mut asked) {
+                        all.push(m.clone());
+                        for reply in mock.handle(m) {
+                            if let DaemonMsg::Fight { req_id, fight } = reply {
+                                replies.push((req_id, fight));
+                            }
+                        }
+                    }
+                    for (req_id, fight) in replies {
+                        asked.extend(s.absorb(req_id, fight, next));
+                    }
+                    if asked.is_empty() {
+                        break;
+                    }
+                }
+                all
+            };
+        let mut next = 10;
+        let (mut s, sent) = Stored::open(
+            kill.id.clone(),
+            Some(kill.clone()),
+            View::Damage,
+            None,
+            None,
+            &mut next,
+        );
+        assert_eq!(s.kept(), None, "nothing known before the answer");
+        assert_eq!(s.offered(), Kept::ALL, "so everything is offered");
+        run(&mut mock, &mut s, sent, &mut next);
+        assert_eq!(s.kept(), Some(Kept::ALL), "a kill kept whole");
+        let (abilities, _) = s.state.drill_series();
+        assert!(!abilities.is_empty(), "the stack, as a live drill's");
+
+        // An ability opened: the keys to the inspector, then Enter.
+        let mut sent = s.state.apply(wowdps_model::Action::Open);
+        sent.extend(s.state.apply(wowdps_model::Action::Open));
+        let routed = s.route(sent, &mut next);
+        assert!(
+            matches!(
+                routed.as_slice(),
+                [ClientMsg::GetFight {
+                    spell: Some(_),
+                    pair: None,
+                    ..
+                }]
+            ),
+            "{routed:?}"
+        );
+        run(&mut mock, &mut s, routed, &mut next);
+        let b = s.state.drill_breakdown().expect("the opened drill");
+        assert!(
+            b.spell_timeline
+                .as_ref()
+                .is_some_and(|t| t.buckets.iter().any(|v| *v > 0)),
+            "the ability's own curve"
+        );
+        assert!(b.spell_targets.as_ref().is_some_and(|t| !t.is_empty()));
+
+        // Back out, pin, move: the pair forms off the store.
+        let mut sent = s.state.apply(wowdps_model::Action::Back);
+        sent.extend(s.state.apply(wowdps_model::Action::Back));
+        run(&mut mock, &mut s, sent, &mut next);
+        let mut sent = s.state.apply(wowdps_model::Action::PickCompare);
+        sent.extend(s.state.apply(wowdps_model::Action::Down));
+        let routed = s.route(sent, &mut next);
+        let asked = run(&mut mock, &mut s, routed, &mut next);
+        assert!(
+            asked
+                .iter()
+                .any(|m| matches!(m, ClientMsg::GetFight { pair: Some(_), .. })),
+            "{asked:?}"
+        );
+        let (a, b) = s.state.compare_sides().expect("the stored pair");
+        assert_ne!(a.guid, b.guid);
+        assert!(!a.spells.is_empty() && !a.timeline.buckets.is_empty());
     }
 
     /// A held `j` asks for the player it lands on, not for every one it

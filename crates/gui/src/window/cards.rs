@@ -303,7 +303,7 @@ impl Gui {
     }
 
     fn refusal(&self, action: Action, cx: &App) -> Option<&'static str> {
-        self.hist.store.stored.as_ref()?;
+        let kept = self.hist.store.stored.as_ref()?.offered();
         let app = self.fight(cx);
         // R26: Enter on a group of the ability tree folds it, stored or not.
         let folds = super::inspector::model::tree_lines(app, &self.insp)
@@ -312,7 +312,8 @@ impl Gui {
                     .and_then(|at| lines.get(at).map(|l| l.opens.is_none()))
             })
             .unwrap_or(false);
-        stored_refusal(action, app.inspecting(), folds)
+        let comparing = !app.compare_picks().is_empty();
+        stored_refusal(action, app.inspecting(), folds, comparing, kept)
     }
 
     // ---- the sheet's surface -----------------------------------------------
@@ -339,7 +340,8 @@ impl Gui {
         let beside = Fit::of(self.width) != Fit::Narrow;
         inert_keys(Inert {
             covered: self.place == Place::Home || self.talents.is_some(),
-            stored: self.hist.store.stored.is_some(),
+            stored: self.hist.store.stored.as_ref().map(|s| s.offered()),
+            comparing: !app.compare_picks().is_empty(),
             inspecting: app.inspecting(),
             pinnable: self.stage_card(cx).is_some(),
             deaths_table_beside: beside

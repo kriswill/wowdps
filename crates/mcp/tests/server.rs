@@ -1033,6 +1033,7 @@ fn history_opts(tmp: &Temp) -> wowdps_daemon::history::HistoryOptions {
         keep_per_encounter: 200,
         keep_details_per_encounter: 10,
         details_min_wipe_secs: 60,
+        keep_kills_whole: true,
         characters: Vec::new(),
         cache_dir: None,
         addon_dir: None,
