@@ -56,7 +56,10 @@ advanced block described Tranqlock at 759 581 health, the respawn.[^format]
   close (a wipe) said they were dead when that pull ended, not that they got
   up then. The Overall keeps it open, and the next member ends it at its
   first sight of them (`first_alive`, the same gate), or at their next death
-  there. Role spans keep their member-clock close.
+  there. Role spans keep their member-clock close. The merge holds in either
+  order (`Segment::alive_after`): the daemon's mid-visit attach absorbs the
+  earlier, scanned prefix INTO the live Overall, so the prefix's open deaths
+  close against the live side's first sight (CodeRabbit's review of #76).
 - **The wire says which spans never closed** (PROTO_VERSION 41, `Mark` +
   trailing bool `open`; the history record writes `"open"` on every mark).
   No reader could work it out from `at_ms + dur_ms`: an open span reads to

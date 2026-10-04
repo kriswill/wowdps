@@ -2,6 +2,9 @@
 
 ## 2026-10-03
 
+- **Update** — [R23 Death spans](r23.md): the Overall merge closes an open
+  death in either order — the daemon's mid-visit attach absorbs the earlier
+  prefix into the live Overall; a cast is proof of life in any log.
 - **Update** — [R9 Deaths & recap](r9.md): a Feign Death (`UNIT_DIED`'s trailing
   `unconsciousOnDeath` 1) is no death — `Other` in the parser, no combat in the
   scanner; `sample.txt` holds one.

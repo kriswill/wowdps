@@ -1609,39 +1609,52 @@ impl Segment {
         // not closed against the member's clock. A death its member left
         // OPEN (a wipe, a death in a pull's last seconds) says the player
         // was still dead when that pull ended, not that they came back
-        // then: it stays open here, and the next member that saw them
-        // alive ends it at that sight — or at their next death there,
-        // which they had to be alive to die. One no later member ends
-        // reads to the Overall's own close, like any open span.
+        // then: it stays open here, and the first later proof of life ends
+        // it — a sight of them alive, or their next death, which they had
+        // to be alive to die. One nothing later ends reads to the Overall's
+        // own close, like any open span. Either side may be the later one:
+        // an Overall absorbs its members in order, but the daemon's
+        // mid-visit attach absorbs the EARLIER prefix into the live
+        // Overall, so each side's open deaths close against the other's
+        // proof — the incoming ones against this side's before the merge.
+        let incoming: Vec<(&String, Vec<AbsSpan>)> = other
+            .death_spans
+            .iter()
+            .map(|(guid, spans)| {
+                let spans = spans
+                    .iter()
+                    .map(|s| {
+                        let mut s = s.clone();
+                        if s.dur_ms.is_none() {
+                            s.dur_ms = self.alive_after(guid, s.at_ms).map(|t| t - s.at_ms);
+                        }
+                        s
+                    })
+                    .collect();
+                (guid, spans)
+            })
+            .collect();
         for (guid, list) in &mut self.death_spans {
-            let seen = other.first_alive.get(guid).copied();
-            let died = other
-                .death_spans
-                .get(guid)
-                .and_then(|l| l.iter().map(|s| s.at_ms).min());
-            let Some(back) = seen.into_iter().chain(died).min() else {
-                continue;
-            };
-            for s in list
-                .iter_mut()
-                .filter(|s| s.dur_ms.is_none() && back > s.at_ms)
-            {
-                s.dur_ms = Some(back - s.at_ms);
+            for s in list.iter_mut().filter(|s| s.dur_ms.is_none()) {
+                s.dur_ms = other.alive_after(guid, s.at_ms).map(|t| t - s.at_ms);
             }
         }
-        for (guid, spans) in &other.death_spans {
+        for (guid, spans) in incoming {
             let dst = self.death_spans.entry(guid.clone()).or_default();
             for s in spans {
                 if dst.len() >= SPAN_CAP {
                     break;
                 }
                 if !dst.iter().any(|d| d.at_ms == s.at_ms) {
-                    dst.push(s.clone());
+                    dst.push(s);
                 }
             }
         }
         for (guid, &at) in &other.first_alive {
-            self.first_alive.entry(guid.clone()).or_insert(at);
+            self.first_alive
+                .entry(guid.clone())
+                .and_modify(|t| *t = (*t).min(at))
+                .or_insert(at);
         }
         for (target, cells) in other.rollup() {
             let mine = self.uptime.entry(target).or_default();
@@ -3317,6 +3330,21 @@ impl Segment {
             self.first_alive.insert(guid.to_string(), ts);
         }
         self.end_death(guid, ts, None);
+    }
+
+    /// R23, for the Overall merge: this segment's first proof that `guid`
+    /// was alive after `at` — its first sight of them, or a death of
+    /// theirs, which they had to be alive to die. `None` when everything
+    /// it saw of them came first.
+    fn alive_after(&self, guid: &str, at: i64) -> Option<i64> {
+        let seen = self.first_alive.get(guid).copied();
+        let died = self
+            .death_spans
+            .get(guid)
+            .into_iter()
+            .flatten()
+            .map(|s| s.at_ms);
+        seen.into_iter().chain(died).filter(|&t| t > at).min()
     }
 
     /// R23: the same close, naming what raised them — a battle rez, a
@@ -8022,6 +8050,57 @@ mod tests {
             ov.close_ms() - ov.start_ms - at,
             "never seen again: dead to the visit's close"
         );
+    }
+
+    /// The daemon attaches mid-visit by absorbing the scanned PREFIX, the
+    /// visit's earlier members, into the live Overall: the merge runs
+    /// backwards. The prefix's open death must still end at the live
+    /// side's first sight of them, exactly as it does merged in order.
+    #[test]
+    fn r23_a_prefix_absorbed_into_the_live_overall_ends_its_deaths_too() {
+        let death = |seg: &Segment, who: &str| {
+            seg.timeline(who)
+                .marks
+                .iter()
+                .find(|m| m.kind == MarkKind::Death)
+                .map(|m| (m.at_ms, m.dur_ms, m.open))
+                .expect("a death span")
+        };
+        let zone = || {
+            at(
+                0,
+                Event::ZoneChange {
+                    map_id: 2526,
+                    name: "Algeth'ar Academy".into(),
+                    difficulty: 8,
+                },
+            )
+        };
+        let prefix = fed(vec![
+            zone(),
+            start(1_000, "Crawth"),
+            damage(2_000, p1(), None, 100),
+            damage(2_000, p2(), None, 100),
+            at(5_000, Event::Death { unit: p1() }),
+            at(5_500, Event::Death { unit: p2() }),
+            end(6_000, "Crawth", false),
+        ]);
+        let live = fed(vec![
+            zone(),
+            start(60_000, "Crawth"),
+            reported(61_000, P1, 150_000),
+            damage(62_000, p1(), None, 100),
+            end(90_000, "Crawth", true),
+        ]);
+        let mut ov = live.overall(0).expect("the live side");
+        ov.absorb(&prefix.overall(0).expect("the prefix"));
+        assert_eq!(
+            death(&ov, P1),
+            (5_000, 56_000, false),
+            "up at the live side's first sight of them"
+        );
+        let (at_ms, _, open) = death(&ov, P2);
+        assert_eq!((at_ms, open), (5_500, true), "never seen again: still dead");
     }
 
     /// A rez is passive: it must not open a segment or extend one, or the
