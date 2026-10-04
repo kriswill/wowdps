@@ -17,3 +17,8 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
+  # The CodeRabbit CLI (coderabbit / cr), from numtide's llm-agents.nix —
+  # flake.nix tracks its main branch; here the rev flake.lock resolved it to.
+  # It keeps its own nixpkgs: its package set needs a newer one than ours.
+  llm-agents:
+    url: github:numtide/llm-agents.nix/4e0a04f23b1113a125efb0246f57752674ade3d9

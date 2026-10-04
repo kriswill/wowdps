@@ -20,6 +20,13 @@
       url = "https://flakehub.com/f/kriswill/okflight/0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # The CodeRabbit CLI (`coderabbit`, alias `cr`: an AI review of the
+    # working tree or a branch, `coderabbit review --agent`) — a prebuilt,
+    # unfree binary nixpkgs does not carry, packaged (and updated daily) by
+    # numtide's llm-agents.nix. devenv.yaml mirrors this input.
+    # It keeps its OWN nixpkgs: its package set needs a newer one than this
+    # repo pins (following ours, it does not evaluate).
+    llm-agents.url = "github:numtide/llm-agents.nix";
   };
 
   outputs =
@@ -29,6 +36,7 @@
       rust-overlay,
       crane,
       okf,
+      llm-agents,
       ...
     }:
     let
@@ -50,10 +58,13 @@
       # okf, the knowledge-bundle CLI over docs/OKF (okflight.toml), from the
       # okflight input — on the dev-shell PATH and exported as `.#okf`.
       okfFor = pkgs: okf.packages.${pkgs.stdenv.hostPlatform.system}.okf;
+      # The CodeRabbit CLI, from the llm-agents input — on the dev-shell PATH.
+      coderabbitFor = pkgs: llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.coderabbit-cli;
       # BOTH dev shells' contents, declared once: the wrappers, the packages
       # and the environment that `nix develop` and devenv.nix each hand you.
       # Importing the same file is what keeps the twins from drifting; each
-      # shell adds only what it alone plumbs (its toolchain, its okf).
+      # shell adds only what it alone plumbs (its toolchain, and the CLIs it
+      # reaches through its own inputs: okf, coderabbit).
       devShellFor = pkgs: import ./nix/dev { inherit pkgs; };
       # The two DUCKDB_* variables the history reader's sys crate needs — the
       # PACKAGE build wants them too, and a package is not a shell.
@@ -250,6 +261,9 @@
             # reaches this shell through the flake's own input and devenv's
             # through devenv.yaml's, which is why it is not in the shared file.
             (okfFor pkgs)
+            # coderabbit / cr, the CodeRabbit review CLI — the same split as
+            # okf: this shell's llm-agents input, devenv's mirrored one.
+            (coderabbitFor pkgs)
           ];
           env = (devShellFor pkgs).env;
         };

@@ -1,5 +1,11 @@
 # Log
 
+## 2026-10-03
+
+- **Creation** — [skills-update](skills-update.md): refreshes the vendored
+  CodeRabbit skills and re-applies this repo's patches over them, starting
+  with autofix's push gate.
+
 ## 2026-10-01
 
 - **Creation** — [overlay-replay](overlay-replay.md): a night's log replayed at

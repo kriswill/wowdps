@@ -1,0 +1,19 @@
+{
+  "enabledPlugins": {
+    "code-review@claude-plugins-official": false
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(nix build --no-link --print-out-paths --inputs-from \"$CLAUDE_PROJECT_DIR\" llm-agents#coderabbit-cli 2>/dev/null) && echo \"export PATH=\\\"$p/bin:\\$PATH\\\"\" >> \"$CLAUDE_ENV_FILE\" || true",
+            "timeout": 300,
+            "statusMessage": "Putting the dev shell's coderabbit on PATH"
+          }
+        ]
+      }
+    ]
+  }
+}
