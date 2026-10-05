@@ -121,7 +121,10 @@ and the test binaries without running them. It gates on nothing. Both jobs
 share one rust-cache `shared-key`, and only main writes either cache: PR
 runs restore rust-cache with `save-if: false` and read sccache with
 `SCCACHE_GHA_RW_MODE=READ_ONLY`. A PR-scoped entry would serve that PR
-alone while crowding main's out of the 10 GB budget.
+alone while crowding main's out of the 10 GB budget. The stable clippy
+canary keeps no cache at all, since main never runs it. Before #85 every PR
+run saved its own `target/`, about 1.8 GB a PR; on 2026-10-04 those dead
+entries made up 19 of the repository's 23.6 GB, and were deleted.
 
 ## Consequences
 
