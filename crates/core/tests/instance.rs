@@ -894,3 +894,81 @@ fn an_open_world_door_is_zoned_out_whatever_its_difficulty() {
     );
     assert_eq!(idx.open_visit.as_ref().and_then(|m| m.visit), Some(0));
 }
+
+/// R10: a Σ knows what its members knew, nothing more. The Overall used to
+/// seed its identity maps (owners, names, classes …) from the meter as it
+/// stood when asked: the end of the file in a full replay, the end of the
+/// visit in a lazy load. A guardian whose owner is named only AFTER the
+/// key's END (a Lightspawn Lasher's "Sappy Demise" cast, 28 lines after a
+/// real +13's END) folded into the full replay's Σ alone — 65,856 damage on
+/// Den of Nalorakk +13, 65,053 on The Blinding Vale +11 — while every
+/// member, lazy or full, left it out. And a statement after the END landed
+/// in the member the END had closed. Both variants: the owner named after
+/// post-key combat (the Σ's seeding), and before any (the closed member).
+#[test]
+fn a_sigma_knows_only_what_its_members_knew() {
+    let head = "\
+8/1/2026 12:00:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1
+8/1/2026 12:00:05.000-7  ZONE_CHANGE,2526,\"Algeth'ar Academy\",23
+8/1/2026 12:00:10.000-7  CHALLENGE_MODE_START,\"Algeth'ar Academy\",2526,558,12,[9,10]
+8/1/2026 12:01:00.000-7  ENCOUNTER_START,2562,\"Vexamus\",8,5,2526
+8/1/2026 12:01:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1-2526-1-194181-0000000001,\"Vexamus\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+8/1/2026 12:01:20.000-7  SPELL_DAMAGE,Creature-0-1-2526-1-254697-00001771EB,\"Lightspawn Lasher\",0x2111,0x0,Creature-0-1-2526-1-194181-0000000001,\"Vexamus\",0xa48,0x0,1253,\"Lightbloom Lashing\",8,50,50,0,0,0,0,0,nil,nil
+8/1/2026 12:02:00.000-7  ENCOUNTER_END,2562,\"Vexamus\",8,5,1,60000
+8/1/2026 12:02:01.000-7  CHALLENGE_MODE_END,2526,1,12,111000,300.000000,3029
+";
+    let summon = "8/1/2026 12:02:02.000-7  SPELL_SUMMON,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1-2526-1-254697-00001771EB,\"Lightspawn Lasher\",0x2111,0x0,1252,\"Lightspawn\",0x8\n";
+    let after = "8/1/2026 12:02:30.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Training Dummy\",0xa48,0x0,116,\"Frostbolt\",16,5,5,0,0,0,0,0,nil,nil\n";
+    for (variant, text) in [
+        (
+            "owner named after post-key combat",
+            format!("{head}{after}{summon}"),
+        ),
+        (
+            "owner named before any post-key combat",
+            format!("{head}{summon}{after}"),
+        ),
+    ] {
+        let bytes = text.as_bytes();
+        let full = meter_from_lines(text.lines());
+        let idx = scan(&mut &bytes[..]);
+        let key = idx
+            .overalls
+            .iter()
+            .find(|m| m.name.contains('+'))
+            .expect("the key's Σ");
+        let ord = key.visit.expect("an Overall names its visit");
+        let want = full.overall(ord).expect("the full replay's Σ");
+        let got = lazy(bytes, key).overall(ord).expect("the lazy Σ");
+        assert_eq!(
+            amounts(&got, View::Damage),
+            amounts(&want, View::Damage),
+            "{variant}: lazy Σ = full Σ"
+        );
+        // A full replay's Σ is its members merged, nothing more.
+        let members: u64 = full
+            .segments()
+            .iter()
+            .filter(|s| s.visit == Some(ord))
+            .flat_map(|s| s.rows(View::Damage))
+            .map(|r| r.amount)
+            .sum();
+        let sigma: u64 = want.rows(View::Damage).iter().map(|r| r.amount).sum();
+        assert_eq!(sigma, members, "{variant}: Σ = Σ members");
+        // Every member, lazily loaded, is the full replay's member.
+        for meta in idx.segments.iter().filter(|m| m.visit == Some(ord)) {
+            let seg = full
+                .segments()
+                .iter()
+                .find(|s| s.start_ms == meta.start_ms)
+                .expect("the member in the full replay");
+            let lazy = lazy(bytes, meta);
+            assert_eq!(
+                amounts(&lazy.segments()[0], View::Damage),
+                amounts(seg, View::Damage),
+                "{variant}: member {}",
+                meta.name
+            );
+        }
+    }
+}

@@ -2,6 +2,10 @@
 
 ## 2026-10-04
 
+- **Update** — [R10 Visits & Overall](r10.md): a Σ starts knowing nobody and
+  learns identity from its members alone, and a closed segment learns
+  nothing more — lazy Σ = full Σ again on a real +13 and +11
+  ([decision](../decisions/a-sigma-knows-its-members.md)).
 - **Update** — [R10 Visits & Overall](r10.md): a door onto an open-world map
   (Map.db2 InstanceType 0) is zoned out whatever difficulty it carries — a
   hearth stamped with the raid's difficulty no longer opens a city visit

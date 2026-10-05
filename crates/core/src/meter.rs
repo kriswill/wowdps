@@ -1237,7 +1237,30 @@ struct AbsMark {
 }
 
 impl Segment {
+    /// A segment opening now, seeded with what the meter already knows —
+    /// owners, names, flags, classes, specs, loadouts, summons — so a pet
+    /// summoned in an earlier segment still resolves here. Lazy loads
+    /// rebuild that knowledge from the seed lines before the slice.
     fn new(kind: SegmentKind, name: String, start_ms: i64, seed: &Meter) -> Self {
+        Self {
+            owners: seed.owners.clone(),
+            names: seed.names.clone(),
+            flags: seed.flags.clone(),
+            classes: seed.classes.clone(),
+            specs: seed.specs.clone(),
+            loadouts: seed.loadouts.clone(),
+            summons: seed.summons.clone(),
+            ..Self::empty(kind, name, start_ms, seed)
+        }
+    }
+
+    /// A segment that knows nobody: no identity seeded from the meter. An
+    /// Overall starts here and learns what its members knew through
+    /// `absorb` — the meter's own knowledge is where the replay stands when
+    /// it is asked (the end of the file in a full replay, the end of the
+    /// visit in a lazy load), so seeding from it made a Σ depend on when it
+    /// was read.
+    fn empty(kind: SegmentKind, name: String, start_ms: i64, seed: &Meter) -> Self {
         Self {
             kind,
             name,
@@ -1266,14 +1289,12 @@ impl Segment {
             healed: HashMap::new(),
             absorbed_credit: HashMap::new(),
             self_harm: HashMap::new(),
-            // Seed with what the meter already knows so a pet summoned in an earlier
-            // segment still resolves here.
-            owners: seed.owners.clone(),
-            names: seed.names.clone(),
-            flags: seed.flags.clone(),
-            classes: seed.classes.clone(),
-            specs: seed.specs.clone(),
-            loadouts: seed.loadouts.clone(),
+            owners: HashMap::new(),
+            names: HashMap::new(),
+            flags: HashMap::new(),
+            classes: HashMap::new(),
+            specs: HashMap::new(),
+            loadouts: HashMap::new(),
             last_ms: start_ms,
             enemies: HashMap::new(),
             pvp: false,
@@ -1288,7 +1309,7 @@ impl Segment {
             casts: HashMap::new(),
             misses: HashMap::new(),
             dots: HashMap::new(),
-            summons: seed.summons.clone(),
+            summons: HashMap::new(),
             marks: HashMap::new(),
             item_casts: HashMap::new(),
             spans: HashMap::new(),
@@ -5015,7 +5036,9 @@ impl Meter {
         if u.flags != 0 && self.flags.get(&u.guid) != Some(&u.flags) {
             self.flags.insert(u.guid.clone(), u.flags);
         }
-        if let Some(s) = self.segments.last_mut() {
+        // Only an OPEN segment learns, as `infer`: a closed one's byte range
+        // ends before this line, so its lazy load never sees it.
+        if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none()) {
             if !u.name.is_empty() && s.names.get(&u.guid).is_none_or(|n| *n != u.name) {
                 s.names.insert(u.guid.clone(), u.name.clone());
             }
@@ -5137,7 +5160,7 @@ impl Meter {
             id: spell.id,
             name: spell.name.clone(),
         };
-        if let Some(s) = self.segments.last_mut() {
+        if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none()) {
             s.summons
                 .entry(key.clone())
                 .or_insert_with(|| summon.clone());
@@ -5154,7 +5177,7 @@ impl Meter {
         if self.owners.get(unit).is_none_or(|o| o != owner) {
             self.owners.insert(unit.to_string(), owner.to_string());
         }
-        if let Some(s) = self.segments.last_mut()
+        if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none())
             && s.owners.get(unit).is_none_or(|o| o != owner)
         {
             s.owners.insert(unit.to_string(), owner.to_string());
@@ -6348,7 +6371,7 @@ impl Meter {
                     let class = spec.class();
                     self.classes.insert(guid.clone(), class);
                     self.specs.insert(guid.clone(), spec);
-                    if let Some(s) = self.segments.last_mut() {
+                    if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none()) {
                         s.classes.insert(guid.clone(), class);
                         s.specs.insert(guid.clone(), spec);
                     }
@@ -6374,7 +6397,7 @@ impl Meter {
                         },
                     });
                     self.loadouts.insert(guid.clone(), Arc::clone(&loadout));
-                    if let Some(s) = self.segments.last_mut() {
+                    if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none()) {
                         s.loadouts.insert(guid.clone(), loadout);
                     }
                 }
@@ -6731,7 +6754,10 @@ impl Meter {
             .filter(|s| s.visit == Some(ordinal))
             .peekable();
         members.peek()?;
-        let mut out = Segment::new(SegmentKind::Overall, v.display_name(), v.start_ms, self);
+        // The Σ knows what its members knew and nothing more: seeded from
+        // the meter, a pet whose owner a line after a key's END named folded
+        // into a full replay's Σ alone (65,856 damage on a real +13).
+        let mut out = Segment::empty(SegmentKind::Overall, v.display_name(), v.start_ms, self);
         out.visit = Some(ordinal);
         out.end_ms = v.end_ms;
         out.key = v.keyed;
