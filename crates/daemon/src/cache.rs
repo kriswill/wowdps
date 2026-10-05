@@ -39,7 +39,10 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // raid, a delve, Timewalking) and is a seed when it moves it; ScanState
 // gained `last_zone_map`. A checkpoint scanned by the old rule holds those
 // pulls outside any visit and the visit before them open.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x11";
+// \x12: R10 reads a door onto an open-world map (Map.db2) as zoned out — a
+// checkpoint scanned by the old rule holds a city visit opened by a hearth
+// stamped with the raid's difficulty, and the raid visit it closed.
+const MAGIC: &[u8; 8] = b"WDPSIDX\x12";
 
 pub struct IndexCache {
     dir: PathBuf,

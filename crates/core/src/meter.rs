@@ -597,6 +597,20 @@ pub(crate) fn instanced_difficulty(difficulty: u32) -> bool {
     !matches!(difficulty, 0 | 172 | 192 | 230)
 }
 
+/// R10: the difficulty a door means. The game stamps a door OUT of an
+/// instance with the difficulty it just left — a hearth out of a Heroic raid
+/// logs `ZONE_CHANGE,0,"Silvermoon City",15`, the end of a key
+/// `ZONE_CHANGE,2444,"The Waking Shores",8` — so a door onto a map Map.db2
+/// calls open world (the generated `open_world_maps.rs`) is read as 0, zoned
+/// out. A map the table does not know keeps the door's own difficulty.
+pub(crate) fn door_difficulty(map_id: u32, difficulty: u32) -> u32 {
+    if crate::open_world_maps::open_world(map_id) {
+        0
+    } else {
+        difficulty
+    }
+}
+
 /// R10: where a visit stands, as every resume decision reads it. `Meter`
 /// and the index scanner both decide through [`Standing::resumed_by`], so
 /// the two cannot drift apart.
@@ -5502,7 +5516,8 @@ impl Meter {
     /// 0 reads as zoned out: the pulls landed outside any visit, and the
     /// visit they replaced stayed current, and live, to the end of the log.
     /// So an ENCOUNTER_START while zoned out, at an instanced difficulty, on
-    /// the map the last door named, settles it as a CHALLENGE_MODE_START
+    /// the map the last door named (never an open-world map: a pull there
+    /// reads as a door would, `door_difficulty`), settles it as a CHALLENGE_MODE_START
     /// settles a key: the current visit resumes when it is on that map at
     /// that difficulty (a keyed one on the map alone, and a keystone pull
     /// on an unkeyed one is a key the log joined mid-run, which its END
@@ -5513,8 +5528,7 @@ impl Meter {
     /// does. The scanner mirrors this and seeds every START that zones in.
     fn encounter_visit(&mut self, ts: i64, instance_id: u32, difficulty: u32) {
         if self.zoned_in
-            || instance_id == 0
-            || !instanced_difficulty(difficulty)
+            || !instanced_difficulty(door_difficulty(instance_id, difficulty))
             || self.last_zone_map != Some(instance_id)
         {
             return;
@@ -6367,12 +6381,16 @@ impl Meter {
             }
 
             // R10: visit tracking. Every zone change closes the open Trash
-            // segment; a nonzero difficulty means instanced content.
+            // segment; a nonzero difficulty means instanced content — except
+            // on an open-world map, where the game stamps a door out of an
+            // instance with the difficulty it just left (a hearth out of a
+            // Heroic raid logs `ZONE_CHANGE,0,"Silvermoon City",15`).
             Event::ZoneChange {
                 map_id,
                 name,
                 difficulty,
             } => {
+                let difficulty = &door_difficulty(*map_id, *difficulty);
                 self.close_trash(ts);
                 // R13: any teleport ends the dead-arena window.
                 self.arena_over = false;

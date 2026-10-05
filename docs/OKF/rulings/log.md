@@ -2,6 +2,10 @@
 
 ## 2026-10-04
 
+- **Update** — [R10 Visits & Overall](r10.md): a door onto an open-world map
+  (Map.db2 InstanceType 0) is zoned out whatever difficulty it carries — a
+  hearth stamped with the raid's difficulty no longer opens a city visit
+  ([decision](../decisions/an-open-world-door-is-zoned-out.md)).
 - **Update** — [R10 Visits & Overall](r10.md): a pull behind a door logged at
   difficulty 0 zones in — an ENCOUNTER_START while zoned out, at an instanced
   difficulty on the map the last door named, resumes or opens its visit, and

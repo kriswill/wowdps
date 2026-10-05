@@ -2,6 +2,10 @@
 
 ## 2026-10-04
 
+- **Creation** — [An Open-World Door Is Zoned Out](an-open-world-door-is-zoned-out.md):
+  a ZONE_CHANGE onto a map Map.db2 calls open world reads as difficulty 0, so
+  a hearth logged as `"Silvermoon City",15` no longer opens a city visit and
+  splits the raid's; the generated `open_world_maps.rs` names the maps.
 - **Creation** — [A Pull Zones In The Door That Logged Zero](a-pull-zones-in.md):
   an ENCOUNTER_START while zoned out opens or resumes its visit (a raid
   re-entered after a Heroic→Mythic switch logged its doors at 0, and the

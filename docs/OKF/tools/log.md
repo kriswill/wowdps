@@ -1,5 +1,11 @@
 # Log
 
+## 2026-10-04
+
+- **Creation** — [gen-open-world-maps](gen-open-world-maps.md): Map.db2's
+  open-world maps (InstanceType 0) into `crates/core/src/open_world_maps.rs`,
+  read by R10's door rule ([decision](../decisions/an-open-world-door-is-zoned-out.md)).
+
 ## 2026-10-03
 
 - **Update** — [skills-update](skills-update.md): installs upstream's

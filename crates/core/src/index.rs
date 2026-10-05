@@ -490,7 +490,9 @@ impl Scanner {
                 self.close_trash(ts, off);
                 let f = split_fields(rest, 4);
                 let map_id = f.get(1).map_or(0, |s| ascii_u32(s));
-                let difficulty = f.get(3).map_or(0, |s| ascii_u32(s));
+                // R10 mirror of `Meter`: an open-world door is zoned out.
+                let difficulty =
+                    crate::meter::door_difficulty(map_id, f.get(3).map_or(0, |s| ascii_u32(s)));
                 // R13: any teleport ends the dead-arena window.
                 self.arena_over = false;
                 // R13 mirror of `Meter::last_zone`: every difficulty; R10's
@@ -876,8 +878,10 @@ impl Scanner {
     /// which makes the START a seed.
     fn encounter_visit(&mut self, ts: i64, off: u64, instance_id: u32, difficulty: u32) -> bool {
         if self.visit.as_ref().is_some_and(|v| v.zoned_in)
-            || instance_id == 0
-            || !crate::meter::instanced_difficulty(difficulty)
+            || !crate::meter::instanced_difficulty(crate::meter::door_difficulty(
+                instance_id,
+                difficulty,
+            ))
             || self.last_zone_map != Some(instance_id)
         {
             return false;

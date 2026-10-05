@@ -839,3 +839,58 @@ fn a_pull_zones_in_only_instanced_content_its_door_named() {
     );
     assert_eq!(tags(door_stands), vec![(SegmentKind::Encounter, Some(0))]);
 }
+
+/// R10 amendment: an open-world door is zoned out. The game stamps a door
+/// OUT of an instance with the difficulty it just left — a hearth out of a
+/// Heroic raid logs `"Silvermoon City",15`, the end of a key
+/// `"The Waking Shores",8` — and a nonzero difficulty read as zoned in, so
+/// the hearth opened a "Silvermoon City" visit (the history store held five
+/// such Σ cards) and closed the raid's, and the next pull behind a 0-logged
+/// door opened a second raid visit instead of resuming the first. Map.db2
+/// calls those maps open world (InstanceType 0), so the doors read as 0.
+#[test]
+fn an_open_world_door_is_zoned_out_whatever_its_difficulty() {
+    let text = "\
+10/4/2026 19:00:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1
+10/4/2026 19:00:05.000-7  ZONE_CHANGE,3004,\"The Venomous Abyss\",15
+10/4/2026 19:01:00.000-7  ENCOUNTER_START,3429,\"The Coiled Altar\",15,25,3004
+10/4/2026 19:01:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"The Coiled Altar\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+10/4/2026 19:02:00.000-7  ENCOUNTER_END,3429,\"The Coiled Altar\",15,25,1,60000
+10/4/2026 19:03:00.000-7  ZONE_CHANGE,0,\"Silvermoon City\",15
+10/4/2026 19:03:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-2,\"Training Dummy\",0xa48,0x0,116,\"Frostbolt\",16,5,5,0,0,0,0,0,nil,nil
+10/4/2026 19:05:00.000-7  ZONE_CHANGE,3004,\"The Venomous Abyss\",0
+10/4/2026 19:06:00.000-7  ENCOUNTER_START,3492,\"Ula'tek\",15,26,3004
+10/4/2026 19:06:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-3,\"Ula'tek\",0xa48,0x0,116,\"Frostbolt\",16,200,200,0,0,0,0,0,nil,nil
+10/4/2026 19:07:00.000-7  ENCOUNTER_END,3492,\"Ula'tek\",15,26,1,60000
+10/4/2026 19:08:00.000-7  ZONE_CHANGE,2444,\"The Waking Shores\",8
+10/4/2026 19:08:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-4,\"Primal Tarasek\",0xa48,0x0,116,\"Frostbolt\",16,7,7,0,0,0,0,0,nil,nil
+";
+    let meter = meter_from_lines(text.lines());
+    let places: Vec<_> = meter
+        .visits()
+        .iter()
+        .map(|v| (v.display_name(), v.difficulty))
+        .collect();
+    assert_eq!(
+        places,
+        vec![("The Venomous Abyss".to_string(), 15)],
+        "one raid visit, no city visit"
+    );
+    assert_eq!(meter.visits()[0].end_ms, None, "suspended, never closed");
+    assert_eq!(
+        tags(text),
+        vec![
+            (SegmentKind::Encounter, Some(0)), // The Coiled Altar
+            (SegmentKind::Trash, None),        // the town dummy: zoned out
+            (SegmentKind::Encounter, Some(0)), // Ula'tek resumes the raid
+            (SegmentKind::Trash, None),        // the Waking Shores: zoned out
+        ]
+    );
+    let idx = scan(&mut text.as_bytes());
+    assert!(
+        idx.overalls.is_empty(),
+        "no visit closed: {:?}",
+        idx.overalls
+    );
+    assert_eq!(idx.open_visit.as_ref().and_then(|m| m.visit), Some(0));
+}
