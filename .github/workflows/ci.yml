@@ -233,7 +233,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # No cargo cache: one saved from a PR is readable by that PR alone
+      # (about 0.6 GB each, crowding main's out of the 10 GB budget), and
+      # main never runs this job to save one every PR could read. It
+      # compiles from scratch beside the `ci` job, which takes longer.
       # No distro libduckdb here: the history crate is the one workspace
       # member with a native dependency, and it builds only in the flake
       # shell (system-linked, never bundled). The canary still covers every
