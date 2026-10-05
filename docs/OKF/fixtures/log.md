@@ -2,6 +2,9 @@
 
 ## 2026-10-04
 
+- **Update** — [relog.txt](relog.md): its golden regains the 65 metric rows
+  `check.awk` grew since R21 (all additive), and `verify.sh` gates it by
+  default, as CI runs it.
 - **Update** — [instance.txt](instance.md): its gate replays a raid whose
   difficulty was switched outside, its doors logged at 0, checking the meter,
   the scanner, lazy slices, the live tail and checkpoint resumes against each
