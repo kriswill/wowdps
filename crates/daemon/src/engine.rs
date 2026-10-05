@@ -245,6 +245,16 @@ impl Engine {
 
     pub fn on_tail(&mut self, ev: TailEvent, out: &mut Vec<EngineEvent>) {
         match ev {
+            // State only (owners, classes, visits): a seed opens no segment,
+            // so there is nothing to number or announce.
+            TailEvent::Seeds(lines) => {
+                for line in &lines {
+                    if let Some(parsed) = parse_line(line) {
+                        self.now_ms = self.now_ms.max(parsed.ts_ms);
+                        self.meter.seed(parsed);
+                    }
+                }
+            }
             TailEvent::Lines(lines) => {
                 if self.caught_up && !lines.is_empty() {
                     self.last_fresh = Some(Instant::now());

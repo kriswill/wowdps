@@ -19,7 +19,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use wowdps_core::index::{load_segment_text, scan};
-use wowdps_core::meter::{SegmentKind, meter_from_lines};
+use wowdps_core::meter::SegmentKind;
 use wowdps_core::parser::{AuraType, Event, parse_line};
 
 /// The healer shields whose log sizes are trusted: an absorb never exceeds
@@ -96,8 +96,12 @@ fn shields_balance_on_every_real_segment() {
     for meta in &metas {
         let text = load_segment_text(Path::new(&path), meta).expect("load the segment");
         let t = Instant::now();
-        let lines: Vec<_> = text.lines().filter_map(parse_line).collect();
-        let meter = meter_from_lines(text.lines());
+        let lines: Vec<_> = text
+            .seeds()
+            .chain(text.slice())
+            .filter_map(parse_line)
+            .collect();
+        let meter = text.meter();
         parse_ms += t.elapsed().as_millis();
 
         // Every guid a shield can be keyed on or folded to.

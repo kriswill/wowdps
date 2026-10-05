@@ -589,7 +589,69 @@ pub(crate) const KEY_COUNTDOWN_MS: i64 = 10_000;
 /// the run as a key.
 pub const KEYSTONE_DIFFICULTY: u32 = 8;
 
+/// R10: a pull at this difficulty is instanced content, so it may open its
+/// visit (`Meter::encounter_visit`). Difficulty.db2 gives three ids an
+/// InstanceType of 0, the open world: 172 World Boss, 192 Challenge Level 1
+/// and 230 Heroic. A world boss's pull keeps its place outside any visit.
+pub(crate) fn instanced_difficulty(difficulty: u32) -> bool {
+    !matches!(difficulty, 0 | 172 | 192 | 230)
+}
+
+/// R10: where a visit stands, as every resume decision reads it. `Meter`
+/// and the index scanner both decide through [`Standing::resumed_by`], so
+/// the two cannot drift apart.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Standing {
+    pub map_id: u32,
+    pub difficulty: u32,
+    pub keyed: bool,
+    /// A finished key: nothing resumes it.
+    pub ended: bool,
+}
+
+impl Standing {
+    /// R10: does arriving on `map_id` at `difficulty` resume this visit?
+    /// Unended, the same map, the same difficulty — a keyed visit on the
+    /// map alone, since a mid-run re-fire carries another difficulty than
+    /// the door's. A PULL (`pull`: an ENCOUNTER_START) at the keystone
+    /// difficulty also resumes an unkeyed one: a key the log joined
+    /// mid-run, which its END keys.
+    pub fn resumed_by(self, map_id: u32, difficulty: u32, pull: bool) -> bool {
+        !self.ended
+            && self.map_id == map_id
+            && (self.keyed
+                || self.difficulty == difficulty
+                || (pull && difficulty == KEYSTONE_DIFFICULTY))
+    }
+}
+
 impl Visit {
+    /// R10: a plain visit, opened by a door or by a pull behind one.
+    fn unkeyed(map_id: u32, difficulty: u32, name: String, start_ms: i64) -> Self {
+        Self {
+            map_id,
+            difficulty,
+            name,
+            key_level: None,
+            keyed: false,
+            joined: false,
+            start_ms,
+            end_ms: None,
+            completed: None,
+            official_ms: None,
+            pars_ms: None,
+        }
+    }
+
+    pub(crate) fn standing(&self) -> Standing {
+        Standing {
+            map_id: self.map_id,
+            difficulty: self.difficulty,
+            keyed: self.keyed,
+            ended: self.end_ms.is_some(),
+        }
+    }
+
     /// "Skyreach +10" for keys, the zone name otherwise.
     pub fn display_name(&self) -> String {
         match self.key_level {
@@ -4897,6 +4959,9 @@ pub struct Meter {
     /// R13: name of the last zone entered, ANY difficulty — arenas zone in
     /// with difficulty 0, so the visit table never learns their names.
     last_zone: Option<String>,
+    /// R10: that zone's map id. A pull opens a visit only on the map its
+    /// door named, so the visit wears the door's name.
+    last_zone_map: Option<u32>,
     /// R13: an arena match's segment is open, so ARENA_MATCH_END has
     /// something to verdict. False outside one — a stray END closes nothing.
     in_arena: bool,
@@ -5414,6 +5479,60 @@ impl Meter {
         s.stack_hit(dst_guid, label, spell_id, dealt, ts);
     }
 
+    /// Replay a SEED line (`SegmentMeta::seeds`, the tail's `Seeds`) for the
+    /// state it carries and nothing else. A seed lands ahead of a slice, so
+    /// it must never open a segment. Every seed kind but one is passive
+    /// under `feed` already; the exception, an ENCOUNTER_START the scanner
+    /// seeded because it opened or resumed a visit (R10), replays its visit
+    /// rule alone.
+    pub fn seed(&mut self, line: LogLine) {
+        match &line.event {
+            Event::EncounterStart {
+                difficulty,
+                instance_id,
+                ..
+            } => self.encounter_visit(line.ts_ms, *instance_id, *difficulty),
+            _ => self.feed(line),
+        }
+    }
+
+    /// R10: a pull ZONES IN the door that led to it did not. The game can
+    /// log a door at difficulty 0 onto instanced content (a raid re-entered
+    /// after its difficulty was switched outside, delves, Timewalking), and
+    /// 0 reads as zoned out: the pulls landed outside any visit, and the
+    /// visit they replaced stayed current, and live, to the end of the log.
+    /// So an ENCOUNTER_START while zoned out, at an instanced difficulty, on
+    /// the map the last door named, settles it as a CHALLENGE_MODE_START
+    /// settles a key: the current visit resumes when it is on that map at
+    /// that difficulty (a keyed one on the map alone, and a keystone pull
+    /// on an unkeyed one is a key the log joined mid-run, which its END
+    /// keys); otherwise a NEW visit opens under the door's name at the
+    /// pull's difficulty, closing whatever was current. Zoned in, the door
+    /// that put us there stands. The trash between such a door and its
+    /// first pull stays outside, as the stretch before a door-0 key's START
+    /// does. The scanner mirrors this and seeds every START that zones in.
+    fn encounter_visit(&mut self, ts: i64, instance_id: u32, difficulty: u32) {
+        if self.zoned_in
+            || instance_id == 0
+            || !instanced_difficulty(difficulty)
+            || self.last_zone_map != Some(instance_id)
+        {
+            return;
+        }
+        let resumes = self
+            .current_visit
+            .and_then(|i| self.visits.get(i as usize))
+            .is_some_and(|v| v.standing().resumed_by(instance_id, difficulty, true));
+        if !resumes {
+            self.close_visit(ts);
+            let name = self.last_zone.clone().unwrap_or_default();
+            self.visits
+                .push(Visit::unkeyed(instance_id, difficulty, name, ts));
+            self.current_visit = Some(self.visits.len() as u32 - 1);
+        }
+        self.zoned_in = true;
+    }
+
     pub fn feed(&mut self, line: LogLine) {
         let ts = line.ts_ms;
         if let Some(h) = &line.owner_hint {
@@ -5483,8 +5602,12 @@ impl Meter {
                 name,
                 difficulty,
                 group_size,
+                instance_id,
             } => {
                 self.close(ts, None);
+                // R10: the pull settles its visit before its segment opens,
+                // so the segment carries the visit it settled.
+                self.encounter_visit(ts, *instance_id, *difficulty);
                 let mut seg = Segment::new(SegmentKind::Encounter, name.clone(), ts, self);
                 seg.encounter = Some(Encounter {
                     id: *id,
@@ -6254,8 +6377,10 @@ impl Meter {
                 // R13: any teleport ends the dead-arena window.
                 self.arena_over = false;
                 // R13: remembered at every difficulty — arena zones log 0.
+                // R10: with its map, the place a pull may open a visit.
                 if !name.is_empty() {
                     self.last_zone = Some(name.clone());
+                    self.last_zone_map = Some(*map_id);
                 }
                 let keyed_here = self.current_visit.is_some_and(|i| {
                     self.visits
@@ -6279,29 +6404,16 @@ impl Meter {
                     // difficulty stamped at the door — that must not split
                     // the run or its END gets orphaned.
                     let same = self.current_visit.is_some_and(|i| {
-                        self.visits.get(i as usize).is_some_and(|v| {
-                            v.end_ms.is_none()
-                                && v.map_id == *map_id
-                                && (v.keyed || v.difficulty == *difficulty)
-                        })
+                        self.visits
+                            .get(i as usize)
+                            .is_some_and(|v| v.standing().resumed_by(*map_id, *difficulty, false))
                     });
                     if same {
                         self.zoned_in = true;
                     } else {
                         self.close_visit(ts);
-                        self.visits.push(Visit {
-                            map_id: *map_id,
-                            difficulty: *difficulty,
-                            name: name.clone(),
-                            key_level: None,
-                            keyed: false,
-                            joined: false,
-                            start_ms: ts,
-                            end_ms: None,
-                            completed: None,
-                            official_ms: None,
-                            pars_ms: None,
-                        });
+                        self.visits
+                            .push(Visit::unkeyed(*map_id, *difficulty, name.clone(), ts));
                         self.current_visit = Some(self.visits.len() as u32 - 1);
                         self.zoned_in = true;
                     }
@@ -6627,11 +6739,28 @@ impl Meter {
     }
 }
 
-/// Replay raw lines into a fresh meter — the lazy-load path, shared with the
-/// tests. Pure: no I/O, no clock.
+/// Replay raw lines into a fresh meter — a whole log from its first line,
+/// shared with the tests. Pure: no I/O, no clock. A lazily loaded slice
+/// starts mid-log behind its seed lines and goes through
+/// [`meter_from_seeded`].
 pub fn meter_from_lines<'a, I: IntoIterator<Item = &'a str>>(lines: I) -> Meter {
+    meter_from_seeded(std::iter::empty(), lines)
+}
+
+/// The lazy-load path: a slice's seed lines through `Meter::seed`, then the
+/// slice itself through `Meter::feed`. Pure: no I/O, no clock.
+pub fn meter_from_seeded<'a, 'b, S, L>(seeds: S, slice: L) -> Meter
+where
+    S: IntoIterator<Item = &'a str>,
+    L: IntoIterator<Item = &'b str>,
+{
     let mut meter = Meter::new();
-    for line in lines {
+    for line in seeds {
+        if let Some(parsed) = crate::parser::parse_line(line) {
+            meter.seed(parsed);
+        }
+    }
+    for line in slice {
         if let Some(parsed) = crate::parser::parse_line(line) {
             meter.feed(parsed);
         }
@@ -6741,6 +6870,7 @@ mod tests {
                 name: name.into(),
                 difficulty: 14,
                 group_size: 20,
+                instance_id: 0,
             },
         )
     }
@@ -8694,6 +8824,7 @@ mod tests {
                     name: "Boss".into(),
                     difficulty: 16,
                     group_size: 20,
+                    instance_id: 0,
                 },
             ),
             damage(1_000, p1(), None, 500),

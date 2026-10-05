@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use wowdps_core::index::{load_segment_text, scan};
-use wowdps_core::meter::{SegmentKind, View, meter_from_lines};
+use wowdps_core::meter::{SegmentKind, View};
 use wowdps_core::parser::{Event, parse_line};
 
 #[test]
@@ -34,7 +34,7 @@ fn stack_cells_are_bounded_on_every_real_boss_pull() {
     let mut stacking: BTreeMap<String, u16> = BTreeMap::new();
     for meta in &pulls {
         let text = load_segment_text(Path::new(&path), meta).expect("load the pull");
-        for raw in text.lines() {
+        for raw in text.seeds().chain(text.slice()) {
             let is_dose = raw
                 .split("  ")
                 .nth(1)
@@ -50,7 +50,7 @@ fn stack_cells_are_bounded_on_every_real_boss_pull() {
                 dose_parsed += 1;
             }
         }
-        let meter = meter_from_lines(text.lines());
+        let meter = text.meter();
         let mut keys: HashSet<String> = HashSet::new();
         for seg in meter.segments() {
             for r in seg.rows(View::Taken) {

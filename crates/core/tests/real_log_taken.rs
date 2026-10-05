@@ -12,7 +12,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use wowdps_core::index::{load_segment_text, scan};
-use wowdps_core::meter::{SegmentKind, View, meter_from_lines};
+use wowdps_core::meter::{SegmentKind, View};
 use wowdps_core::parser::{Event, parse_line};
 use wowdps_model::MissKind;
 
@@ -50,13 +50,17 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
     for meta in &pulls {
         let text = load_segment_text(Path::new(&path), meta).expect("load the pull");
         let t = Instant::now();
-        let lines: Vec<_> = text.lines().filter_map(parse_line).collect();
-        let meter = meter_from_lines(text.lines());
+        let lines: Vec<_> = text
+            .seeds()
+            .chain(text.slice())
+            .filter_map(parse_line)
+            .collect();
+        let meter = text.meter();
         parse_ms += t.elapsed().as_millis();
 
         // Census: every miss line is Missed, or Other for a kind the model
         // does not know (report which, never fail on it).
-        for raw in text.lines() {
+        for raw in text.seeds().chain(text.slice()) {
             let Some(ev) = raw.split("  ").nth(1).and_then(|r| r.split(',').next()) else {
                 continue;
             };

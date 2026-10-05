@@ -4,7 +4,7 @@
 //! arena's zone name across a cut, which is what `ScanState::last_zone`
 //! exists for).
 
-use wowdps_core::index::{load_segment, scan, scan_from};
+use wowdps_core::index::{load_segment_text, scan, scan_from};
 use wowdps_core::meter::{Meter, SegmentKind, View, meter_from_lines};
 
 const ARENA_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/arena.txt");
@@ -155,8 +155,9 @@ fn a_lazily_loaded_match_matches_the_full_replay() {
     let meter = replay();
 
     for (i, meta) in idx.segments.iter().enumerate() {
-        let lines = load_segment(std::path::Path::new(ARENA_FIXTURE), meta).unwrap();
-        let lazy = meter_from_lines(lines.iter().map(String::as_str));
+        let lazy = load_segment_text(std::path::Path::new(ARENA_FIXTURE), meta)
+            .unwrap()
+            .meter();
         let got = lazy.segments().last().expect("slice rebuilds the segment");
         let want = &meter.segments()[i];
         assert_eq!(got.name, want.name, "segment {i}");

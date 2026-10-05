@@ -1,7 +1,8 @@
 //! Fast structural scan of a combat log: segment boundaries and byte ranges,
 //! no per-event parsing. This is what lets the app show every encounter in a
 //! 300 MB log in well under a second, then lazily parse only the segment the
-//! user opens (`load_range` + `Meter::feed`).
+//! user opens (`load_segment_text` + `SegmentText::meter`: its seed lines
+//! through `Meter::seed`, its slice through `Meter::feed`).
 //!
 //! The scanner is a deliberate mirror of `Meter::feed`'s segmentation rules
 //! (ENCOUNTER_START/END, R6 version boundaries, R7 trash gaps) so that
@@ -13,8 +14,8 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::meter::{
-    CC_SPELLS, NON_HEALING_ABSORBS, SegmentKind, TRASH_GAP_MS, arena_name, is_friendly_source,
-    is_hostile_target, trash_name,
+    CC_SPELLS, Meter, NON_HEALING_ABSORBS, SegmentKind, TRASH_GAP_MS, arena_name,
+    is_friendly_source, is_hostile_target, trash_name,
 };
 use crate::parser::{is_damage_event, is_guid, parse_timestamp};
 use wowdps_model::Encounter;
@@ -36,14 +37,16 @@ pub struct SegmentMeta {
     /// R11: worth a list row (mirrors `Segment::counts`) — false for Trash
     /// that closed with no enemy damage and no player death.
     pub counts: bool,
-    /// `[start, end)` file offsets; replaying exactly these bytes through the
-    /// meter reproduces this segment.
+    /// `[start, end)` file offsets; feeding exactly these bytes through a
+    /// meter seeded with `seeds` reproduces this segment.
     pub byte_range: (u64, u64),
-    /// Byte ranges of earlier state-carrying lines (SPELL_SUMMON,
-    /// COMBATANT_INFO, COMBAT_LOG_VERSION, and R10's ZONE_CHANGE /
-    /// CHALLENGE_MODE lines) that must be replayed BEFORE the slice so pet
-    /// ownership, names, classes and visit context resolve exactly as they
-    /// do in a full replay. These lines are rare, so this stays small.
+    /// Byte ranges of earlier state-carrying lines, one line each
+    /// (SPELL_SUMMON, COMBATANT_INFO, COMBAT_LOG_VERSION, and R10's
+    /// ZONE_CHANGE / CHALLENGE_MODE lines and every ENCOUNTER_START that
+    /// zoned in) that must be replayed BEFORE the slice — through
+    /// `Meter::seed`, never `feed` — so pet ownership, names, classes and
+    /// visit context resolve exactly as they do in a full replay. These
+    /// lines are rare, so this stays small.
     pub seeds: Vec<(u64, u64)>,
     /// R10: ordinal of the instance visit this segment belongs to. On an
     /// `Overall` meta: the visit it aggregates (its byte range spans the
@@ -90,6 +93,19 @@ pub struct VisitScan {
     /// a re-run's reset marker and START can still read its map, difficulty
     /// and name. An ended visit never resumes and is never re-emitted.
     pub ended_ms: Option<i64>,
+}
+
+impl VisitScan {
+    /// What the shared R10 resume rule reads, as `Visit::standing` gives it
+    /// to `Meter`.
+    fn standing(&self) -> crate::meter::Standing {
+        crate::meter::Standing {
+            map_id: self.map_id,
+            difficulty: self.difficulty,
+            keyed: self.keyed,
+            ended: self.ended_ms.is_some(),
+        }
+    }
 }
 
 /// The product of one scan.
@@ -143,6 +159,9 @@ pub struct ScanState {
     /// `Meter`'s — arena matches (difficulty-0 zones, no visit) are named
     /// from it, and it must survive a checkpoint resume.
     pub last_zone: Option<String>,
+    /// R10: that zone's map id, mirroring `Meter`'s — a pull opens a visit
+    /// only on the map its door named.
+    pub last_zone_map: Option<u32>,
     /// R13: standing in a decided arena at `offset` (match ended, not yet
     /// teleported out) — trash opened here is noise and never counts.
     pub arena_over: bool,
@@ -150,50 +169,63 @@ pub struct ScanState {
     pub offset: u64,
 }
 
-/// Everything `Meter::feed` needs to reproduce one segment: the seed lines
-/// (pet summons, combatant info, version seams) followed by the slice itself.
-pub fn load_segment(path: &Path, meta: &SegmentMeta) -> io::Result<Vec<String>> {
-    Ok(load_segment_text(path, meta)?
-        .lines()
-        .map(str::to_string)
-        .collect())
-}
-
-/// A segment's raw text, owned once, read as borrowed lines.
+/// One segment's raw text, owned once and read as borrowed lines, in two
+/// parts that never mix: the SEED lines (pet summons, combatant info,
+/// version seams, R10's visit lines) and the slice itself. A seed replays
+/// through `Meter::seed` and the slice through `Meter::feed` — fed, an R10
+/// seed can be an ENCOUNTER_START, which would open a segment ahead of the
+/// slice — so the two only ever leave here apart, or as [`meter`].
 ///
-/// [`load_segment`]'s `Vec<String>` is one allocation and one copy per line —
-/// 71 ms of the 86 MB pull's load, against 28 ms for reading the bytes and
-/// validating them a single time. Its signature is fixed by CONTRACT.md, so
-/// this sits beside it for callers that only want to iterate (the daemon's
-/// loader feeds the lines straight to a `Meter` and drops them).
+/// Reading the bytes and validating them once costs 28 ms of the 86 MB
+/// pull's load, against 71 ms for a `String` per line.
+///
+/// [`meter`]: SegmentText::meter
 pub struct SegmentText {
     buf: String,
+    /// Where the slice begins: `buf[..slice_at]` is the seed lines.
+    slice_at: usize,
 }
 
 impl SegmentText {
-    /// The segment's lines, blank ones dropped and `\r` trimmed — exactly what
-    /// [`load_segment`] returns, without materialising a `String` each.
-    pub fn lines(&self) -> impl Iterator<Item = &str> {
-        self.buf
-            .split('\n')
-            .filter(|l| !l.is_empty())
-            .map(|l| l.strip_suffix('\r').unwrap_or(l))
+    /// The seed lines, blank ones dropped and `\r` trimmed.
+    pub fn seeds(&self) -> impl Iterator<Item = &str> {
+        text_lines(self.buf.get(..self.slice_at).unwrap_or_default())
+    }
+
+    /// The slice's lines, blank ones dropped and `\r` trimmed.
+    pub fn slice(&self) -> impl Iterator<Item = &str> {
+        text_lines(self.buf.get(self.slice_at..).unwrap_or_default())
+    }
+
+    /// The segment replayed into a fresh meter — what the daemon's loader
+    /// runs: the seeds through `Meter::seed`, then the slice through
+    /// `Meter::feed`.
+    pub fn meter(&self) -> Meter {
+        crate::meter::meter_from_seeded(self.seeds(), self.slice())
     }
 }
 
-/// Everything `Meter::feed` needs for one segment, as one owned buffer.
+fn text_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.split('\n')
+        .filter(|l| !l.is_empty())
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+}
+
+/// Everything a fresh `Meter` needs to reproduce one segment: its seed
+/// ranges, then its byte range, read into one [`SegmentText`].
 pub fn load_segment_text(path: &Path, meta: &SegmentMeta) -> io::Result<SegmentText> {
     let mut buf = String::new();
     for &range in &meta.seeds {
         read_range_into(path, range, &mut buf)?;
     }
+    let slice_at = buf.len();
     read_range_into(path, meta.byte_range, &mut buf)?;
-    Ok(SegmentText { buf })
+    Ok(SegmentText { buf, slice_at })
 }
 
 /// Append one byte range's text. Ranges are line-aligned, but a separating
 /// newline is cheap insurance against a seed's last line fusing with the
-/// next range's first; `lines()` drops the blank it may leave behind.
+/// next range's first; the line readers drop the blank it may leave behind.
 fn read_range_into(path: &Path, range: (u64, u64), out: &mut String) -> io::Result<()> {
     let bytes = read_range_bytes(path, range)?;
     match String::from_utf8(bytes) {
@@ -221,7 +253,7 @@ fn read_range_bytes(path: &Path, range: (u64, u64)) -> io::Result<Vec<u8>> {
 pub fn load_range(path: &Path, range: (u64, u64)) -> io::Result<Vec<String>> {
     let mut buf = String::new();
     read_range_into(path, range, &mut buf)?;
-    Ok(SegmentText { buf }.lines().map(str::to_string).collect())
+    Ok(text_lines(&buf).map(str::to_string).collect())
 }
 
 /// Scan a whole reader (normally a `File` positioned at 0). The caller keeps
@@ -245,6 +277,7 @@ pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
         visit_count: state.visit_count,
         visit: state.visit,
         last_zone: state.last_zone,
+        last_zone_map: state.last_zone_map,
         in_arena: false,
         arena_home: None,
         arena_factions: Default::default(),
@@ -259,6 +292,7 @@ pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
         visit_count: sc.visit_count,
         visit: sc.visit.clone(),
         last_zone: sc.last_zone.clone(),
+        last_zone_map: sc.last_zone_map,
         arena_over: sc.arena_over,
         offset: base,
     };
@@ -361,6 +395,7 @@ struct Ckpt {
     visit_count: u32,
     visit: Option<VisitScan>,
     last_zone: Option<String>,
+    last_zone_map: Option<u32>,
     arena_over: bool,
     offset: u64,
 }
@@ -382,6 +417,8 @@ struct Scanner {
     visit: Option<VisitScan>,
     /// R13: mirrors `Meter::last_zone` (arena segment names).
     last_zone: Option<String>,
+    /// R10: mirrors `Meter::last_zone_map` (where a pull opens a visit).
+    last_zone_map: Option<u32>,
     /// R13: mirrors `Meter::in_arena`/`arena_home`/`arena_factions`. All
     /// live only while a match's segment is open, so none of it needs to
     /// travel in a checkpoint.
@@ -456,9 +493,11 @@ impl Scanner {
                 let difficulty = f.get(3).map_or(0, |s| ascii_u32(s));
                 // R13: any teleport ends the dead-arena window.
                 self.arena_over = false;
-                // R13 mirror of `Meter::last_zone`: every difficulty.
+                // R13 mirror of `Meter::last_zone`: every difficulty; R10's
+                // `last_zone_map` beside it.
                 if let Some(name) = f.get(2).filter(|n| !n.is_empty()) {
                     self.last_zone = Some(String::from_utf8_lossy(name).into_owned());
+                    self.last_zone_map = Some(map_id);
                 }
                 let seed_n = self.seeds.len();
                 self.seeds.push((off, end));
@@ -473,11 +512,7 @@ impl Scanner {
                     .as_mut()
                     // A keyed visit resumes on the map alone; a FINISHED
                     // one never resumes at all (see `Meter`).
-                    .filter(|v| {
-                        v.ended_ms.is_none()
-                            && v.map_id == map_id
-                            && (v.keyed || v.difficulty == difficulty)
-                    })
+                    .filter(|v| v.standing().resumed_by(map_id, difficulty, false))
                 {
                     v.zoned_in = true;
                 } else {
@@ -605,17 +640,26 @@ impl Scanner {
             }
             "ENCOUNTER_START" => {
                 let Some(ts) = ts_of(prefix) else { return };
-                let f = split_fields(rest, 5);
+                let f = split_fields(rest, 6);
                 let name = String::from_utf8_lossy(f.get(2).copied().unwrap_or(b"?")).into_owned();
                 let num = |i: usize| f.get(i).map_or(0, |s| ascii_u32(s));
                 self.close(ts, None, off);
+                // R10 mirror of `Meter::encounter_visit`: the pull settles
+                // its visit first. A START that moved the visit state is a
+                // seed for every later slice (replayed through `Meter::seed`,
+                // so it opens no segment there); its own slice starts with
+                // it, so its own seeds stop short of it.
+                let seeds = self.seeds.clone();
+                if self.encounter_visit(ts, off, num(5), num(3)) {
+                    self.seeds.push((off, end));
+                }
                 self.open = Some(OpenSeg {
                     kind: SegmentKind::Encounter,
                     name,
                     start_ms: ts,
                     start_off: off,
                     last_ms: ts,
-                    seeds: self.seeds.clone(),
+                    seeds,
                     enemies: Default::default(),
                     visit: self.member_visit(),
                     deaths: false,
@@ -826,6 +870,33 @@ impl Scanner {
         self.visit_count += 1;
     }
 
+    /// R10 mirror of `Meter::encounter_visit`: a pull while zoned out, at an
+    /// instanced difficulty, on the map the last door named, resumes the
+    /// visit suspended there or opens a new one. True when it zoned in,
+    /// which makes the START a seed.
+    fn encounter_visit(&mut self, ts: i64, off: u64, instance_id: u32, difficulty: u32) -> bool {
+        if self.visit.as_ref().is_some_and(|v| v.zoned_in)
+            || instance_id == 0
+            || !crate::meter::instanced_difficulty(difficulty)
+            || self.last_zone_map != Some(instance_id)
+        {
+            return false;
+        }
+        if let Some(v) = self
+            .visit
+            .as_mut()
+            .filter(|v| v.standing().resumed_by(instance_id, difficulty, true))
+        {
+            v.zoned_in = true;
+            return true;
+        }
+        let seed_n = self.seeds.len();
+        self.close_visit(Some(ts), off);
+        let name = self.last_zone.clone().unwrap_or_default();
+        self.open_visit_state(instance_id, difficulty, name, None, ts, off, seed_n);
+        true
+    }
+
     /// The visit a segment opening right now would belong to.
     fn member_visit(&self) -> Option<u32> {
         self.visit
@@ -847,6 +918,7 @@ impl Scanner {
                 visit_count: self.visit_count,
                 visit: self.visit.clone(),
                 last_zone: self.last_zone.clone(),
+                last_zone_map: self.last_zone_map,
                 arena_over: self.arena_over,
                 offset: end,
             };
@@ -887,6 +959,7 @@ impl Scanner {
             visit_count: self.ckpt.visit_count,
             visit: self.ckpt.visit,
             last_zone: self.ckpt.last_zone,
+            last_zone_map: self.ckpt.last_zone_map,
             arena_over: self.ckpt.arena_over,
             offset: self.ckpt.offset,
         };
@@ -1140,6 +1213,27 @@ mod tests {
             }
         }
         m
+    }
+
+    /// A slice of `bytes` replayed the way `SegmentText::meter` does: its
+    /// seed ranges through `Meter::seed`, its byte range through `feed`.
+    fn lazy(bytes: &[u8], meta: &SegmentMeta) -> Meter {
+        let lines = |ranges: &[(u64, u64)]| -> Vec<String> {
+            ranges
+                .iter()
+                .flat_map(|&(a, b)| {
+                    String::from_utf8_lossy(&bytes[a as usize..b as usize])
+                        .lines()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
+        let (seeds, slice) = (lines(&meta.seeds), lines(&[meta.byte_range]));
+        crate::meter::meter_from_seeded(
+            seeds.iter().map(String::as_str),
+            slice.iter().map(String::as_str),
+        )
     }
 
     #[test]
@@ -1423,18 +1517,7 @@ mod tests {
             assert_eq!(full.segments().len(), 2, "{shape}");
             let mut seen = Vec::new();
             for (meta, seg) in metas.iter().zip(full.segments()) {
-                let slice: Vec<String> = meta
-                    .seeds
-                    .iter()
-                    .chain([&meta.byte_range])
-                    .flat_map(|&(a, b)| {
-                        String::from_utf8_lossy(&bytes[a as usize..b as usize])
-                            .lines()
-                            .map(str::to_string)
-                            .collect::<Vec<_>>()
-                    })
-                    .collect();
-                let lazy = replay(&slice);
+                let lazy = lazy(bytes, meta);
                 assert_eq!(lazy.segments().len(), 1, "{shape}: {}", meta.name);
                 let (f, l) = (
                     seg.mitigation(MONK).expect("full record"),
@@ -1514,19 +1597,13 @@ mod tests {
             assert_eq!(meta.encounter, seg.encounter, "{}", meta.name);
         }
 
-        // Lazily parsing each slice (seeds first, like load_segment) must
+        // Lazily parsing each slice (seeds first, like the loader) must
         // reproduce the same numbers.
         for (meta, seg) in metas.iter().zip(full.segments()) {
-            let ranges = meta.seeds.iter().chain([&meta.byte_range]);
-            let slice_lines: Vec<String> = ranges
-                .flat_map(|&(a, b)| {
-                    String::from_utf8_lossy(&bytes[a as usize..b as usize])
-                        .lines()
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .collect();
-            let lazy = replay(&slice_lines);
+            let lazy = lazy(&bytes, meta);
+            let (a, b) = meta.byte_range;
+            let slice_text = String::from_utf8_lossy(&bytes[a as usize..b as usize]);
+            let slice_lines: Vec<&str> = slice_text.lines().collect();
             assert_eq!(
                 lazy.segments().len(),
                 1,
@@ -1759,18 +1836,11 @@ mod tests {
             .max_by_key(|m| m.byte_range.1 - m.byte_range.0)
             .expect("has encounters");
         let t = std::time::Instant::now();
-        // load_segment_text, not load_segment: this gate exists to time what
-        // the daemon's loader actually runs when a user opens a segment.
-        let text = load_segment_text(Path::new(&path), biggest).unwrap();
-        let meter = {
-            let mut m = Meter::new();
-            for l in text.lines() {
-                if let Some(p) = parse_line(l) {
-                    m.feed(p);
-                }
-            }
-            m
-        };
+        // This gate times what the daemon's loader actually runs when a user
+        // opens a segment.
+        let meter = load_segment_text(Path::new(&path), biggest)
+            .unwrap()
+            .meter();
         let load_ms = t.elapsed().as_millis();
         let rows = meter.segments()[0].rows(View::Damage);
         println!(
@@ -1890,18 +1960,7 @@ mod tests {
             assert_eq!(full.segments().len(), 2, "{shape}");
             let mut seen = Vec::new();
             for (meta, seg) in metas.iter().zip(full.segments()) {
-                let slice: Vec<String> = meta
-                    .seeds
-                    .iter()
-                    .chain([&meta.byte_range])
-                    .flat_map(|&(a, b)| {
-                        String::from_utf8_lossy(&bytes[a as usize..b as usize])
-                            .lines()
-                            .map(str::to_string)
-                            .collect::<Vec<_>>()
-                    })
-                    .collect();
-                let lazy = replay(&slice);
+                let lazy = lazy(bytes, meta);
                 assert_eq!(lazy.segments().len(), 1, "{shape}: {}", meta.name);
                 let ls = &lazy.segments()[0];
                 assert_eq!(

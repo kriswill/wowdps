@@ -13,8 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use wowdps_core::index::{self, load_segment};
-use wowdps_core::meter::meter_from_lines;
+use wowdps_core::index::{self, load_segment_text};
 use wowdps_core::tail::TailEvent;
 use wowdps_daemon::engine::{Built, Engine, LoadoutBuilt};
 use wowdps_model::{ListRow, SegmentId, SegmentKind, View};
@@ -94,8 +93,8 @@ fn install(e: &mut Engine, path: &Path, built: Built) {
         assert!(status.as_deref().is_some_and(is_loading_status));
         assert!(rows.is_empty(), "placeholders carry no rows");
     }
-    let lines = load_segment(path, &meta).unwrap();
-    e.install_loaded(id, meter_from_lines(lines.iter().map(String::as_str)));
+    let text = load_segment_text(path, &meta).unwrap();
+    e.install_loaded(id, text.meter());
 }
 
 /// R10: the instance fixture's completed key is a CLOSED visit — its

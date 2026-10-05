@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use wowdps_core::index::{SegmentMeta, load_segment_text};
-use wowdps_core::meter::meter_from_lines;
 use wowdps_core::model::SegmentId;
 
 use crate::history::{HistoryLink, HistoryReq, ImportJob};
@@ -46,7 +45,7 @@ pub fn spawn(hub: Sender<HubMsg>, workers: usize) -> Sender<LoadReq> {
                 };
                 let Ok(req) = req else { return };
                 let result = load_segment_text(&req.path, &req.meta)
-                    .map(|text| Box::new(meter_from_lines(text.lines())))
+                    .map(|text| Box::new(text.meter()))
                     .map_err(|e| format!("{}: {e}", req.path.display()));
                 match req.reply {
                     LoadReply::Hub => {

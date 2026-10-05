@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use wowdps_core::index::{load_segment, scan};
+use wowdps_core::index::{load_segment_text, scan};
 use wowdps_core::meter::{Meter, Segment, View, meter_from_lines};
 use wowdps_model::{GroupKind, Row, SpellGroup, SpellPart, SpellTree};
 
@@ -398,10 +398,9 @@ fn the_tree_survives_lazy_loading_on_every_fixture() {
             out
         };
         for (meta, seg) in metas.iter().zip(full.segments()) {
-            let lines = load_segment(Path::new(&path), meta);
-            assert!(lines.is_ok(), "{name}: slice loads");
-            let lines = lines.unwrap_or_default();
-            let lazy = meter_from_lines(lines.iter().map(String::as_str));
+            let text = load_segment_text(Path::new(&path), meta);
+            assert!(text.is_ok(), "{name}: slice loads");
+            let lazy = text.map(|t| t.meter()).unwrap_or_default();
             let want = picture(seg);
             compared += want.len();
             assert_eq!(picture(&lazy.segments()[0]), want, "{name} / {}", meta.name);
