@@ -16,7 +16,7 @@ A pet summoned before a relog must not stay attributed after it; the expected TS
 
 ## Gate
 
-`relog_boundary_resets_pet_ownership` in `crates/core/tests/fixture_totals.rs` against `relog.expected.tsv`; also in the taken and spans fixture lists.
+`relog_boundary_resets_pet_ownership` in `crates/core/tests/fixture_totals.rs` against `relog.expected.tsv`; also in the taken and spans fixture lists. `verify.sh` with no arguments recomputes its goldens with `check.awk` too (as CI runs it) — it was missing from that loop until 2026-10-04, so its golden lagged six rounds of new metrics while `cargo test`, which compares only the metrics a golden lists, stayed green.
 
 ## Source
 

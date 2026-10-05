@@ -14,6 +14,7 @@ The game-data generators and census scripts under tools/ — regenerated once pe
 * [gen-icons](gen-icons.md) - Regenerate the class/spec icon cache from the LOCAL game install.
 * [gen-item-spells](gen-item-spells.md) - Regenerate crates/core/src/item_spells.rs from the LOCAL game install.
 * [gen-keystone-timers](gen-keystone-timers.md) - Regenerate crates/core/src/keystone_timers.rs from the LOCAL game install.
+* [gen-open-world-maps](gen-open-world-maps.md) - Regenerate crates/core/src/open_world_maps.rs from the LOCAL game install.
 * [gen-proc-spells](gen-proc-spells.md) - Regenerate crates/core/src/proc_spells.rs (+ proc_spells.expected.md) from the LOCAL game install.
 * [gen-role-spells](gen-role-spells.md) - Regenerate crates/core/src/role_spells.rs (+ role_spells.expected.md) from the LOCAL game install.
 * [gen-spell-icons](gen-spell-icons.md) - Regenerate the spell-icon cache from the LOCAL game install.

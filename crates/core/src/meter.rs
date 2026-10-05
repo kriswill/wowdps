@@ -597,6 +597,20 @@ pub(crate) fn instanced_difficulty(difficulty: u32) -> bool {
     !matches!(difficulty, 0 | 172 | 192 | 230)
 }
 
+/// R10: the difficulty a door means. The game stamps a door OUT of an
+/// instance with the difficulty it just left — a hearth out of a Heroic raid
+/// logs `ZONE_CHANGE,0,"Silvermoon City",15`, the end of a key
+/// `ZONE_CHANGE,2444,"The Waking Shores",8` — so a door onto a map Map.db2
+/// calls open world (the generated `open_world_maps.rs`) is read as 0, zoned
+/// out. A map the table does not know keeps the door's own difficulty.
+pub(crate) fn door_difficulty(map_id: u32, difficulty: u32) -> u32 {
+    if crate::open_world_maps::open_world(map_id) {
+        0
+    } else {
+        difficulty
+    }
+}
+
 /// R10: where a visit stands, as every resume decision reads it. `Meter`
 /// and the index scanner both decide through [`Standing::resumed_by`], so
 /// the two cannot drift apart.
@@ -1223,7 +1237,30 @@ struct AbsMark {
 }
 
 impl Segment {
+    /// A segment opening now, seeded with what the meter already knows —
+    /// owners, names, flags, classes, specs, loadouts, summons — so a pet
+    /// summoned in an earlier segment still resolves here. Lazy loads
+    /// rebuild that knowledge from the seed lines before the slice.
     fn new(kind: SegmentKind, name: String, start_ms: i64, seed: &Meter) -> Self {
+        Self {
+            owners: seed.owners.clone(),
+            names: seed.names.clone(),
+            flags: seed.flags.clone(),
+            classes: seed.classes.clone(),
+            specs: seed.specs.clone(),
+            loadouts: seed.loadouts.clone(),
+            summons: seed.summons.clone(),
+            ..Self::empty(kind, name, start_ms, seed)
+        }
+    }
+
+    /// A segment that knows nobody: no identity seeded from the meter. An
+    /// Overall starts here and learns what its members knew through
+    /// `absorb` — the meter's own knowledge is where the replay stands when
+    /// it is asked (the end of the file in a full replay, the end of the
+    /// visit in a lazy load), so seeding from it made a Σ depend on when it
+    /// was read.
+    fn empty(kind: SegmentKind, name: String, start_ms: i64, seed: &Meter) -> Self {
         Self {
             kind,
             name,
@@ -1252,14 +1289,12 @@ impl Segment {
             healed: HashMap::new(),
             absorbed_credit: HashMap::new(),
             self_harm: HashMap::new(),
-            // Seed with what the meter already knows so a pet summoned in an earlier
-            // segment still resolves here.
-            owners: seed.owners.clone(),
-            names: seed.names.clone(),
-            flags: seed.flags.clone(),
-            classes: seed.classes.clone(),
-            specs: seed.specs.clone(),
-            loadouts: seed.loadouts.clone(),
+            owners: HashMap::new(),
+            names: HashMap::new(),
+            flags: HashMap::new(),
+            classes: HashMap::new(),
+            specs: HashMap::new(),
+            loadouts: HashMap::new(),
             last_ms: start_ms,
             enemies: HashMap::new(),
             pvp: false,
@@ -1274,7 +1309,7 @@ impl Segment {
             casts: HashMap::new(),
             misses: HashMap::new(),
             dots: HashMap::new(),
-            summons: seed.summons.clone(),
+            summons: HashMap::new(),
             marks: HashMap::new(),
             item_casts: HashMap::new(),
             spans: HashMap::new(),
@@ -5001,7 +5036,9 @@ impl Meter {
         if u.flags != 0 && self.flags.get(&u.guid) != Some(&u.flags) {
             self.flags.insert(u.guid.clone(), u.flags);
         }
-        if let Some(s) = self.segments.last_mut() {
+        // Only an OPEN segment learns, as `infer`: a closed one's byte range
+        // ends before this line, so its lazy load never sees it.
+        if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none()) {
             if !u.name.is_empty() && s.names.get(&u.guid).is_none_or(|n| *n != u.name) {
                 s.names.insert(u.guid.clone(), u.name.clone());
             }
@@ -5123,7 +5160,7 @@ impl Meter {
             id: spell.id,
             name: spell.name.clone(),
         };
-        if let Some(s) = self.segments.last_mut() {
+        if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none()) {
             s.summons
                 .entry(key.clone())
                 .or_insert_with(|| summon.clone());
@@ -5140,7 +5177,7 @@ impl Meter {
         if self.owners.get(unit).is_none_or(|o| o != owner) {
             self.owners.insert(unit.to_string(), owner.to_string());
         }
-        if let Some(s) = self.segments.last_mut()
+        if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none())
             && s.owners.get(unit).is_none_or(|o| o != owner)
         {
             s.owners.insert(unit.to_string(), owner.to_string());
@@ -5502,7 +5539,8 @@ impl Meter {
     /// 0 reads as zoned out: the pulls landed outside any visit, and the
     /// visit they replaced stayed current, and live, to the end of the log.
     /// So an ENCOUNTER_START while zoned out, at an instanced difficulty, on
-    /// the map the last door named, settles it as a CHALLENGE_MODE_START
+    /// the map the last door named (never an open-world map: a pull there
+    /// reads as a door would, `door_difficulty`), settles it as a CHALLENGE_MODE_START
     /// settles a key: the current visit resumes when it is on that map at
     /// that difficulty (a keyed one on the map alone, and a keystone pull
     /// on an unkeyed one is a key the log joined mid-run, which its END
@@ -5513,8 +5551,7 @@ impl Meter {
     /// does. The scanner mirrors this and seeds every START that zones in.
     fn encounter_visit(&mut self, ts: i64, instance_id: u32, difficulty: u32) {
         if self.zoned_in
-            || instance_id == 0
-            || !instanced_difficulty(difficulty)
+            || !instanced_difficulty(door_difficulty(instance_id, difficulty))
             || self.last_zone_map != Some(instance_id)
         {
             return;
@@ -6334,7 +6371,7 @@ impl Meter {
                     let class = spec.class();
                     self.classes.insert(guid.clone(), class);
                     self.specs.insert(guid.clone(), spec);
-                    if let Some(s) = self.segments.last_mut() {
+                    if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none()) {
                         s.classes.insert(guid.clone(), class);
                         s.specs.insert(guid.clone(), spec);
                     }
@@ -6360,19 +6397,23 @@ impl Meter {
                         },
                     });
                     self.loadouts.insert(guid.clone(), Arc::clone(&loadout));
-                    if let Some(s) = self.segments.last_mut() {
+                    if let Some(s) = self.segments.last_mut().filter(|s| s.end_ms.is_none()) {
                         s.loadouts.insert(guid.clone(), loadout);
                     }
                 }
             }
 
             // R10: visit tracking. Every zone change closes the open Trash
-            // segment; a nonzero difficulty means instanced content.
+            // segment; a nonzero difficulty means instanced content — except
+            // on an open-world map, where the game stamps a door out of an
+            // instance with the difficulty it just left (a hearth out of a
+            // Heroic raid logs `ZONE_CHANGE,0,"Silvermoon City",15`).
             Event::ZoneChange {
                 map_id,
                 name,
                 difficulty,
             } => {
+                let difficulty = &door_difficulty(*map_id, *difficulty);
                 self.close_trash(ts);
                 // R13: any teleport ends the dead-arena window.
                 self.arena_over = false;
@@ -6713,7 +6754,10 @@ impl Meter {
             .filter(|s| s.visit == Some(ordinal))
             .peekable();
         members.peek()?;
-        let mut out = Segment::new(SegmentKind::Overall, v.display_name(), v.start_ms, self);
+        // The Σ knows what its members knew and nothing more: seeded from
+        // the meter, a pet whose owner a line after a key's END named folded
+        // into a full replay's Σ alone (65,856 damage on a real +13).
+        let mut out = Segment::empty(SegmentKind::Overall, v.display_name(), v.start_ms, self);
         out.visit = Some(ordinal);
         out.end_ms = v.end_ms;
         out.key = v.keyed;

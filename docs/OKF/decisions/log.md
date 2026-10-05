@@ -2,6 +2,14 @@
 
 ## 2026-10-04
 
+- **Creation** — [A Σ Knows Only What Its Members Knew](a-sigma-knows-its-members.md):
+  `Meter::overall` builds from `Segment::empty`, and identity statements land
+  only in an open segment, so a guardian owned after a key's END no longer
+  folds into a full replay's Σ alone (65,856 damage on a real +13).
+- **Creation** — [An Open-World Door Is Zoned Out](an-open-world-door-is-zoned-out.md):
+  a ZONE_CHANGE onto a map Map.db2 calls open world reads as difficulty 0, so
+  a hearth logged as `"Silvermoon City",15` no longer opens a city visit and
+  splits the raid's; the generated `open_world_maps.rs` names the maps.
 - **Creation** — [A Pull Zones In The Door That Logged Zero](a-pull-zones-in.md):
   an ENCOUNTER_START while zoned out opens or resumes its visit (a raid
   re-entered after a Heroic→Mythic switch logged its doors at 0, and the

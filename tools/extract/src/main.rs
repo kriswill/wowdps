@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wowdps_extract::{
-    absorbgen, artgen, classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen,
+    absorbgen, artgen, classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen, mapgen,
     procgen, rolegen, spellicongen, table, tact, talentgen, wdc5,
 };
 
@@ -42,6 +42,8 @@ const USAGE: &str = "usage:
                        [-o class_spells.rs] [--keys tactkeys.txt]
   wowdps-extract gen-keystone-timers [wow-dir] --dbd-dir <dir>
                        [-o keystone_timers.rs] [--keys tactkeys.txt]
+  wowdps-extract gen-open-world-maps [wow-dir] --dbd-dir <dir>
+                       [-o open_world_maps.rs] [--keys tactkeys.txt]
   wowdps-extract gen-item-spells [wow-dir] --dbd-dir <dir>
                        [-o item_spells.rs] [--keys tactkeys.txt]
   wowdps-extract gen-role-spells [wow-dir] --dbd-dir <dir> --census <csv>
@@ -80,6 +82,7 @@ fn run() -> Result<(), String> {
         Some("fetch") => fetch(rest),
         Some("gen-class-spells") => gen_class_spells(rest),
         Some("gen-keystone-timers") => gen_keystone_timers(rest),
+        Some("gen-open-world-maps") => gen_open_world_maps(rest),
         Some("gen-item-spells") => gen_item_spells(rest),
         Some("gen-role-spells") => gen_role_spells(rest),
         Some("gen-absorb-spells") => gen_absorb_spells(rest),
@@ -445,6 +448,21 @@ fn gen_keystone_timers(args: &[String]) -> Result<(), String> {
     eprintln!(
         "{}: {} dungeons, build {}",
         a.out_path, g.dungeons, game.build
+    );
+    Ok(())
+}
+
+fn gen_open_world_maps(args: &[String]) -> Result<(), String> {
+    let a = gen_args(args, "crates/core/src/open_world_maps.rs")?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let (name, fdid) = mapgen::TABLE;
+    let csv = load_table(&game, &a.dbd_dir, name, fdid)?;
+
+    let g = mapgen::generate(&csv, &game.build)?;
+    std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
+    eprintln!(
+        "{}: {} open-world maps, build {}",
+        a.out_path, g.maps, game.build
     );
     Ok(())
 }
