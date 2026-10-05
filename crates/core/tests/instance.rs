@@ -2,10 +2,50 @@
 //! instance fixture — full replay semantics, scanner parity, lazy-load
 //! parity, and checkpoint resumption with a visit in flight.
 
-use wowdps_core::index::{load_segment, scan, scan_from};
-use wowdps_core::meter::{Meter, SegmentKind, View, meter_from_lines};
+use wowdps_core::index::{Index, SegmentMeta, load_segment_text, scan, scan_from};
+use wowdps_core::meter::{Meter, SegmentKind, View, meter_from_lines, meter_from_seeded};
 
 const INSTANCE_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/instance.txt");
+
+fn range_lines(bytes: &[u8], ranges: &[(u64, u64)]) -> Vec<String> {
+    ranges
+        .iter()
+        .flat_map(|&(s, e)| {
+            let range = bytes.get(s as usize..e as usize);
+            assert!(range.is_some(), "range {s}..{e} lies in the log");
+            String::from_utf8_lossy(range.unwrap_or_default())
+                .lines()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// A slice loaded the way the daemon's loader does: its seeds, then its
+/// bytes, replayed through `Meter::seed` and `Meter::feed`.
+fn lazy(bytes: &[u8], meta: &SegmentMeta) -> Meter {
+    let seeds = range_lines(bytes, &meta.seeds);
+    let slice = range_lines(bytes, &[meta.byte_range]);
+    meter_from_seeded(
+        seeds.iter().map(String::as_str),
+        slice.iter().map(String::as_str),
+    )
+}
+
+/// The live meter the way the tailer builds it: the seed lines before the
+/// tail (the open segment's, else the checkpoint's) through `Meter::seed`,
+/// then everything from `live_offset` through `Meter::feed`.
+fn live_meter(bytes: &[u8], idx: &Index) -> Meter {
+    let seeds = match idx.open.as_ref() {
+        Some(open) => &open.seeds,
+        None => &idx.checkpoint.seeds,
+    };
+    let seeds = range_lines(bytes, seeds);
+    let tail = bytes.get(idx.live_offset as usize..);
+    assert!(tail.is_some(), "live_offset lies in the log");
+    let tail = String::from_utf8_lossy(tail.unwrap_or_default()).into_owned();
+    meter_from_seeded(seeds.iter().map(String::as_str), tail.lines())
+}
 
 fn replay() -> Meter {
     let text = std::fs::read_to_string(INSTANCE_FIXTURE);
@@ -207,8 +247,8 @@ fn a_lazily_loaded_overall_matches_the_full_replay() {
     let meter = replay();
 
     for (meta, ordinal) in idx.overalls.iter().map(|m| (m, m.visit.unwrap())) {
-        let lines = load_segment(std::path::Path::new(INSTANCE_FIXTURE), meta).unwrap();
-        let lazy = meter_from_lines(lines.iter().map(String::as_str));
+        let text = load_segment_text(std::path::Path::new(INSTANCE_FIXTURE), meta).unwrap();
+        let lazy = text.meter();
         let got = lazy.overall(ordinal).expect("lazy replay finds the visit");
         let want = meter.overall(ordinal).unwrap();
         for view in [View::Damage, View::Healing, View::Deaths, View::Taken] {
@@ -254,18 +294,12 @@ fn an_attach_mid_visit_composes_to_the_full_replay() {
 
     // The prefix, loaded the way the daemon's loader does.
     let ov = idx.open_visit.as_ref().expect("Skyreach is in progress");
-    let prefix_lines = load_segment(std::path::Path::new(INSTANCE_FIXTURE), ov).unwrap();
-    let prefix = meter_from_lines(prefix_lines.iter().map(String::as_str));
+    let prefix = load_segment_text(std::path::Path::new(INSTANCE_FIXTURE), ov).unwrap();
+    let prefix = prefix.meter();
 
     // The live side, built the way the tailer feeds it: the open segment's
     // seed lines, then everything from `live_offset`.
-    let seeds = &idx.open.as_ref().expect("trailing pull is open").seeds;
-    let mut live_text = String::new();
-    for &(s, e) in seeds {
-        live_text.push_str(std::str::from_utf8(&bytes[s as usize..e as usize]).unwrap());
-    }
-    live_text.push_str(std::str::from_utf8(&bytes[idx.live_offset as usize..]).unwrap());
-    let live = meter_from_lines(live_text.lines());
+    let live = live_meter(&bytes, &idx);
 
     // The daemon's LiveOverall merge: live members + the lazy prefix.
     let mut combined = live.overall(2).expect("the open pull is a live member");
@@ -611,4 +645,197 @@ fn a_zeroed_end_on_an_unkeyed_visit_keys_nothing() {
     assert_eq!(visits[0].completed, None);
     assert!(visits[0].end_ms.is_none(), "still in progress");
     assert_eq!(tags(text), vec![(SegmentKind::Trash, Some(0))]);
+}
+
+/// R10 amendment: a pull zones in the door that led to it did not. A real
+/// raid night (2026-10-04) switched The Venomous Abyss from Heroic to Mythic
+/// outside, and every door back in logged difficulty 0 — so no Mythic visit
+/// opened, the Mythic pulls landed outside any visit, and the Heroic visit
+/// stayed current, and live, for the rest of the night. The first Mythic
+/// pull closes the Heroic visit and opens the Mythic one; after a trip to
+/// town through the same 0-logged door the next pull resumes it. The trash
+/// between a 0-door and its first pull stays outside.
+const DIFFICULTY_SWITCH: &str = "\
+10/4/2026 19:00:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1
+10/4/2026 19:00:05.000-7  ZONE_CHANGE,3004,\"The Venomous Abyss\",15
+10/4/2026 19:01:00.000-7  ENCOUNTER_START,3429,\"The Coiled Altar\",15,25,3004
+10/4/2026 19:01:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"The Coiled Altar\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+10/4/2026 19:02:00.000-7  ENCOUNTER_END,3429,\"The Coiled Altar\",15,25,1,60000
+10/4/2026 19:03:00.000-7  ZONE_CHANGE,2916,\"Vaults of Atal'Utek\",0
+10/4/2026 19:04:00.000-7  ZONE_CHANGE,3004,\"The Venomous Abyss\",0
+10/4/2026 19:04:30.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-2,\"Venomfang Juggernaut\",0xa48,0x0,116,\"Frostbolt\",16,40,40,0,0,0,0,0,nil,nil
+10/4/2026 19:05:00.000-7  ENCOUNTER_START,3470,\"Nek'zali the Soulcoiler\",16,20,3004
+10/4/2026 19:05:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-3,\"Nek'zali the Soulcoiler\",0xa48,0x0,116,\"Frostbolt\",16,200,200,0,0,0,0,0,nil,nil
+10/4/2026 19:06:00.000-7  ENCOUNTER_END,3470,\"Nek'zali the Soulcoiler\",16,20,0,60000
+10/4/2026 19:06:30.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-4,\"Soulcoiler Revenant\",0xa48,0x0,116,\"Frostbolt\",16,30,30,0,0,0,0,0,nil,nil
+10/4/2026 19:08:00.000-7  ZONE_CHANGE,0,\"Silvermoon City\",0
+10/4/2026 19:08:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-5,\"Training Dummy\",0xa48,0x0,116,\"Frostbolt\",16,5,5,0,0,0,0,0,nil,nil
+10/4/2026 19:09:00.000-7  ZONE_CHANGE,3004,\"The Venomous Abyss\",0
+10/4/2026 19:10:00.000-7  ENCOUNTER_START,3497,\"The Lost Explorers\",16,20,3004
+10/4/2026 19:10:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-6,\"The Lost Explorers\",0xa48,0x0,116,\"Frostbolt\",16,300,300,0,0,0,0,0,nil,nil
+10/4/2026 19:11:00.000-7  ENCOUNTER_END,3497,\"The Lost Explorers\",16,20,1,60000
+10/4/2026 19:11:30.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-7,\"First Mate Nama\",0xa48,0x0,116,\"Frostbolt\",16,1,1,0,0,0,0,0,nil,nil
+";
+
+#[test]
+fn a_pull_behind_a_door_logged_at_zero_zones_in() {
+    let text = DIFFICULTY_SWITCH;
+    let meter = meter_from_lines(text.lines());
+    let visits = meter.visits();
+    assert_eq!(visits.len(), 2, "Heroic, then Mythic: {visits:?}");
+    let (heroic, mythic) = (&visits[0], &visits[1]);
+    assert_eq!((heroic.map_id, heroic.difficulty), (3004, 15));
+    let first_mythic_pull = meter.segments()[2].start_ms;
+    assert_eq!(
+        heroic.end_ms,
+        Some(first_mythic_pull),
+        "the first Mythic pull closed the Heroic visit"
+    );
+    assert_eq!((mythic.map_id, mythic.difficulty), (3004, 16));
+    assert_eq!(mythic.display_name(), "The Venomous Abyss");
+    assert_eq!(mythic.start_ms, first_mythic_pull);
+    assert_eq!(mythic.end_ms, None, "still going");
+    assert_eq!(
+        tags(text),
+        vec![
+            (SegmentKind::Encounter, Some(0)), // The Coiled Altar, Heroic
+            (SegmentKind::Trash, None),        // behind the 0-door, before a pull
+            (SegmentKind::Encounter, Some(1)), // Nek'zali opens the Mythic visit
+            (SegmentKind::Trash, Some(1)),     // zoned in now
+            (SegmentKind::Trash, None),        // the town dummy
+            (SegmentKind::Encounter, Some(1)), // the next pull resumes it
+            (SegmentKind::Trash, Some(1)),     // still open
+        ]
+    );
+
+    let bytes = text.as_bytes();
+    let idx = scan(&mut &bytes[..]);
+    let closed: Vec<_> = idx
+        .overalls
+        .iter()
+        .map(|m| (m.visit, m.start_ms, m.end_ms))
+        .collect();
+    assert_eq!(
+        closed,
+        vec![(Some(0), heroic.start_ms, heroic.end_ms)],
+        "the Heroic Σ is emitted, closed where the Mythic visit began"
+    );
+    let open = idx
+        .open_visit
+        .as_ref()
+        .expect("the Mythic visit is in progress");
+    assert_eq!(open.visit, Some(1));
+
+    // Every slice rebuilds alone and in its own visit: a seeded START opens
+    // no segment and restores the visit it opened or resumed.
+    for meta in idx.segments.iter().chain(idx.open.iter()) {
+        let lazy = lazy(bytes, meta);
+        assert_eq!(lazy.segments().len(), 1, "one segment: {}", meta.name);
+        assert_eq!(lazy.segments()[0].visit, meta.visit, "{}", meta.name);
+        let place = |v: &wowdps_core::meter::Visit| (v.map_id, v.difficulty, v.start_ms);
+        let rebuilt: Vec<_> = lazy.visits().iter().map(place).collect();
+        let want: Vec<_> = meter
+            .visits()
+            .iter()
+            .take(rebuilt.len())
+            .map(place)
+            .collect();
+        assert_eq!(rebuilt, want, "the visit table up to {}", meta.name);
+    }
+    for meta in idx.overalls.iter() {
+        let ord = meta.visit.expect("an Overall names its visit");
+        let got = lazy(bytes, meta)
+            .overall(ord)
+            .expect("the slice holds the visit");
+        let want = meter.overall(ord).expect("the replay holds the visit");
+        assert_eq!(amounts(&got, View::Damage), amounts(&want, View::Damage));
+    }
+
+    // The daemon attached mid-night: the lazy prefix plus the live meter
+    // (seeds, then the open pull) compose to the replay's Mythic Σ.
+    let live = live_meter(bytes, &idx);
+    assert_eq!(live.visits().len(), 2, "the seeds rebuilt both visits");
+    assert_eq!(live.segments().last().and_then(|s| s.visit), Some(1));
+    let mut combined = live.overall(1).expect("the open pull is a live member");
+    combined.absorb(&lazy(bytes, open).overall(1).expect("the closed members"));
+    let want = meter.overall(1).expect("the Mythic Σ");
+    assert_eq!(
+        amounts(&combined, View::Damage),
+        amounts(&want, View::Damage)
+    );
+    assert_eq!(combined.duration_ms(0), want.duration_ms(i64::MAX));
+
+    // A checkpoint anywhere resumes to the full scan.
+    let full = scan(&mut &bytes[..]);
+    let cuts = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(_, &b)| b == b'\n')
+        .map(|(i, _)| i + 1);
+    for cut in cuts {
+        let state = scan(&mut &bytes[..cut]).checkpoint;
+        let off = state.offset as usize;
+        let resumed = scan_from(&mut &bytes[off..], state);
+        assert_eq!(resumed.segments, full.segments, "cut at {cut}");
+        assert_eq!(resumed.overalls, full.overalls, "cut at {cut}");
+        assert_eq!(resumed.open_visit, full.open_visit, "cut at {cut}");
+        assert_eq!(resumed.open, full.open, "cut at {cut}");
+    }
+}
+
+/// The amendment's edges. A delve's door logs 0 too, and its pull opens the
+/// delve's visit; a world boss's pull (Difficulty.db2's World Boss, an
+/// InstanceType of 0) is open-world content and stays outside, as does a
+/// pull on a map no door named; and a door that zoned us in stands, even
+/// when its difficulty and the pull's disagree.
+#[test]
+fn a_pull_zones_in_only_instanced_content_its_door_named() {
+    let delve = "\
+8/29/2026 17:50:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1
+8/29/2026 17:50:54.000-7  ZONE_CHANGE,3077,\"The Ring of Glory\",0
+8/29/2026 17:52:00.000-7  ENCOUNTER_START,3514,\"Gnok\",208,2,3077
+8/29/2026 17:52:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"Gnok\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+8/29/2026 17:53:00.000-7  ENCOUNTER_END,3514,\"Gnok\",208,2,1,60000
+";
+    let meter = meter_from_lines(delve.lines());
+    let names: Vec<_> = meter
+        .visits()
+        .iter()
+        .map(|v| (v.display_name(), v.difficulty))
+        .collect();
+    assert_eq!(names, vec![("The Ring of Glory".to_string(), 208)]);
+    assert_eq!(tags(delve), vec![(SegmentKind::Encounter, Some(0))]);
+
+    let world_boss = "\
+8/29/2026 17:50:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1
+8/29/2026 17:50:54.000-7  ZONE_CHANGE,2916,\"Vaults of Atal'Utek\",0
+8/29/2026 17:52:00.000-7  ENCOUNTER_START,3600,\"A World Boss\",172,40,2916
+8/29/2026 17:52:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"A World Boss\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+8/29/2026 17:53:00.000-7  ENCOUNTER_END,3600,\"A World Boss\",172,40,1,60000
+8/29/2026 17:54:00.000-7  ENCOUNTER_START,3601,\"Elsewhere\",15,20,3004
+8/29/2026 17:55:00.000-7  ENCOUNTER_END,3601,\"Elsewhere\",15,20,1,60000
+";
+    assert!(meter_from_lines(world_boss.lines()).visits().is_empty());
+    assert_eq!(
+        tags(world_boss),
+        vec![
+            (SegmentKind::Encounter, None),
+            (SegmentKind::Encounter, None)
+        ]
+    );
+
+    let door_stands = "\
+8/29/2026 17:50:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1
+8/29/2026 17:50:54.000-7  ZONE_CHANGE,3004,\"The Venomous Abyss\",16
+8/29/2026 17:52:00.000-7  ENCOUNTER_START,3429,\"The Coiled Altar\",15,20,3004
+8/29/2026 17:53:00.000-7  ENCOUNTER_END,3429,\"The Coiled Altar\",15,20,1,60000
+";
+    let meter = meter_from_lines(door_stands.lines());
+    assert_eq!(meter.visits().len(), 1);
+    assert_eq!(
+        meter.visits()[0].difficulty,
+        16,
+        "the door's difficulty stands"
+    );
+    assert_eq!(tags(door_stands), vec![(SegmentKind::Encounter, Some(0))]);
 }

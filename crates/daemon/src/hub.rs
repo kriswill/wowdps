@@ -1200,8 +1200,8 @@ mod tests {
             "the second request rides the same load"
         );
 
-        let lines = wowdps_core::index::load_segment(&req.path, &req.meta).unwrap();
-        let meter = wowdps_core::meter::meter_from_lines(lines.iter().map(String::as_str));
+        let text = wowdps_core::index::load_segment_text(&req.path, &req.meta).unwrap();
+        let meter = text.meter();
         hub.handle(HubMsg::Loaded {
             id: first,
             result: Ok(Box::new(meter)),

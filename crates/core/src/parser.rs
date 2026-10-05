@@ -131,6 +131,9 @@ pub enum Event {
         name: String,
         difficulty: u32,
         group_size: u32,
+        /// The instance the pull is in: the map id ZONE_CHANGE logs for the
+        /// same place (R10: a pull the door left unannounced opens its visit).
+        instance_id: u32,
     },
     EncounterEnd {
         id: u32,
@@ -956,6 +959,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 name: get(f, 2).unwrap_or_default().to_string(),
                 difficulty: parse_u32(get(f, 3).unwrap_or_default()),
                 group_size: parse_u32(get(f, 4).unwrap_or_default()),
+                instance_id: parse_u32(get(f, 5).unwrap_or_default()),
             });
         }
         "ENCOUNTER_END" => {
@@ -1438,6 +1442,7 @@ mod tests {
                 name: "Ulgrax the Devourer".into(),
                 difficulty: 14,
                 group_size: 20,
+                instance_id: 2657,
             }
         );
     }

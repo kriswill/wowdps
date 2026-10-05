@@ -5,8 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use wowdps_core::index::{self, load_segment};
-use wowdps_core::meter::meter_from_lines;
+use wowdps_core::index::{self, load_segment_text};
 use wowdps_core::tail::TailEvent;
 use wowdps_proto::{ClientKind, ClientMsg, Cursor, DaemonMsg};
 
@@ -105,7 +104,7 @@ impl MockDaemon {
             &mut events,
         );
         if !seeds.is_empty() {
-            engine.on_tail(TailEvent::Lines(seeds), &mut events);
+            engine.on_tail(TailEvent::Seeds(seeds), &mut events);
         }
         let tail: Vec<String> = String::from_utf8_lossy(bytes.get(live..).unwrap_or_default())
             .lines()
@@ -150,10 +149,9 @@ impl MockDaemon {
                     match self.engine.loadout(segment, &guid) {
                         LoadoutBuilt::Ready(l) => break l,
                         LoadoutBuilt::Loading(id, meta) => {
-                            let lines = load_segment(&self.path, &meta);
-                            assert!(lines.is_ok(), "fixture slice loads");
-                            let lines = lines.unwrap_or_default();
-                            let meter = meter_from_lines(lines.iter().map(String::as_str));
+                            let text = load_segment_text(&self.path, &meta);
+                            assert!(text.is_ok(), "fixture slice loads");
+                            let meter = text.map(|t| t.meter()).unwrap_or_default();
                             self.engine.install_loaded(id, meter);
                         }
                     }
@@ -367,10 +365,9 @@ impl MockDaemon {
                     match $build {
                         Built::Ready(msg) => break *msg,
                         Built::Loading(_, id, meta) => {
-                            let lines = load_segment(&self.path, &meta);
-                            assert!(lines.is_ok(), "fixture slice loads");
-                            let lines = lines.unwrap_or_default();
-                            let meter = meter_from_lines(lines.iter().map(String::as_str));
+                            let text = load_segment_text(&self.path, &meta);
+                            assert!(text.is_ok(), "fixture slice loads");
+                            let meter = text.map(|t| t.meter()).unwrap_or_default();
                             self.engine.install_loaded(id, meter);
                         }
                         Built::Failed(id, error) => {

@@ -39,6 +39,11 @@ pub enum SourceSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TailEvent {
     Lines(Vec<String>),
+    /// The scanner's seed lines before the tail's start, emitted once per
+    /// file right after `Index`: replay each through `Meter::seed`, never
+    /// `feed` — an R10 seed can be an ENCOUNTER_START, and fed it would
+    /// open a segment.
+    Seeds(Vec<String>),
     Switched(PathBuf),
     /// The reader finished the current file's backlog (first read that hit
     /// EOF). Every `Lines` after this is fresh combat, not replay — consumers
@@ -171,9 +176,10 @@ impl Tailer {
     /// Open `path`, scan its structure, and tell the consumer to reset. The
     /// tail then starts at the index's `live_offset` — history is served by
     /// the index, not replayed line by line — but the scanner's seed lines
-    /// (SPELL_SUMMON / COMBATANT_INFO / COMBAT_LOG_VERSION before the tail)
-    /// are emitted first, so the live meter resolves pet owners and player
-    /// classes exactly like a lazily loaded slice does. Without this, a
+    /// (SPELL_SUMMON / COMBATANT_INFO / COMBAT_LOG_VERSION and R10's visit
+    /// lines before the tail) are emitted first, as `Seeds`, so the live
+    /// meter resolves pet owners, player classes and visits exactly like a
+    /// lazily loaded slice does. Without this, a
     /// mid-session restart would lose the class colors an earlier boss pull
     /// established.
     fn retarget(&mut self, path: &Path, out: &mut Vec<TailEvent>) {
@@ -222,7 +228,7 @@ impl Tailer {
                     file_age_ms,
                 });
                 if !seed_lines.is_empty() {
-                    out.push(TailEvent::Lines(seed_lines));
+                    out.push(TailEvent::Seeds(seed_lines));
                 }
             }
             Err(e) => {
@@ -433,6 +439,17 @@ mod tests {
             .collect()
     }
 
+    fn seeds_of(events: &[TailEvent]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                TailEvent::Seeds(l) => Some(l.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
     fn index_of(events: &[TailEvent]) -> Option<&index::Index> {
         events.iter().find_map(|e| match e {
             TailEvent::Index { index, .. } => Some(&**index),
@@ -505,18 +522,27 @@ mod tests {
 
         let mut t = Tailer::new(SourceSpec::File(p.clone()));
         let first = t.poll();
+        // The seed arrives as `Seeds`, ahead of the tail's `Lines`.
+        let at = |want: fn(&TailEvent) -> bool| first.iter().position(want);
+        let seeds_at = at(|e| matches!(e, TailEvent::Seeds(_))).expect("a Seeds event");
+        let lines_at = at(|e| matches!(e, TailEvent::Lines(_))).expect("a Lines event");
+        assert!(seeds_at < lines_at, "{first:?}");
+        let seeds = seeds_of(&first);
+        assert_eq!(seeds.len(), 1, "{seeds:?}");
+        assert!(seeds[0].contains("COMBATANT_INFO"), "{seeds:?}");
         let lines = lines_of(&first);
-        assert_eq!(lines.len(), 2, "seed + open segment: {lines:?}");
-        assert!(lines[0].contains("COMBATANT_INFO"), "{lines:?}");
-        assert!(lines[1].contains("21:05:00"), "{lines:?}");
+        assert_eq!(lines.len(), 1, "the open segment: {lines:?}");
+        assert!(lines[0].contains("21:05:00"), "{lines:?}");
 
         // With nothing open, the seed still replays for future segments.
         let q = dir.join("closed.txt");
         append(&q, info.as_bytes());
         let mut t = Tailer::new(SourceSpec::File(q));
-        let lines = lines_of(&t.poll());
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].contains("COMBATANT_INFO"));
+        let polled = t.poll();
+        assert!(lines_of(&polled).is_empty(), "{polled:?}");
+        let seeds = seeds_of(&polled);
+        assert_eq!(seeds.len(), 1, "{seeds:?}");
+        assert!(seeds[0].contains("COMBATANT_INFO"));
     }
 
     #[test]

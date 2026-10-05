@@ -25,7 +25,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use wowdps_core::index::{load_segment_text, scan};
-use wowdps_core::meter::{Segment, View, meter_from_lines};
+use wowdps_core::meter::{Segment, View};
 use wowdps_core::parser::{Event, LogLine, parse_line};
 use wowdps_model::MissKind;
 
@@ -635,15 +635,23 @@ fn support_partitions_damage_on_every_real_segment() {
     for meta in &metas {
         let text = load_segment_text(Path::new(&path), meta).expect("load the segment");
         let t = Instant::now();
-        let lines: Vec<LogLine> = text.lines().filter_map(parse_line).collect();
-        let meter = meter_from_lines(text.lines());
+        let lines: Vec<LogLine> = text
+            .seeds()
+            .chain(text.slice())
+            .filter_map(parse_line)
+            .collect();
+        let meter = text.meter();
         parse_ms += t.elapsed().as_millis();
-        let raws: Vec<&str> = text.lines().filter(|l| parse_line(l).is_some()).collect();
+        let raws: Vec<&str> = text
+            .seeds()
+            .chain(text.slice())
+            .filter(|l| parse_line(l).is_some())
+            .collect();
 
         // Census: every `_SUPPORT` line by family — the six parse as
         // Support, every other name (SPELL_ABSORBED_SUPPORT above all) as
         // Other. Counted per (family: parsed, other).
-        for raw in text.lines() {
+        for raw in text.seeds().chain(text.slice()) {
             let Some(ev) = raw.split("  ").nth(1).and_then(|x| x.split(',').next()) else {
                 continue;
             };

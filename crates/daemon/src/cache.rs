@@ -35,7 +35,11 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // keyed visit for such a run, and the sweep imports through this cache.
 // \x10: R10 keys a run joined mid-way from its finished END — a checkpoint
 // scanned by the old rule holds that run as a plain, unkeyed zone visit.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x10";
+// \x11: R10's ENCOUNTER_START settles its visit (a door logged at 0 onto a
+// raid, a delve, Timewalking) and is a seed when it moves it; ScanState
+// gained `last_zone_map`. A checkpoint scanned by the old rule holds those
+// pulls outside any visit and the visit before them open.
+const MAGIC: &[u8; 8] = b"WDPSIDX\x11";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -139,6 +143,9 @@ impl IndexCache {
         wire::put_opt(&mut buf, state.last_zone.as_ref(), |b, z| {
             wire::put_str(b, z)
         });
+        wire::put_opt(&mut buf, state.last_zone_map.as_ref(), |b, m| {
+            wire::put_u32(b, *m)
+        });
         wire::put_bool(&mut buf, state.arena_over);
 
         let _ = write_atomic(&self.cache_path(path), &buf);
@@ -183,6 +190,7 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
     let visit_count = rd.u32().ok()?;
     let visit = rd.opt(get_visit).ok()?;
     let last_zone = rd.opt(|r| r.string()).ok()?;
+    let last_zone_map = rd.opt(|r| r.u32()).ok()?;
     let arena_over = rd.bool().ok()?;
     rd.finish().ok()?;
     Some((
@@ -198,6 +206,7 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
             visit_count,
             visit,
             last_zone,
+            last_zone_map,
             arena_over,
             offset,
         },

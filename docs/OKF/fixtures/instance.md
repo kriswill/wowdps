@@ -16,7 +16,11 @@ ZONE_CHANGE and CHALLENGE_MODE_* lines drive instance visits; the fixture proves
 
 ## Gate
 
-`crates/core/tests/instance.rs`.
+`crates/core/tests/instance.rs`. Beside the fixture it replays inline R10
+shapes: a key whose door logged 0, a key joined mid-run, and a raid whose
+difficulty was switched outside so its door logged 0. For that raid the
+meter, the scanner, every lazy slice, the live tail and every checkpoint
+resume must agree ([the decision](../decisions/a-pull-zones-in.md)).
 
 ## Source
 

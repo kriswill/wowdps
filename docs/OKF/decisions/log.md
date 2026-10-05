@@ -2,6 +2,11 @@
 
 ## 2026-10-04
 
+- **Creation** — [A Pull Zones In The Door That Logged Zero](a-pull-zones-in.md):
+  an ENCOUNTER_START while zoned out opens or resumes its visit (a raid
+  re-entered after a Heroic→Mythic switch logged its doors at 0, and the
+  Mythic pulls fell outside any visit while the Heroic one stayed live);
+  such a START is a seed, replayed through the new `Meter::seed`.
 - **Creation** — [devenv Is The Reference Shell, And The Flake Shell Mirrors It](devenv-is-the-reference-shell.md):
   devenv for local builds and CI; the flake shell mirrors devenv's clang
   and linker to the same store path, PKG_CONFIG_PATH pinned in both,

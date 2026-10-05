@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-04
+
+- **Update** — [R10 Visits & Overall](r10.md): a pull behind a door logged at
+  difficulty 0 zones in — an ENCOUNTER_START while zoned out, at an instanced
+  difficulty on the map the last door named, resumes or opens its visit, and
+  is a seed line replayed through `Meter::seed`
+  ([decision](../decisions/a-pull-zones-in.md)).
+
 ## 2026-10-03
 
 - **Update** — [R23 Death spans](r23.md): the Overall merge closes an open

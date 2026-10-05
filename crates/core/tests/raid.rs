@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use wowdps_core::index::{load_segment, scan, scan_from};
+use wowdps_core::index::{load_segment_text, scan, scan_from};
 use wowdps_core::meter::{Meter, Segment, View, meter_from_lines};
 use wowdps_model::RaidTimeline;
 
@@ -434,8 +434,9 @@ fn the_raid_timeline_survives_lazy_loading_and_checkpoints() {
         let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();
         assert_eq!(metas.len(), full.segments().len(), "{name}: segment count");
         for (meta, seg) in metas.iter().zip(full.segments()) {
-            let lines = load_segment(Path::new(&path), meta).expect("slice loads");
-            let lazy = meter_from_lines(lines.iter().map(String::as_str));
+            let lazy = load_segment_text(Path::new(&path), meta)
+                .expect("slice loads")
+                .meter();
             assert_eq!(lazy.segments().len(), 1, "{name}: one segment per slice");
             assert_eq!(
                 picture(&lazy.segments()[0]),
@@ -447,8 +448,9 @@ fn the_raid_timeline_survives_lazy_loading_and_checkpoints() {
         }
         for meta in &idx.overalls {
             let ordinal = meta.visit.expect("an Overall meta names its visit");
-            let lines = load_segment(Path::new(&path), meta).expect("visit loads");
-            let lazy = meter_from_lines(lines.iter().map(String::as_str));
+            let lazy = load_segment_text(Path::new(&path), meta)
+                .expect("visit loads")
+                .meter();
             let got = lazy.overall(ordinal).expect("lazy replay finds the visit");
             let want = full.overall(ordinal).expect("full replay has the visit");
             assert_eq!(picture(&got), picture(&want), "{name} / {}", meta.name);
@@ -470,8 +472,9 @@ fn the_raid_timeline_survives_lazy_loading_and_checkpoints() {
                 .chain(resumed.open.as_ref())
                 .collect();
             for (meta, seg) in rmetas.iter().zip(full.segments()) {
-                let lines = load_segment(Path::new(&path), meta).expect("slice loads");
-                let lazy = meter_from_lines(lines.iter().map(String::as_str));
+                let lazy = load_segment_text(Path::new(&path), meta)
+                    .expect("slice loads")
+                    .meter();
                 assert_eq!(
                     picture(&lazy.segments()[0]),
                     picture(seg),

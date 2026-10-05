@@ -1,5 +1,12 @@
 # Log
 
+## 2026-10-04
+
+- **Update** — [instance.txt](instance.md): its gate replays a raid whose
+  difficulty was switched outside, its doors logged at 0, checking the meter,
+  the scanner, lazy slices, the live tail and checkpoint resumes against each
+  other ([decision](../decisions/a-pull-zones-in.md)).
+
 ## 2026-10-03
 
 - **Update** — [sample.txt](sample.md): a Feign Death for its hunter at

@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use wowdps_core::index::{load_segment_text, scan};
-use wowdps_core::meter::{SegmentKind, meter_from_lines};
+use wowdps_core::meter::SegmentKind;
 use wowdps_core::parser::{Event, parse_line};
 use wowdps_model::MarkKind;
 
@@ -34,7 +34,7 @@ fn death_spans_are_sane_on_every_real_segment() {
 
     for meta in &metas {
         let text = load_segment_text(Path::new(&path), meta).expect("load the segment");
-        let meter = meter_from_lines(text.lines());
+        let meter = text.meter();
         let Some(seg) = meter.segments().last() else {
             continue;
         };
@@ -43,7 +43,8 @@ fn death_spans_are_sane_on_every_real_segment() {
         // spans must match, taken from the lines rather than the meter so
         // the test can disagree with it.
         let died: Vec<String> = text
-            .lines()
+            .seeds()
+            .chain(text.slice())
             .filter_map(parse_line)
             .filter_map(|l| match l.event {
                 Event::Death { unit } if unit.is_player() => Some(unit.guid),
