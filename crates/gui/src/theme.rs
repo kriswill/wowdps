@@ -325,6 +325,64 @@ mod tests {
         });
     }
 
+    /// Every built-in theme's faces set a capital with a mark over it as
+    /// wide as the capital, at every weight the window uses: a name never
+    /// gains a gap after its accent. Saira's bake once left Å at the
+    /// variable font's default width, 151 units wider than A (the advances
+    /// step in `crates/gui-logic/fonts/README.md`).
+    #[test]
+    fn every_theme_s_faces_set_a_capital_s_mark_in_its_width() {
+        use gpui_kit::{FontWeight, font, px};
+        use wowdps_gui_logic::theme::themes;
+        let mut cx = crate::testkit::headless();
+        cx.update(|cx| {
+            let faces = wowdps_gui_logic::fonts::FONTS
+                .iter()
+                .map(|b| std::borrow::Cow::Borrowed(*b))
+                .collect();
+            cx.text_system()
+                .add_fonts(faces)
+                .expect("the bundled fonts load");
+            let marked = [
+                ('A', "ÀÁÂÃÄÅ"),
+                ('E', "ÈÉÊË"),
+                ('I', "ÌÍÎÏ"),
+                ('O', "ÒÓÔÕÖ"),
+                ('U', "ÙÚÛÜ"),
+                ('N', "Ñ"),
+                ('Y', "Ý"),
+            ];
+            for def in themes() {
+                let ui = [FontWeight::NORMAL, FontWeight::MEDIUM, FontWeight::SEMIBOLD]
+                    .map(|w| (&def.faces.ui, w));
+                for (family, weight) in ui
+                    .into_iter()
+                    .chain([(&def.faces.title, FontWeight::NORMAL)])
+                {
+                    let mut f = font(face(family));
+                    f.weight = weight;
+                    let id = cx.text_system().resolve_font(&f);
+                    let width = |c: char| {
+                        cx.text_system()
+                            .advance(id, px(14.5), c)
+                            .map(|s| f32::from(s.width))
+                            .ok()
+                    };
+                    for (base, letters) in marked {
+                        for c in letters.chars() {
+                            assert_eq!(
+                                width(c),
+                                width(base),
+                                "{} {family} {weight:?}: {c} beside {base}",
+                                def.name
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     /// One definition drives both targets, and another replaces both: Kit's
     /// slots and our Look switch together, and a class chrome reaches the
     /// slots that draw the chrome.

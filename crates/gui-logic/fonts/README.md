@@ -121,11 +121,26 @@ family is renamed **Saira Tabular** (PostScript
 legacy family carrying the weight for 500 and 600), `usWeightClass` is set
 to the weight and `usWidthClass` to 3 (condensed, the nearest class), and the `STAT`
 table (which describes the variable axes no longer there) and any `DSIG`
-are dropped. Deterministic with `recalcTimestamp=False`:
+are dropped.
+
+One more step fixes advances. The instancer sets every advance from
+`gvar`'s phantom points and drops `HVAR`. Saira's `gvar` holds nothing
+for seven composites (`Aring`, `Aringacute`, `Ldot`, `napostrophe`,
+`uni1EE1`, `uni1EEF`, `underscoredbl`: Å Ǻ Ŀ ŉ ỡ ữ ‗). Their components
+narrow to width 80, but the instancer left each at the default width's
+advance. Å was 683 units wide over an A of 532, a gap after it in every
+name that holds one. So every composite `gvar` holds nothing for takes
+its advance from `HVAR` at the same location, as HarfBuzz reads the
+variable font. That is exactly those seven: `HVAR` moves no other glyph
+`gvar` leaves alone. A simple glyph `gvar` leaves alone keeps its
+outline at the default width, and its advance with it: № stays 1058,
+which `HVAR`'s 855 would cut into. Deterministic with
+`recalcTimestamp=False`:
 
 ```sh
 cat > bake_saira.py <<'PY'
 import sys
+from fontTools.misc.roundTools import otRound
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
@@ -133,7 +148,19 @@ FAMILY = "Saira Tabular"
 PS = "SairaTabular"
 src, weight, style, dst = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 f = TTFont(src, recalcTimestamp=False)
-f = instantiateVariableFont(f, {"wght": weight, "wdth": 80})
+location = {"wght": weight, "wdth": 80}
+# The instancer sets each advance from gvar's phantom points; a composite
+# gvar holds nothing for (Aring, Ldot, ...) draws its components narrowed
+# but keeps the default width's advance. Take HVAR's, as HarfBuzz does.
+widths = f.getGlyphSet(location=location)
+fixed = {
+    g: otRound(widths[g].width)
+    for g in f.getGlyphOrder()
+    if f["glyf"][g].isComposite() and not f["gvar"].variations.get(g)
+}
+f = instantiateVariableFont(f, location)
+for g, advance in fixed.items():
+    f["hmtx"][g] = (advance, f["hmtx"][g][1])
 gsub = f["GSUB"].table
 tnum = set()
 for fr in gsub.FeatureList.FeatureRecord:
