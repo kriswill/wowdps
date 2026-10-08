@@ -4,9 +4,9 @@
 # (.github/workflows/update-locks.yml does exactly this weekly).
 inputs:
   nixpkgs:
-    url: github:NixOS/nixpkgs/a7868a727837f3c09cee2ce0ca671c76b1589fed
+    url: github:NixOS/nixpkgs/494ce7fd23ff6a5dff39e1fb11e9b6f2ac74bf25
   rust-overlay:
-    url: github:oxalica/rust-overlay/dbc715a4b7c0ace63b9769a032d1dd34cd89e5bd
+    url: github:oxalica/rust-overlay/e60029353d0c48d216bc4b065168ccd4079c166f
     inputs:
       nixpkgs:
         follows: nixpkgs
@@ -21,4 +21,4 @@ inputs:
   # flake.nix tracks its main branch; here the rev flake.lock resolved it to.
   # It keeps its own nixpkgs: its package set needs a newer one than ours.
   llm-agents:
-    url: github:numtide/llm-agents.nix/59d0417c2017794f8872b5556f133c8b0b413734
+    url: github:numtide/llm-agents.nix/ba24820b562c0e1ff95d283a2e2e1debcbcbad83
