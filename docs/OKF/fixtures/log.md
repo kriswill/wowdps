@@ -2,6 +2,11 @@
 
 ## 2026-10-09
 
+- **Creation** — [replay.txt](replay.md): R29's fixture; check.awk's R29 block
+  writes `replay_*` rows into every gated fixture's TSV.
+- **Update** — [sample.txt](sample.md): Mírelle's mana once in the Verkath
+  wipe — the `DAMAGE_SPLIT`'s block, read at offset 12 since v45 — and the
+  R29 rows of both pulls.
 - **Update** — [tree.txt](tree.md): an Evoker, Ember, with nineteen Fire
   Breath and Dream Breath lines (releases at stages 1, 3 and 4, two cancels,
   one before the pull and one after the kill) gated as `empower_stage1`..`4`

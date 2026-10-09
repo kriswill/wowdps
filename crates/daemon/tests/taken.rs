@@ -1459,6 +1459,9 @@ fn survivors(cards: &[FightCard]) -> Vec<i64> {
         Retention {
             keep_per_encounter: 0,
             characters: vec!["Ana-Realm".to_string()],
+            // The bests and the fastest kill alone: a wipe on a boss never
+            // killed (progression, v45) would be protected besides.
+            keep_progression: false,
             ..Retention::default()
         },
     );

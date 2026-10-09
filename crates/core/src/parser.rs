@@ -84,6 +84,25 @@ pub struct HpHint {
     /// `a|b` (a Rogue's `3|4`, energy and combo points); the FIRST entry is
     /// kept.
     pub power: Option<Power>,
+    /// v45 (R29): advanced fields 14–17 — where the unit stands and which
+    /// way it faces. `None` when any of them does not read, or the map is 0
+    /// (a unit the block places nowhere).
+    pub pos: Option<Position>,
+    /// v45: advanced field 18 — a player's item level (an NPC's own level);
+    /// 0 when it does not read.
+    pub item_level: u32,
+}
+
+/// v45 (R29): a unit's place from the advanced block, in the log's own
+/// precision kept exact as integers: `x` and `y` in hundredths of a yard
+/// (the log writes two decimals), `map` the UiMap id (the floor), `facing`
+/// in ten-thousandths of a radian (four decimals).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    pub x: i32,
+    pub y: i32,
+    pub map: u32,
+    pub facing: i32,
 }
 
 /// A unit's power reading from the advanced block: `kind` is the game's
@@ -164,6 +183,9 @@ pub enum Event {
         id: u32,
         name: String,
         success: bool,
+        /// v45: the line's trailing fight time in ms (the game's own encounter
+        /// clock); `None` when absent.
+        duration_ms: Option<u64>,
     },
     CombatantInfo {
         guid: String,
@@ -386,9 +408,12 @@ pub enum Event {
     },
     /// R12: a cast that actually went off. The meter uses these for one
     /// thing only — telling a trinket the player *used* from one that fired
-    /// on its own — so no cast ever opens or extends a segment.
+    /// on its own — so no cast ever opens or extends a segment. v45 (R29):
+    /// `dst` is whom it was aimed at (the nil unit for none), what the
+    /// replay cut keeps as a cast's target.
     Cast {
         src: Unit,
+        dst: Unit,
         spell: Spell,
     },
     /// R26 (2026-10-08): `SPELL_CAST_START` — a cast with a cast time began
@@ -458,6 +483,54 @@ pub enum Event {
         src: Unit,
         dst: Unit,
         spell: Spell,
+    },
+    /// v45 (R29): `SPELL_CAST_FAILED` — a cast that did not go off, and the
+    /// client's own words for why (`reason`: "Not enough soul shards"). The
+    /// log writes the LOGGING player's failures alone. Passive: never combat
+    /// for the scanner, read by no ledger; the replay cut keeps it as a
+    /// player's failed cast.
+    CastFailed {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        reason: String,
+    },
+    /// v45 (R29): `SPELL_CREATE` — `src` made `dst` (a Demonic Circle, a
+    /// Soulwell): a summon's line shape for something that is no pet, so it
+    /// never enters the ownership map. Passive; the replay cut's placed
+    /// things read it beside `Summon`.
+    Create {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+    },
+    /// v45 (R29): `UNIT_DESTROYED` — a unit gone without dying (a totem
+    /// replaced or recalled). Passive.
+    Destroyed {
+        unit: Unit,
+    },
+    /// v45 (R29): `UNIT_DIED` whose trailing `unconsciousOnDeath` is 1 — a
+    /// Hunter's Feign Death, or a creature that goes down without dying (a
+    /// council boss, a Restless Amani). No death (R9): no ledger reads it
+    /// and the scanner counts it as no combat, as when it parsed as `Other`;
+    /// the replay cut takes an NPC's as down and a player's as nothing.
+    Unconscious {
+        unit: Unit,
+    },
+    /// v45 (R29): `WORLD_MARKER_PLACED,mapID,marker,x,y` — a raid world
+    /// marker (the log's number: square 0 to skull 7) placed on the
+    /// instance map at x, y, in hundredths of a yard. Passive; an index SEED,
+    /// so a segment knows the markers standing at its start.
+    MarkerPlaced {
+        map_id: u32,
+        marker: u32,
+        x: i32,
+        y: i32,
+    },
+    /// v45 (R29): `WORLD_MARKER_REMOVED,marker` — whatever map it stood on.
+    /// Passive; a seed like the placement.
+    MarkerRemoved {
+        marker: u32,
     },
     /// Recognised as a log line but not modelled. Never an error.
     Other,
@@ -689,6 +762,29 @@ fn power_at(f: &[Cow<'_, str>], i: usize) -> Option<Power> {
     let current = first(1)?.parse().ok()?;
     let max = first(2)?.parse().ok()?;
     (max > 0).then_some(Power { kind, current, max })
+}
+
+/// v45 (R29): a decimal field as a fixed-point integer — `scale` 100 for a
+/// two-decimal position, 10 000 for a four-decimal facing. Rounded, so the
+/// log's own digits come back exactly; `None` when the field does not read
+/// as a finite number or overflows.
+fn fixed_at(f: &[Cow<'_, str>], i: usize, scale: f64) -> Option<i32> {
+    let v: f64 = get(f, i)?.parse().ok()?;
+    let s = (v * scale).round();
+    (s.is_finite() && s >= f64::from(i32::MIN) && s <= f64::from(i32::MAX)).then_some(s as i32)
+}
+
+/// v45 (R29): advanced fields `i..i+4` (x, y, map, facing) → the unit's
+/// [`Position`]; `None` when any does not read or the map is 0.
+fn position_at(f: &[Cow<'_, str>], i: usize) -> Option<Position> {
+    let map: u32 = get(f, i + 2)?.parse().ok()?;
+    (map > 0).then_some(())?;
+    Some(Position {
+        x: fixed_at(f, i, 100.0)?,
+        y: fixed_at(f, i + 1, 100.0)?,
+        map,
+        facing: fixed_at(f, i + 3, 10_000.0)?,
+    })
 }
 
 fn parse_i64(s: &str) -> i64 {
@@ -1149,6 +1245,29 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 name: get(f, 2).unwrap_or_default().to_string(),
                 // Offset 5; the trailing duration_ms at 6 is optional.
                 success: truthy(get(f, 5).unwrap_or_default()),
+                duration_ms: get(f, 6).and_then(|s| s.parse().ok()),
+            });
+        }
+        // v45 (R29): the raid's world markers — `mapID, marker, x, y` placed,
+        // `marker` removed. Short lines, no unit block: read here or never.
+        "WORLD_MARKER_PLACED" => {
+            let n = |i: usize| get(f, i).and_then(|s| s.parse::<u32>().ok());
+            return plain(
+                match (n(1), n(2), fixed_at(f, 3, 100.0), fixed_at(f, 4, 100.0)) {
+                    (Some(map_id), Some(marker), Some(x), Some(y)) => Event::MarkerPlaced {
+                        map_id,
+                        marker,
+                        x,
+                        y,
+                    },
+                    _ => Event::Other,
+                },
+            );
+        }
+        "WORLD_MARKER_REMOVED" => {
+            return plain(match get(f, 1).and_then(|s| s.parse().ok()) {
+                Some(marker) => Event::MarkerRemoved { marker },
+                None => Event::Other,
             });
         }
         "ZONE_CHANGE" => {
@@ -1222,10 +1341,15 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
     // R19: EVERY support line carries the buff's 3-field spell block —
     // SWING_DAMAGE_LANDED_SUPPORT included (42 fields, not the swing's 38);
     // with the swing offsets its amount would read as the buff's spell id.
+    // v45 (R29): DAMAGE_SPLIT too — it carries the 3-field spell block (the
+    // split's spell: Blessing of Sacrifice, a shared-damage mechanic), so its
+    // advanced block (describing the unit the split landed on) sits at 12;
+    // read at 9 it was never found, and its health, power and position lost.
     let prefix_len = if is_support_event(ev)
         || ev.starts_with("SPELL_")
         || ev.starts_with("RANGE_")
         || ev.starts_with("DAMAGE_SHIELD")
+        || ev == "DAMAGE_SPLIT"
     {
         3
     } else {
@@ -1267,6 +1391,10 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             flags,
             absorb: parse_u64(get(f, adv_start + 9).unwrap_or_default()),
             power: power_at(f, adv_start + 10),
+            pos: position_at(f, adv_start + 14),
+            item_level: get(f, adv_start + 18)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
         })
     } else {
         None
@@ -1500,6 +1628,20 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         }
         "SPELL_CAST_SUCCESS" => with_hint(Event::Cast {
             src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell: spell.unwrap_or_default(),
+        }),
+        // v45 (R29): the plain spell-prefix line and the client's reason —
+        // no advanced block, so the reason sits where the suffix starts.
+        "SPELL_CAST_FAILED" => with_hint(Event::CastFailed {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell: spell.unwrap_or_default(),
+            reason: get(f, suffix).unwrap_or_default().to_string(),
+        }),
+        "SPELL_CREATE" => with_hint(Event::Create {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
             spell: spell.unwrap_or_default(),
         }),
         // R27: `amount, overEnergize, powerType, maxPower` after the
@@ -1572,8 +1714,15 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         // R9 amendment: the trailing field is `unconsciousOnDeath`, 1 on a
         // Hunter's Feign Death — a player who did not die, so no death at
         // all (the index scanner drops it from `is_combat` the same way).
-        "UNIT_DIED" if get(f, 9) == Some("1") => with_hint(Event::Other),
+        // v45 (R29): no death, but no longer `Other` — the replay cut takes a
+        // creature's as down.
+        "UNIT_DIED" if get(f, 9) == Some("1") => with_hint(Event::Unconscious {
+            unit: unit_at(f, 5),
+        }),
         "UNIT_DIED" => with_hint(Event::Death {
+            unit: unit_at(f, 5),
+        }),
+        "UNIT_DESTROYED" => with_hint(Event::Destroyed {
             unit: unit_at(f, 5),
         }),
         "SPELL_INSTAKILL" => with_hint(Event::InstaKill {
@@ -1610,6 +1759,7 @@ mod tests {
     const HEALER: &str = r#"Player-1168-0B999C,"Moira-Ragnaros",0x512,0x0"#;
     const BOSS: &str = r#"Creature-0-4232-2662-31585-214502-0001,"Ulgrax the Devourer",0xa48,0x0"#;
     const BOSS_GUID: &str = "Creature-0-4232-2662-31585-214502-0001";
+    const PLAYER_GUID: &str = "Player-1168-0A234B";
     // Real logs use 0x80000000 (not 0x0) for "no raid marker" — that is > i32::MAX.
     const NIL_UNIT: &str = "0000000000000000,nil,0x80000000,0x80000000";
 
@@ -1715,7 +1865,8 @@ mod tests {
             Event::EncounterEnd {
                 id: 2917,
                 name: "Ulgrax the Devourer".into(),
-                success: true
+                success: true,
+                duration_ms: Some(183_000)
             }
         );
         // Trailing duration_ms is optional and absent here.
@@ -1725,7 +1876,8 @@ mod tests {
             Event::EncounterEnd {
                 id: 2917,
                 name: "Ulgrax the Devourer".into(),
-                success: false
+                success: false,
+                duration_ms: None
             }
         );
     }
@@ -2048,6 +2200,15 @@ mod tests {
                     current: 95,
                     max: 100
                 }),
+                // v45 (R29): fields 14–18 — x, y, the floor, the facing and
+                // the item level, the decimals kept exact as integers.
+                pos: Some(Position {
+                    x: 123_456,
+                    y: -98_765,
+                    map: 2222,
+                    facing: 31_400,
+                }),
+                item_level: 639,
             })
         );
 
@@ -2805,9 +2966,106 @@ mod tests {
         let feign = parse(
             r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-60-0F5EEDCE,"Kyarrix-Stormrage-US",0x514,0x80000000,1"#,
         );
-        assert_eq!(feign, Event::Other);
+        // v45 (R29): no death, and no longer `Other` either — the replay cut
+        // reads a creature's as down.
+        let Event::Unconscious { unit } = &feign else {
+            panic!("{feign:?}")
+        };
+        assert_eq!(unit.guid, "Player-60-0F5EEDCE");
         let missing = parse(&format!("UNIT_DIED,{NIL_UNIT},{PLAYER}"));
         assert!(matches!(missing, Event::Death { .. }), "no field, a death");
+    }
+
+    /// v45 (R29): the lines the replay cut reads that were `Other` — a cast
+    /// that failed and why, a create, a unit destroyed, the world markers —
+    /// and a cast's target, an encounter's own clock.
+    #[test]
+    fn the_replay_lines_parse() {
+        let failed = parse(&format!(
+            "SPELL_CAST_FAILED,{PLAYER},{NIL_UNIT},105174,\"Hand of Gul'dan\",0x24,\"Not enough soul shards\""
+        ));
+        let Event::CastFailed {
+            src, spell, reason, ..
+        } = &failed
+        else {
+            panic!("{failed:?}")
+        };
+        assert_eq!((src.guid.as_str(), spell.id), (PLAYER_GUID, 105_174));
+        assert_eq!(reason, "Not enough soul shards");
+        let create = parse(&format!(
+            "SPELL_CREATE,{PLAYER},GameObject-0-1-2-3-303148-AA,\"Soulwell\",0x4228,0x80000000,29893,\"Create Soulwell\",0x20"
+        ));
+        assert!(
+            matches!(&create, Event::Create { dst, spell, .. } if dst.name == "Soulwell" && spell.id == 29_893),
+            "{create:?}"
+        );
+        let gone = parse(&format!(
+            "UNIT_DESTROYED,{NIL_UNIT},Creature-0-1-2-3-97285-WR,\"Wind Rush Totem\",0x2111,0x80000000,0"
+        ));
+        assert!(
+            matches!(&gone, Event::Destroyed { unit } if unit.name == "Wind Rush Totem"),
+            "{gone:?}"
+        );
+        assert_eq!(
+            parse("WORLD_MARKER_PLACED,3004,4,100.50,-20.25"),
+            Event::MarkerPlaced {
+                map_id: 3004,
+                marker: 4,
+                x: 10_050,
+                y: -2_025
+            }
+        );
+        assert_eq!(
+            parse("WORLD_MARKER_REMOVED,0"),
+            Event::MarkerRemoved { marker: 0 }
+        );
+        assert_eq!(parse("WORLD_MARKER_PLACED,3004,4,nil,1.00"), Event::Other);
+        assert_eq!(parse("WORLD_MARKER_REMOVED"), Event::Other);
+        let cast = parse(&format!(
+            "SPELL_CAST_SUCCESS,{PLAYER},{BOSS},133,\"Fireball\",0x4,{}",
+            adv(PLAYER_GUID, "0000000000000000")
+        ));
+        assert!(
+            matches!(&cast, Event::Cast { dst, .. } if dst.guid == BOSS_GUID),
+            "{cast:?}"
+        );
+        assert_eq!(
+            parse("ENCOUNTER_END,3000,\"Ula'tek\",16,20,1,12000"),
+            Event::EncounterEnd {
+                id: 3000,
+                name: "Ula'tek".into(),
+                success: true,
+                duration_ms: Some(12_000)
+            }
+        );
+    }
+
+    /// v45 (R29): a position the block does not give — a field that is no
+    /// number, or map 0 — is none; the health beside it still reads.
+    #[test]
+    fn a_position_reads_only_whole() {
+        let hint = |tail: &str| {
+            parse_line(&line(&format!(
+                "SPELL_CAST_SUCCESS,{PLAYER},{NIL_UNIT},133,\"Fireball\",0x4,{PLAYER_GUID},0000000000000000,100,100,0,0,0,0,0,0,0,0,0,0,{tail}"
+            )))
+            .and_then(|l| l.hp_hint)
+        };
+        let h = hint("1500.25,-3.50,2434,1.5000,90").unwrap();
+        assert_eq!(
+            (h.pos, h.item_level),
+            (
+                Some(Position {
+                    x: 150_025,
+                    y: -350,
+                    map: 2434,
+                    facing: 15_000
+                }),
+                90
+            )
+        );
+        assert_eq!(hint("0.00,0.00,0,0.0000,90").unwrap().pos, None, "map 0");
+        assert_eq!(hint("nil,1.00,2434,0.0000,90").unwrap().pos, None);
+        assert_eq!(hint("1.00,1.00,2434").unwrap().pos, None, "truncated");
     }
 
     // ---- real-log corrections (validator, verified against build 12.0.7) ----

@@ -43,10 +43,11 @@ pub struct SegmentMeta {
     /// Byte ranges of earlier state-carrying lines, one line each
     /// (SPELL_SUMMON, COMBATANT_INFO, COMBAT_LOG_VERSION, and R10's
     /// ZONE_CHANGE / CHALLENGE_MODE lines and every ENCOUNTER_START that
-    /// zoned in) that must be replayed BEFORE the slice — through
-    /// `Meter::seed`, never `feed` — so pet ownership, names, classes and
-    /// visit context resolve exactly as they do in a full replay. These
-    /// lines are rare, so this stays small.
+    /// zoned in, and (v45, R29) every WORLD_MARKER_PLACED / _REMOVED) that
+    /// must be replayed BEFORE the slice — through `Meter::seed`, never
+    /// `feed` — so pet ownership, names, classes, visit context and the
+    /// world markers standing resolve exactly as they do in a full replay.
+    /// These lines are rare, so this stays small.
     pub seeds: Vec<(u64, u64)>,
     /// R10: ordinal of the instance visit this segment belongs to. On an
     /// `Overall` meta: the visit it aggregates (its byte range spans the
@@ -468,6 +469,11 @@ impl Scanner {
             // Not combat, but they carry state later segments depend on:
             // pet ownership + names, and player classes.
             "SPELL_SUMMON" => self.seeds.push((off, end)),
+            // v45 (R29): the raid's world markers. Not combat (no meter
+            // ledger reads them), but the replay cut needs the markers
+            // standing when a pull starts, placed however long before it —
+            // a handful a night, so every one is a seed.
+            "WORLD_MARKER_PLACED" | "WORLD_MARKER_REMOVED" => self.seeds.push((off, end)),
             "COMBATANT_INFO" => {
                 self.seeds.push((off, end));
                 // R13 mirror of `Meter`: inside a match, field 2 ("faction")
@@ -1892,6 +1898,35 @@ mod tests {
     #[test]
     fn the_relog_fixture_survives_index_then_lazy_parse() {
         parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/relog.txt"));
+    }
+
+    /// R29 (v45): world markers before and between pulls (seeds now), a cast
+    /// that failed, a create, a unit destroyed, a creature unconscious and a
+    /// DAMAGE_SPLIT's block — index-then-lazy == full, segmentation untouched.
+    #[test]
+    fn the_replay_fixture_survives_index_then_lazy_parse() {
+        parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/replay.txt"));
+    }
+
+    /// R29 (v45): every WORLD_MARKER line is a seed of every segment after
+    /// it, so a lazily loaded pull knows the markers standing at its start.
+    #[test]
+    fn world_markers_seed_the_segments_after_them() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/replay.txt");
+        let bytes = std::fs::read(path).unwrap();
+        let idx = scan(&mut bytes.as_slice());
+        let markers = |m: &SegmentMeta| {
+            m.seeds
+                .iter()
+                .filter(|&&(a, b)| {
+                    String::from_utf8_lossy(&bytes[a as usize..b as usize]).contains("WORLD_MARKER")
+                })
+                .count()
+        };
+        // Five before the first pull; the second pull's seeds add the five
+        // the first one changed.
+        assert_eq!(markers(&idx.segments[0]), 5);
+        assert_eq!(markers(&idx.segments[1]), 10);
     }
 
     /// R19: every support family, a self-supported proc, a buffed pet and

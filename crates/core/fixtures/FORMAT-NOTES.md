@@ -87,6 +87,17 @@ damage/heal suffix by two columns.
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 
+> **v45 (R29, the replay cut) — fields 14–18 and `DAMAGE_SPLIT`.** The parser now
+> reads the block's place: `x`, `y` (two decimals: `1500.25,-3.50`), `ui_map_id`
+> (the floor, a UiMap id) and `facing` (four decimals, radians), kept exact as
+> integers (`HpHint.pos`: hundredths of a yard, ten-thousandths of a radian; none
+> when a field does not read or the map is 0), and field 18 (a player's item level,
+> an NPC's own level: `325`, `93`). `DAMAGE_SPLIT` (Blessing of Sacrifice's share)
+> carries the 3-field spell prefix, so its block is at off12 like a spell's — it
+> describes the unit the split landed on; read at off9, it was never found (452
+> posts over 48 real pulls, 2026-10-09). The game writes `-0.00` for a coordinate
+> or a facing a hair below zero; the integer reading has no negative zero.
+
 ### Which unit the advanced block describes  ← attribution-critical
 
 | event | block describes |
@@ -357,7 +368,24 @@ as cancels on the spell's row.
 - `UNIT_DIED` — **10 fields**: nil source (`0000000000000000,nil,0x80000000,0x80000000`),
   then the dying unit, then a single trailing `unconsciousOnDeath`: `0` on a real
   death, `1` on a Hunter's Feign Death (and on some creatures that go down
-  without dying, a boss among them) — which the parser reads as `Other`, no death.
+  without dying, a boss among them) — which the parser reads as `Unconscious`
+  (v45; `Other` before), no death: R29's replay cut takes a creature's as down.
+- `UNIT_DESTROYED` — the same 10 fields: a unit gone without dying (a totem
+  recalled or replaced); `Destroyed` (v45, R29), passive.
+- `SPELL_CREATE` — 12 fields like `SPELL_SUMMON`: `src` made `dst`, a GameObject
+  (a Demonic Circle, a Soulwell, a Ritual of Summoning portal); `Create` (v45),
+  passive, never the ownership map.
+- `SPELL_CAST_FAILED` — 13 fields: the spell prefix, no advanced block, and the
+  client's reason (`"Not enough soul shards"`, `"Another action is in progress"`,
+  `"Item is not ready yet"`). The log writes the LOGGING player's own failures
+  alone (275 in a 372 MB raid night). `CastFailed` (v45), passive.
+- `WORLD_MARKER_PLACED,mapID,marker,x,y` and `WORLD_MARKER_REMOVED,marker` — the
+  raid's ground markers, short lines with no unit block: `mapID` the instance map
+  (ENCOUNTER_START's last field), `marker` 0–7 (square … skull: the game's world
+  marker n + 1; `0` is a marker, not "all"), x/y two decimals. A removal names no
+  map. A raid night writes a few dozen. `MarkerPlaced` / `MarkerRemoved` (v45),
+  passive, and every one an index seed, so a pull knows the markers standing at
+  its start.
 - `ENCOUNTER_START` — `id, "name", difficultyID, groupSize, instanceID`
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
 - `COMBATANT_INFO` — `guid, faction, <22 stat scalars>, currentSpecID(field 25),

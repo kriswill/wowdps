@@ -1680,7 +1680,8 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             }
             View::Damage | View::Healing if details_never_written(&f.card) => format!(
                 "{fight_id}: details not written: wipe under {DETAILS_MIN_WIPE_SECS} s (default \
-                 history_details_min_wipe_secs) — only kills and longer wipes get the details tier"
+                 history_details_min_wipe_secs) — only kills, longer wipes and (v45) wipes on a \
+                 boss not yet killed at that difficulty (progression) get the details tier"
             ),
             View::Damage | View::Healing => format!(
                 "{fight_id}: details demoted by retention (tier {tier_name}) — pin fights you want to keep drillable"

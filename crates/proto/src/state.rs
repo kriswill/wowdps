@@ -1284,7 +1284,8 @@ impl ClientState {
             | DaemonMsg::Loadout { .. }
             | DaemonMsg::History { .. }
             | DaemonMsg::Fight { .. }
-            | DaemonMsg::HistoryChanged { .. } => Vec::new(),
+            | DaemonMsg::HistoryChanged { .. }
+            | DaemonMsg::Replay { .. } => Vec::new(),
         }
     }
 

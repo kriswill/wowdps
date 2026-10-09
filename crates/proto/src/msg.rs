@@ -19,7 +19,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 44;
+pub const PROTO_VERSION: u16 = 45;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -192,6 +192,12 @@ pub enum ClientMsg {
         /// Every card of this kind (with the other filters): `key` regrades
         /// all keystone Σs, which have no encounter id to select by.
         kind: Option<FightKind>,
+    },
+    /// v45 (R29): one stored fight's replay tier — its `replay/<id>.bin`
+    /// bytes (`proto::replay`), answered by `DaemonMsg::Replay`.
+    GetReplay {
+        req_id: u32,
+        fight_id: String,
     },
 }
 
@@ -636,6 +642,17 @@ pub struct HistoryStatus {
     /// v31: when the newest affiliation was SEEN by the addon (UTC ms) —
     /// the honest "as of" for every guild the store answers.
     pub affiliations_utc_ms: Option<i64>,
+    /// v45 (R29): fights that keep the replay tier, and its bytes on disk.
+    pub replays: u32,
+    pub replay_bytes: u64,
+    /// v45: the cards retention never touches, by why — a boss kill, a
+    /// timed key, a progression wipe (a boss the store has not seen killed
+    /// at that difficulty), a pin — each card once, under the first of
+    /// those reasons that holds it.
+    pub kept_kills: u32,
+    pub kept_keys: u32,
+    pub kept_progression: u32,
+    pub kept_pins: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -780,6 +797,14 @@ pub enum DaemonMsg {
     /// fight — like `SegmentList`, so a history screen knows to refresh.
     HistoryChanged {
         fight_id: String,
+    },
+    /// v45 (R29): answers `GetReplay` — the fight's replay tier as the store
+    /// keeps it (`proto::replay::decode` reads it); `None` when the fight is
+    /// unknown or keeps no replay (demoted, not cut yet, or past a frame).
+    Replay {
+        req_id: u32,
+        fight_id: String,
+        bytes: Option<Vec<u8>>,
     },
 }
 
@@ -1726,6 +1751,12 @@ fn put_history_status(buf: &mut Vec<u8>, h: &HistoryStatus) {
     wire::put_opt(buf, h.affiliations_utc_ms.as_ref(), |b, t| {
         wire::put_i64(b, *t)
     });
+    // v45: the replay tier and the kept-whole set, trailing.
+    wire::put_u32(buf, h.replays);
+    wire::put_u64(buf, h.replay_bytes);
+    for n in [h.kept_kills, h.kept_keys, h.kept_progression, h.kept_pins] {
+        wire::put_u32(buf, n);
+    }
 }
 
 fn get_history_status(rd: &mut Reader) -> Result<HistoryStatus> {
@@ -1739,6 +1770,12 @@ fn get_history_status(rd: &mut Reader) -> Result<HistoryStatus> {
         addon: rd.opt(|r| r.string())?,
         affiliations: rd.u32()?,
         affiliations_utc_ms: rd.opt(|r| r.i64())?,
+        replays: rd.u32()?,
+        replay_bytes: rd.u64()?,
+        kept_kills: rd.u32()?,
+        kept_keys: rd.u32()?,
+        kept_progression: rd.u32()?,
+        kept_pins: rd.u32()?,
     })
 }
 
@@ -2485,6 +2522,7 @@ const T_GET_FIGHT: u8 = 0x09;
 const T_PIN_FIGHT: u8 = 0x0A;
 const T_IMPORT_LOG: u8 = 0x0B;
 const T_REGRADE: u8 = 0x0C;
+const T_GET_REPLAY: u8 = 0x0D;
 
 impl ClientMsg {
     /// One complete on-the-wire frame.
@@ -2580,6 +2618,11 @@ impl ClientMsg {
                 });
                 T_REGRADE
             }
+            ClientMsg::GetReplay { req_id, fight_id } => {
+                wire::put_u32(&mut body, *req_id);
+                wire::put_str(&mut body, fight_id);
+                T_GET_REPLAY
+            }
         };
         wire::frame(tag, &body)
     }
@@ -2635,6 +2678,10 @@ impl ClientMsg {
                 difficulty: rd.opt(|r| r.u32())?,
                 kind: rd.opt(|r| fight_kind_from(r.u8()?))?,
             },
+            T_GET_REPLAY => ClientMsg::GetReplay {
+                req_id: rd.u32()?,
+                fight_id: rd.string()?,
+            },
             other => return Err(DecodeError::BadTag(other)),
         };
         rd.finish()?;
@@ -2657,6 +2704,7 @@ const T_LOADOUT: u8 = 0x8A;
 const T_HISTORY: u8 = 0x8B;
 const T_FIGHT: u8 = 0x8C;
 const T_HISTORY_CHANGED: u8 = 0x8D;
+const T_REPLAY: u8 = 0x8E;
 
 impl DaemonMsg {
     /// One complete on-the-wire frame.
@@ -2795,6 +2843,16 @@ impl DaemonMsg {
                 wire::put_str(&mut body, fight_id);
                 T_HISTORY_CHANGED
             }
+            DaemonMsg::Replay {
+                req_id,
+                fight_id,
+                bytes,
+            } => {
+                wire::put_u32(&mut body, *req_id);
+                wire::put_str(&mut body, fight_id);
+                wire::put_opt(&mut body, bytes.as_ref(), |b, v| wire::put_bytes(b, v));
+                T_REPLAY
+            }
         };
         wire::frame(tag, &body)
     }
@@ -2872,6 +2930,11 @@ impl DaemonMsg {
             },
             T_HISTORY_CHANGED => DaemonMsg::HistoryChanged {
                 fight_id: rd.string()?,
+            },
+            T_REPLAY => DaemonMsg::Replay {
+                req_id: rd.u32()?,
+                fight_id: rd.string()?,
+                bytes: rd.opt(|r| r.bytes())?,
             },
             other => return Err(DecodeError::BadTag(other)),
         };

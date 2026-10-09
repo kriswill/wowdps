@@ -314,3 +314,45 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	power_seconds	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	power_sum	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	power_max	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_units	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_posts	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_floor	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_hit	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_cast_start	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_cast_success	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_pcast_start	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_pcast_success	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_pcast_failed	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_interrupt	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_debuff_applied	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_debuff_removed	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_debuff_dose	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_death	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_npc_died	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_rez	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_placed_cast	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_placed_summon	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_placed_touch	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_placed_gone	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_markers	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_units	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_posts	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_floor	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_hit	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_cast_start	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_cast_success	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_pcast_start	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_pcast_success	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_pcast_failed	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_interrupt	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_debuff_applied	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_debuff_removed	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_debuff_dose	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_death	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_npc_died	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_rez	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_placed_cast	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_placed_summon	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_placed_touch	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_placed_gone	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_markers	0
