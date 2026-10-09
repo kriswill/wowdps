@@ -1,7 +1,7 @@
 ---
 type: Fixture
 title: support.txt
-description: 'An Augmentation Evoker buffing a Mage, a Warrior and a pet, plus a Holy Priest with shields, overheal, a self-heal and an NPC-sourced heal — support attribution and the healing split.'
+description: 'An Augmentation Evoker buffing a Mage, a Warrior and a pet, plus a Holy Priest with shields, overheal, a self-heal and an NPC-sourced heal (v44: two of the Priest''s heals partly eaten by a heal-absorb) — support attribution and the healing split.'
 resource: crates/core/fixtures/support.txt
 tags: [fixture]
 status: stable
@@ -19,6 +19,16 @@ Includes shares, a self-supported proc the log writes twice and a melee support 
 The Fire Mage steals Eternal Flame off the boss: a `SPELL_STOLEN` line,
 parsed apart from a dispel and counted on the Dispels view alike
 ([R15](../rulings/r15.md)).
+
+## Heal-absorbs and power (v44)
+
+The Holy Priest's Flash Heal at 22:05:21 has 6 000 of its 20 000 eaten by a
+heal-absorb, and a Renew tick at 22:05:30 logs 9 000 absorbed of the 5 000 it
+healed — capped to 5 000 — so her `heal_absorbed` reads 11 000
+([R2](../rulings/r2.md); [decision](../decisions/a-heal-absorb-is-healing.md)).
+The city trash shows [R28](../rulings/r28.md)'s order: the swing that opens
+it reports into nothing, the boar's swing on Brakkar two seconds later
+reports his rage.
 
 ## Gate
 

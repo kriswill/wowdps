@@ -1,7 +1,7 @@
 ---
 type: Fixture
 title: tree.txt
-description: 'The ability tree''s fixture — a Destruction Warlock''s Sayaad and Infernal summoned mid-pull, Wither''s hit and tick under two ids, two trinkets'' procs, and every cast the passive gate turns away; a Priest''s one-id Shadow Word: Pain hit and ticks and Renew''s instant heal and ticks.'
+description: 'The ability tree''s fixture — a Destruction Warlock''s Sayaad and Infernal summoned mid-pull, Wither''s hit and tick under two ids, two trinkets'' procs, and every cast the passive gate turns away; a Priest''s one-id Shadow Word: Pain hit and ticks and Renew''s instant heal and ticks; an Evoker''s empowered Fire Breath and Dream Breath (v44).'
 resource: crates/core/fixtures/tree.txt
 tags: [fixture]
 status: stable
@@ -58,6 +58,17 @@ metrics — `casts`, `damage_periodic`, `heal_periodic`, `misses_dealt`,
 carries them) and
 `crates/core/tests/tree.rs` for the structure; the mcp's
 `a_drill_s_abilities_carry_the_ability_tree` reads it through a real daemon.
+
+## Empowered spells and power (v44)
+
+Ember, an Evoker, charges Fire Breath and Dream Breath: releases at stages
+3, 1 and 4, a cancel of each, one release before the pull and one after the
+kill that land nowhere — `empower_stage1`..`4` and `empower_cancelled`
+([R26](../rulings/r26.md)); her casts report her mana, and every player's
+reports gate [R28](../rulings/r28.md)'s `power_seconds` / `power_sum` /
+`power_max` (Vexxa reports two pools: mana and soul shards). The window's
+head-line test reads Vexxa's soul shards ([R27](../rulings/r27.md)); the
+mcp's `an_empowered_ability_carries_its_stages` reads Ember's rows.
 
 ## Source
 

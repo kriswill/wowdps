@@ -1,5 +1,16 @@
 # Log
 
+## 2026-10-09
+
+- **Creation** — [A Pool, Second by Second](a-pool-second-by-second.md): new
+  ruling R28 keeps each player's power as a 1 s series per type, drawn under a
+  healer's graph; R27's energize reaches the live drill and R26 counts
+  empowered stages; PROTO_VERSION 44 for the three and the heal-absorb split.
+- **Creation** — [A Heal-Absorb's Part Is Healing, Shown Apart](a-heal-absorb-is-healing.md):
+  R2 counts what a heal-absorb ate as healing done and surfaces it as
+  `heal_absorbed`, capped at what the line healed. Follow-up, not taken:
+  `SPELL_HEAL_ABSORBED` (the absorb's own line) still parses `Other`.
+
 ## 2026-10-08
 
 - **Creation** — [Armor Is Mitigation](armor-is-mitigation.md): R17's record
