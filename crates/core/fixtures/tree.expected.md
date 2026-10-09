@@ -98,3 +98,26 @@ zone — so each trash pull keeps only the cast after its opening hit.
 
 Vexxa's casts 8 (6 + 1 + 1), Incinerate's row 2; Wither's parts and every
 group as in segment 1. Wither's uptime 24 800, the pull's own.
+
+## 2026-10-08: casts that began (`cast_starts`)
+
+Nine `SPELL_CAST_START` lines join the log. `check.awk` counts one by one of
+ours exactly as it counts a cast — passive, so it never opens, extends or
+splits a segment — and emits `cast_starts` right after `casts` for every
+fixture (0 wherever no start was logged):
+
+| ts | who | spell | lands |
+|---|---|---|---|
+| 22:04:56.0 | Vexxa | Chaos Bolt | nowhere — before the pull (nothing open) |
+| 22:05:01.5 | Vexxa | Chaos Bolt | the pull (its cast at 02.0 went off) |
+| 22:05:18.0 | Lumen | Flash Heal | the pull (cast at 19.0) |
+| 22:05:18.5 | Grove Cultist | Shadow Bolt | nobody's — an NPC |
+| 22:05:20.5 | Vexxa | Chaos Bolt | the pull (cast at 22.0) |
+| 22:05:24.0 | Vexxa | Chaos Bolt | the pull — and no cast follows: it never went off |
+| 22:05:30.5 | Vexxa | Chaos Bolt | nowhere — after ENCOUNTER_END |
+| 22:07:00.2 | Vexxa | Incinerate | trash 1 (after its opening hit) |
+| 22:08:29.0 | Vexxa | Incinerate | nowhere — 87.5 s past the last hit, the dead zone |
+
+So segment 1: **Vexxa 3** (Chaos Bolt's row: 3 starts, 2 casts — one
+cancelled), **Lumen 1**; segment 2: **Vexxa 1**; segment 3: 0. No other
+number moves and the segment list is the same three.

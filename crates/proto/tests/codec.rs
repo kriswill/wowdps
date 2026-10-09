@@ -2322,6 +2322,7 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
             }],
             misses: 0x7172_7374_7576_7778,
             uptime_ms: 0x8182_8384_8586_8788,
+            starts: 0x9192_9394_9596_9798,
         }],
     };
     let make = |tree: SpellTree| DaemonMsg::Snapshot {
@@ -2369,6 +2370,7 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
     want.extend_from_slice(&0x6162_6364_6566_6768u64.to_le_bytes());
     want.extend_from_slice(&0x7172_7374_7576_7778u64.to_le_bytes()); // misses
     want.extend_from_slice(&0x8182_8384_8586_8788u64.to_le_bytes()); // uptime_ms
+    want.extend_from_slice(&0x9192_9394_9596_9798u64.to_le_bytes()); // v43: starts
     let start = empty.len() - tail - 8;
     assert_eq!(
         &empty[start..empty.len() - tail],

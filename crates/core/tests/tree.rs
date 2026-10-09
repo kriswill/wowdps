@@ -197,6 +197,36 @@ fn casts_count_on_the_row_they_name() {
     }
 }
 
+/// R26 (2026-10-08): SPELL_CAST_START counts beside the casts on the row
+/// it names, through the same passive gate — so a start before the pull,
+/// after the kill or past the trash gap lands nowhere, an NPC's is
+/// nobody's, and a start with no success behind it (the third Chaos Bolt)
+/// is a cast that never went off. No segment moves (the index scanner
+/// never counts the line).
+#[test]
+fn cast_starts_count_beside_the_casts_and_never_open_a_segment() {
+    let m = tree_fight();
+    assert_eq!(
+        m.segments().len(),
+        3,
+        "the pull and two trash pulls, as ever"
+    );
+    let seg = &m.segments()[0];
+    let tree = seg.spell_tree(W, View::Damage);
+    let chaos = tree.meta("Chaos Bolt").expect("Chaos Bolt's meta");
+    assert_eq!((chaos.starts, chaos.casts), (3, 2), "one cancelled");
+    assert_eq!(seg.cast_starts(W), 3);
+    assert_eq!(
+        seg.spell_tree(P, View::Healing)
+            .meta("Flash Heal")
+            .map(|m| (m.starts, m.casts)),
+        Some((1, 1))
+    );
+    assert_eq!(seg.cast_starts(P), 1);
+    let trash: Vec<u64> = m.segments()[1..].iter().map(|s| s.cast_starts(W)).collect();
+    assert_eq!(trash, vec![1, 0], "the start past the gap is nobody's");
+}
+
 /// Healing nests the same way: Renew's instant heal and its ticks are two
 /// parts of one row, each cast counted.
 #[test]
@@ -390,7 +420,7 @@ fn the_tree_survives_lazy_loading_on_every_fixture() {
                         r.key.clone(),
                         view,
                         seg.spell_tree(&r.key, view),
-                        seg.casts(&r.key),
+                        seg.casts(&r.key) + 1_000 * seg.cast_starts(&r.key),
                     ));
                 }
             }

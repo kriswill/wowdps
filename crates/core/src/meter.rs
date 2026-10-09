@@ -342,6 +342,7 @@ struct DotUnion {
 struct TreeRow {
     group: String,
     casts: u64,
+    starts: u64,
     misses: u64,
     slot: SpellSlot,
 }
@@ -882,6 +883,10 @@ pub struct Segment {
     /// `actors`. Passive: counted only inside an open segment, never
     /// opening or extending one.
     casts: HashMap<String, HashMap<String, u64>>,
+    /// R26 (2026-10-08): SPELL_CAST_START counts, keyed exactly like
+    /// `casts` and as passive — casts with a cast time that BEGAN, so a
+    /// row's starts less its casts are the ones that never went off.
+    starts: HashMap<String, HashMap<String, u64>>,
     /// R26 (step 3): `*_MISSED` lines per RAW attacker guid, per spell NAME
     /// (the attacker's side of R17's misses) — folded at read like `casts`.
     misses: HashMap<String, HashMap<String, u64>>,
@@ -1310,6 +1315,7 @@ impl Segment {
             spell_series: HashMap::new(),
             heal_spell_series: HashMap::new(),
             casts: HashMap::new(),
+            starts: HashMap::new(),
             misses: HashMap::new(),
             dots: HashMap::new(),
             summons: HashMap::new(),
@@ -1592,6 +1598,12 @@ impl Segment {
         // member's (members are absorbed in order, so first seen wins).
         for (caster, per_spell) in &other.casts {
             let dst = self.casts.entry(caster.clone()).or_default();
+            for (spell, n) in per_spell {
+                *dst.entry(spell.clone()).or_default() += n;
+            }
+        }
+        for (caster, per_spell) in &other.starts {
+            let dst = self.starts.entry(caster.clone()).or_default();
             for (spell, n) in per_spell {
                 *dst.entry(spell.clone()).or_default() += n;
             }
@@ -2220,6 +2232,16 @@ impl Segment {
     /// per-row casts are split out of.
     pub fn casts(&self, player_guid: &str) -> u64 {
         self.casts
+            .iter()
+            .filter(|(caster, _)| self.resolve_owner(caster) == player_guid)
+            .map(|(_, per_spell)| per_spell.values().sum::<u64>())
+            .sum()
+    }
+
+    /// R26 (2026-10-08): every SPELL_CAST_START by the player and their
+    /// pets, folded like `casts` — the casts with a cast time that began.
+    pub fn cast_starts(&self, player_guid: &str) -> u64 {
+        self.starts
             .iter()
             .filter(|(caster, _)| self.resolve_owner(caster) == player_guid)
             .map(|(_, per_spell)| per_spell.values().sum::<u64>())
@@ -3078,6 +3100,17 @@ impl Segment {
                 }
             }
         }
+        for (caster, per_spell) in &self.starts {
+            if self.resolve_owner(caster) != player_guid {
+                continue;
+            }
+            let pet = (caster != player_guid).then(|| self.label_for(caster));
+            for (spell, n) in per_spell {
+                if let Some(acc) = rows.get_mut(&tree_key(spell, pet.as_deref())) {
+                    acc.starts += n;
+                }
+            }
+        }
         // R26 (step 3): misses join the same way; a DoT's uptime is the
         // player's own debuff of the row's name.
         for (attacker, per_spell) in &self.misses {
@@ -3124,6 +3157,7 @@ impl Segment {
                 };
                 (!acc.group.is_empty()
                     || acc.casts > 0
+                    || acc.starts > 0
                     || acc.misses > 0
                     || uptime_ms > 0
                     || !parts.is_empty())
@@ -3131,6 +3165,7 @@ impl Segment {
                     key,
                     group: acc.group,
                     casts: acc.casts,
+                    starts: acc.starts,
                     parts,
                     misses: acc.misses,
                     uptime_ms,
@@ -4581,6 +4616,12 @@ impl Segment {
         bump(&mut self.casts, caster, spell);
     }
 
+    /// R26 (2026-10-08): one SPELL_CAST_START by a unit of ours, on the
+    /// spell's NAME like `note_cast`.
+    fn note_start(&mut self, caster: &str, spell: &str) {
+        bump(&mut self.starts, caster, spell);
+    }
+
     /// R26 (step 3): one miss by a unit of ours, on the spell's NAME (or
     /// "Melee" for a swing) so it joins the attacker's by-spell row.
     fn note_miss(&mut self, attacker: &str, spell: &str) {
@@ -5744,6 +5785,22 @@ impl Meter {
                     }
                 }
             }
+
+            // R26 (2026-10-08): a cast that BEGAN — counted beside the casts
+            // that went off, on the same row, through the same passive gate
+            // (the scanner does not count SPELL_CAST_START, so it may never
+            // open, extend or split a segment). No R8 inference (its sources
+            // are fixed) and no R23 proof of life (the line carries no health
+            // report, and the rule names a cast that went off).
+            Event::CastStart { src, spell, .. } => {
+                if let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    s.note_start(&src.guid, &spell.name);
+                }
+            }
+            // Parsed for its stage; nothing reads it yet. Passive.
+            Event::Empower { .. } => {}
 
             // R23: somebody was raised. Passive by construction — a rez must
             // never open or extend a segment (the index scanner does not

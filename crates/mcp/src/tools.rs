@@ -176,7 +176,9 @@ pub fn catalog() -> Vec<Tool> {
                           under, the pet itself, or the trinket a proc came from), `casts` \
                           and `avg_cast` (SPELL_CAST_SUCCESS by the player and their pets \
                           under that ability name; 0 casts = none logged, as for a swing \
-                          or a proc), `parts` (per spell id, periodic = a DoT/HoT tick, \
+                          or a proc), `starts` (v43: SPELL_CAST_STARTs under that name — a cast-time \
+                          spell's casts that began; starts beyond casts never went off), \
+                          `parts` (per spell id, periodic = a DoT/HoT tick, \
                           summing to the row), `misses` + `miss_pct` (the player's own \
                           misses under that name, of hits + misses) and a DoT's \
                           `uptime_pct` (the union of its debuff on any enemy over the \
@@ -3628,7 +3630,9 @@ fn meter_row(rank: usize, r: &Row, view: View, run_ms: Option<i64>) -> Json {
 /// additionally reports remaining health).
 /// R26 (v36): a by-ability row with what the ability tree adds — `group`
 /// (the summon, pet, trinket or driving spell it hangs under), `casts` and `avg_cast` when
-/// casts were seen, and `parts` (per spell id, direct vs periodic) when the
+/// casts were seen, `starts` (v43: SPELL_CAST_STARTs, a cast-time spell's
+/// casts that began) when any, and `parts` (per spell id, direct vs
+/// periodic) when the
 /// row splits. Step 3: `misses` and `miss_pct` (of hits + misses) when any
 /// missed, and a DoT's `uptime_pct` over `fight_ms`. A row the tree says nothing about is `ability_row`'s.
 fn tree_ability_row(r: &Row, view: View, tree: &SpellTree, fight_ms: i64) -> Json {
@@ -3645,6 +3649,12 @@ fn tree_ability_row(r: &Row, view: View, tree: &SpellTree, fight_ms: i64) -> Jso
     if m.casts > 0 {
         o.push(("casts".to_string(), Json::u64(m.casts)));
         o.push(("avg_cast".to_string(), Json::u64(r.amount / m.casts)));
+    }
+    // v43 (R26): the casts with a cast time that BEGAN — beside `casts`,
+    // the difference is how many never went off (cancelled, kicked,
+    // moved out of).
+    if m.starts > 0 {
+        o.push(("starts".to_string(), Json::u64(m.starts)));
     }
     if m.misses > 0 {
         let pct = m.misses as f64 / (r.count + m.misses) as f64 * 100.0;

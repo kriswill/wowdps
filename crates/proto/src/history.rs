@@ -1821,6 +1821,8 @@ pub fn spell_tree_json(t: &SpellTree) -> Json {
             "casts": Json::u64(m.casts),
             "misses": Json::u64(m.misses),
             "uptime_ms": Json::u64(m.uptime_ms),
+            // v43: the casts that began; absent on an older file reads 0.
+            "starts": Json::u64(m.starts),
             "parts": Json::Arr(m.parts.iter().map(|p| obj! {
                 "spell_id": Json::num(p.spell_id),
                 "periodic": Json::Bool(p.periodic),
@@ -1862,6 +1864,7 @@ pub fn spell_tree_from(v: Option<&Json>) -> SpellTree {
                 casts: u64_of(m, "casts").unwrap_or(0),
                 misses: u64_of(m, "misses").unwrap_or(0),
                 uptime_ms: u64_of(m, "uptime_ms").unwrap_or(0),
+                starts: u64_of(m, "starts").unwrap_or(0),
                 parts: m
                     .get("parts")
                     .and_then(Json::as_arr)

@@ -46,6 +46,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stack_cells	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	casts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	cast_starts	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	damage_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	misses_dealt	0
@@ -97,6 +98,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stack_cells	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	casts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	cast_starts	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	damage_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	misses_dealt	0
@@ -148,6 +150,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stack_cells	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	casts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	cast_starts	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	damage_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	misses_dealt	0
@@ -199,6 +202,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stack_cells	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	casts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	cast_starts	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	damage_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	misses_dealt	0
@@ -250,6 +254,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stack_cells	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	casts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	cast_starts	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	damage_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	misses_dealt	0
@@ -301,6 +306,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C43	stack_cells	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	stack_auras	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	casts	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	cast_starts	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	damage_periodic	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	heal_periodic	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	misses_dealt	0
@@ -352,6 +358,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	stack_cells	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	stack_auras	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	casts	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	cast_starts	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	damage_periodic	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	heal_periodic	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	misses_dealt	0

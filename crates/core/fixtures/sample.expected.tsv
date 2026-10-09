@@ -46,6 +46,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C01	stack_cells	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	stack_auras	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	casts	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	cast_starts	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	damage_periodic	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	heal_periodic	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	misses_dealt	1
@@ -97,6 +98,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C03	stack_cells	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	stack_auras	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	casts	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	cast_starts	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	damage_periodic	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	heal_periodic	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	misses_dealt	0
@@ -148,6 +150,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C02	stack_cells	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	stack_auras	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	casts	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	cast_starts	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	damage_periodic	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	heal_periodic	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	misses_dealt	0
@@ -199,6 +202,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stack_cells	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stack_auras	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	casts	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	cast_starts	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	damage_periodic	8450
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	heal_periodic	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	misses_dealt	1
@@ -250,6 +254,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stack_cells	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stack_auras	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	casts	1
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	cast_starts	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	damage_periodic	7350
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	heal_periodic	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	misses_dealt	0
@@ -301,6 +306,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stack_cells	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stack_auras	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	casts	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	cast_starts	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	damage_periodic	3200
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	heal_periodic	8500
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	misses_dealt	0
@@ -352,6 +358,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stack_cells	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stack_auras	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	casts	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	cast_starts	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	damage_periodic	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	heal_periodic	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	misses_dealt	0
@@ -403,6 +410,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C03	stack_cells	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	stack_auras	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	casts	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	cast_starts	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	damage_periodic	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	heal_periodic	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	misses_dealt	0
@@ -454,6 +462,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C01	stack_cells	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	stack_auras	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	casts	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	cast_starts	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	damage_periodic	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	heal_periodic	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	misses_dealt	0
@@ -505,6 +514,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stack_cells	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stack_auras	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	casts	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	cast_starts	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	damage_periodic	3400
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	heal_periodic	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	misses_dealt	0
@@ -556,6 +566,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stack_cells	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stack_auras	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	casts	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	cast_starts	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	damage_periodic	3900
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	heal_periodic	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	misses_dealt	0
@@ -607,6 +618,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stack_cells	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stack_auras	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	casts	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	cast_starts	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	damage_periodic	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	heal_periodic	7000
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	misses_dealt	0

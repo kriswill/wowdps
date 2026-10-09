@@ -46,6 +46,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	stack_cells	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	stack_auras	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	casts	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	cast_starts	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	damage_periodic	6000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	heal_periodic	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	misses_dealt	0
@@ -97,6 +98,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	stack_cells	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	stack_auras	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	casts	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	cast_starts	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	damage_periodic	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	heal_periodic	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	misses_dealt	0
@@ -148,6 +150,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	stack_cells	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	stack_auras	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	casts	1
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	cast_starts	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	damage_periodic	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	heal_periodic	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	misses_dealt	0
@@ -199,6 +202,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	stack_cells	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	stack_auras	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	casts	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	cast_starts	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	damage_periodic	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	heal_periodic	13000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	misses_dealt	0
@@ -250,6 +254,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C22	stack_cells	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	stack_auras	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	casts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	cast_starts	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	damage_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	heal_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	misses_dealt	0
@@ -301,6 +306,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C23	stack_cells	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	stack_auras	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	casts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	cast_starts	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	damage_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	heal_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	misses_dealt	0
@@ -352,6 +358,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C21	stack_cells	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	stack_auras	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	casts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	cast_starts	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	damage_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	heal_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	misses_dealt	0

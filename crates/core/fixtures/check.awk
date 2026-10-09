@@ -778,6 +778,17 @@ ev == "SPELL_CAST_SUCCESS" {
     next
 }
 
+# ---- R26 (2026-10-08) casts that BEGAN: a SPELL_CAST_START by one of ours,
+# counted exactly like a cast (passive — never combat, so a start before the
+# pull, after the kill or past the trash gap lands nowhere; an NPC's is
+# nobody's). A start with no success after it is a cast that never went off.
+ev == "SPELL_CAST_START" {
+    if (passive_stale()) next
+    a = actor($2, $4); if (a == "") next
+    startv[cur SUBSEP a]++
+    next
+}
+
 ev == "SPELL_INTERRUPT" { a = actor($2, $4); note(cur, a, "interrupts", 1); next }
 ev == "SPELL_DISPEL"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next }
 
@@ -939,6 +950,7 @@ END {
             # metrics: casts (passive-gated), and the periodic halves of damage
             # and healing (ticks; the direct part is the total less these).
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcasts\t%d\n",                 s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, castv[s SUBSEP g] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcast_starts\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, startv[s SUBSEP g] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdamage_periodic\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "damage_periodic"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\theal_periodic\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "heal_periodic"] + 0
             # R26 (step 3): misses by the player and their pets, and the Σ of

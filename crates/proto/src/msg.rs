@@ -1368,6 +1368,8 @@ fn put_spell_tree(buf: &mut Vec<u8>, t: &SpellTree) {
         });
         wire::put_u64(b, m.misses);
         wire::put_u64(b, m.uptime_ms);
+        // v43 (R26): the casts that began, trailing.
+        wire::put_u64(b, m.starts);
     });
 }
 
@@ -1414,6 +1416,7 @@ fn get_spell_tree(rd: &mut Reader) -> Result<SpellTree> {
                 })?,
                 misses: r.u64()?,
                 uptime_ms: r.u64()?,
+                starts: r.u64()?,
             })
         })?,
     })

@@ -32,6 +32,14 @@ the per-player totals `check.awk` computes.
   proc and its driver form one `Spell` group labelled "Wither"
   ([A Talent Proc Nests Under Its Driver](../decisions/proc-under-its-driver.md)).
 
+## Casts that began (2026-10-08)
+
+Nine `SPELL_CAST_START` lines: Chaos Bolt started three times in the pull
+and cast twice (one cancelled), a Flash Heal, a trash Incinerate — and four
+that land nowhere: a precast, one after the kill, one in the trash dead zone,
+and an NPC's. `cast_starts` reads 3 / 1 in the pull and 1 in the first trash
+([R26](../rulings/r26.md)).
+
 ## Gate
 
 `crates/core/tests/fixture_totals.rs` against `tree.expected.tsv` (the R26

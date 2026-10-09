@@ -1271,6 +1271,11 @@ pub struct SpellMeta {
     /// was up on any enemy, ms — a DoT's uptime; 0 for a row that applies
     /// none (and for a pet's row: their debuffs are not tracked).
     pub uptime_ms: u64,
+    /// R26 (v43): `SPELL_CAST_START`s by the player and their pets under the
+    /// row's name — casts with a cast time that BEGAN; `starts − casts`
+    /// (when positive) is how many were cancelled, interrupted or pushed
+    /// back past their end. 0 on an instant spell, which writes no start.
+    pub starts: u64,
 }
 
 /// R26: how one player's by-ability rows nest — Damage and Healing only;
@@ -1319,6 +1324,7 @@ impl SpellTree {
             m.parts.clear();
             m.misses = 0;
             m.uptime_ms = 0;
+            m.starts = 0;
         }
         self.rows.retain(|m| !m.group.is_empty());
         self
@@ -1885,6 +1891,7 @@ mod tests {
                     parts: vec![part.clone(), part],
                     misses: 1,
                     uptime_ms: 9,
+                    starts: 4,
                 },
                 SpellMeta {
                     key: "Wither".into(),
@@ -1893,6 +1900,7 @@ mod tests {
                     parts: Vec::new(),
                     misses: 0,
                     uptime_ms: 40_000,
+                    starts: 0,
                 },
             ],
         };

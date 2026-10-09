@@ -2,6 +2,9 @@
 
 ## 2026-10-08
 
+- **Update** — [R26 Ability tree](r26.md): each row counts its
+  `SPELL_CAST_START`s beside its casts (`SpellMeta::starts`, passive, v43);
+  the empower families parse as `Event::Empower`.
 - **Update** — [R9 Deaths & recap](r9.md): a recap row carries the victim's
   shields beside its health (`Row::absorb`, the advanced block's field 9 from
   the same report), on the wire and in the store's death windows (v43).

@@ -471,6 +471,7 @@ fn tree() -> SpellTree {
             ],
             misses: 2,
             uptime_ms: 12_000,
+            starts: 5,
         }],
     }
 }
@@ -590,7 +591,7 @@ fn golden_documents_pin_the_file_format() {
         d.contains(r#""heal_spells":[],"heal_targets":[],"damage_timeline":{"bucket_ms":1000"#)
     );
     // R26 (v36): the trees ride last, the heal one empty.
-    assert!(d.contains(r#""damage_tree":{"groups":[{"key":"summon:Summon Water Elemental","label":"Summon Water Elemental","spell_id":31687,"kind":"summon"}],"rows":[{"key":"Waterbolt\u0000Water Elemental","group":"summon:Summon Water Elemental","casts":7,"misses":2,"uptime_ms":12000,"parts":[{"spell_id":31707,"periodic":false,"amount":50,"extra":1,"count":5,"crits":2},{"spell_id":31708,"periodic":true,"amount":10,"extra":0,"count":3,"crits":0}]}]}"#), "{d}");
+    assert!(d.contains(r#""damage_tree":{"groups":[{"key":"summon:Summon Water Elemental","label":"Summon Water Elemental","spell_id":31687,"kind":"summon"}],"rows":[{"key":"Waterbolt\u0000Water Elemental","group":"summon:Summon Water Elemental","casts":7,"misses":2,"uptime_ms":12000,"starts":5,"parts":[{"spell_id":31707,"periodic":false,"amount":50,"extra":1,"count":5,"crits":2},{"spell_id":31708,"periodic":true,"amount":10,"extra":0,"count":3,"crits":0}]}]}"#), "{d}");
     // v42: the count views' drills ride after them.
     assert!(
         d.contains(r#""heal_tree":{"groups":[],"rows":[]},"counts":[{"view":"interrupts","spells":[{"key":"Counterspell""#),

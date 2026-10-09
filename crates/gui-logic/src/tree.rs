@@ -432,6 +432,7 @@ mod tests {
             parts,
             misses: 0,
             uptime_ms: 0,
+            starts: 0,
         }
     }
 

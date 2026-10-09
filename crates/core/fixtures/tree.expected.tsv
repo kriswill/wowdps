@@ -46,6 +46,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stack_cells	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stack_auras	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	casts	6
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	cast_starts	3
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	damage_periodic	98000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	heal_periodic	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	misses_dealt	2
@@ -97,6 +98,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stack_cells	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stack_auras	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	casts	3
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	cast_starts	1
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	damage_periodic	16000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	heal_periodic	18000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	misses_dealt	0
@@ -148,6 +150,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		1500			Player-1168-0A1B2C61	stack_cells	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	stack_auras	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	casts	1
+2	Trash	Trash		1500			Player-1168-0A1B2C61	cast_starts	1
 2	Trash	Trash		1500			Player-1168-0A1B2C61	damage_periodic	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	heal_periodic	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	misses_dealt	0
@@ -199,6 +202,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1500			Player-1168-0A1B2C61	stack_cells	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	stack_auras	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	casts	1
+3	Trash	Trash		1500			Player-1168-0A1B2C61	cast_starts	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	damage_periodic	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	heal_periodic	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	misses_dealt	0

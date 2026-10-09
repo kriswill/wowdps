@@ -46,6 +46,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stack_cells	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stack_auras	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	casts	1
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	cast_starts	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	damage_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	heal_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	misses_dealt	1
@@ -97,6 +98,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_cells	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_auras	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	casts	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	cast_starts	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	damage_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	heal_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	misses_dealt	0
@@ -148,6 +150,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stack_cells	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stack_auras	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	casts	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	cast_starts	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	damage_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	heal_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	misses_dealt	0
@@ -199,6 +202,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	stack_cells	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	stack_auras	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	casts	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	cast_starts	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	damage_periodic	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	heal_periodic	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	misses_dealt	0
@@ -250,6 +254,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		45000			Player-1168-0A1B2C11	stack_cells	0
 3	Trash	Trash		45000			Player-1168-0A1B2C11	stack_auras	0
 3	Trash	Trash		45000			Player-1168-0A1B2C11	casts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C11	cast_starts	0
 3	Trash	Trash		45000			Player-1168-0A1B2C11	damage_periodic	0
 3	Trash	Trash		45000			Player-1168-0A1B2C11	heal_periodic	0
 3	Trash	Trash		45000			Player-1168-0A1B2C11	misses_dealt	0
@@ -301,6 +306,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		45000			Player-1168-0A1B2C13	stack_cells	0
 3	Trash	Trash		45000			Player-1168-0A1B2C13	stack_auras	0
 3	Trash	Trash		45000			Player-1168-0A1B2C13	casts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C13	cast_starts	0
 3	Trash	Trash		45000			Player-1168-0A1B2C13	damage_periodic	0
 3	Trash	Trash		45000			Player-1168-0A1B2C13	heal_periodic	0
 3	Trash	Trash		45000			Player-1168-0A1B2C13	misses_dealt	0
@@ -352,6 +358,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		45000			Player-1168-0A1B2C14	stack_cells	0
 3	Trash	Trash		45000			Player-1168-0A1B2C14	stack_auras	0
 3	Trash	Trash		45000			Player-1168-0A1B2C14	casts	0
+3	Trash	Trash		45000			Player-1168-0A1B2C14	cast_starts	0
 3	Trash	Trash		45000			Player-1168-0A1B2C14	damage_periodic	0
 3	Trash	Trash		45000			Player-1168-0A1B2C14	heal_periodic	15000
 3	Trash	Trash		45000			Player-1168-0A1B2C14	misses_dealt	0

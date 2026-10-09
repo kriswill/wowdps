@@ -367,6 +367,27 @@ pub enum Event {
         src: Unit,
         spell: Spell,
     },
+    /// R26 (2026-10-08): `SPELL_CAST_START` — a cast with a cast time began
+    /// (the plain spell-prefix line, no advanced block, `dst` usually nil).
+    /// Passive like a cast: it never opens or extends a segment (the index
+    /// scanner does not count it), and it is no R8 or R23 signal. The
+    /// ability tree counts it per caster per spell name beside the casts
+    /// that went off (`SpellMeta::starts`).
+    CastStart {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+    },
+    /// 2026-10-08: `SPELL_EMPOWER_START` (`stage` None) and
+    /// `SPELL_EMPOWER_END` (`stage` = the trailing empower level released,
+    /// 1–4) — an Evoker's charged spell. Parsed and passive; nothing reads
+    /// it yet (the release still writes a `SPELL_CAST_SUCCESS`, which the
+    /// casts count). `SPELL_EMPOWER_INTERRUPT` stays `Other`.
+    Empower {
+        src: Unit,
+        spell: Spell,
+        stage: Option<u32>,
+    },
     /// R26: `spell` is what summoned the pet — the ability its rows nest
     /// under in the ability tree ("Summon Sayaad").
     Summon {
@@ -1380,6 +1401,25 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             src: unit_at(f, 1),
             spell: spell.unwrap_or_default(),
         }),
+        "SPELL_CAST_START" => with_hint(Event::CastStart {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell: spell.unwrap_or_default(),
+        }),
+        // The prefix alone on START; END trails the stage released.
+        "SPELL_EMPOWER_START" => with_hint(Event::Empower {
+            src: unit_at(f, 1),
+            spell: spell.unwrap_or_default(),
+            stage: None,
+        }),
+        "SPELL_EMPOWER_END" => match get(f, suffix).and_then(|s| s.parse().ok()) {
+            Some(stage) => with_hint(Event::Empower {
+                src: unit_at(f, 1),
+                spell: spell.unwrap_or_default(),
+                stage: Some(stage),
+            }),
+            None => with_hint(Event::Other),
+        },
         "SPELL_SUMMON" => with_hint(Event::Summon {
             owner: unit_at(f, 1),
             pet: unit_at(f, 5),
@@ -2905,6 +2945,46 @@ mod tests {
         }
     }
 
+    /// 2026-10-08: the cast-start and empower families, in real lines'
+    /// shapes — the plain spell prefix, a nil destination, END trailing the
+    /// stage released (an INTERRUPT stays `Other`).
+    #[test]
+    fn cast_starts_and_empowers_parse_as_their_own_events() {
+        let e = parse(&format!(
+            "SPELL_CAST_START,{PLAYER},{NIL_UNIT},194153,\"Starfire\",0x40"
+        ));
+        let Event::CastStart { src, dst, spell } = e else {
+            panic!("not a CastStart: {e:?}")
+        };
+        assert_eq!(src.guid, "Player-1168-0A234B");
+        assert!(dst.name.is_empty(), "the nil unit names nobody");
+        assert_eq!((spell.id, spell.name.as_str()), (194153, "Starfire"));
+        let e = parse(&format!(
+            "SPELL_EMPOWER_START,{PLAYER},{PLAYER},355936,\"Dream Breath\",0x8"
+        ));
+        assert!(matches!(e, Event::Empower { stage: None, .. }), "{e:?}");
+        let e = parse(&format!(
+            "SPELL_EMPOWER_END,{PLAYER},{NIL_UNIT},355936,\"Dream Breath\",0x8,3"
+        ));
+        assert!(
+            matches!(&e, Event::Empower { stage: Some(3), spell, .. } if spell.id == 355936),
+            "{e:?}"
+        );
+        assert_eq!(
+            parse(&format!(
+                "SPELL_EMPOWER_END,{PLAYER},{NIL_UNIT},355936,\"Dream Breath\",0x8"
+            )),
+            Event::Other,
+            "an END without its stage is nothing we can use"
+        );
+        assert_eq!(
+            parse(&format!(
+                "SPELL_EMPOWER_INTERRUPT,{PLAYER},{NIL_UNIT},357208,\"Fire Breath\",0x4,0"
+            )),
+            Event::Other
+        );
+    }
+
     #[test]
     fn missed_survives_a_quoted_comma_before_the_miss_type() {
         let e = parse(&format!(
@@ -3182,8 +3262,10 @@ mod tests {
 
     #[test]
     fn unknown_event_is_other_not_none() {
+        // SPELL_CAST_START was the example here until 2026-10-08, when it
+        // became `Event::CastStart`; a family nothing models still is Other.
         let e = parse(&format!(
-            "SPELL_CAST_START,{PLAYER},{BOSS},133,\"Fireball\",0x4"
+            "SPELL_EXTRA_ATTACKS,{PLAYER},{BOSS},465660,\"Skyfury\",0x1,1"
         ));
         assert_eq!(e, Event::Other);
         let e = parse("SOME_FUTURE_EVENT,1,2,3");

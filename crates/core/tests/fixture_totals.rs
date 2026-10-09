@@ -197,6 +197,8 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             // R26: casts (passive-gated, pets folded) and the periodic halves
             // of damage and healing, read off the rows' (id, periodic) parts.
             put_i("casts", seg.casts(key) as i64);
+            // R26 (2026-10-08): the casts that BEGAN, as passive as the casts.
+            put_i("cast_starts", seg.cast_starts(key) as i64);
             put_i(
                 "damage_periodic",
                 seg.periodic_amount(key, View::Damage) as i64,
