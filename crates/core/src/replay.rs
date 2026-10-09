@@ -77,6 +77,9 @@
 //!   keeps counting up (the text cutter's time of day went negative).
 //! - COMBATANT_INFO is the parser's (its stat block can no longer pass for
 //!   an advanced block whose map field happens to equal the floor).
+//! - A world marker's number is one object: placed on one map it leaves any
+//!   other (the text cutter kept a placement per map and marker, so a marker
+//!   moved away and back could stand at its old place when a pull began).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -332,6 +335,11 @@ impl Cutter {
                 x,
                 y,
             } => {
+                // A marker's number is one object: placed here, it is gone
+                // from any other map it stood on.
+                for markers in self.on.values_mut() {
+                    markers.remove(marker);
+                }
                 self.on
                     .entry(*map_id)
                     .or_default()
