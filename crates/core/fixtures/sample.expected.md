@@ -190,7 +190,7 @@ Every one of these is in `sample.txt`; the totals above already account for them
 | unknown event type | 20:05:43 `WOWDPS_SYNTHETIC_EVENT` | `Other`, never an error |
 | truncated line (6 fields) | 20:05:46 | `parse_line` → `None` |
 | blank line | after 20:05:47 | `parse_line` → `None` |
-| unmodelled real events | `SPELL_CAST_SUCCESS`, `SPELL_ENERGIZE`, `SWING_MISSED`, `SPELL_MISSED`, `SPELL_AURA_REMOVED`, `ZONE_CHANGE`, `MAP_CHANGE` | `Other` |
+| unmodelled real events (when the table was written) | `SPELL_CAST_SUCCESS`, `SPELL_ENERGIZE`, `SWING_MISSED`, `SPELL_MISSED`, `SPELL_AURA_REMOVED`, `ZONE_CHANGE`, `MAP_CHANGE` | `Other` then; all but `MAP_CHANGE` are modelled since (`SPELL_ENERGIZE` is R27's, 2026-10-08) |
 
 ## Known coverage gaps (stated, not hidden)
 
@@ -317,3 +317,11 @@ one: a Hollow Rot tick on P1 Thraxx in segment 4, Verkath the Hollow (l.105,
 22 000 landed of 23 000 unmitigated, nothing absorbed or blocked) — **`reduced` 1 000**. No other
 number moves; `taken.txt` is the fixture built for the amendment
 (`taken.expected.md`, its last section).
+
+## Addendum — resources (2026-10-08: R27)
+
+`check.awk` emits `energize_gained` and `energize_wasted` per player (every
+power type summed, four decimals) after `dot_uptime_ms`. The one
+`SPELL_ENERGIZE` here, P1 Thraxx's Second Wind at 20:05:20 in segment 2 (The
+Ashen Warden), gives him **20 rage** (type 1, nothing over the cap); every
+other row reads 0.0000.

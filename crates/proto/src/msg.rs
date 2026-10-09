@@ -5,9 +5,10 @@
 
 use wowdps_model::{AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
-    RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind,
-    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
+    MissKind, Mitigation, RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId,
+    SegmentInfo, SegmentKind, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick,
+    Timeline, UptimeCell, View,
 };
 
 use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
@@ -451,6 +452,11 @@ pub struct StoredFight {
     /// without a pair, and on a fight whose details tier is gone (tier < 3:
     /// the abilities a side lists are not kept).
     pub pair: Option<StoredPair>,
+    /// v43 (R27): the drilled player's resources from the details tier —
+    /// per power type what `SPELL_ENERGIZE` gave them and what the cap ate.
+    /// Empty without a drill, below tier 3, and on a details file written
+    /// before it.
+    pub energize: Vec<EnergizeRow>,
 }
 
 /// v42: a stored fight's comparison — the two sides and the window their
@@ -2199,6 +2205,26 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
         put_compare_side(b, &p.b);
         put_range(b, p.range);
     });
+    // v43 (R27): the drilled player's resources, trailing.
+    wire::put_vec(buf, &f.energize, put_energize_row);
+}
+
+/// v43 (R27): `EnergizeRow` = u32 power_type | f64 gained | f64 wasted |
+/// u32 count.
+fn put_energize_row(buf: &mut Vec<u8>, r: &EnergizeRow) {
+    wire::put_u32(buf, r.power_type);
+    wire::put_f64(buf, r.gained);
+    wire::put_f64(buf, r.wasted);
+    wire::put_u32(buf, r.count);
+}
+
+fn get_energize_row(rd: &mut Reader) -> Result<EnergizeRow> {
+    Ok(EnergizeRow {
+        power_type: rd.u32()?,
+        gained: rd.f64()?,
+        wasted: rd.f64()?,
+        count: rd.u32()?,
+    })
 }
 
 /// v26: `ShieldRow` = u32 spell_id | string label | u64 applied | u64
@@ -2246,6 +2272,7 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
                 range: get_range(r)?,
             })
         })?,
+        energize: rd.vec(get_energize_row)?,
     })
 }
 

@@ -2,6 +2,9 @@
 
 ## 2026-10-08
 
+- **Update** — [tree.txt](tree.md): eight energize lines for
+  [R27](../rulings/r27.md), gated as `energize_gained` / `energize_wasted`, two
+  new golden rows on every fixture.
 - **Update** — [tree.txt](tree.md): nine `SPELL_CAST_START` lines — one
   cancelled Chaos Bolt, four that land nowhere — gated as `cast_starts`, a new
   golden row on every fixture.

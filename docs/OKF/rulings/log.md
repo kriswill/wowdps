@@ -2,6 +2,9 @@
 
 ## 2026-10-08
 
+- **Creation** — [R27 Resources (energize)](r27.md): `SPELL_ENERGIZE` per player
+  per power type, gained and lost to the cap, passive, on the details tier
+  and `stored_fight { player }` (v43).
 - **Update** — [R26 Ability tree](r26.md): each row counts its
   `SPELL_CAST_START`s beside its casts (`SpellMeta::starts`, passive, v43);
   the empower families parse as `Event::Empower`.

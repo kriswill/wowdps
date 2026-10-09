@@ -51,6 +51,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	heal_periodic	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	misses_dealt	2
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	dot_uptime_ms	24800
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	energize_gained	1.5000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	energize_wasted	1.0000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	damage	31000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overkill	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	petdamage	0
@@ -103,6 +105,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	heal_periodic	18000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	misses_dealt	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	dot_uptime_ms	25900
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	energize_gained	2500.0000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	energize_wasted	0.0000
 2	Trash	Trash		1500			Player-1168-0A1B2C61	damage	60000
 2	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
@@ -155,6 +159,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		1500			Player-1168-0A1B2C61	heal_periodic	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	misses_dealt	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	dot_uptime_ms	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	energize_gained	1.5000
+2	Trash	Trash		1500			Player-1168-0A1B2C61	energize_wasted	0.5000
 3	Trash	Trash		1500			Player-1168-0A1B2C61	damage	60000
 3	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
@@ -207,3 +213,5 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1500			Player-1168-0A1B2C61	heal_periodic	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	misses_dealt	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	dot_uptime_ms	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	energize_gained	0.0000
+3	Trash	Trash		1500			Player-1168-0A1B2C61	energize_wasted	0.0000

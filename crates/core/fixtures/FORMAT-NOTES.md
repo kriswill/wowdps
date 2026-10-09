@@ -250,10 +250,36 @@ block is the *buff* (Shifting Sands), so the underlying shield is unknowable and
 the `NON_HEALING_ABSORBS` exclusion (R2) cannot be applied — it stays `Other`
 and contributes to nothing.
 
+### `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` — resources (R27)
+
+Verified 2026-10-08 on a real Heroic raid pull (16 004 + 2 470 lines, every one
+35 fields): the spell prefix, the advanced block (it describes the
+destination), then `amount, overEnergize, powerType, maxPower`. The two
+amounts are four-decimal numbers (`1.0000,0.0000,7,50` — a soul-shard
+fragment of 50; `0.5000` happens). A gain that hits the cap logs `amount`
+`0.0000` and the whole generation as `overEnergize` (2 201 lines: a Hunter at
+125 of 125 focus writes `0.0000,3.0000,2,125`), so `amount` is what reached
+the pool and `overEnergize` what the cap ate. Index from the END (the last
+four fields) or forward from the advanced block; both agree.
+
+### `SPELL_CAST_START` and the empower family (R26)
+
+`SPELL_CAST_START` is the plain 12-field spell-prefix line — no advanced
+block, the destination usually the nil unit (`SPELL_CAST_START,<src>,
+0000000000000000,nil,0x80000000,0x80000000,473662,"Consume",0x6a`), 10 680
+of them on that pull. A cast-time spell writes it at the start and
+`SPELL_CAST_SUCCESS` when it goes off; a cancelled or kicked cast writes the
+start alone. `SPELL_EMPOWER_START` is the same 12 fields; `SPELL_EMPOWER_END`
+adds the stage released (`…,355936,"Dream Breath",0x8,1`) and
+`SPELL_EMPOWER_INTERRUPT` a trailing `0`. None of them is combat for the
+index scanner.
+
 ### Count/flag events
 
 - `SPELL_INTERRUPT` — 15 fields; 12-14 = interrupted spell id/name/school.
-- `SPELL_DISPEL` — 16 fields; 12-14 = dispelled spell, 15 = `BUFF`/`DEBUFF`.
+- `SPELL_DISPEL` — 16 fields; 12-14 = dispelled spell, 15 = `BUFF`/`DEBUFF`
+  (verified 2026-10-08 on a real raid pull: `4987,"Cleanse",0x2,1287036,
+  "Poisonous Bite",8,DEBUFF` — the dispelled spell's school a bare decimal).
 - `SPELL_AURA_APPLIED` — 13, 14 **or 15** (see correction 5 below); 12 =
   `BUFF`/`DEBUFF`, 13 = optional absorb amount (**not** a stack count — stacks only
   appear on `_DOSE` events). Read offset 12; offset 13 is the parser's `absorb`

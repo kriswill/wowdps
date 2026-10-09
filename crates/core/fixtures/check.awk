@@ -778,6 +778,21 @@ ev == "SPELL_CAST_SUCCESS" {
     next
 }
 
+# ---- R27 (2026-10-08) resources: a SPELL_ENERGIZE / SPELL_PERIODIC_ENERGIZE
+# landing on a PLAYER (a `Player-` destination by guid; a pet's pool is its
+# own and counts for nobody) adds its amount to `energize_gained` and its
+# overcap to `energize_wasted`, summed over power types. The suffix is the
+# line's last four fields (`amount, overEnergize, powerType, maxPower`), with
+# or without the advanced block before it. Passive, like a cast: never combat,
+# so one before the pull, after its end or past the trash gap lands nowhere.
+ev == "SPELL_ENERGIZE" || ev == "SPELL_PERIODIC_ENERGIZE" {
+    if (passive_stale()) next
+    if ($6 !~ /^Player-/) next
+    engain[cur SUBSEP $6] += $(NF - 3)
+    enwaste[cur SUBSEP $6] += $(NF - 2)
+    next
+}
+
 # ---- R26 (2026-10-08) casts that BEGAN: a SPELL_CAST_START by one of ours,
 # counted exactly like a cast (passive — never combat, so a start before the
 # pull, after the kill or past the trash gap lands nowhere; an NPC's is
@@ -957,6 +972,9 @@ END {
             # their debuffs' unions up on enemies.
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tmisses_dealt\t%d\n",          s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, missv[s SUBSEP g] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdot_uptime_ms\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, dotUp[s SUBSEP g] + 0
+            # R27: power gained and lost to the cap, every power type summed.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tenergize_gained\t%.4f\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, engain[s SUBSEP g] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tenergize_wasted\t%.4f\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, enwaste[s SUBSEP g] + 0
         }
         delete plist
     }

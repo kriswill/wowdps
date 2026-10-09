@@ -15,7 +15,7 @@ use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
     RaidDeath, RaidTimeline, Rez, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
 };
-use wowdps_model::{StackBase, StackCell, StackingDebuff};
+use wowdps_model::{EnergizeRow, StackBase, StackCell, StackingDebuff};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
 /// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
@@ -887,6 +887,11 @@ pub struct Segment {
     /// `casts` and as passive — casts with a cast time that BEGAN, so a
     /// row's starts less its casts are the ones that never went off.
     starts: HashMap<String, HashMap<String, u64>>,
+    /// R27 (2026-10-08): per RAW receiving player guid, per power type, what
+    /// `SPELL_ENERGIZE` lines gave them and what the cap ate. Players only —
+    /// a pet's pool is its own, and folding it onto its owner would mix two
+    /// pools of one type. Passive: counted only inside an open segment.
+    energize: HashMap<String, BTreeMap<u32, EnergizeRow>>,
     /// R26 (step 3): `*_MISSED` lines per RAW attacker guid, per spell NAME
     /// (the attacker's side of R17's misses) — folded at read like `casts`.
     misses: HashMap<String, HashMap<String, u64>>,
@@ -1316,6 +1321,7 @@ impl Segment {
             heal_spell_series: HashMap::new(),
             casts: HashMap::new(),
             starts: HashMap::new(),
+            energize: HashMap::new(),
             misses: HashMap::new(),
             dots: HashMap::new(),
             summons: HashMap::new(),
@@ -1606,6 +1612,19 @@ impl Segment {
             let dst = self.starts.entry(caster.clone()).or_default();
             for (spell, n) in per_spell {
                 *dst.entry(spell.clone()).or_default() += n;
+            }
+        }
+        // R27: a member's resources sum per player per power type.
+        for (player, per_type) in &other.energize {
+            let dst = self.energize.entry(player.clone()).or_default();
+            for (power_type, r) in per_type {
+                let row = dst.entry(*power_type).or_insert(EnergizeRow {
+                    power_type: *power_type,
+                    ..EnergizeRow::default()
+                });
+                row.gained += r.gained;
+                row.wasted += r.wasted;
+                row.count += r.count;
             }
         }
         for (k, v) in &other.summons {
@@ -2236,6 +2255,16 @@ impl Segment {
             .filter(|(caster, _)| self.resolve_owner(caster) == player_guid)
             .map(|(_, per_spell)| per_spell.values().sum::<u64>())
             .sum()
+    }
+
+    /// R27 (2026-10-08): the power the player gained here, per power type
+    /// (ascending): Σ `SPELL_ENERGIZE` amounts landing on them, Σ their
+    /// overcap and the line count. Empty for a player nothing energized.
+    pub fn energize(&self, player_guid: &str) -> Vec<EnergizeRow> {
+        self.energize
+            .get(player_guid)
+            .map(|per_type| per_type.values().copied().collect())
+            .unwrap_or_default()
     }
 
     /// R26 (2026-10-08): every SPELL_CAST_START by the player and their
@@ -5801,6 +5830,35 @@ impl Meter {
             }
             // Parsed for its stage; nothing reads it yet. Passive.
             Event::Empower { .. } => {}
+            // R27: power gained and power lost to the cap, on the PLAYER it
+            // landed on (a pet's pool is its own and is not tallied).
+            // Passive like a cast: the scanner never counts the line, so it
+            // never opens, extends or splits a segment, and one before a
+            // pull, after its end or past the trash gap lands nowhere.
+            Event::Energize {
+                dst,
+                amount,
+                over,
+                power_type,
+                ..
+            } => {
+                if dst.guid.starts_with("Player-")
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                {
+                    let row = s
+                        .energize
+                        .entry(dst.guid.clone())
+                        .or_default()
+                        .entry(*power_type)
+                        .or_insert(EnergizeRow {
+                            power_type: *power_type,
+                            ..EnergizeRow::default()
+                        });
+                    row.gained += amount;
+                    row.wasted += over;
+                    row.count += 1;
+                }
+            }
 
             // R23: somebody was raised. Passive by construction — a rez must
             // never open or extend a segment (the index scanner does not

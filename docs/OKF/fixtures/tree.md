@@ -20,7 +20,9 @@ the per-player totals `check.awk` computes.
 ## Rulings exercised
 
 - [R26 Ability tree](../rulings/r26.md): groups (two summons, two trinkets),
-  parts, casts per row, a cast with no row under it (Summon Infernal).
+  parts, casts per row, a cast with no row under it (Summon Infernal), and
+  (2026-10-08) casts that began, one never going off.
+- [R27 Resources](../rulings/r27.md): energize per player per power type.
 - [R5 Pets](../rulings/r5.md): the Sayaad and the Infernal fold onto Vexxa.
 - [R4 Segment boundaries](../rulings/r4.md) and the passive gate: a precast
   before ENCOUNTER_START, a cast after the kill, one before the trash's first
@@ -39,6 +41,14 @@ and cast twice (one cancelled), a Flash Heal, a trash Incinerate — and four
 that land nowhere: a precast, one after the kill, one in the trash dead zone,
 and an NPC's. `cast_starts` reads 3 / 1 in the pull and 1 in the first trash
 ([R26](../rulings/r26.md)).
+
+## Resources (2026-10-08)
+
+Eight energize lines — a warlock's shard fragments (whole, capped, a half),
+a priest's mana, the Sayaad's energy (nobody's: a pet's pool is its own), one
+before the pull and one in the dead zone — for [R27](../rulings/r27.md):
+1.5 gained / 1.0 wasted and 2 500 mana in the pull, 1.5 / 0.5 in the first
+trash.
 
 ## Gate
 

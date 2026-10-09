@@ -1156,6 +1156,26 @@ fn history_tools_answer_over_the_store() {
     let err = error_text(&reply[0]);
     assert!(err.contains("no death 4"), "{err}");
 
+    // R27 (v43): a player drill of a fight that keeps its details names the
+    // power that energized them — the warrior's 20 rage from Second Wind.
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(
+            31,
+            "stored_fight",
+            &format!(r#"{{"fight_id":"{kill_id}","player":"Thraxx"}}"#),
+        )],
+    );
+    let doc = tool_doc(&reply[0]);
+    let energize = match doc.get("energize") {
+        Some(Json::Arr(rows)) => rows.clone(),
+        other => panic!("energize: {other:?}"),
+    };
+    assert_eq!(energize.len(), 1, "{energize:?}");
+    assert_eq!(str_of(&energize[0], "power"), "rage");
+    assert_eq!(num_of(&energize[0], "gained"), 20.0);
+    assert_eq!(num_of(&energize[0], "waste_pct"), 0.0);
+
     // Filters: by encounter id, by player name, by an unknown kind.
     let reply = drive(
         &mut bridge,

@@ -8,8 +8,8 @@ use crate::json::Json;
 use crate::obj;
 
 use wowdps_model::{
-    GearItem, Loadout, Mark, MissKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
-    SegmentKind, ShieldRow, Spec, SpellTree, StackCell, Timeline, View,
+    EnergizeRow, GearItem, Loadout, Mark, MissKind, Mitigation, Role, RoleNightRow, Row, SegmentId,
+    SegmentInfo, SegmentKind, ShieldRow, Spec, SpellTree, StackCell, Timeline, View, power_name,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
@@ -574,7 +574,14 @@ pub fn catalog() -> Vec<Tool> {
                           up at the end, which fold in with consumed and count only), and \
                           Σ consumed over the rows = the player's absorbed, exactly. Absent \
                           when they cast no shield (and on a pre-5 record until \
-                          regrade_fights).",
+                          regrade_fights). With `player` on a fight that keeps its details \
+                          tier the answer also carries `energize` (v43, R27): per power \
+                          type the player gained from SPELL_ENERGIZE lines — {power_type, \
+                          power (mana, rage, energy, soul_shards …), gained, wasted, \
+                          waste_pct, count}, where wasted is what the cap ate (generated \
+                          while the pool was full) and waste_pct its share of gained + \
+                          wasted. Absent when nothing energized them, below the details \
+                          tier, and on a record written before it until regrade_fights.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -1709,6 +1716,11 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         if !f.shields.is_empty() {
             o.push(("shields".to_string(), shields_json(&f.shields)));
         }
+        // R27 (v43): what energized the drilled player, per power type,
+        // from the details tier — absent when nothing did (and below it).
+        if !f.energize.is_empty() {
+            o.push(("energize".to_string(), energize_json(&f.energize)));
+        }
         // v39: a window answers only where the store keeps the seconds;
         // anywhere else the lists below would be the whole fight, so say so.
         if let (Some((lo, hi)), Some(b)) = (window, &f.breakdown) {
@@ -1868,6 +1880,26 @@ fn shields_json(rows: &[ShieldRow]) -> Json {
                     "wasted": Json::u64(s.wasted),
                     "count": Json::u64(u64::from(s.count)),
                     "unknown": Json::u64(u64::from(s.unknown)),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// R27 (v43): the drilled player's resources for a reader — one row per
+/// power type, ascending: `gained` (what reached the pool), `wasted` (what
+/// the cap ate) and the wasted share of everything generated.
+fn energize_json(rows: &[EnergizeRow]) -> Json {
+    Json::Arr(
+        rows.iter()
+            .map(|e| {
+                obj! {
+                    "power_type": Json::u64(u64::from(e.power_type)),
+                    "power": Json::str(power_name(e.power_type)),
+                    "gained": Json::num(round1(e.gained)),
+                    "wasted": Json::num(round1(e.wasted)),
+                    "waste_pct": Json::num(round1(e.waste_pct())),
+                    "count": Json::u64(u64::from(e.count)),
                 }
             })
             .collect(),

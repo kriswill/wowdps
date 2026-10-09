@@ -3,9 +3,10 @@
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
-    RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind,
-    ShieldRow, Spec, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
+    MissKind, Mitigation, RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId,
+    SegmentInfo, SegmentKind, ShieldRow, Spec, StackCell, StackingDebuff, TalentPick, Timeline,
+    UptimeCell, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use wowdps_proto::wire::{self, DecodeError};
@@ -870,6 +871,13 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     b: compare_side("Player-1-B"),
                     range: Some((1_000, 61_000)),
                 }),
+                // v43 (R27): the drilled player's resources.
+                energize: vec![EnergizeRow {
+                    power_type: 7,
+                    gained: 1.5,
+                    wasted: 0.5,
+                    count: 3,
+                }],
             }),
         },
         DaemonMsg::Fight {
@@ -1641,14 +1649,20 @@ fn golden_bytes_pin_the_encoding() {
                 series: false,
                 abilities: false,
                 pair: None,
+                energize: Vec::new(),
             }),
         }
         .encode();
         // v35 put the raid timeline's presence byte behind all of them —
         // `00` here, pinned on its own below — v39 the series flag after
         // it and v42 the pair's presence byte after that; all are cut off,
-        // so every tail these checks read ends where it did.
-        assert_eq!(frame.last(), Some(&0), "pair: None closes the frame");
+        // so every tail these checks read ends where it did; v43's energize
+        // count (four `00`, an empty vec) closes the frame after them all.
+        for _ in 0..4 {
+            assert_eq!(frame.last(), Some(&0), "energize: empty closes the frame");
+            frame.pop();
+        }
+        assert_eq!(frame.last(), Some(&0), "pair: None before it");
         frame.pop();
         assert_eq!(frame.last(), Some(&0), "abilities: false before it");
         frame.pop();
@@ -1997,16 +2011,18 @@ fn golden_bytes_pin_the_encoding() {
                 series: false,
                 abilities: false,
                 pair: None,
+                energize: Vec::new(),
             }),
         }
         .encode()
     };
     let (got, bare) = (hex(&fight(Some(small_raid))[4..]), hex(&fight(None)[4..]));
-    // v39: the series flag closes the frame after the raid, and v42 the
-    // abilities flag and the pair's presence byte after that.
-    let head = bare.strip_suffix("00000000 00 00 00 00".replace(' ', "").as_str());
+    // v39: the series flag closes the frame after the raid, v42 the
+    // abilities flag and the pair's presence byte after that, and v43 the
+    // empty energize vec's count last.
+    let head = bare.strip_suffix("00000000 00 00 00 00 00000000".replace(' ', "").as_str());
     assert_eq!(
-        head.map(|h| format!("{h}00000000{tail}000000")),
+        head.map(|h| format!("{h}00000000{tail}00000000000000")),
         Some(got),
         "shields 0, then the raid"
     );

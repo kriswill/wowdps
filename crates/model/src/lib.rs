@@ -1092,6 +1092,59 @@ pub struct UptimeCell {
     pub total_ms: i64,
 }
 
+/// R27 (2026-10-08): one power type a player gained in a segment from
+/// `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` lines landing on them —
+/// `gained` the Σ of the lines' amounts (what reached the pool), `wasted`
+/// the Σ of their overcap (`overEnergize`: generated while the pool was
+/// full), `count` the lines. In the game's own units, fractional where
+/// the log writes a fraction (0.5 of a mana tick). The pool's generation
+/// is `gained + wasted`; `waste_pct` its wasted share.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct EnergizeRow {
+    pub power_type: u32,
+    pub gained: f64,
+    pub wasted: f64,
+    pub count: u32,
+}
+
+impl EnergizeRow {
+    /// The wasted share of everything generated, 0..100; 0.0 when nothing
+    /// was.
+    pub fn waste_pct(&self) -> f64 {
+        let total = self.gained + self.wasted;
+        if total > 0.0 {
+            self.wasted * 100.0 / total
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The game's name for a power type (the advanced block's and
+/// `SPELL_ENERGIZE`'s `powerType`), "" for a type it does not name.
+pub fn power_name(power_type: u32) -> &'static str {
+    match power_type {
+        0 => "mana",
+        1 => "rage",
+        2 => "focus",
+        3 => "energy",
+        4 => "combo_points",
+        5 => "runes",
+        6 => "runic_power",
+        7 => "soul_shards",
+        8 => "astral_power",
+        9 => "holy_power",
+        11 => "maelstrom",
+        12 => "chi",
+        13 => "insanity",
+        16 => "arcane_charges",
+        17 => "fury",
+        18 => "pain",
+        19 => "essence",
+        _ => "",
+    }
+}
+
 /// R20 (step 5): one row of a player's shield ledger — every shield of one
 /// spell they cast in the segment, folded: `applied` (the initial sizes plus
 /// refresh growth plus over-absorb excess), `consumed` (Σ `SPELL_ABSORBED`

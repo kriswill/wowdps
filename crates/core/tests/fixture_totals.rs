@@ -210,6 +210,17 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             // R26 (step 3): the attacker's misses and the debuffs' unions.
             put_i("misses_dealt", seg.misses_dealt(key) as i64);
             put_i("dot_uptime_ms", seg.dot_uptime_ms(key));
+            // R27: power gained and lost to the cap, every power type summed
+            // (the golden prints four decimals; these sums are exact halves).
+            let energize = seg.energize(key);
+            out.insert(
+                (i, key.clone(), "energize_gained".into()),
+                energize.iter().map(|r| r.gained).sum(),
+            );
+            out.insert(
+                (i, key.clone(), "energize_wasted".into()),
+                energize.iter().map(|r| r.wasted).sum(),
+            );
         }
         let _ = result;
     }

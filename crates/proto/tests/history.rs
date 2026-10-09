@@ -5,8 +5,9 @@
 //! never-panics fuzz over truncated documents.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
+    Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
+    View,
 };
 use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_proto::history::{
@@ -433,6 +434,13 @@ fn details() -> FightDetails {
                 spells: vec![row("Counterspell", 2)],
                 targets: vec![row("Spitting Larva", 2)],
             }],
+            // v43 (R27): soul shards, a half and a capped tick.
+            energize: vec![EnergizeRow {
+                power_type: 7,
+                gained: 1.5,
+                wasted: 0.5,
+                count: 3,
+            }],
         }],
         ..Default::default()
     }
@@ -598,7 +606,8 @@ fn golden_documents_pin_the_file_format() {
         "{d}"
     );
     assert!(
-        d.ends_with(r#""targets":[{"key":"Spitting Larva","label":"Spitting Larva-label","amount":2,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}]}]}]}"#),
+        // v43 (R27): the resources close each player.
+        d.ends_with(r#""targets":[{"key":"Spitting Larva","label":"Spitting Larva-label","amount":2,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}]}],"energize":[{"power_type":7,"gained":1.5,"wasted":0.5,"count":3}]}]}"#),
         "{d}"
     );
 }

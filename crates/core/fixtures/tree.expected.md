@@ -121,3 +121,24 @@ fixture (0 wherever no start was logged):
 So segment 1: **Vexxa 3** (Chaos Bolt's row: 3 starts, 2 casts — one
 cancelled), **Lumen 1**; segment 2: **Vexxa 1**; segment 3: 0. No other
 number moves and the segment list is the same three.
+
+## 2026-10-08: resources (`energize_gained` / `energize_wasted`, R27)
+
+Eight `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` lines join the log, each
+with its advanced block. A line counts on the PLAYER it lands on, passive
+like a cast:
+
+| ts | on | power | amount / over | lands |
+|---|---|---|---|---|
+| 22:04:57.5 | Vexxa | soul shards (7) | 2 / 0 | nowhere — before the pull |
+| 22:05:05.3 | Vexxa | soul shards | 1 / 0 | the pull |
+| 22:05:06.7 | Sayaad (pet) | energy (3) | 10 / 0 | nobody — a pet's pool is its own |
+| 22:05:07.3 | Vexxa | soul shards | 0 / 1 (capped) | the pull |
+| 22:05:10.5 | Lumen | mana (0) | 2 500 / 0 | the pull |
+| 22:05:12.5 | Vexxa | soul shards | 0.5 / 0 | the pull |
+| 22:07:00.6 | Vexxa | soul shards | 1.5 / 0.5 | trash 1 |
+| 22:08:29.5 | Vexxa | soul shards | 2 / 0 | nowhere — the dead zone |
+
+So segment 1: **Vexxa 1.5 gained, 1.0 wasted** (40 % of 2.5 generated),
+**Lumen 2 500 / 0**; segment 2: **Vexxa 1.5 / 0.5**; segment 3: nothing. The
+visit's Σ sums Vexxa to 3.0 / 1.5 over 4 lines.

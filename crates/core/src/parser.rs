@@ -31,7 +31,7 @@ const FLAG_TYPE_PET: u32 = 0x0000_1000;
 const FLAG_TYPE_GUARDIAN: u32 = 0x0000_2000;
 
 /// A parsed log line. `ts_ms` is monotonic within a file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LogLine {
     pub ts_ms: i64,
     pub event: Event,
@@ -141,7 +141,7 @@ pub enum AuraType {
     Debuff,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Version {
         log_version: u32,
@@ -377,6 +377,21 @@ pub enum Event {
         src: Unit,
         dst: Unit,
         spell: Spell,
+    },
+    /// R27 (2026-10-08): `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` —
+    /// `dst` gained `amount` of power type `power_type` (its pool's max
+    /// `max_power`) and lost `over` to the cap. Amounts are the log's own
+    /// four-decimal numbers (`1.0000`, `0.5000`); a capped gain logs
+    /// `0.0000` with the whole amount as `over`. Passive: never combat for
+    /// the scanner, through the meter's passive gate.
+    Energize {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        amount: f64,
+        over: f64,
+        power_type: u32,
+        max_power: u32,
     },
     /// 2026-10-08: `SPELL_EMPOWER_START` (`stage` None) and
     /// `SPELL_EMPOWER_END` (`stage` = the trailing empower level released,
@@ -1401,6 +1416,26 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             src: unit_at(f, 1),
             spell: spell.unwrap_or_default(),
         }),
+        // R27: `amount, overEnergize, powerType, maxPower` after the
+        // (optional) advanced block; a line whose amounts do not read is not
+        // one the meter can use.
+        "SPELL_ENERGIZE" | "SPELL_PERIODIC_ENERGIZE" => {
+            let num = |i: usize| get(f, suffix + i).and_then(|s| s.parse::<f64>().ok());
+            match (num(0), num(1)) {
+                (Some(amount), Some(over)) if amount >= 0.0 && over >= 0.0 => {
+                    with_hint(Event::Energize {
+                        src: unit_at(f, 1),
+                        dst: unit_at(f, 5),
+                        spell: spell.unwrap_or_default(),
+                        amount,
+                        over,
+                        power_type: parse_u32(get(f, suffix + 2).unwrap_or_default()),
+                        max_power: parse_u32(get(f, suffix + 3).unwrap_or_default()),
+                    })
+                }
+                _ => with_hint(Event::Other),
+            }
+        }
         "SPELL_CAST_START" => with_hint(Event::CastStart {
             src: unit_at(f, 1),
             dst: unit_at(f, 5),
@@ -2980,6 +3015,56 @@ mod tests {
         assert_eq!(
             parse(&format!(
                 "SPELL_EMPOWER_INTERRUPT,{PLAYER},{NIL_UNIT},357208,\"Fire Breath\",0x4,0"
+            )),
+            Event::Other
+        );
+    }
+
+    /// R27: `amount, overEnergize, powerType, maxPower` after the advanced
+    /// block, the amounts the log's four-decimal numbers — a real warlock's
+    /// soul-shard fragment, a capped focus gain (amount 0, all of it over), a
+    /// half mana tick — and an unreadable amount is `Other`.
+    #[test]
+    fn energize_reads_its_amount_overcap_and_power_type() {
+        let e = parse(&format!(
+            "SPELL_ENERGIZE,{PLAYER},{PLAYER},194192,\"Shadow Bolt\",0x20,{},1.0000,0.0000,7,50",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        let Event::Energize {
+            dst,
+            spell,
+            amount,
+            over,
+            power_type,
+            max_power,
+            ..
+        } = e
+        else {
+            panic!("not an Energize: {e:?}")
+        };
+        assert_eq!(dst.guid, "Player-1168-0A234B");
+        assert_eq!(spell.id, 194192);
+        assert_eq!((amount, over, power_type, max_power), (1.0, 0.0, 7, 50));
+        let e = parse(&format!(
+            "SPELL_PERIODIC_ENERGIZE,{PLAYER},{PLAYER},1243113,\"Horrific Vision\",0x20,{},0.5000,0.0000,13,10000",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        assert!(
+            matches!(e, Event::Energize { amount, power_type: 13, .. } if amount == 0.5),
+            "{e:?}"
+        );
+        // Without the advanced block the suffix follows the spell block.
+        let e = parse(&format!(
+            "SPELL_ENERGIZE,{PLAYER},{PLAYER},75,\"Auto Shot\",1,0.0000,3.0000,2,125"
+        ));
+        assert!(
+            matches!(e, Event::Energize { amount, over, power_type: 2, max_power: 125, .. }
+                if amount == 0.0 && over == 3.0),
+            "{e:?}"
+        );
+        assert_eq!(
+            parse(&format!(
+                "SPELL_ENERGIZE,{PLAYER},{PLAYER},75,\"Auto Shot\",1,x,0.0000,2,125"
             )),
             Event::Other
         );

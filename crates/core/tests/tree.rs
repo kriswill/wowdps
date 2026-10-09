@@ -12,7 +12,7 @@ use std::path::Path;
 
 use wowdps_core::index::{load_segment_text, scan};
 use wowdps_core::meter::{Meter, Segment, View, meter_from_lines};
-use wowdps_model::{GroupKind, Row, SpellGroup, SpellPart, SpellTree};
+use wowdps_model::{EnergizeRow, GroupKind, Row, SpellGroup, SpellPart, SpellTree};
 
 const FIXTURES: &[&str] = &[
     "sample.txt",
@@ -227,6 +227,64 @@ fn cast_starts_count_beside_the_casts_and_never_open_a_segment() {
     assert_eq!(trash, vec![1, 0], "the start past the gap is nobody's");
 }
 
+/// R27 (2026-10-08): SPELL_ENERGIZE tallies per player per power type —
+/// what reached the pool and what the cap ate — through the passive gate:
+/// the shard before the pull and the one in the trash dead zone land
+/// nowhere, the Sayaad's energy is the pet's own (nobody's row), and an
+/// Overall sums its members.
+#[test]
+fn energize_tallies_gain_and_overcap_per_power_type() {
+    let m = tree_fight();
+    let seg = &m.segments()[0];
+    let shards = EnergizeRow {
+        power_type: 7,
+        gained: 1.5,
+        wasted: 1.0,
+        count: 3,
+    };
+    assert_eq!(seg.energize(W), vec![shards]);
+    assert_eq!(
+        seg.energize(P),
+        vec![EnergizeRow {
+            power_type: 0,
+            gained: 2_500.0,
+            wasted: 0.0,
+            count: 1,
+        }]
+    );
+    assert!(
+        seg.energize("Pet-0-4232-2662-31585-184600-0101A1B261")
+            .is_empty()
+    );
+    assert_eq!(
+        m.segments()[1].energize(W),
+        vec![EnergizeRow {
+            power_type: 7,
+            gained: 1.5,
+            wasted: 0.5,
+            count: 1,
+        }]
+    );
+    assert!(
+        m.segments()[2].energize(W).is_empty(),
+        "the dead zone's is nobody's"
+    );
+    let ov = m.overall(0).expect("the visit's Σ");
+    assert_eq!(
+        ov.energize(W),
+        vec![EnergizeRow {
+            power_type: 7,
+            gained: 3.0,
+            wasted: 1.5,
+            count: 4,
+        }]
+    );
+    assert!(
+        (shards.waste_pct() - 40.0).abs() < 1e-9,
+        "1 of 2.5 generated"
+    );
+}
+
 /// Healing nests the same way: Renew's instant heal and its ticks are two
 /// parts of one row, each cast counted.
 #[test]
@@ -412,7 +470,7 @@ fn the_tree_survives_lazy_loading_on_every_fixture() {
         let full = replay(&text);
         let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();
         assert_eq!(metas.len(), full.segments().len(), "{name}: segment count");
-        let picture = |seg: &Segment| -> Vec<(String, View, SpellTree, u64)> {
+        let picture = |seg: &Segment| -> Vec<(String, View, SpellTree, u64, Vec<EnergizeRow>)> {
             let mut out = Vec::new();
             for view in [View::Damage, View::Healing] {
                 for r in seg.rows(view) {
@@ -421,6 +479,7 @@ fn the_tree_survives_lazy_loading_on_every_fixture() {
                         view,
                         seg.spell_tree(&r.key, view),
                         seg.casts(&r.key) + 1_000 * seg.cast_starts(&r.key),
+                        seg.energize(&r.key),
                     ));
                 }
             }

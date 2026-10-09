@@ -21,8 +21,9 @@ use crate::json::Json;
 use crate::lua::Lua;
 use crate::obj;
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
+    Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
+    View,
 };
 use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 
@@ -1414,6 +1415,9 @@ pub struct PlayerDetail {
     /// drills (and compares) them as the live meter does. Empty on a
     /// details file written before v42.
     pub counts: Vec<CountDetail>,
+    /// v43 (R27): the player's resources, per power type ascending
+    /// (`Segment::energize`). Empty on a details file written before it.
+    pub energize: Vec<EnergizeRow>,
 }
 
 /// v42: the views [`PlayerDetail::counts`] keeps, in order.
@@ -1475,6 +1479,13 @@ impl FightDetails {
                     "spells": rows_json(&c.spells),
                     "targets": rows_json(&c.targets),
                 }).collect()),
+                // v43 (R27): the resources, after the count drills.
+                "energize": Json::Arr(p.energize.iter().map(|e| obj! {
+                    "power_type": Json::num(e.power_type),
+                    "gained": Json::num(e.gained),
+                    "wasted": Json::num(e.wasted),
+                    "count": Json::num(e.count),
+                }).collect()),
             }).collect()),
         }
     }
@@ -1508,6 +1519,23 @@ impl FightDetails {
                                                 view: view_named(str_of(c, "view")?)?,
                                                 spells: rows_from(c.get("spells")),
                                                 targets: rows_from(c.get("targets")),
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                            // v43: absent before, and empty then.
+                            energize: p
+                                .get("energize")
+                                .and_then(Json::as_arr)
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(|e| {
+                                            Some(EnergizeRow {
+                                                power_type: u32_of(e, "power_type")?,
+                                                gained: f64_of(e, "gained").unwrap_or(0.0),
+                                                wasted: f64_of(e, "wasted").unwrap_or(0.0),
+                                                count: u32_of(e, "count").unwrap_or(0),
                                             })
                                         })
                                         .collect()

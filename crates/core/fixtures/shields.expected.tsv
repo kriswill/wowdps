@@ -51,6 +51,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	misses_dealt	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	dot_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	energize_gained	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	energize_wasted	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	damage	73000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	petdamage	0
@@ -103,6 +105,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	misses_dealt	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	dot_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	energize_gained	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	energize_wasted	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	damage	66000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	petdamage	0
@@ -155,6 +159,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	misses_dealt	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	dot_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	energize_gained	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	energize_wasted	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	damage	49000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	petdamage	0
@@ -207,6 +213,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	misses_dealt	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	dot_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	energize_gained	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	energize_wasted	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	damage	26000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	petdamage	0
@@ -259,6 +267,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	heal_periodic	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	misses_dealt	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	dot_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	energize_gained	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	energize_wasted	0.0000
 2	Trash	Trash		8000			Player-1168-0A1B2C43	damage	36000
 2	Trash	Trash		8000			Player-1168-0A1B2C43	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	petdamage	0
@@ -311,6 +321,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C43	heal_periodic	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	misses_dealt	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	dot_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	energize_gained	0.0000
+2	Trash	Trash		8000			Player-1168-0A1B2C43	energize_wasted	0.0000
 2	Trash	Trash		8000			Player-1168-0A1B2C42	damage	6000
 2	Trash	Trash		8000			Player-1168-0A1B2C42	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	petdamage	0
@@ -363,3 +375,5 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	heal_periodic	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	misses_dealt	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	dot_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	energize_gained	0.0000
+2	Trash	Trash		8000			Player-1168-0A1B2C42	energize_wasted	0.0000
