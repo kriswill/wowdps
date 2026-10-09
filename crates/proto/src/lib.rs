@@ -21,6 +21,7 @@ pub mod history;
 pub mod json;
 pub mod lua;
 pub mod msg;
+pub mod replay;
 pub mod series;
 pub mod state;
 pub mod talents;
