@@ -2,6 +2,11 @@
 
 ## 2026-10-09
 
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): an ordered layer
+  stack in three tiers (`Tier::User` the default), `Source` / `Origin`,
+  `with_curated`, `with_user`, `with_user_dir` and `user_errors`,
+  `encounter_traced` with its `Provenance`, `layers_of` / `has_user`
+  ([decision](../decisions/encounter-rubric-layers.md)).
 - **Creation** — [wowdps-encounter-rubric](encounter-rubric.md): the seasonal
   encounter rubric brought to main from the replay branch under its new name
   (it was `wowdps-rubric` there), with the generated drafts, the instance and

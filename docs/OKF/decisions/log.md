@@ -2,6 +2,12 @@
 
 ## 2026-10-09
 
+- **Creation** — [Resolve An Encounter Through An Ordered Layer Stack](encounter-rubric-layers.md):
+  the encounter rubric, brought to main as `wowdps-encounter-rubric` with
+  the base alone, resolves through base, curated and user tiers: the base's
+  four sources, each curated set in the order laid (embedded, then
+  bundles), the user's files; difficulty overrides last; a provenance per
+  key path.
 - **Creation** — [A Pool, Second by Second](a-pool-second-by-second.md): new
   ruling R28 keeps each player's power as a 1 s series per type, drawn under a
   healer's graph; R27's energize reaches the live drill and R26 counts
