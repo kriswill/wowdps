@@ -252,6 +252,9 @@ pub struct DataTokens: Color {
     mark_cooldown,
     mark_dead,
     mark_healing_cd,
+    /// R28 (v44): the line under the inspector's graph — a healer's mana
+    /// as a fraction of its max, second by second.
+    power,
 }
 }
 

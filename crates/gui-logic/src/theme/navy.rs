@@ -41,6 +41,8 @@ pub const DATA: DataTokens = DataTokens {
     mark_cooldown: Color::rgb(0.50, 0.40, 1.0),
     mark_dead: Color::rgb(0.62, 0.62, 0.66),
     mark_healing_cd: Color::rgb(0.55, 1.0, 0.45),
+    // The game's own mana blue, lifted to read on the dark panels.
+    power: Color::hex(0x4C8DF6),
 };
 
 /// The window redesign's Tokens and the overlay as it has always looked.

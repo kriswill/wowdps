@@ -1,7 +1,8 @@
 //! The window inspector's model, free of any GUI (plan step 3.3, wave B):
 //! who is who ([`Roster`]), the graph's curves and dead spans ([`plot`]),
 //! its lanes ([`lanes`]) and its stacked bands' seating ([`stack`]), its
-//! curves ([`curves`]), numbers ([`nums`]) and recap words ([`recap`]), the
+//! curves ([`curves`]), numbers ([`nums`]) and recap words ([`recap`]), a
+//! healer's mana line under it ([`power`], R28), the
 //! graph's geometry ([`geometry`]) and R21's matrices ([`matrix`]), and
 //! how wide it stands ([`Fit`]) —
 //! moved from the iced window's inspector, so both window GUIs build the
@@ -18,6 +19,7 @@ pub mod list;
 pub mod matrix;
 pub mod nums;
 pub mod plot;
+pub mod power;
 pub mod recap;
 pub mod stack;
 

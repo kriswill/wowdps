@@ -391,6 +391,21 @@ fn head_block(
                         .text_color(w.c(|t| t.ink_2))
                         .child(h.sub.clone()),
                 )
+            })
+            // R27 (v44): what energized them, a quieter line under it.
+            .when_some(h.energy.as_ref(), |d, energy| {
+                d.child(
+                    div()
+                        .id("inspector-energy")
+                        .test_support()
+                        .font_family(w.ui.clone())
+                        .text_size(w.z(SUB_PX))
+                        .text_color(w.c(|t| t.ink_3_text))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .child(energy.clone()),
+                )
             }),
     );
     let acts = || {
@@ -595,6 +610,10 @@ fn graph_block(g: &Graph, w: &W, cx: &mut Context<Gui>) -> Div {
                 .child(tail),
         )
         .child(super::graph(g, w, cx))
+        // R28 (v44): a healer's mana runs under the plot, on its clock.
+        .when_some(g.power.as_ref(), |d, line| {
+            d.child(super::power::strip(line, g.window, !g.lanes.is_empty(), w))
+        })
 }
 
 /// A legend's swatch: a 10 × 3 bar, or a dashed one as two bits.
