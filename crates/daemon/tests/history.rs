@@ -97,6 +97,15 @@ fn mem(cfg: Retention) -> Store<MemBackend> {
     Store::open(MemBackend::new(), cfg)
 }
 
+/// The rules before v45: a wipe on a boss never killed is no progression,
+/// so the tests of the caps and the details minimum read as they did.
+fn no_progression() -> Retention {
+    Retention {
+        keep_progression: false,
+        ..Retention::default()
+    }
+}
+
 fn names(store: &Store<MemBackend>, dir: &str) -> Vec<String> {
     store.backend().list(dir)
 }
@@ -115,8 +124,9 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
     assert_eq!(names(&store, "rows").len(), 2);
     assert_eq!(
         names(&store, "details").len(),
-        1,
-        "details for the kill only"
+        2,
+        "details for the kill, and (v45) for Verkath's wipe: a boss the store
+         has never seen killed at that difficulty is progression, kept whole"
     );
     assert_eq!(
         names(&store, "loadouts").len(),
@@ -180,9 +190,12 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
         "R16: 8863800 / 9000000 rounds down"
     );
     assert_eq!(wipe.duration_ms, 45_000);
+    // A 45 s wipe is under the 60 s details minimum, but (v45) Verkath was
+    // never killed at this difficulty: progression, kept whole.
+    assert!(store.is_progression(wipe));
     assert!(
-        !store.has_details(&wipe.id),
-        "a 45 s wipe is under the 60 s details minimum: no details tier"
+        store.has_details(&wipe.id),
+        "a progression wipe keeps its details whatever its length"
     );
     let rows = store.rows(&wipe.id).expect("rows always");
     assert_eq!(rows.rows(wowdps_model::View::Damage).len(), 3);
@@ -747,7 +760,7 @@ fn wipes_over_the_minimum_get_details_short_and_aborted_ones_do_not() {
     let fights = closed_fights(&path);
     let facts = LogFacts::read(&path);
     assert_eq!(fights.len(), 4);
-    let mut store = mem(Retention::default());
+    let mut store = mem(no_progression());
     let ids: Vec<String> = fights
         .iter()
         .map(|f| store.store(f, facts).unwrap())
@@ -765,7 +778,7 @@ fn wipes_over_the_minimum_get_details_short_and_aborted_ones_do_not() {
     // rewrite that turns a long wipe into an aborted record unlinks them.
     let mut aborted = fights[0].clone();
     aborted.aborted = true;
-    let mut fresh = mem(Retention::default());
+    let mut fresh = mem(no_progression());
     let id = fresh.store(&aborted, facts).unwrap();
     assert!(fresh.card(&id).unwrap().aborted);
     assert!(
@@ -776,6 +789,7 @@ fn wipes_over_the_minimum_get_details_short_and_aborted_ones_do_not() {
     // The minimum is the config's: raise it and the 90 s wipe is short.
     let mut strict = mem(Retention {
         details_min_wipe_secs: 120,
+        keep_progression: false,
         ..Retention::default()
     });
     let id = strict.store(&fights[0], facts).unwrap();
@@ -812,6 +826,9 @@ fn the_details_cap_demotes_wipes_and_never_a_kill() {
         &[(100, false), (120, false)],
         Retention {
             keep_details_per_encounter: 1,
+            // The caps on wipes; a boss never killed is progression (v45),
+            // kept whole and out of them.
+            keep_progression: false,
             ..Retention::default()
         },
     );
@@ -831,6 +848,8 @@ fn a_pin_protects_a_fight_and_details_are_demoted_by_unlink() {
     let mut store = mem(Retention {
         keep_per_encounter: 2,
         keep_details_per_encounter: 1,
+        // The caps on wipes, progression (v45) aside.
+        keep_progression: false,
         ..Retention::default()
     });
     // Store the first (oldest) and pin it, then the rest.
@@ -873,6 +892,8 @@ fn an_annotation_file_protects_a_fight() {
     let facts = LogFacts::read(&path);
     let mut store = mem(Retention {
         keep_per_encounter: 1,
+        // The caps on wipes, progression (v45) aside.
+        keep_progression: false,
         ..Retention::default()
     });
     let first = store.store(&fights[0], facts).unwrap();
@@ -897,6 +918,7 @@ fn an_annotation_file_protects_a_fight() {
         backend,
         Retention {
             keep_per_encounter: 1,
+            keep_progression: false,
             ..Retention::default()
         },
     );
@@ -1294,6 +1316,8 @@ fn options(tmp: &Temp, source: SourceSpec, history_dir: PathBuf) -> DaemonOption
             keep_details_per_encounter: 10,
             details_min_wipe_secs: 60,
             keep_kills_whole: true,
+            keep_progression_whole: true,
+            replay_mb: 4096,
             characters: Vec::new(),
             cache_dir: None,
             addon_dir: None,
@@ -1362,6 +1386,89 @@ fn count(dir: &Path, sub: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// v45 (R29) end to end: a pull that closes on the LIVE tail is stored from
+/// the meter, and its replay is cut from the log once the history thread's
+/// mailbox is idle — the meter kept no lines — so the tier fills without a
+/// restart or a regrade.
+#[test]
+fn a_pull_closed_live_is_cut_into_the_replay_tier() {
+    let tmp = Temp::new("live-replay");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let log = logs.join("WoWCombatLog-072726.txt");
+    std::fs::write(&log, std::fs::read_to_string(SAMPLE).unwrap()).unwrap();
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs), hist.clone()));
+    wait_for_fights(&d.socket, 2);
+    // A session listening for the store's broadcasts.
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    // A third pull, written as the game writes it, after the daemon caught up.
+    let pull = concat!(
+        "7/27/2026 21:00:00.000-4  ENCOUNTER_START,3130,\"The Ashen Warden\",15,3,2769\n",
+        "7/27/2026 21:00:01.000-4  SPELL_DAMAGE,Player-1168-0A1B2C01,\"Thraxx-Nebula-US\",0x511,0x80000000,Creature-0-4232-2662-31585-214502-0000AAAAAA,\"The Ashen Warden\",0x10a48,0x80000000,12294,\"Mortal Strike\",0x1,Creature-0-4232-2662-31585-214502-0000AAAAAA,0000000000000000,8000000,9000000,0,0,0,0,0,0,3,100,100,0,-905.00,2300.00,2287,1.5708,93,1000,1100,-1,1,0,0,0,nil,nil,nil,ST\n",
+        "7/27/2026 21:00:02.000-4  SPELL_CAST_SUCCESS,Player-1168-0A1B2C01,\"Thraxx-Nebula-US\",0x511,0x80000000,Creature-0-4232-2662-31585-214502-0000AAAAAA,\"The Ashen Warden\",0x10a48,0x80000000,12294,\"Mortal Strike\",0x1,Player-1168-0A1B2C01,0000000000000000,700000,780000,0,0,0,0,0,0,1,40,100,0,-900.00,2301.00,2287,1.5708,641\n",
+        "7/27/2026 21:00:30.000-4  ENCOUNTER_END,3130,\"The Ashen Warden\",15,3,0,30000\n",
+    );
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+        f.write_all(pull.as_bytes()).unwrap();
+    }
+    let deadline = Instant::now() + DEADLINE;
+    while count(&hist, "replay") < 3 {
+        assert!(
+            Instant::now() < deadline,
+            "the live pull's replay never landed: {} cards, {} replays",
+            count(&hist, "fights"),
+            count(&hist, "replay")
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    // The card's broadcast went out when the pull was stored, before its
+    // replay was cut; a second one says the replay landed, so a client that
+    // asked first (and was told `None`) knows to ask again — and is answered.
+    let mut told: Vec<String> = Vec::new();
+    let mut answered = None;
+    let deadline = Instant::now() + DEADLINE;
+    while answered.is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "no second HistoryChanged and replay: {told:?}"
+        );
+        for msg in client.poll() {
+            match msg {
+                DaemonMsg::HistoryChanged { fight_id } => {
+                    if told.contains(&fight_id) {
+                        client.send(&ClientMsg::GetReplay {
+                            req_id: 9,
+                            fight_id: fight_id.clone(),
+                        });
+                    }
+                    told.push(fight_id);
+                }
+                DaemonMsg::Replay {
+                    req_id: 9, bytes, ..
+                } => answered = Some(bytes),
+                _ => {}
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(answered.unwrap().is_some(), "the replay answers once told");
+    stop(d);
+    let newest = std::fs::read_dir(hist.join("replay"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .max()
+        .unwrap();
+    let cut = wowdps_proto::replay::decode(&std::fs::read(newest).unwrap()).unwrap();
+    assert_eq!(cut.head.fight_ms, Some(30_000), "the live pull's own END");
+    assert_eq!(cut.floor, 2287);
+    assert_eq!(cut.units.len(), 2, "the warrior and the boss");
+}
+
 #[test]
 fn a_daemon_over_the_fixture_imports_its_history_and_a_restart_adds_nothing() {
     let tmp = Temp::new("import");
@@ -1378,7 +1485,11 @@ fn a_daemon_over_the_fixture_imports_its_history_and_a_restart_adds_nothing() {
     stop(d);
     assert_eq!(count(&hist, "fights"), 2);
     assert_eq!(count(&hist, "rows"), 2);
-    assert_eq!(count(&hist, "details"), 1);
+    // The kill, and (v45) the wipe: Verkath was never killed, so it is
+    // progression, kept whole.
+    assert_eq!(count(&hist, "details"), 2);
+    // v45 (R29): every boss pull is cut into the replay tier on import.
+    assert_eq!(count(&hist, "replay"), 2);
     assert_eq!(count(&hist, "loadouts"), 3);
     let mtimes = |sub: &str| -> Vec<std::time::SystemTime> {
         let mut v: Vec<_> = std::fs::read_dir(hist.join(sub))
@@ -3466,6 +3577,9 @@ fn pinning_a_wipe_backfills_its_series_from_the_log() {
     let mut opts = options(&tmp, SourceSpec::Dir(logs), hist.clone());
     if let Some(h) = opts.history.as_mut() {
         h.details_min_wipe_secs = 30;
+        // A wipe that is no progression (v45), so its pin is what earns it
+        // the series tier.
+        h.keep_progression_whole = false;
     }
     let d = start(opts);
     // The two pulls; the raid's Σ stays open on the tailed log.

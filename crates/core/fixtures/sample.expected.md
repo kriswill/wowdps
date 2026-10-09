@@ -346,8 +346,29 @@ last report of a second winning:
   mana at 0:22 and 0:30 (178 000 + 176 000 = **354 000**, max 250 000); P3
   Kael'thar's focus once (**90**, max 120).
 - Verkath the Hollow (segment 4, from 20:08:00): Thraxx 84, 60, 60, 84, 84 —
-  **Σ 372** over five seconds; Kael'thar 90 once.
+  **Σ 372** over five seconds; Kael'thar 90 once; and (v45) Mírelle's mana
+  once, **180 000** of 250 000 at 0:21 — the `DAMAGE_SPLIT` (Hollow Tether)
+  landing on her, whose advanced block sits at offset 12 behind its spell
+  prefix and was read at 9 (so never) before R29.
 - The trash pulls read nothing: Thraxx's swing at 20:04:02 (and 20:07:05)
   OPENS its trash segment, and the report is read before its line can open
   one — the R23 order — so it lands nowhere; no later line in those pulls
   describes a player.
+
+## Addendum — the replay cut (2026-10-09: R29; v45)
+
+Every gated fixture's TSV now ends with the R29 rows of each closed boss
+pull: twenty-one `*` rows (`replay_units`, `replay_posts`, `replay_floor`,
+the thirteen event kinds, the four placed kinds, `replay_markers`) and a
+`replay_posts` row per player posted on the floor (`replay.expected.md`
+defines them and hand-works the fixture built for them, `replay.txt`).
+Here, both pulls stand on **floor 2287**, the one map every advanced block
+names:
+
+- The Ashen Warden (segment 2): 34 posts (Thraxx 7, Mírelle 2, Kael'thar 1,
+  the rest the boss and its add), 5 units; Thraxx's one cast
+  (`pcast_success`), two interrupts of the boss, Mírelle's death and two
+  NPC deaths — no hostile spell lands on a player, and no marker stands.
+- Verkath the Hollow (segment 4): 18 posts (Thraxx 5, Mírelle 1 — her
+  `DAMAGE_SPLIT`, read at its offset 12 since v45 —, Kael'thar 1), 4 units;
+  one hit on a player, one interrupt, three deaths.

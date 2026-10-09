@@ -69,6 +69,13 @@ pub fn put_bool(buf: &mut Vec<u8>, v: bool) {
     buf.push(v as u8);
 }
 
+/// v45: raw bytes, as `u32 len | bytes` — the layout of a `Vec<u8>`
+/// (`put_vec` of its bytes), written at once.
+pub fn put_bytes(buf: &mut Vec<u8>, bytes: &[u8]) {
+    put_u32(buf, bytes.len() as u32);
+    buf.extend_from_slice(bytes);
+}
+
 pub fn put_str(buf: &mut Vec<u8>, s: &str) {
     put_u32(buf, s.len() as u32);
     buf.extend_from_slice(s.as_bytes());
@@ -158,6 +165,13 @@ impl<'a> Reader<'a> {
         let len = self.u32()? as usize;
         let bytes = self.take(len)?;
         String::from_utf8(bytes.to_vec()).map_err(|_| DecodeError::BadUtf8)
+    }
+
+    /// v45: [`put_bytes`]'s bytes; a length past the frame is EOF, never
+    /// an allocation.
+    pub fn bytes(&mut self) -> Result<Vec<u8>> {
+        let len = self.u32()? as usize;
+        Ok(self.take(len)?.to_vec())
     }
 
     pub fn opt<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<Option<T>> {

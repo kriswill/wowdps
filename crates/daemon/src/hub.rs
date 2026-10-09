@@ -202,6 +202,13 @@ fn forward_history(history: &HistoryLink, s: &mut Session, req: HistoryReq) {
             req_id,
             answer: HistoryAnswer::Regraded { queued: 0 },
         },
+        HistoryReq::Replay {
+            req_id, fight_id, ..
+        } => DaemonMsg::Replay {
+            req_id,
+            fight_id,
+            bytes: None,
+        },
         // Engine-side forwards are lossy by design and answer nobody.
         HistoryReq::Store(_)
         | HistoryReq::Index { .. }
@@ -434,6 +441,19 @@ fn handle(
                                 pair,
                                 stacked,
                             }),
+                        },
+                    );
+                }
+                // v45 (R29): a stored fight's replay tier, read on the
+                // history thread (a read, under its quota).
+                ClientMsg::GetReplay { req_id, fight_id } => {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Replay {
+                            session: id,
+                            req_id,
+                            fight_id,
                         },
                     );
                 }

@@ -298,7 +298,9 @@ fn expected_totals(path: &str) -> (Totals, Vec<Seg>) {
 /// `absorbed` half of the healing split (`Segment::absorbed_healing`) and is
 /// gated like everything else.
 fn is_comparable(metric: &str) -> bool {
-    metric != "petdamage"
+    // R29 (v45): the replay cut's rows are no meter's; `tests/replay.rs`
+    // gates them against the same goldens.
+    metric != "petdamage" && !metric.starts_with("replay_")
 }
 
 /// Returns (gated mismatches, advisory notes).
@@ -492,6 +494,23 @@ fn stacks_fixture_totals_match_expected() {
 #[test]
 fn tree_fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/tree.txt", "fixtures/tree.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R29 (v45) — the replay fixture's meter rows against their goldens: what
+/// the meter makes of the lines the replay cut reads (a cast that failed,
+/// a create, a unit destroyed, a creature going down unconscious, world
+/// markers, a DAMAGE_SPLIT's block) — none of it moves a total.
+#[test]
+fn replay_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/replay.txt", "fixtures/replay.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

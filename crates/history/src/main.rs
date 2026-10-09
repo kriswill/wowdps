@@ -27,6 +27,10 @@ Usage:
                                                  rewrite stored cards from their logs
                                                  (pins + annotations kept; before/after)
   wowdps history export <fight_id>               one fight as one JSON document
+  wowdps history replay-export <fight_id> -o <dir>
+                                                 one fight's replay tier as the seven files a
+                                                 replay reads (units.tsv, tracks.csv, events.csv,
+                                                 placed.csv, markers.csv, raid.csv, pull.txt)
   wowdps history stats
   wowdps history views                            which views this lake defines
 
@@ -282,6 +286,14 @@ fn run(args: Vec<String>) -> Result<String, String> {
             Ok(format!("{}\n", Lake::open(&dir)?.export(id)?.to_line()))
         }
         "stats" => Ok(format!("{}\n", Lake::open(&dir)?.stats().to_line())),
+        // v45 (R29): files only, no DuckDB — the tier is binary.
+        "replay-export" => {
+            let id = arg(1)
+                .filter(|a| !a.starts_with('-'))
+                .ok_or("replay-export needs a fight id")?;
+            let out = after("-o").ok_or("replay-export needs -o <dir>")?;
+            wowdps_history::replay_export(&dir, id, std::path::Path::new(out))
+        }
         "views" => {
             let lake = Lake::open(&dir)?;
             Ok(format!(

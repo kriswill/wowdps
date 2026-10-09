@@ -7,10 +7,10 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use wowdps_core::index::{SegmentMeta, load_segment_text};
+use wowdps_core::index::{SegmentMeta, SegmentText, load_segment_text};
 use wowdps_core::model::SegmentId;
 
-use crate::history::{HistoryLink, HistoryReq, ImportJob};
+use crate::history::{CutJob, HistoryLink, HistoryReq, ImportJob, Loaded};
 use crate::hub::HubMsg;
 
 pub struct LoadReq {
@@ -44,16 +44,17 @@ pub fn spawn(hub: Sender<HubMsg>, workers: usize) -> Sender<LoadReq> {
                     guard.recv()
                 };
                 let Ok(req) = req else { return };
-                let result = load_segment_text(&req.path, &req.meta)
-                    .map(|text| Box::new(text.meter()))
+                let text = load_segment_text(&req.path, &req.meta)
                     .map_err(|e| format!("{}: {e}", req.path.display()));
                 match req.reply {
                     LoadReply::Hub => {
+                        let result = text.map(|text| Box::new(text.meter()));
                         if hub.send(HubMsg::Loaded { id: req.id, result }).is_err() {
                             return;
                         }
                     }
                     LoadReply::History { link, job } => {
+                        let result = text.map(|text| load_for(&text, job.cut));
                         link.reply(HistoryReq::Loaded { job, result });
                     }
                 }
@@ -61,4 +62,26 @@ pub fn spawn(hub: Sender<HubMsg>, workers: usize) -> Sender<LoadReq> {
         });
     }
     tx
+}
+
+/// v45 (R29): what an import job asked of its segment's text — the meter,
+/// the replay cut, or both from one parse of its lines.
+fn load_for(text: &SegmentText, cut: CutJob) -> Loaded {
+    match cut {
+        CutJob::No => Loaded {
+            meter: Some(Box::new(text.meter())),
+            cut: None,
+        },
+        CutJob::Also => {
+            let (meter, cut) = crate::replay::meter_and_cut(text, None);
+            Loaded {
+                meter: Some(Box::new(meter)),
+                cut: Some(Box::new(cut)),
+            }
+        }
+        CutJob::Only => Loaded {
+            meter: None,
+            cut: Some(Box::new(crate::replay::cut_text(text, None))),
+        },
+    }
 }

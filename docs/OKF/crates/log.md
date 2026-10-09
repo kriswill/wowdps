@@ -2,6 +2,11 @@
 
 ## 2026-10-09
 
+- **Update** — [wowdps-core](core.md), [wowdps-model](model.md),
+  [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
+  [wowdps-history](history.md): the replay tier (R29, v45) — the cut, its
+  rows, the `WDRP` codec and the CSV writer, the store's replay slots and
+  `GetReplay`, `replay-export`; and the daemon's progression rule.
 - **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the seasons
   and the schema README live inside the crate (`seasons/<season>/…`,
   `README.md`); the repository-root `rubric/` is gone, and every layer's

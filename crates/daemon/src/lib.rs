@@ -16,6 +16,7 @@ pub mod loader;
 pub mod mine;
 pub mod mock;
 pub mod overlay;
+pub mod replay;
 pub mod server;
 pub mod session;
 
@@ -118,6 +119,8 @@ impl DaemonOptions {
                         keep_details_per_encounter: cfg.history_keep_details_per_encounter as usize,
                         details_min_wipe_secs: cfg.history_details_min_wipe_secs,
                         keep_kills_whole: cfg.history_keep_kills_whole,
+                        keep_progression_whole: cfg.history_keep_progression_whole,
+                        replay_mb: cfg.history_replay_mb,
                         characters: cfg.history_characters.clone(),
                         cache_dir: cache::IndexCache::default_dir(),
                         // The addon belongs to the install the logs come

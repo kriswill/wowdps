@@ -15,6 +15,16 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
 - Manifest: [`crates/proto/Cargo.toml`](../../../crates/proto/Cargo.toml)
 - Root: [`crates/proto/src/lib.rs`](../../../crates/proto/src/lib.rs)
 
+## The replay tier
+
+`replay.rs` (v45, [R29](../rulings/r29.md)) is the history store's second
+binary tier, `replay/<id>.bin` (`WDRP`, a section index, each post against
+its unit's last), and `replay::csv` the one writer of the seven files a
+replay reads; `GetReplay` / `Replay` carry it
+([why](../decisions/replay-tier-in-the-store.md)). Both binary tiers code
+through one crate-private `varint` module (varints, zigzag, strings, the
+bounds-checked cursor), so the two decoders share their refusals.
+
 ## Seams
 
 `ClientState` is every frontend's state machine, and a frontend changes its

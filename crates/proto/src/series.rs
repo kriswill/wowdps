@@ -47,6 +47,7 @@
 //! A format-1 file still reads, those parts empty, and the store rewrites
 //! it from its log ([`format_of`]).
 
+use crate::varint::{Cur, put_str, put_varint};
 use wowdps_model::series::{SeriesCell, SeriesRow, SpellTallies, SpellTargets, TargetTally};
 
 /// The file's first four bytes.
@@ -447,75 +448,6 @@ fn row(c: &mut Cur) -> Option<SeriesRow> {
         school,
         cells,
     })
-}
-
-// ---- varints ----------------------------------------------------------------------
-
-fn put_varint(out: &mut Vec<u8>, mut v: u64) {
-    loop {
-        let byte = (v & 0x7f) as u8;
-        v >>= 7;
-        if v == 0 {
-            out.push(byte);
-            return;
-        }
-        out.push(byte | 0x80);
-    }
-}
-
-fn put_str(out: &mut Vec<u8>, s: &str) {
-    put_varint(out, s.len() as u64);
-    out.extend_from_slice(s.as_bytes());
-}
-
-/// A bounds-checked cursor: every read is `None` past the end.
-struct Cur<'a> {
-    b: &'a [u8],
-}
-
-impl<'a> Cur<'a> {
-    fn new(b: &'a [u8]) -> Self {
-        Self { b }
-    }
-
-    fn u8(&mut self) -> Option<u8> {
-        let (&first, rest) = self.b.split_first()?;
-        self.b = rest;
-        Some(first)
-    }
-
-    fn varint(&mut self) -> Option<u64> {
-        let mut v = 0u64;
-        for shift in (0..64).step_by(7) {
-            let byte = self.u8()?;
-            v |= u64::from(byte & 0x7f).checked_shl(shift)?;
-            if byte & 0x80 == 0 {
-                return Some(v);
-            }
-        }
-        None
-    }
-
-    /// A count of items each at least `min` bytes long: more than the
-    /// bytes left could hold is a lie, and refused before any allocation.
-    fn count(&mut self, min: usize) -> Option<usize> {
-        let n = usize::try_from(self.varint()?).ok()?;
-        (n.saturating_mul(min) <= self.b.len()).then_some(n)
-    }
-
-    fn str(&mut self) -> Option<String> {
-        let len = usize::try_from(self.varint()?).ok()?;
-        if len > self.b.len() {
-            return None;
-        }
-        let (s, rest) = self.b.split_at(len);
-        self.b = rest;
-        String::from_utf8(s.to_vec()).ok()
-    }
-
-    fn done(&self) -> bool {
-        self.b.is_empty()
-    }
 }
 
 #[cfg(test)]

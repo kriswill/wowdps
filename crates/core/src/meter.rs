@@ -6040,7 +6040,7 @@ impl Meter {
             // lands nowhere. Before R18 this reached `segments.last_mut()`
             // unguarded, so a use after ENCOUNTER_END marked the closed
             // pull past its end; the gate closes that R12 hole too.
-            Event::Cast { src, spell } => {
+            Event::Cast { src, spell, .. } => {
                 if let Some(s) = self.open_segment_for_passive(ts) {
                     let guid = src.guid.clone();
                     // R26: every cast by one of ours counts toward its
@@ -7169,7 +7169,14 @@ impl Meter {
                     s.debuff_set(&dst.guid, spell, who, *stacks, ts);
                 }
             }
-            Event::Other => {}
+            // v45 (R29): the lines only the replay cut reads — no ledger here.
+            Event::CastFailed { .. }
+            | Event::Create { .. }
+            | Event::Destroyed { .. }
+            | Event::Unconscious { .. }
+            | Event::MarkerPlaced { .. }
+            | Event::MarkerRemoved { .. }
+            | Event::Other => {}
         }
     }
 
@@ -7366,6 +7373,7 @@ mod tests {
                 id: 1,
                 name: name.into(),
                 success,
+                duration_ms: None,
             },
         )
     }
@@ -8273,6 +8281,8 @@ mod tests {
                 flags: 0,
                 absorb: 0,
                 power: None,
+                pos: None,
+                item_level: 0,
             });
         }
         l
@@ -8440,6 +8450,8 @@ mod tests {
             flags: 0,
             absorb: 0,
             power: None,
+            pos: None,
+            item_level: 0,
         });
         let m = fed(vec![
             hit_player(100, p1(), "Melee", 40_000, -1, None),
@@ -8464,6 +8476,8 @@ mod tests {
                 flags: 0,
                 absorb,
                 power: None,
+                pos: None,
+                item_level: 0,
             });
             l
         };
@@ -8511,6 +8525,8 @@ mod tests {
                 flags: 0,
                 absorb: 0,
                 power: None,
+                pos: None,
+                item_level: 0,
             });
             l
         };
@@ -8561,6 +8577,8 @@ mod tests {
                 flags: 0,
                 absorb: 0,
                 power: None,
+                pos: None,
+                item_level: 0,
             });
             l
         };
@@ -8668,6 +8686,8 @@ mod tests {
             flags: 0,
             absorb: 0,
             power: None,
+            pos: None,
+            item_level: 0,
         });
         l
     }
@@ -9456,6 +9476,7 @@ mod tests {
                     id: 1,
                     name: "Boss".into(),
                     success: true,
+                    duration_ms: None,
                 },
             ),
             at(
@@ -9495,7 +9516,14 @@ mod tests {
     }
 
     fn cast(ts: i64, src: Unit, spell: Spell) -> LogLine {
-        at(ts, Event::Cast { src, spell })
+        at(
+            ts,
+            Event::Cast {
+                src,
+                dst: Unit::default(),
+                spell,
+            },
+        )
     }
 
     fn buff(ts: i64, dst: Unit, spell: Spell) -> LogLine {
@@ -10290,6 +10318,8 @@ mod tests {
             flags,
             absorb: 0,
             power: None,
+            pos: None,
+            item_level: 0,
         });
         l
     }
@@ -11823,6 +11853,8 @@ mod tests {
             flags: 0,
             absorb: 0,
             power: Some(crate::parser::Power { kind, current, max }),
+            pos: None,
+            item_level: 0,
         });
         l
     }

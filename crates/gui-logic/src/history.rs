@@ -1149,7 +1149,9 @@ mod tests {
         let scoped: u64 = s.state.breakdown().0.iter().map(|r| r.amount).sum();
         assert!(scoped < whole, "{scoped} of {whole}");
 
-        // The short wipe keeps no series: the zoom asks the store nothing.
+        // The short wipe is progression (v45: its boss was never killed at
+        // that difficulty), kept whole as the kill is: its zoom rides the
+        // GetFight too.
         let wipe = pick(&mock, false);
         let (mut w, sent) = Stored::open(
             wipe.id.clone(),
@@ -1161,7 +1163,16 @@ mod tests {
         );
         run(&mut mock, &mut w, sent, &mut next);
         let zoom = w.state.set_drill_range(Some((0, 2_000)));
-        assert!(w.route(zoom, &mut next).is_empty(), "the graph's own zoom");
+        assert!(
+            matches!(
+                w.route(zoom, &mut next).as_slice(),
+                [ClientMsg::GetFight {
+                    range: Some((0, 2_000)),
+                    ..
+                }]
+            ),
+            "a progression wipe's zoom asks the store"
+        );
     }
 
     /// v42: a stored kill is kept whole — its drill comes in stacked, an
