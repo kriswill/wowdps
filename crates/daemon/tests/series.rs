@@ -1055,3 +1055,40 @@ fn a_pair_whose_side_cannot_read_its_seconds_echoes_no_window() {
     let f = store.stored_fight_in(&store.mine(), &kill, &ask).unwrap();
     assert_eq!(f.pair.unwrap().range, Some((5_500, 21_200)));
 }
+
+/// R27 (v43): a stored kill's details carry each player's resources, and
+/// `stored_fight` with a drill answers the drilled player's — the warrior's
+/// 20 rage from Second Wind in `sample.txt`'s Ashen Warden kill — while a
+/// fight below the details tier, or no drill, answers none.
+#[test]
+fn a_stored_kill_answers_the_drilled_players_resources() {
+    let (store, _, _) = stored(Retention::default());
+    let kill = id_of(&store, "The Ashen Warden");
+    let thraxx = "Player-1168-0A1B2C01";
+    let f = store
+        .stored_fight(&kill, View::Damage, Some(thraxx), None)
+        .unwrap();
+    assert_eq!(f.tier, 3);
+    assert_eq!(f.energize.len(), 1, "{:?}", f.energize);
+    let rage = f.energize[0];
+    assert_eq!(
+        (rage.power_type, rage.gained, rage.wasted, rage.count),
+        (1, 20.0, 0.0, 1)
+    );
+    assert!(
+        store
+            .stored_fight(&kill, View::Damage, None, None)
+            .unwrap()
+            .energize
+            .is_empty(),
+        "no drill, no resources"
+    );
+    let wipe = id_of(&store, "Verkath the Hollow");
+    let short = store
+        .stored_fight(&wipe, View::Damage, Some(thraxx), None)
+        .unwrap();
+    assert!(
+        short.tier < 3 && short.energize.is_empty(),
+        "no details, none"
+    );
+}

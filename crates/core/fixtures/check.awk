@@ -90,12 +90,21 @@ function friendlyGuid(g) {
     return (g ~ /^Player-/ || g ~ /^Pet-/)
 }
 
-function taken(dguid, dflags, amt, absorbed, blocked,   t) {
+# R17 amendment (2026-10-08): `reduced` = what armor and damage reduction took
+# off — the suffix's unmitigated amount (off 1 after the base amount; an ABSORB
+# miss's unmitigated after its amountMissed) less what came out of it: the RAW
+# base amount (overkill INCLUDED, the log's amount being post-block and
+# pre-overkill) + absorbed + blocked. Floored at 0: a vulnerability debuff lifts
+# a hit above its unmitigated amount, which is not negative mitigation.
+function reduced(unmit, out) { return (unmit > out) ? unmit - out : 0 }
+
+function taken(dguid, dflags, amt, absorbed, blocked, unmit, base,   t) {
     if (!friendlyGuid(dguid)) return
     t = actor(dguid, dflags); if (t == "") return
     note(cur, t, "taken", amt + absorbed)
     note(cur, t, "absorbed", absorbed)
     note(cur, t, "blocked", blocked)
+    note(cur, t, "reduced", reduced(unmit, base + absorbed + blocked))
     # R18 taken series: the same amount on a 10 s grid from the segment's start
     # (ENCOUNTER_START for an encounter, the first combat line for trash).
     # Exactly what `taken` records — a stagger tick never reaches here (R17).
@@ -376,7 +385,7 @@ function missed(dguid, dflags, kind, amt,   t) {
 # and on a friendly victim `taken` and `absorbed` (plus its miss count and its
 # taken series bucket) and the R21 cells. Never a miss on the attacker's ability.
 # Passive, unlike a damage line: it never opens, extends or splits a segment.
-function absorbed_whole(periodic, spell, label, amt,   a, t) {
+function absorbed_whole(periodic, spell, label, amt, unmit,   a, t) {
     if (passive_stale()) return
     if (spell == 124255 && $2 == $6) {
         if (friendlyGuid($6)) { t = actor($6, $8); note(cur, t, "stagger_ticked", amt) }
@@ -384,6 +393,7 @@ function absorbed_whole(periodic, spell, label, amt,   a, t) {
         t = actor($6, $8)
         if (t != "") {
             note(cur, t, "taken", amt); note(cur, t, "absorbed", amt); note(cur, t, "misses", 1)
+            note(cur, t, "reduced", reduced(unmit, amt))   # R17 amendment: base 0 + absorbed
             tk10[cur SUBSEP t SUBSEP int((now - segStart[cur]) / 10000)] += amt
         }
         stack_hit($6, $8, spell, label, amt)
@@ -588,7 +598,7 @@ ev == "SPELL_SUMMON" { summoned[$6 SUBSEP epoch] = $2 }
 ev == "SWING_DAMAGE" {
     ok  = ($31 + 0 > 0) ? $31 + 0 : 0  # off30 overkill
     if (engaged($4, $8) && !friendly_fire($2, $4, $6, $8)) engage()   # R7 amendment (friendly fire never engages)
-    taken($6, $8, $29 - ok, $35 + 0, $34 + 0)   # R17: off28 base, off34 absorbed, off33 blocked
+    taken($6, $8, $29 - ok, $35 + 0, $34 + 0, $30 + 0, $29 + 0)   # R17: off28 base, off34 absorbed, off33 blocked, off29 unmitigated
     stack_hit($6, $8, 0, "Melee", $29 + $35 - ok)  # R21
     a = actor($2, $4); if (a == "") next
     amt = $29 + $35 - ok               # off28 base_amount + off34 absorbed - overkill
@@ -611,7 +621,7 @@ ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
     # `stagger_ticked`. R22: it is also NOT damage done — a self-sourced tick
     # is self-harm, tallied below as `self_harm` instead of `damage`.
     if ($10 + 0 == 124255 && $2 == $6) { if (friendlyGuid($6)) { t = actor($6, $8); note(cur, t, "stagger_ticked", $32 - ok) } }
-    else { taken($6, $8, $32 - ok, $38 + 0, $37 + 0); stack_hit($6, $8, $10 + 0, strip($11), $32 + $38 - ok) }   # off31 base, off37 absorbed, off36 blocked; R21
+    else { taken($6, $8, $32 - ok, $38 + 0, $37 + 0, $33 + 0, $32 + 0); stack_hit($6, $8, $10 + 0, strip($11), $32 + $38 - ok) }   # off31 base, off32 unmitigated, off37 absorbed, off36 blocked; R21
     a = actor($2, $4); if (a == "") next
     amt = $32 + $38 - ok               # off31 base_amount + off37 absorbed - overkill
     if (a == actor($6, $8)) { note(cur, a, "self_harm", amt) }   # R22
@@ -631,7 +641,7 @@ ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
 ev == "ENVIRONMENTAL_DAMAGE" {
     if (NF != 39) next
     ok = ($32 + 0 > 0) ? $32 + 0 : 0   # off31 overkill (R1: out of every amount)
-    taken($6, $8, $30 - ok, $36 + 0, $35 + 0)
+    taken($6, $8, $30 - ok, $36 + 0, $35 + 0, $31 + 0, $30 + 0)   # off30 unmitigated
     stack_hit($6, $8, 0, strip($29), $30 + $36 - ok)   # R21: the envType is the label
     next
 }
@@ -641,14 +651,14 @@ ev == "ENVIRONMENTAL_DAMAGE" {
 # NPC (a player's spell EVADEd, a swing DODGEd by the boss…) has no friendly
 # destination and is taken by nobody.
 ev == "SWING_MISSED" {                       # missType off9, isOffHand off10, amount off11
-    if ($10 == "ABSORB") { absorbed_whole(0, 0, "Melee", $12 + 0); next }   # R1
+    if ($10 == "ABSORB") { absorbed_whole(0, 0, "Melee", $12 + 0, $13 + 0); next }   # R1; off12 unmitigated
     dealt_miss($2, $4, $6)                     # R26: the attacker's side
     missed($6, $8, $10, $12)
     next
 }
 ev == "SPELL_MISSED" || ev == "SPELL_PERIODIC_MISSED" || ev == "RANGE_MISSED" ||
 ev == "DAMAGE_SHIELD_MISSED" {               # missType off12, isOffHand off13, amount off14
-    if ($13 == "ABSORB") { absorbed_whole(ev == "SPELL_PERIODIC_MISSED", $10 + 0, strip($11), $15 + 0); next }   # R1
+    if ($13 == "ABSORB") { absorbed_whole(ev == "SPELL_PERIODIC_MISSED", $10 + 0, strip($11), $15 + 0, $16 + 0); next }   # R1; off15 unmitigated
     dealt_miss($2, $4, $6)                     # R26: the attacker's side
     missed($6, $8, $13, $15)
     next
@@ -768,8 +778,37 @@ ev == "SPELL_CAST_SUCCESS" {
     next
 }
 
+# ---- R27 (2026-10-08) resources: a SPELL_ENERGIZE / SPELL_PERIODIC_ENERGIZE
+# landing on a PLAYER (a `Player-` destination by guid; a pet's pool is its
+# own and counts for nobody) adds its amount to `energize_gained` and its
+# overcap to `energize_wasted`, summed over power types. The suffix is the
+# line's last four fields (`amount, overEnergize, powerType, maxPower`), with
+# or without the advanced block before it. Passive, like a cast: never combat,
+# so one before the pull, after its end or past the trash gap lands nowhere.
+ev == "SPELL_ENERGIZE" || ev == "SPELL_PERIODIC_ENERGIZE" {
+    if (passive_stale()) next
+    if ($6 !~ /^Player-/) next
+    engain[cur SUBSEP $6] += $(NF - 3)
+    enwaste[cur SUBSEP $6] += $(NF - 2)
+    next
+}
+
+# ---- R26 (2026-10-08) casts that BEGAN: a SPELL_CAST_START by one of ours,
+# counted exactly like a cast (passive — never combat, so a start before the
+# pull, after the kill or past the trash gap lands nowhere; an NPC's is
+# nobody's). A start with no success after it is a cast that never went off.
+ev == "SPELL_CAST_START" {
+    if (passive_stale()) next
+    a = actor($2, $4); if (a == "") next
+    startv[cur SUBSEP a]++
+    next
+}
+
 ev == "SPELL_INTERRUPT" { a = actor($2, $4); note(cur, a, "interrupts", 1); next }
 ev == "SPELL_DISPEL"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next }
+# R15 (2026-10-08): a Spellsteal is a dispel too — counted alike (the index
+# scanner counts SPELL_STOLEN as combat, like SPELL_DISPEL).
+ev == "SPELL_STOLEN"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next }
 
 ev == "SPELL_AURA_APPLIED" {
     dot_aura(1)                                  # R26: a player's DoT on an enemy
@@ -879,6 +918,8 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tmisses\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "misses"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstagger\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stagger"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstagger_ticked\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stagger_ticked"] + 0
+            # R17 amendment: what armor and damage reduction took off (never taken)
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\treduced\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "reduced"] + 0
             # R22: what this actor (its pets folded in) dealt to ITSELF — held
             # off `damage`, so `damage` is what reached everyone else.
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tself_harm\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "self_harm"] + 0
@@ -927,12 +968,16 @@ END {
             # metrics: casts (passive-gated), and the periodic halves of damage
             # and healing (ticks; the direct part is the total less these).
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcasts\t%d\n",                 s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, castv[s SUBSEP g] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcast_starts\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, startv[s SUBSEP g] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdamage_periodic\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "damage_periodic"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\theal_periodic\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "heal_periodic"] + 0
             # R26 (step 3): misses by the player and their pets, and the Σ of
             # their debuffs' unions up on enemies.
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tmisses_dealt\t%d\n",          s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, missv[s SUBSEP g] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdot_uptime_ms\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, dotUp[s SUBSEP g] + 0
+            # R27: power gained and lost to the cap, every power type summed.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tenergize_gained\t%.4f\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, engain[s SUBSEP g] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tenergize_wasted\t%.4f\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, enwaste[s SUBSEP g] + 0
         }
         delete plist
     }

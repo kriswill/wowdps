@@ -98,3 +98,47 @@ zone — so each trash pull keeps only the cast after its opening hit.
 
 Vexxa's casts 8 (6 + 1 + 1), Incinerate's row 2; Wither's parts and every
 group as in segment 1. Wither's uptime 24 800, the pull's own.
+
+## 2026-10-08: casts that began (`cast_starts`)
+
+Nine `SPELL_CAST_START` lines join the log. `check.awk` counts one by one of
+ours exactly as it counts a cast — passive, so it never opens, extends or
+splits a segment — and emits `cast_starts` right after `casts` for every
+fixture (0 wherever no start was logged):
+
+| ts | who | spell | lands |
+|---|---|---|---|
+| 22:04:56.0 | Vexxa | Chaos Bolt | nowhere — before the pull (nothing open) |
+| 22:05:01.5 | Vexxa | Chaos Bolt | the pull (its cast at 02.0 went off) |
+| 22:05:18.0 | Lumen | Flash Heal | the pull (cast at 19.0) |
+| 22:05:18.5 | Grove Cultist | Shadow Bolt | nobody's — an NPC |
+| 22:05:20.5 | Vexxa | Chaos Bolt | the pull (cast at 22.0) |
+| 22:05:24.0 | Vexxa | Chaos Bolt | the pull — and no cast follows: it never went off |
+| 22:05:30.5 | Vexxa | Chaos Bolt | nowhere — after ENCOUNTER_END |
+| 22:07:00.2 | Vexxa | Incinerate | trash 1 (after its opening hit) |
+| 22:08:29.0 | Vexxa | Incinerate | nowhere — 87.5 s past the last hit, the dead zone |
+
+So segment 1: **Vexxa 3** (Chaos Bolt's row: 3 starts, 2 casts — one
+cancelled), **Lumen 1**; segment 2: **Vexxa 1**; segment 3: 0. No other
+number moves and the segment list is the same three.
+
+## 2026-10-08: resources (`energize_gained` / `energize_wasted`, R27)
+
+Eight `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` lines join the log, each
+with its advanced block. A line counts on the PLAYER it lands on, passive
+like a cast:
+
+| ts | on | power | amount / over | lands |
+|---|---|---|---|---|
+| 22:04:57.5 | Vexxa | soul shards (7) | 2 / 0 | nowhere — before the pull |
+| 22:05:05.3 | Vexxa | soul shards | 1 / 0 | the pull |
+| 22:05:06.7 | Sayaad (pet) | energy (3) | 10 / 0 | nobody — a pet's pool is its own |
+| 22:05:07.3 | Vexxa | soul shards | 0 / 1 (capped) | the pull |
+| 22:05:10.5 | Lumen | mana (0) | 2 500 / 0 | the pull |
+| 22:05:12.5 | Vexxa | soul shards | 0.5 / 0 | the pull |
+| 22:07:00.6 | Vexxa | soul shards | 1.5 / 0.5 | trash 1 |
+| 22:08:29.5 | Vexxa | soul shards | 2 / 0 | nowhere — the dead zone |
+
+So segment 1: **Vexxa 1.5 gained, 1.0 wasted** (40 % of 2.5 generated),
+**Lumen 2 500 / 0**; segment 2: **Vexxa 1.5 / 0.5**; segment 3: nothing. The
+visit's Σ sums Vexxa to 3.0 / 1.5 over 4 lines.

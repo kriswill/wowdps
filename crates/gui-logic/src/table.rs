@@ -571,6 +571,7 @@ mod tests {
             school: 0,
             mine: false,
             offset_ms: None,
+            absorb: None,
         }
     }
 

@@ -44,9 +44,8 @@ Spell prefix (offsets 9-11, for `SPELL_*` / `RANGE_*`, **not** `SWING_*`):
 
 ## Advanced block — 19 fields, NOT 17
 
-The wiki lists 17. spec.json lists **19**: there are two always-zero `unknown` fields
-between `absorb` and `power_type`. Getting this wrong shifts every damage/heal suffix
-by two columns.
+The wiki lists 17. spec.json lists **19**. Getting the count wrong shifts every
+damage/heal suffix by two columns.
 
 ```
 0 info_guid      10 power_type
@@ -56,10 +55,32 @@ by two columns.
 4 attack_power   14 position_x
 5 spell_power    15 position_y
 6 armor          16 ui_map_id
-7 absorb         17 facing
-8 unknown_1 (0)  18 item_level
-9 unknown_2 (0)
+7 versatility    17 facing
+8 avoidance      18 item_level
+9 absorb
 ```
+
+> **CORRECTION (2026-10-08) — fields 7–9 were mislabeled here.** This file
+> (after spec.json) called field 7 `absorb` and 8–9 two always-zero
+> `unknown`s between `absorb` and `power_type`. Measured on a real Heroic raid
+> pull (2026-09-27, every player's `SPELL_HEAL` / `SPELL_DAMAGE` /
+> `SPELL_CAST_SUCCESS` / `SPELL_ENERGIZE` block): field 7 is **versatility** —
+> it moves with buffs and never drops below a raid buff's floor (300 = the 3 %
+> of Mark of the Wild, so a percentage × 100, not the rating COMBATANT_INFO
+> carries); field 8 is **avoidance** — constant per player (0, 176, 293, 328,
+> 453), nonzero exactly for the players whose COMBATANT_INFO avoidance rating
+> is; field 9 is the unit's **absorb** — the total of the shields on it, 0 to
+> ~900 k, zero 2–52 % of the time per player. Field 6 equals COMBATANT_INFO's
+> armor exactly. The two "extra" fields the wiki lacks sit between `armor` and
+> `absorb`, not after `absorb`. The 19-field count and every offset from 10 on
+> were right; only the names moved. Warcraft Logs' event fields agree
+> (`absorb` is the shield total). The parser then read 0–3 (the owner and
+> health hints) and nothing past them, so no number moved with the names; since
+> R9's v43 amendment it reads 9 (`absorb`, beside a recap's health) and 10–12
+> (the unit's power) too. On a `SPELL_CAST_SUCCESS` that spends two resources
+> fields 10–13 are `a|b` pairs (a Rogue's `3|4,191|5,250|7,25|5`: energy 191
+> of 250 costing 25, combo points 5 of 7 costing 5 — 439 such lines in a real
+> Heroic pull, every one a cast); the parser keeps the first of each.
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 
@@ -85,7 +106,7 @@ remembered owner from an earlier swing / the `0x1000` Pet unit flag).
 | off | field | note |
 |---|---|---|
 | 31 | `base_amount` | **effective damage post-mitigation — the canonical number** |
-| 32 | `raw_amount` | pre-mitigation, diagnostics only |
+| 32 | `unmitigated` | the hit BEFORE the target's own modifiers (an earlier note here said "pre-mitigation, diagnostics only"): armor and damage reduction bring it down to `base_amount + absorbed + blocked`, and it sits ABOVE that on every one of 19 120 hostile spell hits on players in a real Heroic pull — but BELOW it on 91 % of the group's 102 735 hits on enemies, whose vulnerability debuffs amplify the hit after it. R17's `reduced` = this − (amount + absorbed + blocked), floored at 0 |
 | 33 | `overkill` | **`-1` when not a killing blow** — clamp to 0 |
 | 34 | `school` | |
 | 35 | `resisted` | |
@@ -106,7 +127,7 @@ Advanced block at 9-27, then:
 | off | field |
 |---|---|
 | 28 | `base_amount` |
-| 29 | `raw_amount` |
+| 29 | `unmitigated` (as above) |
 | 30 | `overkill` |
 | 31 | `school` (always `1`) |
 | 32-34 | `resisted`, `blocked`, `absorbed` |
@@ -229,10 +250,36 @@ block is the *buff* (Shifting Sands), so the underlying shield is unknowable and
 the `NON_HEALING_ABSORBS` exclusion (R2) cannot be applied — it stays `Other`
 and contributes to nothing.
 
+### `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` — resources (R27)
+
+Verified 2026-10-08 on a real Heroic raid pull (16 004 + 2 470 lines, every one
+35 fields): the spell prefix, the advanced block (it describes the
+destination), then `amount, overEnergize, powerType, maxPower`. The two
+amounts are four-decimal numbers (`1.0000,0.0000,7,50` — a soul-shard
+fragment of 50; `0.5000` happens). A gain that hits the cap logs `amount`
+`0.0000` and the whole generation as `overEnergize` (2 201 lines: a Hunter at
+125 of 125 focus writes `0.0000,3.0000,2,125`), so `amount` is what reached
+the pool and `overEnergize` what the cap ate. Index from the END (the last
+four fields) or forward from the advanced block; both agree.
+
+### `SPELL_CAST_START` and the empower family (R26)
+
+`SPELL_CAST_START` is the plain 12-field spell-prefix line — no advanced
+block, the destination usually the nil unit (`SPELL_CAST_START,<src>,
+0000000000000000,nil,0x80000000,0x80000000,473662,"Consume",0x6a`), 10 680
+of them on that pull. A cast-time spell writes it at the start and
+`SPELL_CAST_SUCCESS` when it goes off; a cancelled or kicked cast writes the
+start alone. `SPELL_EMPOWER_START` is the same 12 fields; `SPELL_EMPOWER_END`
+adds the stage released (`…,355936,"Dream Breath",0x8,1`) and
+`SPELL_EMPOWER_INTERRUPT` a trailing `0`. None of them is combat for the
+index scanner.
+
 ### Count/flag events
 
 - `SPELL_INTERRUPT` — 15 fields; 12-14 = interrupted spell id/name/school.
-- `SPELL_DISPEL` — 16 fields; 12-14 = dispelled spell, 15 = `BUFF`/`DEBUFF`.
+- `SPELL_DISPEL` — 16 fields; 12-14 = dispelled spell, 15 = `BUFF`/`DEBUFF`
+  (verified 2026-10-08 on a real raid pull: `4987,"Cleanse",0x2,1287036,
+  "Poisonous Bite",8,DEBUFF` — the dispelled spell's school a bare decimal).
 - `SPELL_AURA_APPLIED` — 13, 14 **or 15** (see correction 5 below); 12 =
   `BUFF`/`DEBUFF`, 13 = optional absorb amount (**not** a stack count — stacks only
   appear on `_DOSE` events). Read offset 12; offset 13 is the parser's `absorb`
@@ -295,7 +342,23 @@ and contributes to nothing.
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
 - `COMBATANT_INFO` — `guid, faction, <22 stat scalars>, currentSpecID(field 25),
   [(traitNodeID,traitNodeEntryID,rank),…], (pvpTalents…), [(itemID,ilvl,
-  (enchantIDs),(bonusIDs),(gemIDs)),…], [(auras…)], …`. Field 25 is the LAST
+  (enchantIDs),(bonusIDs),(gemID,gemIlvl,…)),…], [(auras…)], …`. The gem
+  list is PAIRS: each socketed gem's item id, then the gem's own item level —
+  `(240892,295)` is one gem, `(240892,295,240983,295)` two (a real Heroic raid
+  pull, 2026-09-27: 366 empty lists, 89 of one gem, 13 of two, never an odd
+  length); the parser keeps the ids. The 22 stat scalars (fields 3–24),
+  measured on a real Heroic pull against Warcraft Logs' names for the same
+  fields: strength, agility, stamina, intellect, two fields that read 0 for
+  every player of every log on hand (one of them dodge: a guardian druid
+  would tell which), parry (a Blood Death Knight's and a Vengeance Demon
+  Hunter's equal their crit, as WCL reports their parry), block, crit ×3
+  (melee, ranged, spell), speed, leech, haste ×3, avoidance, mastery,
+  versatility ×3 (done, healing, taken), armor (equal to the advanced
+  block's field 6). The aura bracket after the gear is FLAT triples —
+  `[casterGUID,spellID,stacks,…]` (`…,Player-…,41635,8,…` is a Prayer of
+  Mending at 8 stacks) — then four trailing scalars (`374,0,0,0`). (Older
+  fixtures here wrote `[(caster,spell,caster,spell)]`; they write the real
+  shape since 2026-10-08.) Field 25 is the LAST
   scalar before the first `[`; a comma split shreds the brackets, so the parser
   scans the raw line bracket-aware (v19). Talent `rank` 0 = a granted/free node
   (matches the import-string codec's "selected but unpurchased"). The gear

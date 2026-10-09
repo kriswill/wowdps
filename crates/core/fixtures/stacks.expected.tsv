@@ -19,6 +19,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	misses	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	stagger	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	stagger_ticked	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	reduced	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	self_harm	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	friendly_fire	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	support_given	0
@@ -45,10 +46,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	stack_cells	1
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	stack_auras	1
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	casts	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	cast_starts	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	damage_periodic	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	heal_periodic	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	misses_dealt	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	dot_uptime_ms	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	energize_gained	0.0000
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	energize_wasted	0.0000
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	damage	90000
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	overkill	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	petdamage	0
@@ -69,6 +73,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	misses	1
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stagger	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stagger_ticked	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	reduced	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	self_harm	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	friendly_fire	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	support_given	0
@@ -95,10 +100,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_cells	7
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_auras	2
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	casts	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	cast_starts	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	damage_periodic	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	heal_periodic	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	misses_dealt	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	dot_uptime_ms	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	energize_gained	0.0000
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	energize_wasted	0.0000
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	damage	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	overkill	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	petdamage	0
@@ -119,6 +127,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	misses	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	stagger	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	stagger_ticked	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	reduced	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	self_harm	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	friendly_fire	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	support_given	0
@@ -145,10 +154,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	stack_cells	1
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	stack_auras	1
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	casts	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	cast_starts	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	damage_periodic	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	heal_periodic	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	misses_dealt	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	dot_uptime_ms	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	energize_gained	0.0000
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	energize_wasted	0.0000
 2	Trash	Trash		2000			Player-1168-0A1B2C53	damage	140000
 2	Trash	Trash		2000			Player-1168-0A1B2C53	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	petdamage	0
@@ -169,6 +181,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C53	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C53	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	support_given	0
@@ -195,10 +208,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C53	stack_cells	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	stack_auras	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	casts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C53	cast_starts	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	damage_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	heal_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	misses_dealt	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	dot_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C53	energize_gained	0.0000
+2	Trash	Trash		2000			Player-1168-0A1B2C53	energize_wasted	0.0000
 2	Trash	Trash		2000			Player-1168-0A1B2C51	damage	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	petdamage	0
@@ -219,6 +235,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C51	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C51	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	support_given	0
@@ -245,10 +262,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C51	stack_cells	1
 2	Trash	Trash		2000			Player-1168-0A1B2C51	stack_auras	1
 2	Trash	Trash		2000			Player-1168-0A1B2C51	casts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C51	cast_starts	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	damage_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	heal_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	misses_dealt	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	dot_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C51	energize_gained	0.0000
+2	Trash	Trash		2000			Player-1168-0A1B2C51	energize_wasted	0.0000
 3	Trash	Trash		1000			Player-1168-0A1B2C53	damage	140000
 3	Trash	Trash		1000			Player-1168-0A1B2C53	overkill	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	petdamage	0
@@ -269,6 +289,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1000			Player-1168-0A1B2C53	misses	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	stagger	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	stagger_ticked	0
+3	Trash	Trash		1000			Player-1168-0A1B2C53	reduced	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	self_harm	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	friendly_fire	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	support_given	0
@@ -295,10 +316,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1000			Player-1168-0A1B2C53	stack_cells	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	stack_auras	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	casts	0
+3	Trash	Trash		1000			Player-1168-0A1B2C53	cast_starts	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	damage_periodic	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	heal_periodic	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	misses_dealt	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	dot_uptime_ms	0
+3	Trash	Trash		1000			Player-1168-0A1B2C53	energize_gained	0.0000
+3	Trash	Trash		1000			Player-1168-0A1B2C53	energize_wasted	0.0000
 3	Trash	Trash		1000			Player-1168-0A1B2C51	damage	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	overkill	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	petdamage	0
@@ -319,6 +343,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1000			Player-1168-0A1B2C51	misses	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	stagger	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	stagger_ticked	0
+3	Trash	Trash		1000			Player-1168-0A1B2C51	reduced	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	self_harm	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	friendly_fire	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	support_given	0
@@ -345,7 +370,10 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1000			Player-1168-0A1B2C51	stack_cells	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	stack_auras	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	casts	0
+3	Trash	Trash		1000			Player-1168-0A1B2C51	cast_starts	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	damage_periodic	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	heal_periodic	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	misses_dealt	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	dot_uptime_ms	0
+3	Trash	Trash		1000			Player-1168-0A1B2C51	energize_gained	0.0000
+3	Trash	Trash		1000			Player-1168-0A1B2C51	energize_wasted	0.0000

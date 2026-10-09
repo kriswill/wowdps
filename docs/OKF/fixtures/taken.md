@@ -25,6 +25,15 @@ Celestial Brew, an Ember Bolt by Pyralis's Ice Barrier. Since
 identity above holds with them on both sides, and `mitigated_pct` reads what
 it read before ([A Hit A Shield Took Whole Is A Hit](../decisions/whole-absorb-is-a-hit.md)).
 
+Since 2026-10-08 seven hits carry a real `unmitigated` amount (and their
+`_LANDED` twins, which nothing reads): an armored, partly blocked swing on
+Durgan, his partly absorbed Cinder Lash, Zenlí's staggered swing and his
+whole-absorbed Smoldering tick, the Water Elemental's hit folding onto
+Pyralis, a boar's swing in the trash after — and an Ember Spit a
+vulnerability lifted above its unmitigated amount, which counts 0, not a
+negative ([Armor Is Mitigation](../decisions/armor-is-mitigation.md)):
+`reduced` 33 000 / 13 500 / 1 000 in the pull, 500 in the trash.
+
 ## Rulings exercised
 
 - [R17 Damage taken & mitigation](../rulings/r17.md), [R1 Damage](../rulings/r1.md) (a hit absorbed whole), [R5 Pets](../rulings/r5.md),

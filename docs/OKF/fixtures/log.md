@@ -1,5 +1,28 @@
 # Log
 
+## 2026-10-08
+
+- **Update** — [support.txt](support.md): a Spellsteal by the Fire Mage —
+  `SPELL_STOLEN` counts on the Dispels view (her `dispels` 1).
+- **Update** — [sample.txt](sample.md), [taken.txt](taken.md),
+  [support.txt](support.md), [spans.txt](spans.md) and the negative control
+  [corrupt.txt](corrupt.md): their COMBATANT_INFO aura brackets write the
+  real flat `(caster, spell, stacks)` triples the parser now reads (they held
+  an older `(caster, spell, caster, spell)` shape nothing read); no golden moves.
+- **Update** — [tree.txt](tree.md): eight energize lines for
+  [R27](../rulings/r27.md), gated as `energize_gained` / `energize_wasted`, two
+  new golden rows on every fixture.
+- **Update** — [tree.txt](tree.md): nine `SPELL_CAST_START` lines — one
+  cancelled Chaos Bolt, four that land nowhere — gated as `cast_starts`, a new
+  golden row on every fixture.
+- **Update** — [taken.txt](taken.md): seven hits carry real `unmitigated`
+  amounts (six rewritten, Durgan's Cinder Lash already did; one amplified,
+  floored at 0), and every golden gains `reduced`
+  after `stagger_ticked` — 33 000 / 13 500 / 1 000 here, 1 000 on
+  [sample.txt](sample.md)'s Hollow Rot tick, 0 elsewhere
+  ([decision](../decisions/armor-is-mitigation.md)). Every fixture's gear
+  bracket writes gems as `(id, item level)` pairs, as the log does.
+
 ## 2026-10-04
 
 - **Update** — [relog.txt](relog.md): its golden regains the 65 metric rows

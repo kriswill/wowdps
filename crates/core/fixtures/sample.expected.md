@@ -190,7 +190,7 @@ Every one of these is in `sample.txt`; the totals above already account for them
 | unknown event type | 20:05:43 `WOWDPS_SYNTHETIC_EVENT` | `Other`, never an error |
 | truncated line (6 fields) | 20:05:46 | `parse_line` → `None` |
 | blank line | after 20:05:47 | `parse_line` → `None` |
-| unmodelled real events | `SPELL_CAST_SUCCESS`, `SPELL_ENERGIZE`, `SWING_MISSED`, `SPELL_MISSED`, `SPELL_AURA_REMOVED`, `ZONE_CHANGE`, `MAP_CHANGE` | `Other` |
+| unmodelled real events (when the table was written) | `SPELL_CAST_SUCCESS`, `SPELL_ENERGIZE`, `SWING_MISSED`, `SPELL_MISSED`, `SPELL_AURA_REMOVED`, `ZONE_CHANGE`, `MAP_CHANGE` | `Other` then; all but `MAP_CHANGE` are modelled since (`SPELL_ENERGIZE` is R27's, 2026-10-08) |
 
 ## Known coverage gaps (stated, not hidden)
 
@@ -208,7 +208,13 @@ validate here, and I am flagging them rather than implying coverage:
    `SPELL_DISPEL` occurs **0 times**, `SPELL_STOLEN` 0 times; the only dispel-family
    event present is a single `SPELL_AURA_BROKEN_SPELL`. The Dispels view is therefore
    gated ONLY by synthetic fixture data. **If these offsets are wrong, every test in
-   this repo would still pass.**
+   this repo would still pass.** — **RESOLVED 2026-10-08:** a real Heroic raid pull
+   (2026-09-27) holds 13 `SPELL_DISPEL` lines and the three raid nights around it
+   929 more (one `SPELL_STOLEN`): the 16-field layout is exactly as written here
+   (`4987,"Cleanse",0x2,1287036,"Poisonous Bite",8,DEBUFF`), the BUFF/DEBUFF word
+   at offset 15. Since then the Dispels drill labels "{dispelled} ({ability})" (R15)
+   and the 20:05:36 / 20:08:22 Purifies read "Creeping Blight (Purify)" and
+   "Withering Curse (Purify)"; the counts do not move.
 3. **`*_SUPPORT` layout is spec-only** — no Augmentation Evoker in the 493 616-line
    real log, so the dedup rule is exercised only by the fixture.
 4. **Off-hand swing (39-field) is spec-only** — every real swing observed was 38-field.
@@ -216,7 +222,7 @@ validate here, and I am flagging them rather than implying coverage:
    log). It carries nested bracket/paren arrays with embedded commas, so the CSV stress
    is present in kind, but not at real scale. Since v19 the talent bracket
    `[(nodeId,entryId,rank),…]` and gear bracket
-   `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]` are contracted surface too
+   `[(itemId,ilvl,(enchants),(bonusIds),(gemId,gemIlvl,…)),…]` are contracted surface too
    (`Event::CombatantInfo.talents`/`gear`), parsed by a bracket-aware scan that keys
    on `[` positions rather than field counts — which is exactly why the short fixture
    shape and the real 461–508-field shape parse identically. The real-log gate
@@ -306,3 +312,22 @@ In this log:
 Coverage-gap 3 above is now closed on the format side: the `*_SUPPORT` shapes
 were verified against a real Augmentation log on 2026-09-04 (FORMAT-NOTES,
 "`*_SUPPORT` events"), and `support.txt` gates the semantics.
+
+## Addendum — armor is mitigation (2026-10-08: R17's `reduced`)
+
+`check.awk` emits one more R17 row per player, `reduced`, right after
+`stagger_ticked`: per hit `taken` counts, the damage suffix's second amount
+(`unmitigated`) less `amount + absorbed + blocked`, floored at 0. This
+fixture's lines mostly log the two amounts equal, so every row reads 0 but
+one: a Hollow Rot tick on P1 Thraxx in segment 4, Verkath the Hollow (l.105,
+22 000 landed of 23 000 unmitigated, nothing absorbed or blocked) — **`reduced` 1 000**. No other
+number moves; `taken.txt` is the fixture built for the amendment
+(`taken.expected.md`, its last section).
+
+## Addendum — resources (2026-10-08: R27)
+
+`check.awk` emits `energize_gained` and `energize_wasted` per player (every
+power type summed, four decimals) after `dot_uptime_ms`. The one
+`SPELL_ENERGIZE` here, P1 Thraxx's Second Wind at 20:05:20 in segment 2 (The
+Ashen Warden), gives him **20 rage** (type 1, nothing over the cap); every
+other row reads 0.0000.

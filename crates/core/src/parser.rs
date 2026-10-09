@@ -10,11 +10,16 @@
 
 use std::borrow::Cow;
 
-use wowdps_model::{GearItem, MissKind, TalentPick};
+use wowdps_model::{GearItem, LoadoutAura, MissKind, TalentPick};
 
 /// Number of fields in the advanced-combat-logging block. The wiki says 17; that is
-/// wrong for current retail — two always-zero fields sit between `absorb` and
-/// `power_type`.
+/// wrong for current retail. In order: `info_guid`, `owner_guid`, `current_hp`,
+/// `max_hp`, `attack_power`, `spell_power`, `armor`, `versatility`, `avoidance`,
+/// `absorb` (the unit's shields, in total), `power_type`, `current_power`,
+/// `max_power`, `power_cost`, `x`, `y`, `ui_map_id`, `facing`, `item_level` — the
+/// two fields the wiki lacks are versatility and avoidance, between `armor` and
+/// `absorb` (an earlier note here, after spec.json, put two always-zero fields
+/// after `absorb`; a real raid pull says otherwise, `fixtures/FORMAT-NOTES.md`).
 const ADVANCED_LEN: usize = 19;
 
 const FLAG_TYPE_PLAYER: u32 = 0x0000_0400;
@@ -26,7 +31,7 @@ const FLAG_TYPE_PET: u32 = 0x0000_1000;
 const FLAG_TYPE_GUARDIAN: u32 = 0x0000_2000;
 
 /// A parsed log line. `ts_ms` is monotonic within a file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LogLine {
     pub ts_ms: i64,
     pub event: Event,
@@ -59,7 +64,8 @@ pub struct OwnerHint {
     pub owner_guid: String,
 }
 
-/// "`unit_guid` is at `current`/`max` health", as reported by the advanced block.
+/// "`unit_guid` is at `current`/`max` health", as reported by the advanced
+/// block — with (2026-10-08) its shields and its power beside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HpHint {
     pub unit_guid: String,
@@ -69,6 +75,25 @@ pub struct HpHint {
     /// destination's, whichever the block's guid names (0 when neither) —
     /// so a consumer can tell a hostile NPC from a friendly guardian (R16).
     pub flags: u32,
+    /// Advanced field 9: the total of the shields on the unit, post-event
+    /// (R9's recap reads it beside the health; 0 when none or unreadable).
+    pub absorb: u64,
+    /// Advanced fields 10–12: the unit's primary power — its type, current
+    /// and max. `None` when the unit has no pool (max 0) or the fields do
+    /// not read. A cast that spends two resources lists each field as
+    /// `a|b` (a Rogue's `3|4`, energy and combo points); the FIRST entry is
+    /// kept.
+    pub power: Option<Power>,
+}
+
+/// A unit's power reading from the advanced block: `kind` is the game's
+/// power type (0 mana, 1 rage, 2 focus, 3 energy, … 17 fury), `current`
+/// and `max` in the game's own units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Power {
+    pub kind: u32,
+    pub current: u64,
+    pub max: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -116,7 +141,7 @@ pub enum AuraType {
     Debuff,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Version {
         log_version: u32,
@@ -152,9 +177,18 @@ pub enum Event {
         /// The line's talent bracket `[(nodeId,entryId,rank),…]`. Empty when
         /// the bracket is absent or unbalanced — never a parse failure.
         talents: Vec<TalentPick>,
-        /// The line's gear bracket `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]`,
-        /// in the log's inventory-slot order. Empty on absence, like `talents`.
+        /// The line's gear bracket
+        /// `[(itemId,ilvl,(enchants),(bonusIds),(gemId,gemIlvl,…)),…]`, in the
+        /// log's inventory-slot order, gems as ids alone. Empty on absence,
+        /// like `talents`.
         gear: Vec<GearItem>,
+        /// v43: the 22 stat scalars between faction and the spec, in the
+        /// log's order (`wowdps_model::COMBATANT_STATS` names them).
+        stats: Vec<u32>,
+        /// v43: the aura bracket after the gear — `(caster, spell, stacks)`
+        /// triples: flask, food, rune, raid buffs at the line. Empty on
+        /// absence.
+        auras: Vec<LoadoutAura>,
     },
     /// R10: the player moved zones. A nonzero `difficulty` marks instanced
     /// content (dungeon, keystone, raid, delve); the open world logs 0.
@@ -207,6 +241,11 @@ pub enum Event {
         blocked: u64,
         critical: bool,
         periodic: bool,
+        /// R17 amendment (2026-10-08): the suffix's second amount — the hit
+        /// before the target's armor and damage reduction (or, under a
+        /// vulnerability debuff, below what landed). `reduced` is what it
+        /// loses on the way to `amount + absorbed + blocked`, floored at 0.
+        unmitigated: u64,
     },
     /// R17: a swing or spell that did not land (`*_MISSED`). `prevented` is
     /// the BLOCK amount or the ABSORB `amountMissed`, else 0. A BLOCK's
@@ -224,6 +263,10 @@ pub enum Event {
         critical: bool,
         /// A `SPELL_PERIODIC_MISSED` tick.
         periodic: bool,
+        /// R17 amendment: the ABSORB tail's `unmitigated` amount (the hit a
+        /// shield took whole, before armor); 0 on every other kind, which
+        /// carries none.
+        unmitigated: u64,
     },
     /// R19: a `*_SUPPORT` twin of a hit or heal — the share of it that a
     /// supporter's buff (Ebon Might, Prescience …) accounts for. `spell` is
@@ -318,11 +361,28 @@ pub enum Event {
         aura_type: AuraType,
         absorb: Option<u64>,
     },
+    /// R15 (2026-10-08): `SPELL_DISPEL` — `spell` (the dispel ability)
+    /// removed `dispelled_spell` from `dst`; `aura_type` is the suffix's
+    /// `BUFF` / `DEBUFF` word after the dispelled spell (a purge of an enemy
+    /// buff, or a cleanse of a debuff on a friend).
     Dispel {
         src: Unit,
         dst: Unit,
         spell: Spell,
         dispelled_spell: Spell,
+        aura_type: AuraType,
+    },
+    /// R15 (2026-10-08): `SPELL_STOLEN` — the same line shape as a dispel,
+    /// but the aura MOVED to the caster (Spellsteal): `stolen_spell` came off
+    /// `dst` onto `src`. Parsed apart so a reader can tell a steal from a
+    /// purge; the meter counts it on the Dispels view exactly as before (the
+    /// scanner counts the line as combat, so it must record like a dispel).
+    Stolen {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        stolen_spell: Spell,
+        aura_type: AuraType,
     },
     /// R12: a cast that actually went off. The meter uses these for one
     /// thing only — telling a trinket the player *used* from one that fired
@@ -330,6 +390,42 @@ pub enum Event {
     Cast {
         src: Unit,
         spell: Spell,
+    },
+    /// R26 (2026-10-08): `SPELL_CAST_START` — a cast with a cast time began
+    /// (the plain spell-prefix line, no advanced block, `dst` usually nil).
+    /// Passive like a cast: it never opens or extends a segment (the index
+    /// scanner does not count it), and it is no R8 or R23 signal. The
+    /// ability tree counts it per caster per spell name beside the casts
+    /// that went off (`SpellMeta::starts`).
+    CastStart {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+    },
+    /// R27 (2026-10-08): `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` —
+    /// `dst` gained `amount` of power type `power_type` (its pool's max
+    /// `max_power`) and lost `over` to the cap. Amounts are the log's own
+    /// four-decimal numbers (`1.0000`, `0.5000`); a capped gain logs
+    /// `0.0000` with the whole amount as `over`. Passive: never combat for
+    /// the scanner, through the meter's passive gate.
+    Energize {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        amount: f64,
+        over: f64,
+        power_type: u32,
+        max_power: u32,
+    },
+    /// 2026-10-08: `SPELL_EMPOWER_START` (`stage` None) and
+    /// `SPELL_EMPOWER_END` (`stage` = the trailing empower level released,
+    /// 1–4) — an Evoker's charged spell. Parsed and passive; nothing reads
+    /// it yet (the release still writes a `SPELL_CAST_SUCCESS`, which the
+    /// casts count). `SPELL_EMPOWER_INTERRUPT` stays `Other`.
+    Empower {
+        src: Unit,
+        spell: Spell,
+        stage: Option<u32>,
     },
     /// R26: `spell` is what summoned the pet — the ability its rows nest
     /// under in the ability tree ("Summon Sayaad").
@@ -579,6 +675,18 @@ fn absorb_at(f: &[Cow<'_, str>], i: usize) -> Option<u64> {
     get(f, i).and_then(|s| s.parse().ok())
 }
 
+/// Advanced fields `i..i+3` (power type, current, max) → the unit's primary
+/// [`Power`]. A cast spending two resources writes each field as `a|b`;
+/// the first entry of each is kept. `None` when the type does not parse or
+/// the unit has no pool (max 0).
+fn power_at(f: &[Cow<'_, str>], i: usize) -> Option<Power> {
+    let first = |k: usize| get(f, i + k).and_then(|s| s.split('|').next());
+    let kind = first(0)?.parse().ok()?;
+    let current = first(1)?.parse().ok()?;
+    let max = first(2)?.parse().ok()?;
+    (max > 0).then_some(Power { kind, current, max })
+}
+
 fn parse_i64(s: &str) -> i64 {
     s.parse().unwrap_or(0)
 }
@@ -656,13 +764,16 @@ pub(crate) fn is_support_event(ev: &str) -> bool {
 }
 
 /// The damage suffix read forward from `s` (the field after the advanced
-/// block, or after envType for ENVIRONMENTAL_DAMAGE): `amount, raw_amount,
+/// block, or after envType for ENVIRONMENTAL_DAMAGE): `amount, unmitigated,
 /// overkill, school, resisted, blocked, absorbed, critical`. `None` when
 /// the line is too short to carry it.
 struct DamageSuffix {
-    /// suffix[0] is base_amount (post-mitigation, canonical); suffix[1] is
-    /// raw_amount (pre-mitigation, diagnostics only).
+    /// suffix[0] is the amount that reached the target (canonical, R1).
     amount: u64,
+    /// suffix[1]: the hit BEFORE the target's own modifiers — armor and
+    /// damage reduction take it down to `amount + absorbed + blocked`, a
+    /// vulnerability debuff can lift it above (R17's `reduced`).
+    unmitigated: u64,
     overkill: i64,
     absorbed: u64,
     blocked: u64,
@@ -676,6 +787,7 @@ fn damage_suffix(f: &[Cow<'_, str>], s: usize) -> Option<DamageSuffix> {
     }
     Some(DamageSuffix {
         amount: parse_u64(amount),
+        unmitigated: parse_u64(get(f, s + 1).unwrap_or_default()),
         overkill: parse_i64(get(f, s + 2).unwrap_or_default()),
         absorbed: parse_u64(get(f, s + 6).unwrap_or_default()),
         blocked: parse_u64(get(f, s + 5).unwrap_or_default()),
@@ -770,32 +882,45 @@ pub fn parse_line(line: &str) -> Option<LogLine> {
 }
 
 /// COMBATANT_INFO, from the text after `"COMBATANT_INFO,"`. Fields 1 (guid),
-/// 2 (faction) and 25 (currentSpecID) are scalars preceding the first `[`;
-/// then come the talent bracket, a PvP/stats tuple (skipped), the gear
-/// bracket, and the auras bracket (ignored). Anything malformed degrades to
+/// 2 (faction) and 25 (currentSpecID) are scalars preceding the first `[`,
+/// with (v43) the 22 stat scalars between them; then come the talent
+/// bracket, a PvP talent tuple (skipped), the gear bracket, and (v43) the
+/// aura bracket of `(caster, spell, stacks)` triples. Anything malformed degrades to
 /// empty vectors or `None` — this event never fails a line.
 fn parse_combatant_info(body: &str) -> Event {
     let first = body.find('[');
     let scalars = body.get(..first.unwrap_or(body.len())).unwrap_or_default();
-    let mut f = scalars.split(',');
-    let guid = f.next().unwrap_or_default().to_string();
-    let faction = parse_u32(f.next().unwrap_or_default());
-    // Line field 25 = body index 24; two next() calls consumed 0 and 1.
-    let spec_id = f.nth(22).and_then(|v| v.parse().ok());
+    let f: Vec<&str> = scalars.split(',').collect();
+    let guid = f.first().copied().unwrap_or_default().to_string();
+    let faction = parse_u32(f.get(1).copied().unwrap_or_default());
+    // v43: the 22 stat scalars sit between faction and the spec (body
+    // indices 2..24); a short line keeps what it has, never a guess.
+    let stats: Vec<u32> = f
+        .iter()
+        .skip(2)
+        .take(22)
+        .filter_map(|v| v.trim().parse().ok())
+        .collect();
+    // Line field 25 = body index 24.
+    let spec_id = f.get(24).and_then(|v| v.parse().ok());
 
     let mut talents = Vec::new();
     let mut gear = Vec::new();
+    let mut auras = Vec::new();
     if let Some(open) = first
         && let Some(t_end) = bracket_end(body, open)
     {
         talents = parse_talent_bracket(body.get(open + 1..t_end).unwrap_or_default());
-        if let Some(g_open) = body
-            .get(t_end + 1..)
-            .and_then(|s| s.find('['))
-            .map(|i| i + t_end + 1)
+        if let Some(g_open) = next_bracket(body, t_end)
             && let Some(g_end) = bracket_end(body, g_open)
         {
             gear = parse_gear_bracket(body.get(g_open + 1..g_end).unwrap_or_default());
+            // v43: the aura bracket follows the gear.
+            if let Some(a_open) = next_bracket(body, g_end)
+                && let Some(a_end) = bracket_end(body, a_open)
+            {
+                auras = parse_aura_bracket(body.get(a_open + 1..a_end).unwrap_or_default());
+            }
         }
     }
     Event::CombatantInfo {
@@ -804,7 +929,35 @@ fn parse_combatant_info(body: &str) -> Event {
         faction,
         talents,
         gear,
+        stats,
+        auras,
     }
+}
+
+/// The offset of the next `[` after `after`, if any.
+fn next_bracket(body: &str, after: usize) -> Option<usize> {
+    body.get(after + 1..)
+        .and_then(|s| s.find('['))
+        .map(|i| i + after + 1)
+}
+
+/// v43: `[caster,spellId,stacks,caster,spellId,stacks,…]` interior → the
+/// auras, a flat list of triples (a real line: `[Player-5-0E…,1296934,1,…,
+/// Player-5-0D…,41635,8,…]`). A triple whose caster is no guid or whose
+/// numbers do not read is dropped alone.
+fn parse_aura_bracket(inner: &str) -> Vec<LoadoutAura> {
+    let fields: Vec<&str> = inner.split(',').map(str::trim).collect();
+    fields
+        .chunks(3)
+        .filter_map(|t| match t {
+            [caster, spell, stacks] if is_guid(caster) => Some(LoadoutAura {
+                caster: (*caster).to_string(),
+                spell_id: spell.parse().ok()?,
+                stacks: stacks.parse().ok()?,
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Index of the `]` balancing the `[` at `open`, or `None` when the bracket
@@ -897,6 +1050,27 @@ fn u32_list(s: &str) -> Vec<u32> {
         .unwrap_or_default()
 }
 
+/// A gear tuple's `(gemId,gemIlvl,gemId,gemIlvl,…)` → the gem ids. The log
+/// pairs every socketed gem with its item level; flattening the pairs (as
+/// [`u32_list`] would) made one gem read as two, its item level as a second
+/// gem id. Positions are taken BEFORE parsing, so a malformed number can
+/// never shift an item level into the id slot; a dangling id with no level
+/// still counts.
+fn gem_ids(s: &str) -> Vec<u32> {
+    s.trim()
+        .strip_prefix('(')
+        .and_then(|r| r.strip_suffix(')'))
+        .filter(|inner| !inner.trim().is_empty())
+        .map(|inner| {
+            inner
+                .split(',')
+                .step_by(2)
+                .filter_map(|v| v.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// `[(nodeId,entryId,rank),…]` interior → picks; malformed tuples drop out
 /// individually.
 fn parse_talent_bracket(inner: &str) -> Vec<TalentPick> {
@@ -913,8 +1087,11 @@ fn parse_talent_bracket(inner: &str) -> Vec<TalentPick> {
         .collect()
 }
 
-/// `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]` interior → items, in the
-/// log's slot order. Trailing elements a future patch appends are ignored.
+/// `[(itemId,ilvl,(enchants),(bonusIds),(gemId,gemIlvl,…)),…]` interior →
+/// items, in the log's slot order. Trailing elements a future patch appends
+/// are ignored. The gem list is PAIRS — each socketed gem's item id, then the
+/// gem's own item level (`(240892,295)` is ONE gem) — and only the ids are
+/// kept ([`gem_ids`]).
 /// The array is positional (slot = index), so a malformed item becomes an
 /// EMPTY slot (`item_id: 0`) rather than dropping out — dropping it would
 /// shift every later item into the wrong slot.
@@ -931,7 +1108,7 @@ fn parse_gear_bracket(inner: &str) -> Vec<GearItem> {
                     ilvl,
                     enchants: parts.get(2).map(|s| u32_list(s)).unwrap_or_default(),
                     bonus_ids: parts.get(3).map(|s| u32_list(s)).unwrap_or_default(),
-                    gems: parts.get(4).map(|s| u32_list(s)).unwrap_or_default(),
+                    gems: parts.get(4).map(|s| gem_ids(s)).unwrap_or_default(),
                 },
                 _ => GearItem::default(),
             }
@@ -1084,6 +1261,8 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             current,
             max,
             flags,
+            absorb: parse_u64(get(f, adv_start + 9).unwrap_or_default()),
+            power: power_at(f, adv_start + 10),
         })
     } else {
         None
@@ -1166,6 +1345,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             blocked: d.blocked,
             critical: d.critical,
             periodic: ev.contains("_PERIODIC_"),
+            unmitigated: d.unmitigated,
         });
     }
 
@@ -1184,6 +1364,10 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         // ABSORB's tail is `amountMissed, unmitigated, critical`; a BLOCK
         // carries its amount alone (`BLOCK,nil,19215,ST` on a real log).
         let critical = kind == MissKind::Absorb && truthy(get(f, m + 4).unwrap_or_default());
+        let unmitigated = match kind {
+            MissKind::Absorb => parse_u64(get(f, m + 3).unwrap_or_default()),
+            _ => 0,
+        };
         return with_hint(Event::Missed {
             src: unit_at(f, 1),
             dst: unit_at(f, 5),
@@ -1193,6 +1377,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             prevented,
             critical,
             periodic: ev.contains("_PERIODIC_"),
+            unmitigated,
         });
     }
 
@@ -1223,15 +1408,32 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 interrupted_spell: spell_at(f, suffix),
             })
         }
+        // R15: `extraSpellId, extraSpellName, extraSchool, auraType` after
+        // the spell prefix (no advanced block); the BUFF/DEBUFF word is the
+        // fourth suffix field.
         "SPELL_DISPEL" | "SPELL_STOLEN" => {
             if f.len() <= suffix + 2 {
                 return with_hint(Event::Other);
             }
-            with_hint(Event::Dispel {
-                src: unit_at(f, 1),
-                dst: unit_at(f, 5),
-                spell: spell.unwrap_or_default(),
-                dispelled_spell: spell_at(f, suffix),
+            let (src, dst, spell) = (unit_at(f, 1), unit_at(f, 5), spell.unwrap_or_default());
+            let removed = spell_at(f, suffix);
+            let aura_type = aura_type(get(f, suffix + 3).unwrap_or_default());
+            with_hint(if ev == "SPELL_STOLEN" {
+                Event::Stolen {
+                    src,
+                    dst,
+                    spell,
+                    stolen_spell: removed,
+                    aura_type,
+                }
+            } else {
+                Event::Dispel {
+                    src,
+                    dst,
+                    spell,
+                    dispelled_spell: removed,
+                    aura_type,
+                }
             })
         }
         "SPELL_AURA_APPLIED" => {
@@ -1296,6 +1498,49 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             src: unit_at(f, 1),
             spell: spell.unwrap_or_default(),
         }),
+        // R27: `amount, overEnergize, powerType, maxPower` after the
+        // (optional) advanced block; a line whose amounts do not read is not
+        // one the meter can use. `f64::from_str` also takes `inf`, `infinity`
+        // and `NaN`, which no log writes and which would poison every sum
+        // they reach, so a reading must be finite as well as non-negative.
+        "SPELL_ENERGIZE" | "SPELL_PERIODIC_ENERGIZE" => {
+            let num = |i: usize| {
+                get(f, suffix + i)
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+            };
+            match (num(0), num(1)) {
+                (Some(amount), Some(over)) => with_hint(Event::Energize {
+                    src: unit_at(f, 1),
+                    dst: unit_at(f, 5),
+                    spell: spell.unwrap_or_default(),
+                    amount,
+                    over,
+                    power_type: parse_u32(get(f, suffix + 2).unwrap_or_default()),
+                    max_power: parse_u32(get(f, suffix + 3).unwrap_or_default()),
+                }),
+                _ => with_hint(Event::Other),
+            }
+        }
+        "SPELL_CAST_START" => with_hint(Event::CastStart {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell: spell.unwrap_or_default(),
+        }),
+        // The prefix alone on START; END trails the stage released.
+        "SPELL_EMPOWER_START" => with_hint(Event::Empower {
+            src: unit_at(f, 1),
+            spell: spell.unwrap_or_default(),
+            stage: None,
+        }),
+        "SPELL_EMPOWER_END" => match get(f, suffix).and_then(|s| s.parse().ok()) {
+            Some(stage) => with_hint(Event::Empower {
+                src: unit_at(f, 1),
+                spell: spell.unwrap_or_default(),
+                stage: Some(stage),
+            }),
+            None => with_hint(Event::Other),
+        },
         "SPELL_SUMMON" => with_hint(Event::Summon {
             owner: unit_at(f, 1),
             pet: unit_at(f, 5),
@@ -1509,6 +1754,8 @@ mod tests {
                     },
                 ],
                 gear: vec![],
+                stats: vec![7549, 3591],
+                auras: vec![],
             }
         );
     }
@@ -1532,6 +1779,11 @@ mod tests {
                     rank: 1
                 }],
                 gear: vec![],
+                stats: vec![
+                    2129, 217, 26548, 664, 0, 0, 0, 0, 968, 968, 968, 221, 0, 668, 668, 668, 0,
+                    1062, 73, 73, 73, 2361,
+                ],
+                auras: vec![],
             }
         );
     }
@@ -1539,10 +1791,10 @@ mod tests {
     #[test]
     fn combatant_info_gear_bracket_yields_items_and_skips_the_pvp_tuple() {
         // Fixture shape: talents, then the (0,0) PvP/stats tuple, then gear with
-        // nested enchant/bonus/gem lists, then the aura bracket (ignored). The
+        // nested enchant/bonus/gem lists, then the aura bracket (v43: read). The
         // rank-0 pick (a granted node) survives as written.
         let e = parse(
-            "COMBATANT_INFO,Player-1168-0A1B2C01,0,12480,3140,980,6420,0,0,0,3120,3120,3120,410,220,4870,4870,4870,190,3960,5210,5210,5210,0,0,71,[(91024,124871,1),(91025,124872,1),(91026,124873,0)],(0,0),[(212446,639,(),(6652,10356),()),(212449,639,(),(6652),(213743))],[(Player-1168-0A1B2C02,17,Player-1168-0A1B2C01,1126)]",
+            "COMBATANT_INFO,Player-1168-0A1B2C01,0,12480,3140,980,6420,0,0,0,3120,3120,3120,410,220,4870,4870,4870,190,3960,5210,5210,5210,0,0,71,[(91024,124871,1),(91025,124872,1),(91026,124873,0)],(0,0),[(212446,639,(),(6652,10356),()),(212449,639,(),(6652),(213743,619))],[Player-1168-0A1B2C02,17,1,Player-1168-0A1B2C01,1126,1]",
         );
         assert_eq!(
             e,
@@ -1583,6 +1835,22 @@ mod tests {
                         gems: vec![213743],
                     },
                 ],
+                stats: vec![
+                    12480, 3140, 980, 6420, 0, 0, 0, 3120, 3120, 3120, 410, 220, 4870, 4870, 4870,
+                    190, 3960, 5210, 5210, 5210, 0, 0,
+                ],
+                auras: vec![
+                    LoadoutAura {
+                        caster: "Player-1168-0A1B2C02".into(),
+                        spell_id: 17,
+                        stacks: 1,
+                    },
+                    LoadoutAura {
+                        caster: "Player-1168-0A1B2C01".into(),
+                        spell_id: 1126,
+                        stacks: 1,
+                    },
+                ],
             }
         );
     }
@@ -1608,6 +1876,69 @@ mod tests {
     }
 
     #[test]
+    fn combatant_info_gems_are_id_and_item_level_pairs() {
+        // A real line's gem list (2026-09-27): `(240892,295)` is ONE gem — its
+        // id, then its own item level — never two gem ids. Two gems are four
+        // numbers; an empty list is none.
+        let e = parse(
+            "COMBATANT_INFO,Player-1168-0A1B2C01,0,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,71,[],(0,0),[(271465,334,(7991,0,0),(6652,13335),(240892,295)),(158366,321,(),(13440),(240892,295,240983,295)),(270175,334,(),(6652),())],[]",
+        );
+        let Event::CombatantInfo { gear, .. } = e else {
+            panic!("not COMBATANT_INFO: {e:?}");
+        };
+        let gems: Vec<&[u32]> = gear.iter().map(|g| g.gems.as_slice()).collect();
+        assert_eq!(
+            gems,
+            vec![&[240892][..], &[240892, 240983][..], &[][..]],
+            "ids only, the item levels dropped"
+        );
+        assert_eq!(gem_ids("(240892,295,240983)"), vec![240892, 240983]);
+        assert_eq!(gem_ids("(x,295,240983,295)"), vec![240983]);
+    }
+
+    /// v43: a real line's tail — the gear bracket, then the auras as a FLAT
+    /// list of `(caster, spell, stacks)` triples (a Prayer of Mending at 8
+    /// stacks, an Arcane Intellect from another player), then four trailing
+    /// scalars — and the 22 stats before the spec.
+    #[test]
+    fn combatant_info_reads_the_stats_and_the_aura_triples() {
+        let e = parse(
+            "COMBATANT_INFO,Player-5-0A1B2C,1,2588,217,46775,664,0,0,0,0,1047,1047,1047,98,0,992,992,992,0,1177,69,69,69,2959,70,[(81523,102493,1)],(0,210256,410126,204018),[(271465,334,(7991,0,0),(6652),(240892,295)),(0,0,(),(),())],[Player-5-0A1B2C,1235110,1,Player-5-0A1B2D,1459,1,Player-5-0A1B2E,41635,8,nil,5,1],374,0,0,0",
+        );
+        let Event::CombatantInfo {
+            stats,
+            auras,
+            gear,
+            spec_id,
+            ..
+        } = e
+        else {
+            panic!("not COMBATANT_INFO: {e:?}")
+        };
+        assert_eq!(spec_id, Some(70));
+        assert_eq!(stats.len(), 22);
+        assert_eq!(
+            (stats[0], stats[2], stats[21]),
+            (2588, 46775, 2959),
+            "str, stam, armor"
+        );
+        assert_eq!(gear.len(), 2);
+        let got: Vec<(&str, u32, u32)> = auras
+            .iter()
+            .map(|a| (a.caster.as_str(), a.spell_id, a.stacks))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Player-5-0A1B2C", 1235110, 1),
+                ("Player-5-0A1B2D", 1459, 1),
+                ("Player-5-0A1B2E", 41635, 8),
+            ],
+            "the malformed triple (a nil caster) drops alone"
+        );
+    }
+
+    #[test]
     fn combatant_info_unbalanced_bracket_degrades_to_empty_vectors() {
         // A truncated line (mid-write tail read) must never fail: scalars parse,
         // the unbalanced bracket yields nothing.
@@ -1622,11 +1953,63 @@ mod tests {
                 faction: 1,
                 talents: vec![],
                 gear: vec![],
+                stats: vec![
+                    2129, 217, 26548, 664, 0, 0, 0, 0, 968, 968, 968, 221, 0, 668, 668, 668, 0,
+                    1062, 73, 73, 73, 2361,
+                ],
+                auras: vec![],
             }
         );
     }
 
     // ---- damage -----------------------------------------------------------
+
+    /// 2026-10-08: the block's field 9 is the unit's shields and 10–12 its
+    /// power — read from real lines' shapes: a healed player carrying a
+    /// shield, a boss's energy on her own swing, a cast spending two
+    /// resources (`3|4,191|5,250|7`: energy and combo points — the first
+    /// kept), and a creature with no pool.
+    #[test]
+    fn the_hint_carries_the_units_absorb_and_power() {
+        let hint = |body: String| parse_line(&line(&body)).unwrap().hp_hint.unwrap();
+        let h = hint(format!(
+            "SPELL_HEAL,{HEALER},{PLAYER},81269,\"Efflorescence\",0x8,Player-1168-0A234B,0000000000000000,786680,786680,3473,434,1069,987,0,4485,3,250,250,0,1566.92,-8.98,2610,0.3252,320,3978,3978,3978,0,nil"
+        ));
+        assert_eq!(h.absorb, 4_485, "field 9, after versatility and avoidance");
+        assert_eq!(
+            h.power,
+            Some(Power {
+                kind: 3,
+                current: 250,
+                max: 250
+            })
+        );
+        let h = hint(format!(
+            "SWING_DAMAGE,{BOSS},{PLAYER},{BOSS_GUID},0000000000000000,1436970781,1436977600,0,0,1470,0,0,0,3,86,100,0,1599.81,-1.23,2610,3.1461,93,62000,90000,-1,1,0,0,0,nil,nil,nil"
+        ));
+        assert_eq!(
+            (h.absorb, h.power.map(|p| (p.kind, p.current, p.max))),
+            (0, Some((3, 86, 100))),
+            "the boss's energy, 86 of 100"
+        );
+        let h = hint(format!(
+            "SPELL_CAST_SUCCESS,{PLAYER},{BOSS},1943,\"Rupture\",0x1,Player-1168-0A234B,0000000000000000,812780,812780,3319,435,1069,1053,0,350042,3|4,191|5,250|7,25|5,1576.42,4.09,2610,6.1121,323"
+        ));
+        assert_eq!(h.absorb, 350_042);
+        assert_eq!(
+            h.power,
+            Some(Power {
+                kind: 3,
+                current: 191,
+                max: 250
+            }),
+            "the first of each `a|b` pair"
+        );
+        let h = hint(format!(
+            "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,{BOSS_GUID},0000000000000000,125000,180000,0,0,0,0,0,0,0,0,0,0,1.0,2.0,2222,3.14,0,12345,13000,-1,4,0,0,0,nil,nil,nil,ST"
+        ));
+        assert_eq!((h.absorb, h.power), (0, None), "no pool, no power");
+    }
 
     #[test]
     fn advanced_lines_carry_an_hp_hint_even_when_the_event_is_dropped() {
@@ -1643,6 +2026,13 @@ mod tests {
                 current: 125_000,
                 max: 180_000,
                 flags: 0xa48,
+                // `adv`: field 9 (absorb) 0, then power type 3 at 95 of 100.
+                absorb: 0,
+                power: Some(Power {
+                    kind: 3,
+                    current: 95,
+                    max: 100
+                }),
             })
         );
 
@@ -2079,6 +2469,24 @@ mod tests {
         };
         assert_eq!(spell.name, "Purify");
         assert_eq!(dispelled_spell.name, "Carnivorous Contest");
+        // R15: the aura type is the fourth suffix field — a real cleanse
+        // (2026-09-27) and a real Spellsteal, which parses apart.
+        let e = parse(&format!(
+            "SPELL_DISPEL,{HEALER},{PLAYER},4987,\"Cleanse\",0x2,1287036,\"Poisonous Bite\",8,DEBUFF"
+        ));
+        assert!(
+            matches!(&e, Event::Dispel { aura_type: AuraType::Debuff, dispelled_spell, .. }
+                if dispelled_spell.id == 1287036 && dispelled_spell.school == 8),
+            "{e:?}"
+        );
+        let e = parse(&format!(
+            "SPELL_STOLEN,{PLAYER},{BOSS},30449,\"Spellsteal\",0x40,156322,\"Eternal Flame\",6,BUFF"
+        ));
+        assert!(
+            matches!(&e, Event::Stolen { aura_type: AuraType::Buff, stolen_spell, spell, .. }
+                if stolen_spell.name == "Eternal Flame" && spell.id == 30449),
+            "{e:?}"
+        );
     }
 
     #[test]
@@ -2673,6 +3081,186 @@ mod tests {
         assert_eq!(missed(e).3, 900);
     }
 
+    /// R17 amendment: the second damage amount and the ABSORB tail's fourth
+    /// field are the hit before the target's armor — read, never confused
+    /// with the amount, and 0 on a miss kind that carries none.
+    #[test]
+    fn the_unmitigated_amount_rides_damage_and_absorb_misses() {
+        // A hostile spell on a player in a real line's shape: 30 000 landed
+        // of 45 000 swung, 12 000 of it on a shield.
+        let e = parse(&format!(
+            "SPELL_DAMAGE,{BOSS},{PLAYER},380001,\"Cinder Lash\",0x4,{},30000,45000,-1,4,0,0,12000,nil,nil,nil,ST",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        assert!(
+            matches!(
+                e,
+                Event::Damage {
+                    amount: 30_000,
+                    unmitigated: 45_000,
+                    absorbed: 12_000,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+        // A swing (no spell block): the same two amounts, forward from the
+        // block.
+        let e = parse(&format!(
+            "SWING_DAMAGE,{BOSS},{PLAYER},{},42000,90000,-1,1,0,18000,0,nil,nil,nil",
+            adv(BOSS_GUID, "0000000000000000")
+        ));
+        assert!(
+            matches!(
+                e,
+                Event::Damage {
+                    amount: 42_000,
+                    unmitigated: 90_000,
+                    blocked: 18_000,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+        // ABSORB: `amountMissed, unmitigated, critical`, with or without the
+        // ST/AOE trailer.
+        for line in [
+            format!("SWING_MISSED,{BOSS},{PLAYER},ABSORB,nil,12345,15000,nil"),
+            format!("SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,ABSORB,nil,12345,15000,1,ST"),
+            format!("RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,ABSORB,nil,12345,15000,nil"),
+        ] {
+            assert!(
+                matches!(
+                    parse(&line),
+                    Event::Missed {
+                        prevented: 12_345,
+                        unmitigated: 15_000,
+                        ..
+                    }
+                ),
+                "{line}"
+            );
+        }
+        // A BLOCK carries its amount alone; a dodge nothing.
+        for line in [
+            format!("SWING_MISSED,{BOSS},{PLAYER},BLOCK,nil,60693"),
+            format!("SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,BLOCK,nil,700,AOE"),
+            format!("SWING_MISSED,{BOSS},{PLAYER},DODGE,nil"),
+        ] {
+            assert!(
+                matches!(parse(&line), Event::Missed { unmitigated: 0, .. }),
+                "{line}"
+            );
+        }
+    }
+
+    /// 2026-10-08: the cast-start and empower families, in real lines'
+    /// shapes — the plain spell prefix, a nil destination, END trailing the
+    /// stage released (an INTERRUPT stays `Other`).
+    #[test]
+    fn cast_starts_and_empowers_parse_as_their_own_events() {
+        let e = parse(&format!(
+            "SPELL_CAST_START,{PLAYER},{NIL_UNIT},194153,\"Starfire\",0x40"
+        ));
+        let Event::CastStart { src, dst, spell } = e else {
+            panic!("not a CastStart: {e:?}")
+        };
+        assert_eq!(src.guid, "Player-1168-0A234B");
+        assert!(dst.name.is_empty(), "the nil unit names nobody");
+        assert_eq!((spell.id, spell.name.as_str()), (194153, "Starfire"));
+        let e = parse(&format!(
+            "SPELL_EMPOWER_START,{PLAYER},{PLAYER},355936,\"Dream Breath\",0x8"
+        ));
+        assert!(matches!(e, Event::Empower { stage: None, .. }), "{e:?}");
+        let e = parse(&format!(
+            "SPELL_EMPOWER_END,{PLAYER},{NIL_UNIT},355936,\"Dream Breath\",0x8,3"
+        ));
+        assert!(
+            matches!(&e, Event::Empower { stage: Some(3), spell, .. } if spell.id == 355936),
+            "{e:?}"
+        );
+        assert_eq!(
+            parse(&format!(
+                "SPELL_EMPOWER_END,{PLAYER},{NIL_UNIT},355936,\"Dream Breath\",0x8"
+            )),
+            Event::Other,
+            "an END without its stage is nothing we can use"
+        );
+        assert_eq!(
+            parse(&format!(
+                "SPELL_EMPOWER_INTERRUPT,{PLAYER},{NIL_UNIT},357208,\"Fire Breath\",0x4,0"
+            )),
+            Event::Other
+        );
+    }
+
+    /// R27: `amount, overEnergize, powerType, maxPower` after the advanced
+    /// block, the amounts the log's four-decimal numbers — a real warlock's
+    /// soul-shard fragment, a capped focus gain (amount 0, all of it over), a
+    /// half mana tick — and an unreadable amount is `Other`.
+    #[test]
+    fn energize_reads_its_amount_overcap_and_power_type() {
+        let e = parse(&format!(
+            "SPELL_ENERGIZE,{PLAYER},{PLAYER},194192,\"Shadow Bolt\",0x20,{},1.0000,0.0000,7,50",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        let Event::Energize {
+            dst,
+            spell,
+            amount,
+            over,
+            power_type,
+            max_power,
+            ..
+        } = e
+        else {
+            panic!("not an Energize: {e:?}")
+        };
+        assert_eq!(dst.guid, "Player-1168-0A234B");
+        assert_eq!(spell.id, 194192);
+        assert_eq!((amount, over, power_type, max_power), (1.0, 0.0, 7, 50));
+        let e = parse(&format!(
+            "SPELL_PERIODIC_ENERGIZE,{PLAYER},{PLAYER},1243113,\"Horrific Vision\",0x20,{},0.5000,0.0000,13,10000",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        assert!(
+            matches!(e, Event::Energize { amount, power_type: 13, .. } if amount == 0.5),
+            "{e:?}"
+        );
+        // Without the advanced block the suffix follows the spell block.
+        let e = parse(&format!(
+            "SPELL_ENERGIZE,{PLAYER},{PLAYER},75,\"Auto Shot\",1,0.0000,3.0000,2,125"
+        ));
+        assert!(
+            matches!(e, Event::Energize { amount, over, power_type: 2, max_power: 125, .. }
+                if amount == 0.0 && over == 3.0),
+            "{e:?}"
+        );
+        assert_eq!(
+            parse(&format!(
+                "SPELL_ENERGIZE,{PLAYER},{PLAYER},75,\"Auto Shot\",1,x,0.0000,2,125"
+            )),
+            Event::Other
+        );
+        // `f64::from_str` reads these; none is an amount the log writes, and a
+        // negative one is no gain either.
+        for (amount, over) in [
+            ("inf", "0.0000"),
+            ("0.0000", "infinity"),
+            ("NaN", "0.0000"),
+            ("1.0000", "-inf"),
+            ("-1.0000", "0.0000"),
+        ] {
+            assert_eq!(
+                parse(&format!(
+                    "SPELL_ENERGIZE,{PLAYER},{PLAYER},75,\"Auto Shot\",1,{amount},{over},2,125"
+                )),
+                Event::Other,
+                "{amount},{over}"
+            );
+        }
+    }
+
     #[test]
     fn missed_survives_a_quoted_comma_before_the_miss_type() {
         let e = parse(&format!(
@@ -2950,8 +3538,10 @@ mod tests {
 
     #[test]
     fn unknown_event_is_other_not_none() {
+        // SPELL_CAST_START was the example here until 2026-10-08, when it
+        // became `Event::CastStart`; a family nothing models still is Other.
         let e = parse(&format!(
-            "SPELL_CAST_START,{PLAYER},{BOSS},133,\"Fireball\",0x4"
+            "SPELL_EXTRA_ATTACKS,{PLAYER},{BOSS},465660,\"Skyfury\",0x1,1"
         ));
         assert_eq!(e, Event::Other);
         let e = parse("SOME_FUTURE_EVENT,1,2,3");

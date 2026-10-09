@@ -982,8 +982,8 @@ mod tests {
         assert_eq!((m.absorbed, m.blocked), (12_000, 18_000));
         assert!(
             all.contains(
-                "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
-                 misses 5 (dodge 1 parry 1 block 1 miss 2)"
+                "mitigated 69% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
+                 reduced 33.0k · misses 5 (dodge 1 parry 1 block 1 miss 2)"
             ),
             "{all}"
         );

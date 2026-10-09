@@ -2975,6 +2975,7 @@ impl<B: Backend> Store<B> {
                 series: false,
                 abilities: false,
                 pair: None,
+                energize: Vec::new(),
             });
         };
         let tier = if details.is_some() { 3 } else { 2 };
@@ -3280,6 +3281,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         if let Some(m) = seg.mitigation(guid) {
             p.mitigated = m.mitigated();
             p.prevented = m.prevented();
+            p.reduced = m.reduced;
         }
         // Step 3b: the healing split's absorb half (the absorber-credited
         // R3 total, ≤ the Healing row), the DAMAGE halves of the support
@@ -3511,6 +3513,8 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                         })
                     })
                     .collect(),
+                // v43 (R27): what energized them, per power type.
+                energize: seg.energize(&p.guid),
             }
         })
         .collect();
@@ -3923,6 +3927,11 @@ fn answer(
         series: series.is_some(),
         abilities,
         pair,
+        // v43 (R27): the drilled player's resources off the details tier,
+        // whatever the view — empty without a drill or below tier 3.
+        energize: drill
+            .and_then(detail)
+            .map_or_else(Vec::new, |d| d.energize.clone()),
     }
 }
 

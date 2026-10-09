@@ -15,7 +15,7 @@ use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
     RaidDeath, RaidTimeline, Rez, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
 };
-use wowdps_model::{StackBase, StackCell, StackingDebuff};
+use wowdps_model::{EnergizeRow, StackBase, StackCell, StackingDebuff};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
 /// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
@@ -187,6 +187,9 @@ struct RecapEntry {
     crit: bool,
     gain: bool,
     hp: Option<(u64, u64)>,
+    /// The victim's shields after the event, from the same health report
+    /// as `hp` (2026-10-08).
+    absorb: Option<u64>,
 }
 
 /// Recap ring capacity per player — a few seconds of raid combat. Bounded so
@@ -339,6 +342,7 @@ struct DotUnion {
 struct TreeRow {
     group: String,
     casts: u64,
+    starts: u64,
     misses: u64,
     slot: SpellSlot,
 }
@@ -879,6 +883,15 @@ pub struct Segment {
     /// `actors`. Passive: counted only inside an open segment, never
     /// opening or extending one.
     casts: HashMap<String, HashMap<String, u64>>,
+    /// R26 (2026-10-08): SPELL_CAST_START counts, keyed exactly like
+    /// `casts` and as passive — casts with a cast time that BEGAN, so a
+    /// row's starts less its casts are the ones that never went off.
+    starts: HashMap<String, HashMap<String, u64>>,
+    /// R27 (2026-10-08): per RAW receiving player guid, per power type, what
+    /// `SPELL_ENERGIZE` lines gave them and what the cap ate. Players only —
+    /// a pet's pool is its own, and folding it onto its owner would mix two
+    /// pools of one type. Passive: counted only inside an open segment.
+    energize: HashMap<String, BTreeMap<u32, EnergizeRow>>,
     /// R26 (step 3): `*_MISSED` lines per RAW attacker guid, per spell NAME
     /// (the attacker's side of R17's misses) — folded at read like `casts`.
     misses: HashMap<String, HashMap<String, u64>>,
@@ -1307,6 +1320,8 @@ impl Segment {
             spell_series: HashMap::new(),
             heal_spell_series: HashMap::new(),
             casts: HashMap::new(),
+            starts: HashMap::new(),
+            energize: HashMap::new(),
             misses: HashMap::new(),
             dots: HashMap::new(),
             summons: HashMap::new(),
@@ -1591,6 +1606,25 @@ impl Segment {
             let dst = self.casts.entry(caster.clone()).or_default();
             for (spell, n) in per_spell {
                 *dst.entry(spell.clone()).or_default() += n;
+            }
+        }
+        for (caster, per_spell) in &other.starts {
+            let dst = self.starts.entry(caster.clone()).or_default();
+            for (spell, n) in per_spell {
+                *dst.entry(spell.clone()).or_default() += n;
+            }
+        }
+        // R27: a member's resources sum per player per power type.
+        for (player, per_type) in &other.energize {
+            let dst = self.energize.entry(player.clone()).or_default();
+            for (power_type, r) in per_type {
+                let row = dst.entry(*power_type).or_insert(EnergizeRow {
+                    power_type: *power_type,
+                    ..EnergizeRow::default()
+                });
+                row.gained += r.gained;
+                row.wasted += r.wasted;
+                row.count += r.count;
             }
         }
         for (k, v) in &other.summons {
@@ -1978,6 +2012,7 @@ impl Segment {
                 class: None,
                 spec: None,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -2030,6 +2065,7 @@ impl Segment {
                 class: self.classes.get(guid).copied(),
                 spec: self.specs.get(guid).copied(),
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 // R13: reaction bit 0x40 — the hostile side of an arena.
@@ -2152,6 +2188,7 @@ impl Segment {
                     class,
                     spec,
                     hp: None,
+                    absorb: None,
                     gain: false,
                     spell_id,
                     enemy: false,
@@ -2214,6 +2251,26 @@ impl Segment {
     /// per-row casts are split out of.
     pub fn casts(&self, player_guid: &str) -> u64 {
         self.casts
+            .iter()
+            .filter(|(caster, _)| self.resolve_owner(caster) == player_guid)
+            .map(|(_, per_spell)| per_spell.values().sum::<u64>())
+            .sum()
+    }
+
+    /// R27 (2026-10-08): the power the player gained here, per power type
+    /// (ascending): Σ `SPELL_ENERGIZE` amounts landing on them, Σ their
+    /// overcap and the line count. Empty for a player nothing energized.
+    pub fn energize(&self, player_guid: &str) -> Vec<EnergizeRow> {
+        self.energize
+            .get(player_guid)
+            .map(|per_type| per_type.values().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// R26 (2026-10-08): every SPELL_CAST_START by the player and their
+    /// pets, folded like `casts` — the casts with a cast time that began.
+    pub fn cast_starts(&self, player_guid: &str) -> u64 {
+        self.starts
             .iter()
             .filter(|(caster, _)| self.resolve_owner(caster) == player_guid)
             .map(|(_, per_spell)| per_spell.values().sum::<u64>())
@@ -2387,6 +2444,7 @@ impl Segment {
                 per_sec: 0.0,
                 pct: 0.0,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -2441,6 +2499,7 @@ impl Segment {
                 per_sec: 0.0,
                 pct: 0.0,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -2520,6 +2579,7 @@ impl Segment {
         };
         if let Some(i) = slot {
             ring[i].hp = Some((h.current, h.max));
+            ring[i].absorb = Some(h.absorb);
         }
     }
 
@@ -2618,6 +2678,7 @@ impl Segment {
                 class,
                 spec,
                 hp: e.hp,
+                absorb: e.absorb,
                 gain: e.gain,
                 spell_id: 0,
                 enemy: false,
@@ -2649,6 +2710,7 @@ impl Segment {
                 class,
                 spec,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -3067,6 +3129,17 @@ impl Segment {
                 }
             }
         }
+        for (caster, per_spell) in &self.starts {
+            if self.resolve_owner(caster) != player_guid {
+                continue;
+            }
+            let pet = (caster != player_guid).then(|| self.label_for(caster));
+            for (spell, n) in per_spell {
+                if let Some(acc) = rows.get_mut(&tree_key(spell, pet.as_deref())) {
+                    acc.starts += n;
+                }
+            }
+        }
         // R26 (step 3): misses join the same way; a DoT's uptime is the
         // player's own debuff of the row's name.
         for (attacker, per_spell) in &self.misses {
@@ -3113,6 +3186,7 @@ impl Segment {
                 };
                 (!acc.group.is_empty()
                     || acc.casts > 0
+                    || acc.starts > 0
                     || acc.misses > 0
                     || uptime_ms > 0
                     || !parts.is_empty())
@@ -3120,6 +3194,7 @@ impl Segment {
                     key,
                     group: acc.group,
                     casts: acc.casts,
+                    starts: acc.starts,
                     parts,
                     misses: acc.misses,
                     uptime_ms,
@@ -3255,6 +3330,7 @@ impl Segment {
                 class: None,
                 spec: None,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: id,
                 enemy: false,
@@ -3339,6 +3415,7 @@ impl Segment {
                 class: self.classes.get(owner).copied(),
                 spec: self.specs.get(owner).copied(),
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -4568,6 +4645,12 @@ impl Segment {
         bump(&mut self.casts, caster, spell);
     }
 
+    /// R26 (2026-10-08): one SPELL_CAST_START by a unit of ours, on the
+    /// spell's NAME like `note_cast`.
+    fn note_start(&mut self, caster: &str, spell: &str) {
+        bump(&mut self.starts, caster, spell);
+    }
+
     /// R26 (step 3): one miss by a unit of ours, on the spell's NAME (or
     /// "Melee" for a swing) so it joins the attacker's by-spell row.
     fn note_miss(&mut self, attacker: &str, spell: &str) {
@@ -4956,6 +5039,10 @@ struct Hit<'a> {
     /// The shield took all of it: R17 files the absorb as `absorbed_full`
     /// and counts the miss by kind, where a partial one is `absorbed`.
     whole: bool,
+    /// R17 amendment: the line's unmitigated amount (the damage suffix's
+    /// second, an ABSORB miss's fourth tail field) — what `reduced` is
+    /// measured from.
+    unmitigated: u64,
 }
 
 #[derive(Debug, Default)]
@@ -5336,6 +5423,32 @@ impl Meter {
         }
     }
 
+    /// R15: one dispel (or Spellsteal) by `src` on `dst` — a Dispels row
+    /// labelled "{removed} ({ability})" with the removed spell's id and
+    /// school, by-target the unit it came off. Combat, like every line the
+    /// scanner counts; the ability (never the removed aura, which is
+    /// someone else's) is the R8 class signal.
+    fn dispel(&mut self, ts: i64, src: &Unit, dst: &Unit, spell: &Spell, removed: &Spell) {
+        self.learn(src);
+        self.learn(dst);
+        let label = format!("{} ({})", removed.name, spell.name);
+        let (guid, target) = (src.guid.clone(), dst.name.clone());
+        self.record(
+            ts,
+            &guid,
+            View::Dispels,
+            &label,
+            removed.id,
+            removed.school,
+            &target,
+            1,
+            0,
+            false,
+            false,
+        );
+        self.infer(src, spell);
+    }
+
     /// R22: damage `src` dealt to ITSELF — the same raw guid, or a unit it
     /// SUMMONED (`summon_fold`, never the ownership map a charmed mob also
     /// writes to).
@@ -5509,6 +5622,16 @@ impl Meter {
             m.absorbed += h.absorbed;
             m.blocked += h.blocked;
         }
+        // R17 amendment (2026-10-08): what armor and damage reduction took
+        // off before the hit landed — the unmitigated amount less what came
+        // out of it (the log's amount is post-block and includes overkill,
+        // so all three are added back). Floored at 0: under a vulnerability
+        // debuff a hit lands ABOVE its unmitigated amount (20 of 19 241
+        // hostile hits on a real Heroic pull, 1.1 M amplified), and that is
+        // not negative mitigation of anything this record reports.
+        m.reduced += h
+            .unmitigated
+            .saturating_sub(h.amount + h.absorbed + h.blocked);
         // R18: the taken series, same amount, same grid.
         s.bucket_taken(dst_guid, ts, dealt);
         // R21: the same hit, per hostile debuff open on the victim, at its
@@ -5718,6 +5841,51 @@ impl Meter {
                 }
             }
 
+            // R26 (2026-10-08): a cast that BEGAN — counted beside the casts
+            // that went off, on the same row, through the same passive gate
+            // (the scanner does not count SPELL_CAST_START, so it may never
+            // open, extend or split a segment). No R8 inference (its sources
+            // are fixed) and no R23 proof of life (the line carries no health
+            // report, and the rule names a cast that went off).
+            Event::CastStart { src, spell, .. } => {
+                if let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    s.note_start(&src.guid, &spell.name);
+                }
+            }
+            // Parsed for its stage; nothing reads it yet. Passive.
+            Event::Empower { .. } => {}
+            // R27: power gained and power lost to the cap, on the PLAYER it
+            // landed on (a pet's pool is its own and is not tallied).
+            // Passive like a cast: the scanner never counts the line, so it
+            // never opens, extends or splits a segment, and one before a
+            // pull, after its end or past the trash gap lands nowhere.
+            Event::Energize {
+                dst,
+                amount,
+                over,
+                power_type,
+                ..
+            } => {
+                if dst.guid.starts_with("Player-")
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                {
+                    let row = s
+                        .energize
+                        .entry(dst.guid.clone())
+                        .or_default()
+                        .entry(*power_type)
+                        .or_insert(EnergizeRow {
+                            power_type: *power_type,
+                            ..EnergizeRow::default()
+                        });
+                    row.gained += amount;
+                    row.wasted += over;
+                    row.count += 1;
+                }
+            }
+
             // R23: somebody was raised. Passive by construction — a rez must
             // never open or extend a segment (the index scanner does not
             // count SPELL_RESURRECT as combat, and lockstep is the rule) —
@@ -5758,7 +5926,7 @@ impl Meter {
                 blocked,
                 critical,
                 periodic,
-                ..
+                unmitigated,
             } => {
                 self.learn(src);
                 self.learn(dst);
@@ -5781,6 +5949,7 @@ impl Meter {
                         critical: *critical,
                         periodic: *periodic,
                         whole: false,
+                        unmitigated: *unmitigated,
                     },
                 );
                 self.name_trash(&guid, &dst_guid, &target);
@@ -5816,11 +5985,10 @@ impl Meter {
                     && *amount > 0
                     && let Some(s) = self.segments.last_mut()
                 {
-                    let hp = line
-                        .hp_hint
-                        .as_ref()
-                        .filter(|h| h.unit_guid == dst.guid)
-                        .map(|h| (h.current, h.max));
+                    let report = line.hp_hint.as_ref().filter(|h| h.unit_guid == dst.guid);
+                    let hp = report.map(|h| (h.current, h.max));
+                    // The shields left on them, from the same report.
+                    let absorb = report.map(|h| h.absorb);
                     s.recap_push(
                         &dst.guid,
                         RecapEntry {
@@ -5835,6 +6003,7 @@ impl Meter {
                             crit: *critical,
                             gain: false,
                             hp,
+                            absorb,
                         },
                     );
                 }
@@ -5899,11 +6068,10 @@ impl Meter {
                 if dst.is_player()
                     && let Some(s) = self.segments.last_mut()
                 {
-                    let hp = line
-                        .hp_hint
-                        .as_ref()
-                        .filter(|h| h.unit_guid == dst.guid)
-                        .map(|h| (h.current, h.max));
+                    let report = line.hp_hint.as_ref().filter(|h| h.unit_guid == dst.guid);
+                    let hp = report.map(|h| (h.current, h.max));
+                    // The shields left on them, from the same report.
+                    let absorb = report.map(|h| h.absorb);
                     s.recap_push(
                         &dst.guid,
                         RecapEntry {
@@ -5915,6 +6083,7 @@ impl Meter {
                             crit: *critical,
                             gain: true,
                             hp,
+                            absorb,
                         },
                     );
                 }
@@ -6004,6 +6173,7 @@ impl Meter {
                             crit: false,
                             gain: true,
                             hp: None,
+                            absorb: None,
                         },
                     );
                 }
@@ -6037,28 +6207,26 @@ impl Meter {
                 self.infer(src, spell);
             }
 
+            // R15 (2026-10-08): the drill answers "what got dispelled", as the
+            // Interrupts drill answers "what got kicked" — the removed aura
+            // leads, the dispel ability in parens, the row wearing the
+            // removed spell's id and school. A Spellsteal is its own event
+            // since, and counts here exactly as before (the scanner counts
+            // both lines as combat, so both record through `record`).
             Event::Dispel {
-                src, dst, spell, ..
-            } => {
-                self.learn(src);
-                self.learn(dst);
-                let (guid, label, target) =
-                    (src.guid.clone(), spell.name.clone(), dst.name.clone());
-                self.record(
-                    ts,
-                    &guid,
-                    View::Dispels,
-                    &label,
-                    spell.id,
-                    spell.school,
-                    &target,
-                    1,
-                    0,
-                    false,
-                    false,
-                );
-                self.infer(src, spell);
-            }
+                src,
+                dst,
+                spell,
+                dispelled_spell,
+                ..
+            } => self.dispel(ts, src, dst, spell, dispelled_spell),
+            Event::Stolen {
+                src,
+                dst,
+                spell,
+                stolen_spell,
+                ..
+            } => self.dispel(ts, src, dst, spell, stolen_spell),
 
             Event::AuraApplied {
                 src,
@@ -6303,6 +6471,8 @@ impl Meter {
                             crit: false,
                             gain: false,
                             hp: remaining.map(|(_, max)| (0, max)),
+                            // A scripted kill states no health report of its own.
+                            absorb: None,
                         },
                     );
                 }
@@ -6358,6 +6528,8 @@ impl Meter {
                 faction,
                 talents,
                 gear,
+                stats,
+                auras,
             } => {
                 // R13: inside a match the faction field is the player's SIDE.
                 if self.in_arena && !guid.is_empty() {
@@ -6394,6 +6566,19 @@ impl Meter {
                             prev.map(|p| p.gear.clone()).unwrap_or_default()
                         } else {
                             gear.clone()
+                        },
+                        // v43: the same rule for the stat scalars and the aura
+                        // bracket — the last list of auras sits at the line's
+                        // end, the first thing a mid-write read cuts off.
+                        stats: if stats.is_empty() {
+                            prev.map(|p| p.stats.clone()).unwrap_or_default()
+                        } else {
+                            stats.clone()
+                        },
+                        auras: if auras.is_empty() {
+                            prev.map(|p| p.auras.clone()).unwrap_or_default()
+                        } else {
+                            auras.clone()
                         },
                     });
                     self.loadouts.insert(guid.clone(), Arc::clone(&loadout));
@@ -6577,6 +6762,7 @@ impl Meter {
                 prevented,
                 critical,
                 periodic,
+                unmitigated,
                 ..
             } => {
                 self.learn(src);
@@ -6605,6 +6791,7 @@ impl Meter {
                                 critical: *critical,
                                 periodic: *periodic,
                                 whole: true,
+                                unmitigated: *unmitigated,
                             },
                         );
                     }
@@ -6868,6 +7055,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )
     }
@@ -6988,6 +7176,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             )
         }
@@ -7016,6 +7205,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
         ]);
@@ -7325,6 +7515,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )]);
         assert_eq!(m.segments()[0].rows(View::Damage)[0].amount, 1_250);
@@ -7346,6 +7537,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
         ]);
@@ -7372,6 +7564,7 @@ mod tests {
             blocked: 0,
             critical: false,
             periodic: false,
+            unmitigated: 0,
         };
         let m = fed(vec![
             at(0, killing(p1(), boss())),
@@ -7419,6 +7612,7 @@ mod tests {
             blocked: 0,
             critical: false,
             periodic: false,
+            unmitigated: 0,
         };
         let m = fed(vec![
             damage(0, p1(), None, 100),
@@ -7491,6 +7685,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
         ]);
@@ -7690,6 +7885,7 @@ mod tests {
                     dst: p1(),
                     spell: sp(527, "Purify"),
                     dispelled_spell: sp(2, "Curse"),
+                    aura_type: AuraType::Debuff,
                 },
             ),
         ]);
@@ -7697,6 +7893,55 @@ mod tests {
         assert_eq!(s.rows(View::Interrupts)[0].amount, 2);
         assert_eq!(s.rows(View::Dispels)[0].amount, 1);
         assert_eq!(s.rows(View::Dispels)[0].key, P2);
+    }
+
+    /// R15 (2026-10-08): the Dispels drill names what came off — "{removed}
+    /// ({ability})", wearing the removed spell's id and school — and a
+    /// Spellsteal, its own event since, counts and reads the same way.
+    #[test]
+    fn dispel_drill_names_the_removed_aura_and_counts_a_steal() {
+        let mut bite = sp(1287036, "Poisonous Bite");
+        bite.school = 8;
+        let m = fed(vec![
+            at(
+                0,
+                Event::Dispel {
+                    src: p2(),
+                    dst: p1(),
+                    spell: sp(4987, "Cleanse"),
+                    dispelled_spell: bite,
+                    aura_type: AuraType::Debuff,
+                },
+            ),
+            at(
+                500,
+                Event::Stolen {
+                    src: p2(),
+                    dst: boss(),
+                    spell: sp(30449, "Spellsteal"),
+                    stolen_spell: sp(156322, "Eternal Flame"),
+                    aura_type: AuraType::Buff,
+                },
+            ),
+        ]);
+        let s = &m.segments()[0];
+        assert_eq!(s.rows(View::Dispels)[0].amount, 2, "a steal is a dispel");
+        let (by_spell, by_target) = s.breakdown(P2, View::Dispels);
+        let mut labels: Vec<(&str, u32, u32)> = by_spell
+            .iter()
+            .map(|r| (r.label.as_str(), r.spell_id, r.school))
+            .collect();
+        labels.sort();
+        assert_eq!(
+            labels,
+            vec![
+                ("Eternal Flame (Spellsteal)", 156322, 1),
+                ("Poisonous Bite (Cleanse)", 1287036, 8),
+            ]
+        );
+        let mut targets: Vec<&str> = by_target.iter().map(|r| r.label.as_str()).collect();
+        targets.sort_unstable();
+        assert_eq!(targets, vec!["Alice", "Ulgrax"]);
     }
 
     #[test]
@@ -7765,6 +8010,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         );
         if let Some((current, max)) = hp {
@@ -7773,6 +8019,8 @@ mod tests {
                 current,
                 max,
                 flags: 0,
+                absorb: 0,
+                power: None,
             });
         }
         l
@@ -7938,6 +8186,8 @@ mod tests {
             current: 60_000,
             max: 150_000,
             flags: 0,
+            absorb: 0,
+            power: None,
         });
         let m = fed(vec![
             hit_player(100, p1(), "Melee", 40_000, -1, None),
@@ -7946,6 +8196,49 @@ mod tests {
         ]);
         let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
         assert_eq!(events[0].hp, Some((60_000, 150_000)));
+    }
+
+    /// v43 (R9): a recap entry carries the victim's shields from the same
+    /// report as its health — its own block's, or the back-filled one — and
+    /// none where no report came (nor on the meter rows).
+    #[test]
+    fn recap_rows_carry_the_shields_beside_the_health() {
+        let report = |ts: i64, current: u64, absorb: u64| {
+            let mut l = at(ts, Event::Other);
+            l.hp_hint = Some(HpHint {
+                unit_guid: P1.into(),
+                current,
+                max: 150_000,
+                flags: 0,
+                absorb,
+                power: None,
+            });
+            l
+        };
+        let mut own = hit_player(300, p1(), "Bolt", 20_000, -1, Some((40_000, 150_000)));
+        if let Some(h) = own.hp_hint.as_mut() {
+            h.absorb = 12_345;
+        }
+        let m = fed(vec![
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            report(100, 60_000, 25_000),
+            own,
+            hit_player(2_500, p1(), "Slam", 40_000, 0, None),
+            at(2_600, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        let absorbs: Vec<Option<u64>> = events.iter().map(|e| e.absorb).collect();
+        assert_eq!(
+            absorbs,
+            vec![None, Some(12_345), Some(25_000)],
+            "newest first: no report, its own block, the back-filled one"
+        );
+        assert!(
+            m.segments()[0]
+                .rows(View::Deaths)
+                .iter()
+                .all(|r| r.absorb.is_none())
+        );
     }
 
     /// R9: several hits landing in the same instant each get their OWN health
@@ -7964,6 +8257,8 @@ mod tests {
                 current,
                 max: 150_000,
                 flags: 0,
+                absorb: 0,
+                power: None,
             });
             l
         };
@@ -8012,6 +8307,8 @@ mod tests {
                 current,
                 max: 150_000,
                 flags: 0,
+                absorb: 0,
+                power: None,
             });
             l
         };
@@ -8117,6 +8414,8 @@ mod tests {
             current,
             max: 150_000,
             flags: 0,
+            absorb: 0,
+            power: None,
         });
         l
     }
@@ -8608,6 +8907,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
         ]);
@@ -8627,6 +8928,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
             at(
@@ -8697,6 +9000,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
         ]);
@@ -8721,6 +9026,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
             damage(1_000, p1(), Some(sp(12294, "Mortal Strike")), 500),
@@ -8771,6 +9078,8 @@ mod tests {
                     faction: 0,
                     talents: picks.clone(),
                     gear: gear.clone(),
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
             damage(1_000, p1(), None, 500),
@@ -8783,6 +9092,8 @@ mod tests {
             spec_id: Some(71),
             talents: picks,
             gear,
+            stats: vec![],
+            auras: vec![],
         };
         assert_eq!(m.loadout(P1), Some(&want));
         for s in m.segments() {
@@ -8793,7 +9104,12 @@ mod tests {
 
     #[test]
     fn empty_brackets_do_not_wipe_an_established_loadout() {
-        use wowdps_model::{GearItem, Loadout, TalentPick};
+        use wowdps_model::{GearItem, Loadout, LoadoutAura, TalentPick};
+        let flask = LoadoutAura {
+            caster: P1.into(),
+            spell_id: 1235110,
+            stacks: 1,
+        };
         let picks = vec![TalentPick {
             node_id: 1,
             entry_id: 2,
@@ -8820,6 +9136,8 @@ mod tests {
                     faction: 0,
                     talents: picks.clone(),
                     gear: gear.clone(),
+                    stats: vec![1, 2, 3],
+                    auras: vec![flask.clone()],
                 },
             ),
             damage(1_000, p1(), None, 500),
@@ -8834,6 +9152,10 @@ mod tests {
                     faction: 0,
                     talents: repicks.clone(),
                     gear: vec![],
+                    // v43: the stats before the brackets read; the auras at
+                    // the line's end were cut off with the gear.
+                    stats: vec![4, 5, 6],
+                    auras: vec![],
                 },
             ),
             // A fully truncated re-fire carries nothing and changes nothing.
@@ -8845,6 +9167,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
         ]);
@@ -8852,6 +9176,8 @@ mod tests {
             spec_id: Some(71),
             talents: repicks,
             gear,
+            stats: vec![4, 5, 6],
+            auras: vec![flask],
         };
         assert_eq!(m.loadout(P1), Some(&want));
     }
@@ -9068,6 +9394,7 @@ mod tests {
                     blocked: 0,
                     critical: true,
                     periodic: false,
+                    unmitigated: 0,
                 },
             )
         };
@@ -9201,6 +9528,7 @@ mod tests {
                     blocked: 0,
                     critical: true,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
             damage(1_000, p1(), Some(sp(116, "Frostbolt")), 999),
@@ -9581,6 +9909,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
         ]);
@@ -9617,6 +9946,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )]);
         assert!(!m.segments()[0].counts());
@@ -9634,6 +9964,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )]);
         assert!(m.segments()[0].counts());
@@ -9651,6 +9982,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )]);
         assert!(!m.segments()[0].counts());
@@ -9670,6 +10002,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
             at(2_000, Event::Death { unit: p1() }),
@@ -9703,6 +10036,8 @@ mod tests {
             current,
             max,
             flags,
+            absorb: 0,
+            power: None,
         });
         l
     }
@@ -9807,6 +10142,7 @@ mod tests {
                 blocked,
                 critical,
                 periodic: false,
+                unmitigated: 0,
             },
         )
     }
@@ -9830,6 +10166,7 @@ mod tests {
                 prevented,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )
     }

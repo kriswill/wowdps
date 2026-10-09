@@ -335,6 +335,7 @@ fn blank() -> Row {
         school: 0,
         mine: false,
         offset_ms: None,
+        absorb: None,
     }
 }
 
@@ -431,6 +432,7 @@ mod tests {
             parts,
             misses: 0,
             uptime_ms: 0,
+            starts: 0,
         }
     }
 

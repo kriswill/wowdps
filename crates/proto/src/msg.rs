@@ -2,12 +2,14 @@
 //! decodes from `(tag, body)`. Changing the shape of anything here — fields,
 //! order, enum codes — is a `PROTO_VERSION` bump; the golden-bytes tests
 //! exist to make that impossible to do by accident.
+use wowdps_model::LoadoutAura;
 
 use wowdps_model::{AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
-    RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind,
-    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
+    MissKind, Mitigation, RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId,
+    SegmentInfo, SegmentKind, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick,
+    Timeline, UptimeCell, View,
 };
 
 use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
@@ -15,7 +17,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 42;
+pub const PROTO_VERSION: u16 = 43;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -451,6 +453,11 @@ pub struct StoredFight {
     /// without a pair, and on a fight whose details tier is gone (tier < 3:
     /// the abilities a side lists are not kept).
     pub pair: Option<StoredPair>,
+    /// v43 (R27): the drilled player's resources from the details tier —
+    /// per power type what `SPELL_ENERGIZE` gave them and what the cap ate.
+    /// Empty without a drill, below tier 3, and on a details file written
+    /// before it.
+    pub energize: Vec<EnergizeRow>,
 }
 
 /// v42: a stored fight's comparison — the two sides and the window their
@@ -951,6 +958,9 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     // resolution — then a recap entry's time before the death (R9, ≤ 0).
     wire::put_bool(buf, r.mine);
     wire::put_opt(buf, r.offset_ms.as_ref(), |b, o| wire::put_i64(b, *o));
+    // v43 (R9): a recap entry's shields after it, from the same health
+    // report as `hp`.
+    wire::put_opt(buf, r.absorb.as_ref(), |b, a| wire::put_u64(b, *a));
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -972,6 +982,7 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         school: rd.u32()?,
         mine: rd.bool()?,
         offset_ms: rd.opt(|r| r.i64())?,
+        absorb: rd.opt(|r| r.u64())?,
     })
 }
 
@@ -1364,6 +1375,8 @@ fn put_spell_tree(buf: &mut Vec<u8>, t: &SpellTree) {
         });
         wire::put_u64(b, m.misses);
         wire::put_u64(b, m.uptime_ms);
+        // v43 (R26): the casts that began, trailing.
+        wire::put_u64(b, m.starts);
     });
 }
 
@@ -1410,6 +1423,7 @@ fn get_spell_tree(rd: &mut Reader) -> Result<SpellTree> {
                 })?,
                 misses: r.u64()?,
                 uptime_ms: r.u64()?,
+                starts: r.u64()?,
             })
         })?,
     })
@@ -1517,8 +1531,8 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
 /// v21 (R17): the six u64 amounts in declaration order (`absorbed`,
 /// `blocked`, `absorbed_full`, `blocked_full`, `stagger`, `stagger_ticked`),
 /// then the ten miss counts as u32 in `MissKind::ALL` order (=
-/// `MissKind::index` order). Fixed 88 bytes, no counts — nothing an
-/// attacker can size. (Overkill is the R9 recap's, per death — not here.)
+/// `MissKind::index` order), then (v43) u64 `reduced`, trailing. Fixed 96
+/// bytes, no counts — nothing an attacker can size. (Overkill is the R9 recap's, per death — not here.)
 fn put_mitigation(buf: &mut Vec<u8>, m: &Mitigation) {
     wire::put_u64(buf, m.absorbed);
     wire::put_u64(buf, m.blocked);
@@ -1529,6 +1543,7 @@ fn put_mitigation(buf: &mut Vec<u8>, m: &Mitigation) {
     for kind in MissKind::ALL {
         wire::put_u32(buf, m.misses.get(kind.index()).copied().unwrap_or(0));
     }
+    wire::put_u64(buf, m.reduced);
 }
 
 fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
@@ -1540,6 +1555,7 @@ fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
         stagger: rd.u64()?,
         stagger_ticked: rd.u64()?,
         misses: [0; MissKind::COUNT],
+        reduced: 0,
     };
     for kind in MissKind::ALL {
         let n = rd.u32()?;
@@ -1547,6 +1563,7 @@ fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
             *slot = n;
         }
     }
+    m.reduced = rd.u64()?;
     Ok(m)
 }
 
@@ -1584,7 +1601,9 @@ fn get_gear_item(rd: &mut Reader) -> Result<GearItem> {
 
 /// The v19 wire encoding of a loadout on its own — what the history store
 /// content-addresses (`proto::history::loadout_hash`), so the same build
-/// hashes the same whether it came off the socket or out of a file.
+/// hashes the same whether it came off the socket or out of a file. Since
+/// v43 it carries the stats and auras too, so a loadout is the build AS
+/// LOGGED AT ONE LINE: two pulls whose buffs differ write two files.
 pub fn loadout_bytes(l: &Loadout) -> Vec<u8> {
     let mut buf = Vec::new();
     put_loadout(&mut buf, l);
@@ -1596,6 +1615,13 @@ fn put_loadout(buf: &mut Vec<u8>, l: &Loadout) {
     wire::put_u16(buf, l.spec_id.map_or(0, |s| s as u16));
     wire::put_vec(buf, &l.talents, put_talent_pick);
     wire::put_vec(buf, &l.gear, put_gear_item);
+    // v43: the 22 stat scalars and the aura triples, trailing.
+    wire::put_vec(buf, &l.stats, |b, v| wire::put_u32(b, *v));
+    wire::put_vec(buf, &l.auras, |b, a| {
+        wire::put_str(b, &a.caster);
+        wire::put_u32(b, a.spell_id);
+        wire::put_u32(b, a.stacks);
+    });
 }
 
 fn get_loadout(rd: &mut Reader) -> Result<Loadout> {
@@ -1604,6 +1630,14 @@ fn get_loadout(rd: &mut Reader) -> Result<Loadout> {
         spec_id: (spec != 0).then_some(spec as u32),
         talents: rd.vec(get_talent_pick)?,
         gear: rd.vec(get_gear_item)?,
+        stats: rd.vec(|r| r.u32())?,
+        auras: rd.vec(|r| {
+            Ok(LoadoutAura {
+                caster: r.string()?,
+                spell_id: r.u32()?,
+                stacks: r.u32()?,
+            })
+        })?,
     })
 }
 
@@ -1730,6 +1764,9 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     // v31: the guild the wowdps addon last saw the player in, trailing —
     // presence byte + string; `None` is unknown, `Some("")` unguilded.
     put_opt_str(buf, p.guild.as_deref());
+    // v43 (R17 amendment): armor's share (`Mitigation::reduced`), trailing;
+    // already inside `mitigated`, added to `mitigated_pct`'s swung total.
+    wire::put_u64(buf, p.reduced);
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1764,6 +1801,9 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         absorb_wasted: rd.opt(|r| r.u64())?,
         shields_unknown: rd.u32()?,
         guild: rd.opt(|r| r.string())?,
+        // Fields evaluate in the order written: `reduced` trails `guild`
+        // on the wire.
+        reduced: rd.u64()?,
     })
 }
 
@@ -2183,6 +2223,26 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
         put_compare_side(b, &p.b);
         put_range(b, p.range);
     });
+    // v43 (R27): the drilled player's resources, trailing.
+    wire::put_vec(buf, &f.energize, put_energize_row);
+}
+
+/// v43 (R27): `EnergizeRow` = u32 power_type | f64 gained | f64 wasted |
+/// u32 count.
+fn put_energize_row(buf: &mut Vec<u8>, r: &EnergizeRow) {
+    wire::put_u32(buf, r.power_type);
+    wire::put_f64(buf, r.gained);
+    wire::put_f64(buf, r.wasted);
+    wire::put_u32(buf, r.count);
+}
+
+fn get_energize_row(rd: &mut Reader) -> Result<EnergizeRow> {
+    Ok(EnergizeRow {
+        power_type: rd.u32()?,
+        gained: rd.f64()?,
+        wasted: rd.f64()?,
+        count: rd.u32()?,
+    })
 }
 
 /// v26: `ShieldRow` = u32 spell_id | string label | u64 applied | u64
@@ -2230,6 +2290,7 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
                 range: get_range(r)?,
             })
         })?,
+        energize: rd.vec(get_energize_row)?,
     })
 }
 

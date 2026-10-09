@@ -536,6 +536,8 @@ fn adopt_logged_installs_the_combat_log_build() {
             pick(999, 1, 1), // build drift
         ],
         gear: gear.clone(),
+        stats: vec![],
+        auras: vec![],
     };
 
     let mut ui = Viewer::open(None);
@@ -595,6 +597,8 @@ fn adopt_logged_installs_the_combat_log_build() {
         spec_id: None,
         talents: vec![pick(1, 101, 1)],
         gear: Vec::new(),
+        stats: vec![],
+        auras: vec![],
     });
     assert!(fresh.logged && fresh.logged_gear.is_none());
     assert_eq!(selected_ids(&fresh), vec![1]);

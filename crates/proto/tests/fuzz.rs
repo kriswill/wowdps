@@ -72,6 +72,7 @@ fn row(key: &str, class: Option<Class>) -> Row {
         school: 0x24,
         mine: class.is_some(),
         offset_ms: class.map(|_| -250),
+        absorb: None,
     }
 }
 
@@ -434,6 +435,13 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     b: CompareSide::default(),
                     range: Some((0, u32::MAX)),
                 }),
+                // v43 (R27): an energize row, so its decoder is under mutation.
+                energize: vec![wowdps_model::EnergizeRow {
+                    power_type: 0,
+                    gained: 2500.0,
+                    wasted: 0.25,
+                    count: u32::MAX,
+                }],
             }),
         },
         // v26: the last answer tag with every row field distinct, so the

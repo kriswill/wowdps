@@ -19,6 +19,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	misses	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	stagger	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	stagger_ticked	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	reduced	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	self_harm	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	friendly_fire	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	support_given	0
@@ -45,10 +46,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	stack_cells	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	stack_auras	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	casts	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	cast_starts	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	damage_periodic	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	heal_periodic	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	misses_dealt	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	dot_uptime_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	energize_gained	0.0000
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	energize_wasted	0.0000
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	damage	5000
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	overkill	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	petdamage	5000
@@ -69,6 +73,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	misses	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	stagger	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	stagger_ticked	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	reduced	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	self_harm	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	friendly_fire	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	support_given	0
@@ -95,10 +100,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	stack_cells	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	stack_auras	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	casts	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	cast_starts	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	damage_periodic	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	heal_periodic	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	misses_dealt	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	dot_uptime_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	energize_gained	0.0000
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	energize_wasted	0.0000
 2	Trash	Trash		2000			Player-1168-0A1B2C01	damage	3000
 2	Trash	Trash		2000			Player-1168-0A1B2C01	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	petdamage	0
@@ -119,6 +127,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C01	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	support_given	0
@@ -145,10 +154,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C01	stack_cells	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	stack_auras	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	casts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	cast_starts	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	damage_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	heal_periodic	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	misses_dealt	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	dot_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	energize_gained	0.0000
+2	Trash	Trash		2000			Player-1168-0A1B2C01	energize_wasted	0.0000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	damage	20000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	overkill	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	petdamage	0
@@ -169,6 +181,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	misses	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	stagger	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	stagger_ticked	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	reduced	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	self_harm	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	friendly_fire	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	support_given	0
@@ -195,10 +208,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	stack_cells	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	stack_auras	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	casts	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	cast_starts	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	damage_periodic	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	heal_periodic	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	misses_dealt	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	dot_uptime_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	energize_gained	0.0000
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	energize_wasted	0.0000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	damage	10000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	overkill	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	petdamage	10000
@@ -219,6 +235,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	misses	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	stagger	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	stagger_ticked	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	reduced	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	self_harm	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	friendly_fire	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	support_given	0
@@ -245,7 +262,10 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	stack_cells	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	stack_auras	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	casts	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	cast_starts	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	damage_periodic	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	heal_periodic	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	misses_dealt	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	dot_uptime_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	energize_gained	0.0000
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	energize_wasted	0.0000

@@ -677,6 +677,18 @@ fn talent_tools_over_a_fixture_dataset() {
     );
     assert_eq!(num_of(gear, "avg_ilvl"), 639.0);
 
+    // v43: the line's stats by name (and raw), and its aura triples — the
+    // fixture's Power Word: Shield from Mírelle and a Mark of the Wild.
+    let stats = doc.get("stats").expect("stats");
+    assert_eq!(num_of(stats, "strength"), 12480.0);
+    assert!(matches!(stats.get("raw"), Some(Json::Arr(r)) if r.len() == 22));
+    let Some(Json::Arr(auras)) = doc.get("auras") else {
+        panic!("no auras: {}", doc.to_line());
+    };
+    let spells: Vec<f64> = auras.iter().map(|a| num_of(a, "spell")).collect();
+    assert_eq!(spells, vec![17.0, 1126.0]);
+    assert_eq!(str_of(&auras[1], "caster"), "self");
+
     // An unknown player is a tool-level error, exactly like breakdown's.
     assert!(is_error(&replies[1]), "{}", replies[1].to_line());
 }
@@ -1155,6 +1167,26 @@ fn history_tools_answer_over_the_store() {
     );
     let err = error_text(&reply[0]);
     assert!(err.contains("no death 4"), "{err}");
+
+    // R27 (v43): a player drill of a fight that keeps its details names the
+    // power that energized them — the warrior's 20 rage from Second Wind.
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(
+            31,
+            "stored_fight",
+            &format!(r#"{{"fight_id":"{kill_id}","player":"Thraxx"}}"#),
+        )],
+    );
+    let doc = tool_doc(&reply[0]);
+    let energize = match doc.get("energize") {
+        Some(Json::Arr(rows)) => rows.clone(),
+        other => panic!("energize: {other:?}"),
+    };
+    assert_eq!(energize.len(), 1, "{energize:?}");
+    assert_eq!(str_of(&energize[0], "power"), "rage");
+    assert_eq!(num_of(&energize[0], "gained"), 20.0);
+    assert_eq!(num_of(&energize[0], "waste_pct"), 0.0);
 
     // Filters: by encounter id, by player name, by an unknown kind.
     let reply = drive(
@@ -1690,11 +1722,14 @@ fn the_taken_view_reads_the_tank_side_live_and_stored() {
     assert_eq!(m.get("blocked").and_then(Json::as_u64), Some(18_000));
     assert_eq!(m.get("blocked_full").and_then(Json::as_u64), Some(55_000));
     assert_eq!(m.get("prevented").and_then(Json::as_u64), Some(55_000));
-    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(85_000));
+    // v43 (R17 amendment): 33 000 of it armor's, inside `mitigated` and
+    // the swung total alike.
+    assert_eq!(m.get("reduced").and_then(Json::as_u64), Some(33_000));
+    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(118_000));
     assert_eq!(
         num_of(&m, "mitigated_pct"),
-        61.2,
-        "85 000 / (84 000 + 55 000)"
+        68.6,
+        "118 000 / (84 000 + 55 000 + 33 000)"
     );
     assert_eq!(m.get("stagger").and_then(Json::as_u64), Some(0));
     let misses = m.get("misses").cloned().expect("misses");
@@ -1752,7 +1787,8 @@ fn stagger_and_full_absorbs_show_up_in_the_mitigation_object() {
         assert!(!is_error(&reply[0]), "{:?}", reply[0]);
         tool_doc(&reply[0])
     };
-    // Zenlí: taken 70 200, mitigated 28 000 (25 000 absorbed + 3 000 full),
+    // Zenlí: taken 73 200, mitigated 41 500 (25 000 absorbed + 3 000 full +
+    // 13 500 reduced by armor),
     // stagger 25 000 of which 10 000 was ticked back out (Niuzao's own 2 500
     // is R22 self-harm, outside R17's destination universe).
     let m = drill(&mut bridge, 5, "Zenlí")
@@ -1761,10 +1797,15 @@ fn stagger_and_full_absorbs_show_up_in_the_mitigation_object() {
         .expect("mitigation");
     assert_eq!(m.get("absorbed").and_then(Json::as_u64), Some(25_000));
     assert_eq!(m.get("absorbed_full").and_then(Json::as_u64), Some(3_000));
-    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(28_000));
+    assert_eq!(m.get("reduced").and_then(Json::as_u64), Some(13_500));
+    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(41_500));
     assert_eq!(m.get("stagger").and_then(Json::as_u64), Some(25_000));
     assert_eq!(m.get("stagger_ticked").and_then(Json::as_u64), Some(10_000));
-    assert_eq!(num_of(&m, "mitigated_pct"), 38.3, "28 000 / 73 200");
+    assert_eq!(
+        num_of(&m, "mitigated_pct"),
+        47.9,
+        "41 500 / (73 200 + 13 500)"
+    );
     // Pyralis: five misses of five different kinds; the ABSORB is a hit her
     // Ice Barrier took whole — 21 000 taken (R1), none of it prevented.
     let m = drill(&mut bridge, 6, "Pyralis")
@@ -1773,7 +1814,9 @@ fn stagger_and_full_absorbs_show_up_in_the_mitigation_object() {
         .expect("mitigation");
     assert_eq!(m.get("prevented").and_then(Json::as_u64), Some(0));
     assert_eq!(m.get("absorbed_full").and_then(Json::as_u64), Some(21_000));
-    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(26_000));
+    // v43: plus the 1 000 armor took off her Water Elemental's hit, folded.
+    assert_eq!(m.get("reduced").and_then(Json::as_u64), Some(1_000));
+    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(27_000));
     let misses = m.get("misses").cloned().expect("misses");
     assert_eq!(misses.get("total").and_then(Json::as_u64), Some(5));
     for kind in ["immune", "absorb", "deflect", "reflect", "resist"] {
@@ -1805,9 +1848,10 @@ fn a_tank_owner_reads_the_card_measures_and_the_tank_pair() {
     assert_eq!(me.get("rank_measure"), Some(&Json::Null));
     assert_eq!(me.get("rank"), Some(&Json::Null));
     assert_eq!(me.get("taken").and_then(Json::as_u64), Some(84_000));
-    assert_eq!(me.get("mitigated").and_then(Json::as_u64), Some(85_000));
+    assert_eq!(me.get("mitigated").and_then(Json::as_u64), Some(118_000));
     assert_eq!(me.get("prevented").and_then(Json::as_u64), Some(55_000));
-    assert_eq!(f64_of(&me, "mitigated_pct"), 61.2);
+    assert_eq!(me.get("reduced").and_then(Json::as_u64), Some(33_000));
+    assert_eq!(f64_of(&me, "mitigated_pct"), 68.6);
     assert_eq!(f64_of(&me, "dtps"), 1400.0);
     let pair = match me.get("tank_pair") {
         Some(Json::Arr(p)) => p.clone(),
@@ -1857,7 +1901,7 @@ fn trend_takes_a_measure_and_defaults_it_by_role() {
     // A tank's default measure is what he turned away.
     let tank = tool_doc(&reply[0]);
     assert_eq!(str_of(&tank, "measure"), "mitigated_pct");
-    assert_eq!(one(&tank, "mitigated_pct"), 61.2);
+    assert_eq!(one(&tank, "mitigated_pct"), 68.6);
     // …and the named measure wins, naming its own field.
     let dtps = tool_doc(&reply[1]);
     assert_eq!(str_of(&dtps, "measure"), "dtps");

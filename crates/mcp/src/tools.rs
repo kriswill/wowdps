@@ -8,8 +8,9 @@ use crate::json::Json;
 use crate::obj;
 
 use wowdps_model::{
-    GearItem, Loadout, Mark, MissKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
-    SegmentKind, ShieldRow, Spec, SpellTree, StackCell, Timeline, View,
+    COMBATANT_STATS, EnergizeRow, GearItem, Loadout, LoadoutAura, Mark, MissKind, Mitigation, Role,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, SpellTree, StackCell,
+    Timeline, View, power_name,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
@@ -142,7 +143,9 @@ pub fn catalog() -> Vec<Tool> {
                           With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
                           hits they took, each with `kind` (damage = it removed health; gain = a \
-                          heal or consumed absorb restored it), remaining health after and \
+                          heal or consumed absorb restored it), remaining health after \
+                          (health_after: current, max and — v43 — absorb, the shields \
+                          still on them from the same report) and \
                           (v35) offset_secs, how long before the death it landed: \
                           seconds, rounded to 0.01 (0 = the \
                           killing blow's moment, never positive) — and a player \
@@ -155,7 +158,11 @@ pub fn catalog() -> Vec<Tool> {
                           damage or taken total. With view=taken \
                           (R17) by_ability is what hit them and by_target who hit them, plus \
                           a mitigation object: absorbed / blocked / absorbed_full / \
-                          blocked_full, the derived prevented / mitigated / mitigated_pct, \
+                          blocked_full, reduced (v43: what armor and damage reduction \
+                          took off before the hit landed — the log's unmitigated amount \
+                          less amount + absorbed + blocked, floored at 0), the derived \
+                          prevented / mitigated / mitigated_pct (reduced inside both \
+                          mitigated and the swung total), \
                           the stagger pair, misses by kind, and by_ability_other / by_target_other = the \
                           player's taken total minus the sum of by_ability (0 on a boss \
                           pull; the folded remainder on a capped Σ drill). R21 (v27): a \
@@ -170,7 +177,9 @@ pub fn catalog() -> Vec<Tool> {
                           under, the pet itself, or the trinket a proc came from), `casts` \
                           and `avg_cast` (SPELL_CAST_SUCCESS by the player and their pets \
                           under that ability name; 0 casts = none logged, as for a swing \
-                          or a proc), `parts` (per spell id, periodic = a DoT/HoT tick, \
+                          or a proc), `starts` (v43: SPELL_CAST_STARTs under that name — a cast-time \
+                          spell's casts that began; starts beyond casts never went off), \
+                          `parts` (per spell id, periodic = a DoT/HoT tick, \
                           summing to the row), `misses` + `miss_pct` (the player's own \
                           misses under that name, of hits + misses) and a DoT's \
                           `uptime_pct` (the union of its debuff on any enemy over the \
@@ -235,8 +244,8 @@ pub fn catalog() -> Vec<Tool> {
                           Augmentation. \
                           Tanks stay unranked (rank_measure null, rank_count = tanks in the \
                           fight) and are read through their own numbers instead: every \
-                          me/peer row carries taken, mitigated, prevented, mitigated_pct and \
-                          dtps (R17), the healing split overheal / absorbed, the support \
+                          me/peer row carries taken, mitigated, prevented, reduced (v43, 0 \
+                          until regrade_fights), mitigated_pct and dtps (R17), the healing split overheal / absorbed, the support \
                           scalars support_given / support_received / effective_dps, \
                           healed_received / self_healed and `support` (true for a support \
                           spec), and — v25 (R18, step 4b) — am_uptime_pct (active \
@@ -264,7 +273,10 @@ pub fn catalog() -> Vec<Tool> {
                           filters the fights to ones where the SUBJECT (the `player` \
                           argument, else the store's owner) played that role; with neither \
                           an owner nor a player the filter is a no-op and every fight comes \
-                          back. `players: all` rows also carry the same scalars.",
+                          back. `players: all` rows also carry the same scalars, but of \
+                          the R17 tank split only taken and dtps: mitigated, prevented, \
+                          reduced and mitigated_pct ride me/peer alone (as do tank_pair \
+                          and healers).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -566,7 +578,14 @@ pub fn catalog() -> Vec<Tool> {
                           up at the end, which fold in with consumed and count only), and \
                           Σ consumed over the rows = the player's absorbed, exactly. Absent \
                           when they cast no shield (and on a pre-5 record until \
-                          regrade_fights).",
+                          regrade_fights). With `player` on a fight that keeps its details \
+                          tier the answer also carries `energize` (v43, R27): per power \
+                          type the player gained from SPELL_ENERGIZE lines — {power_type, \
+                          power (mana, rage, energy, soul_shards …), gained, wasted, \
+                          waste_pct, count}, where wasted is what the cap ate (generated \
+                          while the pool was full) and waste_pct its share of gained + \
+                          wasted. Absent when nothing energized them, below the details \
+                          tier, and on a record written before it until regrade_fights.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -661,7 +680,11 @@ pub fn catalog() -> Vec<Tool> {
             name: "loadout",
             description: "One player's actual build as the combat log recorded it \
                           (COMBATANT_INFO): spec, talents and equipped gear with item \
-                          levels, enchants, gems and bonus ids. Talents come named \
+                          levels, enchants, gem item ids and bonus ids. Since v43 also the \
+                          line's `stats` (by name — strength … mastery, versatility \
+                          done/healing/taken, armor — plus the raw 22) and its `auras` \
+                          ({spell, stacks, caster: self or a guid}: flask, food, rune, \
+                          vantus, raid buffs at the pull). Talents come named \
                           through the local talent dataset with an in-game import \
                           string when the dataset knows the spec, raw \
                           node/entry/rank picks otherwise (rank 0 = a granted node). \
@@ -1701,6 +1724,11 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         if !f.shields.is_empty() {
             o.push(("shields".to_string(), shields_json(&f.shields)));
         }
+        // R27 (v43): what energized the drilled player, per power type,
+        // from the details tier — absent when nothing did (and below it).
+        if !f.energize.is_empty() {
+            o.push(("energize".to_string(), energize_json(&f.energize)));
+        }
         // v39: a window answers only where the store keeps the seconds;
         // anywhere else the lists below would be the whole fight, so say so.
         if let (Some((lo, hi)), Some(b)) = (window, &f.breakdown) {
@@ -1860,6 +1888,26 @@ fn shields_json(rows: &[ShieldRow]) -> Json {
                     "wasted": Json::u64(s.wasted),
                     "count": Json::u64(u64::from(s.count)),
                     "unknown": Json::u64(u64::from(s.unknown)),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// R27 (v43): the drilled player's resources for a reader — one row per
+/// power type, ascending: `gained` (what reached the pool), `wasted` (what
+/// the cap ate) and the wasted share of everything generated.
+fn energize_json(rows: &[EnergizeRow]) -> Json {
+    Json::Arr(
+        rows.iter()
+            .map(|e| {
+                obj! {
+                    "power_type": Json::u64(u64::from(e.power_type)),
+                    "power": Json::str(power_name(e.power_type)),
+                    "gained": Json::num(round1(e.gained)),
+                    "wasted": Json::num(round1(e.wasted)),
+                    "waste_pct": Json::num(round1(e.waste_pct())),
+                    "count": Json::u64(u64::from(e.count)),
                 }
             })
             .collect(),
@@ -2153,6 +2201,8 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "taken": Json::u64(me.taken),
         "mitigated": Json::u64(me.mitigated),
         "prevented": Json::u64(me.prevented),
+        // v43: armor's share — 0 on a card written before it.
+        "reduced": Json::u64(me.reduced),
         "mitigated_pct": Json::num(round1(me.mitigated_pct())),
         "dtps": Json::num(round1(me.dtps)),
         // R19 / the R2 amendment (v23, step 3b): the healing split, the
@@ -2221,6 +2271,7 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
                             "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
                             "taken": Json::u64(p.taken),
                             "mitigated": Json::u64(p.mitigated),
+                            "reduced": Json::u64(p.reduced),
                             "mitigated_pct": Json::num(round1(p.mitigated_pct())),
                             "dtps": Json::num(round1(p.dtps)),
                             // Step 3b: a tank's own healing beside the external
@@ -3020,7 +3071,7 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         Err(damage_err) => resolve_player(bridge, segment, View::Healing, args, "player")
             .map_err(|_| damage_err)?,
     };
-    let Some(l) = bridge.loadout(segment, key)? else {
+    let Some(l) = bridge.loadout(segment, key.clone())? else {
         return Ok(obj! {
             "player": player_ident(&row),
             "logged": Json::Bool(false),
@@ -3062,6 +3113,9 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .unwrap_or(Json::Null),
         "talents": talents_json(&l),
         "gear": gear_json(&l.gear),
+        // v43: the stats and the auras at the line.
+        "stats": stats_json(&l.stats),
+        "auras": auras_json(&l.auras, &key),
     })
 }
 
@@ -3174,6 +3228,47 @@ const GEAR_SLOTS: [&str; 18] = [
 ];
 
 /// Ids only — the log carries no item names. Zeroed tuples are empty slots.
+/// v43: the line's 22 stat scalars by name where the position is pinned
+/// (`COMBATANT_STATS`), with the raw list beside them for the two that are
+/// not. Null on a loadout logged before v43.
+fn stats_json(stats: &[u32]) -> Json {
+    if stats.is_empty() {
+        return Json::Null;
+    }
+    let mut o: Vec<(String, Json)> = COMBATANT_STATS
+        .iter()
+        .zip(stats)
+        .filter(|(name, _)| !name.is_empty())
+        .map(|(name, v)| (name.to_string(), Json::u64(u64::from(*v))))
+        .collect();
+    o.push((
+        "raw".to_string(),
+        Json::Arr(stats.iter().map(|v| Json::u64(u64::from(*v))).collect()),
+    ));
+    Json::Obj(o)
+}
+
+/// v43: the auras on the player at the line — flask, food, rune, vantus,
+/// raid buffs — each with who put it there (`self` for their own).
+fn auras_json(auras: &[LoadoutAura], guid: &str) -> Json {
+    Json::Arr(
+        auras
+            .iter()
+            .map(|a| {
+                obj! {
+                    "spell": Json::u64(u64::from(a.spell_id)),
+                    "stacks": Json::u64(u64::from(a.stacks)),
+                    "caster": if a.caster == guid {
+                        Json::str("self")
+                    } else {
+                        Json::str(a.caster.clone())
+                    },
+                }
+            })
+            .collect(),
+    )
+}
+
 fn gear_json(gear: &[GearItem]) -> Json {
     let labeled = gear.len() <= GEAR_SLOTS.len();
     let ids = |v: &[u32]| Json::Arr(v.iter().map(|&x| Json::u64(x as u64)).collect());
@@ -3619,7 +3714,9 @@ fn meter_row(rank: usize, r: &Row, view: View, run_ms: Option<i64>) -> Json {
 /// additionally reports remaining health).
 /// R26 (v36): a by-ability row with what the ability tree adds — `group`
 /// (the summon, pet, trinket or driving spell it hangs under), `casts` and `avg_cast` when
-/// casts were seen, and `parts` (per spell id, direct vs periodic) when the
+/// casts were seen, `starts` (v43: SPELL_CAST_STARTs, a cast-time spell's
+/// casts that began) when any, and `parts` (per spell id, direct vs
+/// periodic) when the
 /// row splits. Step 3: `misses` and `miss_pct` (of hits + misses) when any
 /// missed, and a DoT's `uptime_pct` over `fight_ms`. A row the tree says nothing about is `ability_row`'s.
 fn tree_ability_row(r: &Row, view: View, tree: &SpellTree, fight_ms: i64) -> Json {
@@ -3636,6 +3733,12 @@ fn tree_ability_row(r: &Row, view: View, tree: &SpellTree, fight_ms: i64) -> Jso
     if m.casts > 0 {
         o.push(("casts".to_string(), Json::u64(m.casts)));
         o.push(("avg_cast".to_string(), Json::u64(r.amount / m.casts)));
+    }
+    // v43 (R26): the casts with a cast time that BEGAN — beside `casts`,
+    // the difference is how many never went off (cancelled, kicked,
+    // moved out of).
+    if m.starts > 0 {
+        o.push(("starts".to_string(), Json::u64(m.starts)));
     }
     if m.misses > 0 {
         let pct = m.misses as f64 / (r.count + m.misses) as f64 * 100.0;
@@ -3735,7 +3838,15 @@ fn ability_row(r: &Row, view: View) -> Json {
     if let Some((hp, max)) = r.hp {
         o.push((
             "health_after".to_string(),
-            obj! { "current": Json::u64(hp), "max": Json::u64(max) },
+            match r.absorb {
+                // v43 (R9): the shields left on them, from the same report.
+                Some(absorb) => obj! {
+                    "current": Json::u64(hp),
+                    "max": Json::u64(max),
+                    "absorb": Json::u64(absorb),
+                },
+                None => obj! { "current": Json::u64(hp), "max": Json::u64(max) },
+            },
         ));
     }
     // v35 (R9): a recap event's time before the death, ≤ 0, in seconds
@@ -3753,8 +3864,9 @@ fn ability_row(r: &Row, view: View) -> Json {
 /// R17: the mitigation record under a Taken drill — the split of what was
 /// swung at a player. `taken` is that player's own Taken row amount (every
 /// absorb included, a hit a shield took whole too — R1), which
-/// `mitigated_pct` is measured against with `prevented` (the full blocks); `misses` carries
-/// the total and only the kinds that actually happened, so a clean pull does
+/// `mitigated_pct` is measured against with `prevented` (the full blocks)
+/// and `reduced` (armor and damage reduction, v43); `misses` carries the
+/// total and only the kinds that actually happened, so a clean pull does
 /// not answer with ten zeros. `by_ability` is the drill's per-ability list:
 /// `by_ability_other` is what `taken` holds beyond its sum — 0 on a boss
 /// pull, the folded remainder on a stored Σ drill capped at 16 abilities
@@ -3774,6 +3886,9 @@ fn mitigation_json(m: &Mitigation, taken: u64, by_ability: &[Row], by_target: &[
         "absorbed_full": Json::u64(m.absorbed_full),
         "blocked_full": Json::u64(m.blocked_full),
         "prevented": Json::u64(m.prevented()),
+        // v43 (R17 amendment): what armor and damage reduction took off;
+        // inside `mitigated` and the swung total `mitigated_pct` divides by.
+        "reduced": Json::u64(m.reduced),
         "mitigated": Json::u64(m.mitigated()),
         "mitigated_pct": Json::num(round1(m.mitigated_pct(taken))),
         "stagger": Json::u64(m.stagger),
@@ -3966,6 +4081,9 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
             .unwrap_or(Json::Null),
         "talents": talents_json(&l),
         "gear": gear_json(&l.gear),
+        // v43: the stats and the auras at the line.
+        "stats": stats_json(&l.stats),
+        "auras": auras_json(&l.auras, &p.guid),
     })
 }
 
@@ -5058,6 +5176,26 @@ mod tests {
         );
         assert!(!keys(&recap).contains(&"avg_hit"));
         assert_eq!(recap.get("kind").and_then(Json::as_str), Some("damage"));
+        // v43 (R9): the shields left on them ride beside the health, and only
+        // when the report carried them.
+        assert_eq!(
+            recap.get("health_after").and_then(|h| h.get("absorb")),
+            None
+        );
+        let shielded = ability_row(
+            &Row {
+                absorb: Some(4_485),
+                ..r.clone()
+            },
+            View::Deaths,
+        );
+        assert_eq!(
+            shielded
+                .get("health_after")
+                .and_then(|h| h.get("absorb"))
+                .and_then(Json::as_u64),
+            Some(4_485)
+        );
         let hit = ability_row(&r, View::Damage);
         assert!(!keys(&hit).contains(&"kind"));
         assert_eq!(hit.get("avg_hit").and_then(Json::as_u64), Some(250));
@@ -5121,6 +5259,8 @@ mod tests {
             spec_id: None,
             talents: vec![pick],
             gear: Vec::new(),
+            stats: vec![],
+            auras: vec![],
         };
         let j = talents_json(&no_spec);
         assert!(

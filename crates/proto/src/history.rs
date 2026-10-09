@@ -20,9 +20,11 @@
 use crate::json::Json;
 use crate::lua::Lua;
 use crate::obj;
+use wowdps_model::LoadoutAura;
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
+    Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
+    View,
 };
 use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 
@@ -274,6 +276,12 @@ pub struct CardPlayer {
     /// (`Segment::shields_unknown`); the healer block's caveat. 0 on an
     /// older card.
     pub shields_unknown: u32,
+    /// R17 amendment (v43): what armor and damage reduction took off the
+    /// hits on the player (`Mitigation::reduced`) — already inside
+    /// `mitigated`, and added to the swung total `mitigated_pct` divides
+    /// by. 0 on a card written before it (its `mitigated` lacks it too, so
+    /// its pct is the one it always had).
+    pub reduced: u64,
     /// v31: the player's guild as the wowdps addon last saw them — joined
     /// from `affiliations/` when a card is ANSWERED, never stored on it
     /// (`to_json` skips it, `from_json` reads `None`): the addon's file
@@ -529,13 +537,13 @@ impl CardPlayer {
         self.spec.map(Spec::role)
     }
 
-    /// R17: `mitigated / (taken + prevented)` × 100 through the model's
-    /// one [`wowdps_model::mitigated_pct`]. Derived the way `role` is:
+    /// R17: `mitigated / (taken + prevented + reduced)` × 100 through the
+    /// model's one [`wowdps_model::mitigated_pct`]. Derived the way `role` is:
     /// never a struct field, written to JSON as `mitigated_pct` for readers
     /// that cannot do the arithmetic themselves (DuckDB), ignored on read.
     /// 0.0 on a card without the tank measures.
     pub fn mitigated_pct(&self) -> f64 {
-        wowdps_model::mitigated_pct(self.mitigated, self.taken, self.prevented)
+        wowdps_model::mitigated_pct(self.mitigated, self.taken, self.prevented, self.reduced)
     }
 
     /// R18 (step 4b): the player's active-mitigation uptime as a
@@ -655,6 +663,8 @@ impl CardPlayer {
             // Step 5 (R20): `null` when unknown, so SQL's NULL is honest.
             "absorb_wasted": self.absorb_wasted.map_or(Json::Null, Json::u64),
             "shields_unknown": Json::num(self.shields_unknown),
+            // v43 (R17 amendment), trailing so every older line's prefix stands.
+            "reduced": Json::u64(self.reduced),
         }
     }
 
@@ -700,6 +710,8 @@ impl CardPlayer {
             // `None`; `absorb_efficiency` is derived and not read back.
             absorb_wasted: u64_of(v, "absorb_wasted"),
             shields_unknown: u32_of(v, "shields_unknown").unwrap_or(0),
+            // v43: armor's share; a card written before it has none.
+            reduced: u64_of(v, "reduced").unwrap_or(0),
             // v31: never stored; the store joins it when it answers.
             guild: None,
         })
@@ -1182,9 +1194,9 @@ impl PlayerMitigation {
 }
 
 /// R17: the `Mitigation` record as an object — the six amounts by field
-/// name, then `misses` as an object keyed by `MissKind::name()`. All ten
-/// miss kinds are written, zeros included, so the lake's column shape is
-/// the same in every file.
+/// name, then `misses` as an object keyed by `MissKind::name()`, then
+/// (v43) `reduced`. All ten miss kinds are written, zeros included, so the
+/// lake's column shape is the same in every file.
 pub fn mitigation_json(m: &Mitigation) -> Json {
     let misses = MissKind::ALL
         .iter()
@@ -1198,6 +1210,9 @@ pub fn mitigation_json(m: &Mitigation) -> Json {
         "stagger": Json::u64(m.stagger),
         "stagger_ticked": Json::u64(m.stagger_ticked),
         "misses": Json::Obj(misses),
+        // v43 (R17 amendment): armor's share, after the misses so an
+        // older record's keys keep their order.
+        "reduced": Json::u64(m.reduced),
     }
 }
 
@@ -1215,6 +1230,7 @@ pub fn mitigation_from(v: &Json) -> Option<Mitigation> {
         stagger: u64_of(v, "stagger").unwrap_or(0),
         stagger_ticked: u64_of(v, "stagger_ticked").unwrap_or(0),
         misses: [0; MissKind::COUNT],
+        reduced: u64_of(v, "reduced").unwrap_or(0),
     };
     if let Some(misses) = v.get("misses") {
         for kind in MissKind::ALL {
@@ -1400,6 +1416,9 @@ pub struct PlayerDetail {
     /// drills (and compares) them as the live meter does. Empty on a
     /// details file written before v42.
     pub counts: Vec<CountDetail>,
+    /// v43 (R27): the player's resources, per power type ascending
+    /// (`Segment::energize`). Empty on a details file written before it.
+    pub energize: Vec<EnergizeRow>,
 }
 
 /// v42: the views [`PlayerDetail::counts`] keeps, in order.
@@ -1461,6 +1480,13 @@ impl FightDetails {
                     "spells": rows_json(&c.spells),
                     "targets": rows_json(&c.targets),
                 }).collect()),
+                // v43 (R27): the resources, after the count drills.
+                "energize": Json::Arr(p.energize.iter().map(|e| obj! {
+                    "power_type": Json::num(e.power_type),
+                    "gained": Json::num(e.gained),
+                    "wasted": Json::num(e.wasted),
+                    "count": Json::num(e.count),
+                }).collect()),
             }).collect()),
         }
     }
@@ -1494,6 +1520,23 @@ impl FightDetails {
                                                 view: view_named(str_of(c, "view")?)?,
                                                 spells: rows_from(c.get("spells")),
                                                 targets: rows_from(c.get("targets")),
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                            // v43: absent before, and empty then.
+                            energize: p
+                                .get("energize")
+                                .and_then(Json::as_arr)
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(|e| {
+                                            Some(EnergizeRow {
+                                                power_type: u32_of(e, "power_type")?,
+                                                gained: f64_of(e, "gained").unwrap_or(0.0),
+                                                wasted: f64_of(e, "wasted").unwrap_or(0.0),
+                                                count: u32_of(e, "count").unwrap_or(0),
                                             })
                                         })
                                         .collect()
@@ -1550,6 +1593,14 @@ impl StoredLoadout {
                 "bonus_ids": u32s_json(&g.bonus_ids),
                 "gems": u32s_json(&g.gems),
             }).collect()),
+            // v43: the stat scalars in the log's order and the auras at
+            // the line, after the gear.
+            "stats": u32s_json(&l.stats),
+            "auras": Json::Arr(l.auras.iter().map(|a| obj! {
+                "caster": Json::str(&*a.caster),
+                "spell": Json::num(a.spell_id),
+                "stacks": Json::num(a.stacks),
+            }).collect()),
         }
     }
 
@@ -1593,6 +1644,23 @@ impl StoredLoadout {
                 spec_id: u32_of(v, "spec_id"),
                 talents,
                 gear,
+                // v43: absent on a file written before them, and empty then.
+                stats: u32s_from(v.get("stats")),
+                auras: v
+                    .get("auras")
+                    .and_then(Json::as_arr)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| {
+                                Some(LoadoutAura {
+                                    caster: str_of(x, "caster")?.to_string(),
+                                    spell_id: u32_of(x, "spell")?,
+                                    stacks: u32_of(x, "stacks").unwrap_or(0),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             },
         })
     }
@@ -1698,11 +1766,14 @@ pub fn row_from(v: &Json) -> Option<Row> {
         // v35: only a recap event carries one (`recap_events_json`); a row
         // written before v35, or any other row, reads as unknown.
         offset_ms: i64_of(v, "offset_ms"),
+        // v43: likewise a recap event's alone; absent = unknown.
+        absorb: u64_of(v, "absorb"),
     })
 }
 
 /// v35 (R9): a death window's events as the rows tier writes them — each a
-/// row ([`row_json`]) plus its `offset_ms`, the time before the death, on
+/// row ([`row_json`]) plus its `offset_ms`, the time before the death, and
+/// (v43) its `absorb`, the shields left on the victim, on
 /// EVERY event (null only where the meter had none), so the lake's recap
 /// column set is the same in every file written from v35 on. Kept off
 /// [`row_json`] itself: only a recap event has a time before a death, and
@@ -1717,6 +1788,9 @@ fn recap_events_json(rows: &[Row]) -> Json {
                         "offset_ms".to_string(),
                         r.offset_ms.map_or(Json::Null, |v| Json::num(v as f64)),
                     ));
+                    // v43: the shields left on the victim, same report as
+                    // `hp` (null where the meter had none).
+                    fields.push(("absorb".to_string(), r.absorb.map_or(Json::Null, Json::u64)));
                 }
                 o
             })
@@ -1801,6 +1875,8 @@ pub fn spell_tree_json(t: &SpellTree) -> Json {
             "casts": Json::u64(m.casts),
             "misses": Json::u64(m.misses),
             "uptime_ms": Json::u64(m.uptime_ms),
+            // v43: the casts that began; absent on an older file reads 0.
+            "starts": Json::u64(m.starts),
             "parts": Json::Arr(m.parts.iter().map(|p| obj! {
                 "spell_id": Json::num(p.spell_id),
                 "periodic": Json::Bool(p.periodic),
@@ -1842,6 +1918,7 @@ pub fn spell_tree_from(v: Option<&Json>) -> SpellTree {
                 casts: u64_of(m, "casts").unwrap_or(0),
                 misses: u64_of(m, "misses").unwrap_or(0),
                 uptime_ms: u64_of(m, "uptime_ms").unwrap_or(0),
+                starts: u64_of(m, "starts").unwrap_or(0),
                 parts: m
                     .get("parts")
                     .and_then(Json::as_arr)

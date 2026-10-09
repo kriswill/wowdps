@@ -120,6 +120,8 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                 put("misses", u64::from(m.misses()));
                 put("stagger", m.stagger);
                 put("stagger_ticked", m.stagger_ticked);
+                // R17 amendment: what armor and damage reduction took off.
+                put("reduced", m.reduced);
             }
             // R19 + the R2 amendment: the support ledger, the healing split
             // and healing received, and the DERIVED `effective` — the
@@ -195,6 +197,8 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             // R26: casts (passive-gated, pets folded) and the periodic halves
             // of damage and healing, read off the rows' (id, periodic) parts.
             put_i("casts", seg.casts(key) as i64);
+            // R26 (2026-10-08): the casts that BEGAN, as passive as the casts.
+            put_i("cast_starts", seg.cast_starts(key) as i64);
             put_i(
                 "damage_periodic",
                 seg.periodic_amount(key, View::Damage) as i64,
@@ -206,6 +210,17 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             // R26 (step 3): the attacker's misses and the debuffs' unions.
             put_i("misses_dealt", seg.misses_dealt(key) as i64);
             put_i("dot_uptime_ms", seg.dot_uptime_ms(key));
+            // R27: power gained and lost to the cap, every power type summed
+            // (the golden prints four decimals; these sums are exact halves).
+            let energize = seg.energize(key);
+            out.insert(
+                (i, key.clone(), "energize_gained".into()),
+                energize.iter().map(|r| r.gained).sum(),
+            );
+            out.insert(
+                (i, key.clone(), "energize_wasted".into()),
+                energize.iter().map(|r| r.wasted).sum(),
+            );
         }
         let _ = result;
     }

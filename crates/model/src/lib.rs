@@ -292,12 +292,14 @@ impl MissKind {
 
 /// R17: `mitigated` as a percentage of everything swung with an amount —
 /// `taken` (the Taken row amount, every absorb included, partial or whole)
-/// plus `prevented` (full blocks, the one amount that never became Taken).
-/// 0..100; 0.0 when nothing was swung. One definition for the live
-/// `Mitigation` record and the history store's `CardPlayer`, so every
-/// reader derives the same number.
-pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64) -> f64 {
-    let swung = taken + prevented;
+/// plus `prevented` (full blocks) plus `reduced` (what armor and damage
+/// reduction took off before the hit landed): the two amounts that never
+/// became Taken. 0..100; 0.0 when nothing was swung. One definition for the
+/// live `Mitigation` record and the history store's `CardPlayer`, so every
+/// reader derives the same number; a card stored before `reduced` existed
+/// reads it 0 and keeps the pct it always had.
+pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64, reduced: u64) -> f64 {
+    let swung = taken + prevented + reduced;
     if swung == 0 {
         0.0
     } else {
@@ -308,8 +310,9 @@ pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64) -> f64 {
 /// R17: one player's mitigation over a segment — what was swung at them
 /// and did not land on health. The Taken row itself (amount = R1's
 /// `amount + absorbed`, a hit a shield took whole included, `extra` =
-/// `absorbed + absorbed_full`, `count` incl. misses) carries the totals; this record carries the split. Every field is additive
-/// under the R10 merge.
+/// `absorbed + absorbed_full`, `count` incl. misses) carries the totals;
+/// this record carries the split. Every field is additive under the R10
+/// merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Mitigation {
     /// Partial absorbs on damage events (the Taken row's `extra`); the
@@ -332,20 +335,31 @@ pub struct Mitigation {
     pub stagger_ticked: u64,
     /// Miss counts by `MissKind::index`.
     pub misses: [u32; MissKind::COUNT],
+    /// R17 amendment (2026-10-08): what armor and damage reduction took
+    /// off — per hit the damage suffix's `unmitigated` amount less what
+    /// came out of it (`amount + absorbed + blocked`; an ABSORB miss's own
+    /// `unmitigated` less its `amountMissed`), floored at 0, since a
+    /// vulnerability debuff can amplify a hit past its unmitigated amount.
+    /// Never Taken; trailing on the wire (v43). 0 on a record read from
+    /// before it.
+    pub reduced: u64,
 }
 
 impl Mitigation {
-    /// Damage that was swung with an amount and did not land:
-    /// partial absorbs and blocks plus full absorbs and blocks. Dodges,
-    /// parries and misses carry no amount and are counts only.
+    /// Damage that was swung with an amount and did not land: partial
+    /// absorbs and blocks, full absorbs and blocks, and what armor and
+    /// damage reduction took off (`reduced`). Dodges, parries and misses
+    /// carry no amount and are counts only.
     pub fn mitigated(&self) -> u64 {
-        self.absorbed + self.blocked + self.absorbed_full + self.blocked_full
+        self.absorbed + self.blocked + self.absorbed_full + self.blocked_full + self.reduced
     }
 
     /// Damage prevented outright — the amount a `*_MISSED` line carried
     /// that never became Taken: full blocks. A full absorb is Taken since
     /// R1 counts it (as a partial block's part never was, and a partial
-    /// absorb's always was).
+    /// absorb's always was). `reduced` never became Taken either, but it is
+    /// its own number: `prevented` keeps the meaning every stored card
+    /// gave it.
     pub fn prevented(&self) -> u64 {
         self.blocked_full
     }
@@ -357,12 +371,12 @@ impl Mitigation {
     }
 
     /// `mitigated` over everything swung with an amount: `taken` (the
-    /// Taken row amount, every absorb included) plus `prevented`.
-    /// 0..100; 0 when nothing was swung. The arithmetic is the free
-    /// [`mitigated_pct`], shared with the history store's card so a stored
-    /// pct can never disagree with a live one.
+    /// Taken row amount, every absorb included) plus `prevented` plus
+    /// `reduced`. 0..100; 0 when nothing was swung. The arithmetic is the
+    /// free [`mitigated_pct`], shared with the history store's card so a
+    /// stored pct can never disagree with a live one.
     pub fn mitigated_pct(&self, taken: u64) -> f64 {
-        mitigated_pct(self.mitigated(), taken, self.prevented())
+        mitigated_pct(self.mitigated(), taken, self.prevented(), self.reduced)
     }
 
     pub fn miss(&mut self, kind: MissKind) {
@@ -387,6 +401,7 @@ impl Mitigation {
         self.blocked_full += other.blocked_full;
         self.stagger += other.stagger;
         self.stagger_ticked += other.stagger_ticked;
+        self.reduced += other.reduced;
         for (a, b) in self.misses.iter_mut().zip(other.misses.iter()) {
             *a += *b;
         }
@@ -1077,6 +1092,59 @@ pub struct UptimeCell {
     pub total_ms: i64,
 }
 
+/// R27 (2026-10-08): one power type a player gained in a segment from
+/// `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` lines landing on them —
+/// `gained` the Σ of the lines' amounts (what reached the pool), `wasted`
+/// the Σ of their overcap (`overEnergize`: generated while the pool was
+/// full), `count` the lines. In the game's own units, fractional where
+/// the log writes a fraction (0.5 of a mana tick). The pool's generation
+/// is `gained + wasted`; `waste_pct` its wasted share.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct EnergizeRow {
+    pub power_type: u32,
+    pub gained: f64,
+    pub wasted: f64,
+    pub count: u32,
+}
+
+impl EnergizeRow {
+    /// The wasted share of everything generated, 0..100; 0.0 when nothing
+    /// was.
+    pub fn waste_pct(&self) -> f64 {
+        let total = self.gained + self.wasted;
+        if total > 0.0 {
+            self.wasted * 100.0 / total
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The game's name for a power type (the advanced block's and
+/// `SPELL_ENERGIZE`'s `powerType`), "" for a type it does not name.
+pub fn power_name(power_type: u32) -> &'static str {
+    match power_type {
+        0 => "mana",
+        1 => "rage",
+        2 => "focus",
+        3 => "energy",
+        4 => "combo_points",
+        5 => "runes",
+        6 => "runic_power",
+        7 => "soul_shards",
+        8 => "astral_power",
+        9 => "holy_power",
+        11 => "maelstrom",
+        12 => "chi",
+        13 => "insanity",
+        16 => "arcane_charges",
+        17 => "fury",
+        18 => "pain",
+        19 => "essence",
+        _ => "",
+    }
+}
+
 /// R20 (step 5): one row of a player's shield ledger — every shield of one
 /// spell they cast in the segment, folded: `applied` (the initial sizes plus
 /// refresh growth plus over-absorb excess), `consumed` (Σ `SPELL_ABSORBED`
@@ -1256,6 +1324,11 @@ pub struct SpellMeta {
     /// was up on any enemy, ms — a DoT's uptime; 0 for a row that applies
     /// none (and for a pet's row: their debuffs are not tracked).
     pub uptime_ms: u64,
+    /// R26 (v43): `SPELL_CAST_START`s by the player and their pets under the
+    /// row's name — casts with a cast time that BEGAN; `starts − casts`
+    /// (when positive) is how many were cancelled, interrupted or pushed
+    /// back past their end. 0 on an instant spell, which writes no start.
+    pub starts: u64,
 }
 
 /// R26: how one player's by-ability rows nest — Damage and Healing only;
@@ -1304,6 +1377,7 @@ impl SpellTree {
             m.parts.clear();
             m.misses = 0;
             m.uptime_ms = 0;
+            m.starts = 0;
         }
         self.rows.retain(|m| !m.group.is_empty());
         self
@@ -1647,6 +1721,10 @@ pub struct Row {
     /// non-increasing down the newest-first recap. `None` everywhere else
     /// and on recaps stored before v35.
     pub offset_ms: Option<i64>,
+    /// v43, death-recap rows only (R9): the victim's shields after the event
+    /// — the advanced block's absorb field, from the same health report as
+    /// `hp` (so `None` wherever `hp` is, and on recaps stored before v43).
+    pub absorb: Option<u64>,
 }
 
 impl Row {
@@ -1678,6 +1756,11 @@ pub struct GearItem {
     pub ilvl: u32,
     pub enchants: Vec<u32>,
     pub bonus_ids: Vec<u32>,
+    /// Socketed gems' item ids, one per gem. The log writes each gem as an
+    /// `(id, item level)` pair; the parser keeps the ids (before 2026-10-08
+    /// it flattened the pairs, so a loadout stored earlier lists every gem
+    /// twice over — its id, then its item level — until a regrade rewrites
+    /// it).
     pub gems: Vec<u32>,
 }
 
@@ -1689,7 +1772,61 @@ pub struct Loadout {
     pub spec_id: Option<u32>,
     pub talents: Vec<TalentPick>,
     pub gear: Vec<GearItem>,
+    /// v43: the line's 22 stat scalars between `faction` and the spec, in
+    /// the log's order ([`COMBATANT_STATS`] names each position) — the
+    /// player's secondary ratings and primaries at the pull. Empty on a
+    /// loadout read from before v43.
+    pub stats: Vec<u32>,
+    /// v43: the auras on the player when the line was written — the
+    /// bracket after the gear, `(caster guid, spell id, stacks)` triples:
+    /// flask, food, augment rune, vantus rune, raid buffs, a priest's
+    /// shield. Empty when the line listed none (or before v43).
+    pub auras: Vec<LoadoutAura>,
 }
+
+/// v43: one aura on a player at their COMBATANT_INFO line.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LoadoutAura {
+    /// Who put it there (their own guid for a flask or food).
+    pub caster: String,
+    pub spell_id: u32,
+    pub stacks: u32,
+}
+
+/// v43: what each of COMBATANT_INFO's 22 stat positions is, as the
+/// retail log writes them (verified on a real Heroic raid pull,
+/// 2026-09-27, against Warcraft Logs' names for the same fields). Two
+/// positions are not pinned: 4 and 5 read 0 for every player of every
+/// log on hand, one of them dodge (a guardian druid's, which no log here
+/// holds, would say which) — so neither is named. Position 6 is parry (a
+/// Blood Death Knight's and a Vengeance Demon Hunter's equal their crit,
+/// as Warcraft Logs reports their parry), 7 block (by elimination; 0 for
+/// every class here). The three crit, haste and versatility triples are
+/// melee/ranged/spell and done/healing/taken.
+pub const COMBATANT_STATS: [&str; 22] = [
+    "strength",
+    "agility",
+    "stamina",
+    "intellect",
+    "",
+    "",
+    "parry",
+    "block",
+    "crit_melee",
+    "crit_ranged",
+    "crit_spell",
+    "speed",
+    "leech",
+    "haste_melee",
+    "haste_ranged",
+    "haste_spell",
+    "avoidance",
+    "mastery",
+    "versatility_done",
+    "versatility_healing",
+    "versatility_taken",
+    "armor",
+];
 
 /// A key press translated into intent. Keeps the keymap testable on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1861,6 +1998,7 @@ mod tests {
                     parts: vec![part.clone(), part],
                     misses: 1,
                     uptime_ms: 9,
+                    starts: 4,
                 },
                 SpellMeta {
                     key: "Wither".into(),
@@ -1869,6 +2007,7 @@ mod tests {
                     parts: Vec::new(),
                     misses: 0,
                     uptime_ms: 40_000,
+                    starts: 0,
                 },
             ],
         };
