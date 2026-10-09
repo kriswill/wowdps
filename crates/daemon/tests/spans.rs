@@ -501,7 +501,20 @@ fn a_stored_fight_answers_the_taken_drill_and_both_uptime_halves() {
             Some(&trash_fight.segment.taken_timeline(WARRIOR))
         );
         bd.timeline = a.breakdown.as_ref().and_then(|x| x.timeline.clone());
+        // v44 (R28): the derived answer's details tier carries the
+        // warrior's rage second by second, on the breakdown as live; the
+        // stored trash keeps no details, so none.
+        assert_eq!(bd.power, trash_fight.segment.power(WARRIOR));
+        assert!(!bd.power.is_empty());
+        bd.power.clear();
+        bd.energize.clear();
     }
+    assert_eq!(b.power, trash_fight.segment.power(WARRIOR));
+    b.power.clear();
+    assert!(
+        a.power.is_empty() && a.energize.is_empty(),
+        "tier 2: no details"
+    );
     assert_eq!((a.tier, b.tier), (2, 3));
     assert_eq!((a.series, b.series), (false, true));
     assert_eq!((a.abilities, b.abilities), (false, true));

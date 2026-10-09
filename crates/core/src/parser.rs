@@ -419,13 +419,17 @@ pub enum Event {
     },
     /// 2026-10-08: `SPELL_EMPOWER_START` (`stage` None) and
     /// `SPELL_EMPOWER_END` (`stage` = the trailing empower level released,
-    /// 1–4) — an Evoker's charged spell. Parsed and passive; nothing reads
-    /// it yet (the release still writes a `SPELL_CAST_SUCCESS`, which the
-    /// casts count). `SPELL_EMPOWER_INTERRUPT` stays `Other`.
+    /// 1–4) — an Evoker's charged spell. Passive (the release still writes
+    /// a `SPELL_CAST_SUCCESS`, which the casts count). R26 (v44):
+    /// `SPELL_EMPOWER_INTERRUPT` too — `interrupted`, with the stage the
+    /// charge had reached when it was let go (its trailer, 0 or more; `None`
+    /// when absent) — and the ability tree counts the releases by stage and
+    /// the cancels (`SpellMeta::empower`).
     Empower {
         src: Unit,
         spell: Spell,
         stage: Option<u32>,
+        interrupted: bool,
     },
     /// R26: `spell` is what summoned the pet — the ability its rows nest
     /// under in the ability tree ("Summon Sayaad").
@@ -1532,15 +1536,26 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             src: unit_at(f, 1),
             spell: spell.unwrap_or_default(),
             stage: None,
+            interrupted: false,
         }),
         "SPELL_EMPOWER_END" => match get(f, suffix).and_then(|s| s.parse().ok()) {
             Some(stage) => with_hint(Event::Empower {
                 src: unit_at(f, 1),
                 spell: spell.unwrap_or_default(),
                 stage: Some(stage),
+                interrupted: false,
             }),
             None => with_hint(Event::Other),
         },
+        // R26 (v44): a charge let go of before its release — the trailer is
+        // the stage it had reached (0 when it never reached one), kept when
+        // it reads; the cancel counts either way.
+        "SPELL_EMPOWER_INTERRUPT" => with_hint(Event::Empower {
+            src: unit_at(f, 1),
+            spell: spell.unwrap_or_default(),
+            stage: get(f, suffix).and_then(|s| s.parse().ok()),
+            interrupted: true,
+        }),
         "SPELL_SUMMON" => with_hint(Event::Summon {
             owner: unit_at(f, 1),
             pet: unit_at(f, 5),
@@ -3156,7 +3171,7 @@ mod tests {
 
     /// 2026-10-08: the cast-start and empower families, in real lines'
     /// shapes — the plain spell prefix, a nil destination, END trailing the
-    /// stage released (an INTERRUPT stays `Other`).
+    /// stage released, an INTERRUPT (v44) the stage it had reached.
     #[test]
     fn cast_starts_and_empowers_parse_as_their_own_events() {
         let e = parse(&format!(
@@ -3186,11 +3201,41 @@ mod tests {
             Event::Other,
             "an END without its stage is nothing we can use"
         );
-        assert_eq!(
-            parse(&format!(
-                "SPELL_EMPOWER_INTERRUPT,{PLAYER},{NIL_UNIT},357208,\"Fire Breath\",0x4,0"
-            )),
-            Event::Other
+        let e = parse(&format!(
+            "SPELL_EMPOWER_INTERRUPT,{PLAYER},{NIL_UNIT},357208,\"Fire Breath\",0x4,0"
+        ));
+        assert!(
+            matches!(
+                &e,
+                Event::Empower { stage: Some(0), interrupted: true, spell, .. } if spell.id == 357208
+            ),
+            "{e:?}"
+        );
+        let e = parse(&format!(
+            "SPELL_EMPOWER_INTERRUPT,{PLAYER},{NIL_UNIT},357208,\"Fire Breath\",0x4"
+        ));
+        assert!(
+            matches!(
+                e,
+                Event::Empower {
+                    stage: None,
+                    interrupted: true,
+                    ..
+                }
+            ),
+            "a cancel without its stage still counts: {e:?}"
+        );
+        assert!(
+            matches!(
+                parse(&format!(
+                    "SPELL_EMPOWER_END,{PLAYER},{NIL_UNIT},355936,\"Dream Breath\",0x8,2"
+                )),
+                Event::Empower {
+                    interrupted: false,
+                    ..
+                }
+            ),
+            "a release is no cancel"
         );
     }
 

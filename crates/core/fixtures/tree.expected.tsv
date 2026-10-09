@@ -4,7 +4,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	petdamage	73000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	dps	36933.33
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	combat_ms	30000
-1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	pct	97.28
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	pct	88.57
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	heal	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	overheal	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	absorbheal	0
@@ -26,7 +26,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_received	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_given_heal	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_received_heal	0
-1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	healed_received	73000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	healed_received	93000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	self_healed	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	effective	1108000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	am_uptime_ms	0
@@ -53,12 +53,84 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	dot_uptime_ms	24800
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	energize_gained	1.5000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	energize_wasted	1.0000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	heal_absorbed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	empower_stage1	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	empower_stage2	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	empower_stage3	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	empower_stage4	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	empower_cancelled	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	power_seconds	12
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	power_sum	1350066
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	power_max	250050
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	damage	112000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	overkill	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	petdamage	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	dps	3733.33
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	combat_ms	30000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	pct	8.95
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	heal	20000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	overheal	10000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	absorbheal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	interrupts	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	cc	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	dispels	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	deaths	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	taken	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	absorbed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	blocked	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	prevented	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	misses	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	stagger	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	stagger_ticked	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	reduced	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	self_harm	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	friendly_fire	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	support_given	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	support_received	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	support_given_heal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	support_received_heal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	healed_received	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	self_healed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	effective	112000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	am_uptime_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	externals_given	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	externals_given_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	externals_received	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	externals_received_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	support_uptime_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	spans	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	taken10_0	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	absorb_applied	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	absorb_wasted	
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	shields_unknown	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	stack_hits	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	stack_sum	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	stack_max	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	stack_cells	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	stack_auras	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	casts	3
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	cast_starts	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	damage_periodic	12000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	heal_periodic	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	misses_dealt	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	dot_uptime_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	energize_gained	0.0000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	energize_wasted	0.0000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	heal_absorbed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	empower_stage1	1
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	empower_stage2	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	empower_stage3	1
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	empower_stage4	1
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	empower_cancelled	2
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	power_seconds	3
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	power_sum	630000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	power_max	250000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	damage	31000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overkill	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	petdamage	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	dps	1033.33
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	combat_ms	30000
-1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	pct	2.72
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	pct	2.48
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	heal	73000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overheal	7000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	absorbheal	0
@@ -107,6 +179,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	dot_uptime_ms	25900
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	energize_gained	2500.0000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	energize_wasted	0.0000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	heal_absorbed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	empower_stage1	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	empower_stage2	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	empower_stage3	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	empower_stage4	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	empower_cancelled	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	power_seconds	4
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	power_sum	600000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	power_max	250000
 2	Trash	Trash		1500			Player-1168-0A1B2C61	damage	60000
 2	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
@@ -161,6 +242,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		1500			Player-1168-0A1B2C61	dot_uptime_ms	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	energize_gained	1.5000
 2	Trash	Trash		1500			Player-1168-0A1B2C61	energize_wasted	0.5000
+2	Trash	Trash		1500			Player-1168-0A1B2C61	heal_absorbed	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	empower_stage1	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	empower_stage2	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	empower_stage3	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	empower_stage4	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	empower_cancelled	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	power_seconds	2
+2	Trash	Trash		1500			Player-1168-0A1B2C61	power_sum	150022
+2	Trash	Trash		1500			Player-1168-0A1B2C61	power_max	250050
 3	Trash	Trash		1500			Player-1168-0A1B2C61	damage	60000
 3	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
@@ -215,3 +305,12 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1500			Player-1168-0A1B2C61	dot_uptime_ms	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	energize_gained	0.0000
 3	Trash	Trash		1500			Player-1168-0A1B2C61	energize_wasted	0.0000
+3	Trash	Trash		1500			Player-1168-0A1B2C61	heal_absorbed	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	empower_stage1	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	empower_stage2	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	empower_stage3	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	empower_stage4	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	empower_cancelled	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	power_seconds	1
+3	Trash	Trash		1500			Player-1168-0A1B2C61	power_sum	150000
+3	Trash	Trash		1500			Player-1168-0A1B2C61	power_max	250000

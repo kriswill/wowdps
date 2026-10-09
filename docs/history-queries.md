@@ -195,3 +195,45 @@ never stores one, so the join is the only way to a guild in SQL, exactly
 as the daemon joins it when it answers. `guild` is `''` for a player the
 addon saw unguilded and `?` here for one it never saw; a guild night is
 one guild holding most of the members.
+
+## A healer's healing split, heal-absorbs included (R2, v44)
+
+```sql
+select p.fight_id, f.name, p.name, p.healing, p.overheal, p.absorbed,
+       p.heal_absorbed,
+       round(p.heal_absorbed * 100.0 / nullif(p.healing, 0), 1) as eaten_pct
+from players p join fights f on f.id = p.fight_id
+where p.role = 'healer' and p.healing > 0
+order by p.heal_absorbed desc;
+```
+
+`heal_absorbed` is the part of `healing` a heal-absorb ate (a boss's
+heal-absorb debuff, Light of the Martyr, Death Pact): healing done all the
+same — it had to land to clear the absorb — and the third half of the split
+beside `overheal` and `absorbed`. A card written before v44 reads 0 until
+`wowdps history regrade` rewrites it.
+
+## Mana over the pull, 10 s at a time (R28, v44)
+
+```sql
+with s as (
+  select w.fight_id, w.max, w.per_sec,
+         unnest(generate_series(1, len(w.per_sec))) as i
+  from power w
+  where w.guid = $1 and w.power_type = 0
+)
+select fight_id, max, (i - 1) // 10 * 10 as from_sec,
+       round(min(per_sec[i]) * 100.0 / max, 1) as low_pct,
+       round(arg_max(per_sec[i], i) * 100.0 / max, 1) as end_pct
+from s
+where per_sec[i] is not null
+group by 1, 2, 3
+order by 1, 3;
+```
+
+`per_sec` is the player's pool on the last line of each second that
+described them (NULL where none did — a gap is no report, not an empty
+pool); `max` the largest maximum reported. Mana is type 0 (`power_name`:
+1 rage, 3 energy, 17 fury, 19 essence …). Only kills, keys, pinned fights
+and long wipes keep the details tier the view reads, and only once written
+by v44 or regraded.

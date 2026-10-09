@@ -12,7 +12,9 @@ use std::path::Path;
 
 use wowdps_core::index::{load_segment_text, scan};
 use wowdps_core::meter::{Meter, Segment, View, meter_from_lines};
-use wowdps_model::{EnergizeRow, GroupKind, Row, SpellGroup, SpellPart, SpellTree};
+use wowdps_model::{
+    Empower, EnergizeRow, GroupKind, PowerSeries, Row, SpellGroup, SpellPart, SpellTree,
+};
 
 const FIXTURES: &[&str] = &[
     "sample.txt",
@@ -30,6 +32,7 @@ const FIXTURES: &[&str] = &[
 /// The tree fixture's roster (see `tree.expected.md`).
 const W: &str = "Player-1168-0A1B2C61"; // Destruction Warlock: pets, Wither, trinkets
 const P: &str = "Player-1168-0A1B2C62"; // Priest: Shadow Word: Pain, Renew
+const E: &str = "Player-1168-0A1B2C63"; // Evoker (v44): Fire Breath, Dream Breath
 
 fn fixture_path(name: &str) -> String {
     format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
@@ -285,6 +288,69 @@ fn energize_tallies_gain_and_overcap_per_power_type() {
     );
 }
 
+/// R26 (v44): an empowered spell's releases count by the stage they reached,
+/// and its cancels apart, on the row the spell's hits make — Fire Breath's
+/// damage, Dream Breath's healing — through the passive gate: the release
+/// before the pull and the one after the kill land nowhere, and a START
+/// counts nothing. A zoom window's tree carries none (a whole-fight count).
+#[test]
+fn empowered_releases_count_by_stage_on_their_row() {
+    let m = tree_fight();
+    let seg = &m.segments()[0];
+    let damage = seg.spell_tree(E, View::Damage);
+    let fire = damage.meta("Fire Breath").expect("Fire Breath's meta");
+    assert_eq!(
+        (fire.empower, fire.casts),
+        (
+            Empower {
+                stages: [1, 0, 1, 0],
+                cancelled: 1,
+            },
+            2
+        )
+    );
+    assert_eq!(fire.empower.stage_avg(), Some(2.0));
+    let healing = seg.spell_tree(E, View::Healing);
+    let dream = healing.meta("Dream Breath").expect("Dream Breath's meta");
+    assert_eq!(
+        dream.empower,
+        Empower {
+            stages: [0, 0, 0, 1],
+            cancelled: 1,
+        }
+    );
+    assert_eq!(
+        seg.empower(E),
+        Empower {
+            stages: [1, 0, 1, 1],
+            cancelled: 2,
+        },
+        "the player's sum over both spells"
+    );
+    assert!(seg.empower(W).is_empty() && seg.empower(P).is_empty());
+    for s in &m.segments()[1..] {
+        assert!(
+            s.empower(E).is_empty(),
+            "before the pull and after the kill: nowhere"
+        );
+    }
+    let ov = m.overall(0).expect("the visit's Σ");
+    assert_eq!(ov.empower(E), seg.empower(E));
+    assert_eq!(
+        ov.spell_tree(E, View::Damage)
+            .meta("Fire Breath")
+            .map(|m| m.empower),
+        Some(fire.empower)
+    );
+    assert!(
+        damage
+            .windowed()
+            .meta("Fire Breath")
+            .is_none_or(|m| m.empower.is_empty()),
+        "a window carries no whole-fight count"
+    );
+}
+
 /// Healing nests the same way: Renew's instant heal and its ticks are two
 /// parts of one row, each cast counted.
 #[test]
@@ -470,7 +536,16 @@ fn the_tree_survives_lazy_loading_on_every_fixture() {
         let full = replay(&text);
         let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();
         assert_eq!(metas.len(), full.segments().len(), "{name}: segment count");
-        let picture = |seg: &Segment| -> Vec<(String, View, SpellTree, u64, Vec<EnergizeRow>)> {
+        type Picture = (
+            String,
+            View,
+            SpellTree,
+            u64,
+            Vec<EnergizeRow>,
+            u64,
+            Vec<PowerSeries>,
+        );
+        let picture = |seg: &Segment| -> Vec<Picture> {
             let mut out = Vec::new();
             for view in [View::Damage, View::Healing] {
                 for r in seg.rows(view) {
@@ -480,6 +555,9 @@ fn the_tree_survives_lazy_loading_on_every_fixture() {
                         seg.spell_tree(&r.key, view),
                         seg.casts(&r.key) + 1_000 * seg.cast_starts(&r.key),
                         seg.energize(&r.key),
+                        // v44: the eaten healing (R2) and the power series (R28).
+                        r.heal_absorbed,
+                        seg.power(&r.key),
                     ));
                 }
             }

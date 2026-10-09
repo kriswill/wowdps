@@ -159,8 +159,8 @@ impl Table {
 /// — the daemon's role-relative grader over `players`; `rows`, `details`,
 /// `loadouts`, `annotations`; R17's `taken` / `mitigation` /
 /// `taken_spells` / `taken_sources`, R19's `support` / `support_targets`
-/// and R18's `uptime` / `coarse`, each defined only when the lake's own
-/// files carry the shape that view needs).
+/// R18's `uptime` / `coarse` and (v44) R28's `power`, each defined only
+/// when the lake's own files carry the shape that view needs).
 pub struct Lake {
     dir: PathBuf,
     conn: Connection,
@@ -545,6 +545,23 @@ impl Lake {
                  CAST(NULL AS DOUBLE) AS absorb_efficiency_sql"
                     .to_string()
             };
+            // v44 (R2): the third half of the healing split — what a
+            // heal-absorb ate of the healing. A card written before it has
+            // none and reads 0, as `CardPlayer::from_json` reads it; a lake
+            // with no such card at all names the column 0 too, so `SELECT
+            // heal_absorbed FROM players` answers on any lake.
+            let heal_absorbed_sql = if self
+                .sql(
+                    "SELECT heal_absorbed FROM \
+                     (SELECT unnest(players, recursive := true) FROM fights) LIMIT 0",
+                )
+                .is_ok()
+            {
+                excluded.push("heal_absorbed");
+                ", coalesce(p.heal_absorbed, 0) AS heal_absorbed"
+            } else {
+                ", CAST(0 AS BIGINT) AS heal_absorbed"
+            };
             let exclude = if excluded.is_empty() {
                 String::new()
             } else {
@@ -556,7 +573,7 @@ impl Lake {
                      f.start_utc_ms, f.duration_ms, f.success, f.aborted, \
                      f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
                      p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql}{am_sql}\
-                     {shields_sql} \
+                     {shields_sql}{heal_absorbed_sql} \
                      FROM fights f, unnest(f.players) AS u(p);",
                     role_case(),
                     support_case(),
@@ -637,6 +654,18 @@ impl Lake {
                 ))
                 .map_err(|e| e.to_string())?;
             self.views.push("details");
+            // v44 (R28): each player's pools second by second, one row per
+            // fight × player × power type — `per_sec` a BIGINT list with a
+            // NULL where no line reported (cast as `coarse`'s lists are: an
+            // all-empty list types `JSON[]`). Probed: a details file written
+            // before v44 has no `power` key, and a lake of such files no view.
+            self.probe_view(
+                "power",
+                "SELECT d.id AS fight_id, p.guid AS guid, w.power_type AS power_type, \
+                        w.max AS max, w.bucket_ms AS bucket_ms, w.per_sec::BIGINT[] AS per_sec \
+                 FROM details d, unnest(d.players) AS u(p), unnest(p.power) AS v(w)",
+                &["guid", "power_type", "per_sec"],
+            );
         }
         if self.has_files("loadouts", "json") {
             self.conn

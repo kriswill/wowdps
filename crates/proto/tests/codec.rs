@@ -108,6 +108,8 @@ fn row(key: &str, class: Option<Class>) -> Row {
         mine: class.is_some(),
         offset_ms: class.map(|_| -1_234),
         absorb: None,
+        // v44 (R2): both arms of the heal-absorbed split.
+        heal_absorbed: if class.is_some() { 6_000 } else { 0 },
     }
 }
 
@@ -446,6 +448,7 @@ fn card() -> FightCard {
                 guild: Some("Templars".to_string()),
                 // v43 (R17 amendment): armor's share, trailing.
                 reduced: 31_000,
+                heal_absorbed: 0,
             },
             CardPlayer::default(),
         ],
@@ -529,6 +532,19 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 tree: Default::default(),
                 ability_series: Vec::new(),
                 target_series: Vec::new(),
+                // v44 (R27, R28): the drilled player's resources and pools.
+                energize: vec![EnergizeRow {
+                    power_type: 0,
+                    gained: 1_250.5,
+                    wasted: 40.0,
+                    count: 3,
+                }],
+                power: vec![wowdps_model::PowerSeries {
+                    power_type: 0,
+                    max: 250_000,
+                    bucket_ms: 1_000,
+                    per_sec: vec![Some(250_000), None, Some(u32::MAX)],
+                }],
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -803,6 +819,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     tree: Default::default(),
                     ability_series: Vec::new(),
                     target_series: Vec::new(),
+                    energize: Vec::new(),
+                    power: Vec::new(),
                 }),
                 tier: 3,
                 has_recap: true,
@@ -880,6 +898,13 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     gained: 1.5,
                     wasted: 0.5,
                     count: 3,
+                }],
+                // v44 (R28): the drilled player's power series, trailing.
+                power: vec![wowdps_model::PowerSeries {
+                    power_type: 7,
+                    max: 5,
+                    bucket_ms: 1_000,
+                    per_sec: vec![None, Some(3)],
                 }],
             }),
         },
@@ -1066,7 +1091,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 43, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 44, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1177,7 +1202,7 @@ fn golden_bytes_pin_the_encoding() {
         // empty src, 0x0115 to 0x0116 (the run after it is all zeros).
         // v43 (R9): each zeroed Row grew a `00` absorb presence byte —
         // 0x0116 to 0x0118.
-        "18010000890100000000000000000001000000000000000000000000000000000000000000000000000000000000000000000001000000410000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa00000000000000020100000050070000000900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "280100008901000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000010000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000000000000201000000500700000009000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 
     // v24 (R18): a role-kind mark with its caster. Placed on side `b` so the
@@ -1305,8 +1330,9 @@ fn golden_bytes_pin_the_encoding() {
             enemy: true,
             school: 32, // Shadow — 0x20 in the golden bytes
             mine: true,
-            offset_ms: Some(-2), // v35: `01 feffffffffffffff`
-            absorb: Some(7),     // v43: `01 0700000000000000`
+            offset_ms: Some(-2),  // v35: `01 feffffffffffffff`
+            absorb: Some(7),      // v43: `01 0700000000000000`
+            heal_absorbed: 6_000, // v44: `7017000000000000`
         }],
         total_rows: 1,
         breakdown: None,
@@ -1503,9 +1529,9 @@ fn golden_bytes_pin_the_encoding() {
     // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
     // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
     // fields are the 32 bytes before the v23 48 before the v25 32 before
-    // the v26 13 before the v31 guild byte and v43's 8-byte `reduced`
-    // before those 50.
-    let player_end = zero.len() - 4 - 42 - 4 - 8 - 1 - 13;
+    // the v26 13 before the v31 guild byte, v43's 8-byte `reduced` and
+    // v44's 8-byte `heal_absorbed` before those 50.
+    let player_end = zero.len() - 4 - 42 - 4 - 8 - 8 - 1 - 13;
     let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
     assert_eq!(
         first_diff,
@@ -1630,9 +1656,24 @@ fn golden_bytes_pin_the_encoding() {
         "reduced"
     );
     assert_eq!(&zero[player_end + 14..player_end + 22], &[0u8; 8]);
+    // v44 (R2): u64 `heal_absorbed` right after `reduced` — the eaten part
+    // of the healing, the card's last field now.
+    let eaten = one(CardPlayer {
+        absorb_wasted: Some(0),
+        heal_absorbed: 0x7172_7374_7576_7778,
+        ..CardPlayer::default()
+    });
+    assert_eq!(eaten.len(), zero.len());
+    assert_eq!(&eaten[4..player_end + 22], &zero[4..player_end + 22]);
     assert_eq!(
-        &armored[player_end + 22..],
-        &zero[player_end + 22..],
+        &eaten[player_end + 22..player_end + 30],
+        &0x7172_7374_7576_7778u64.to_le_bytes(),
+        "heal_absorbed"
+    );
+    assert_eq!(&zero[player_end + 22..player_end + 30], &[0u8; 8]);
+    assert_eq!(
+        &armored[player_end + 30..],
+        &zero[player_end + 30..],
         "bosses untouched"
     );
 
@@ -1664,6 +1705,7 @@ fn golden_bytes_pin_the_encoding() {
                 abilities: false,
                 pair: None,
                 energize: Vec::new(),
+                power: Vec::new(),
             }),
         }
         .encode();
@@ -1671,9 +1713,14 @@ fn golden_bytes_pin_the_encoding() {
         // `00` here, pinned on its own below — v39 the series flag after
         // it and v42 the pair's presence byte after that; all are cut off,
         // so every tail these checks read ends where it did; v43's energize
-        // count (four `00`, an empty vec) closes the frame after them all.
+        // count (four `00`, an empty vec) comes after them all and v44's
+        // power count (four more) closes the frame.
         for _ in 0..4 {
-            assert_eq!(frame.last(), Some(&0), "energize: empty closes the frame");
+            assert_eq!(frame.last(), Some(&0), "power: empty closes the frame");
+            frame.pop();
+        }
+        for _ in 0..4 {
+            assert_eq!(frame.last(), Some(&0), "energize: empty before it");
             frame.pop();
         }
         assert_eq!(frame.last(), Some(&0), "pair: None before it");
@@ -1898,10 +1945,12 @@ fn golden_bytes_pin_the_encoding() {
         // byte; the frame grew from 0xa4 to 0xac.
         // v43 (R9): Row gained a trailing Option<u64> `absorb` — the
         // `01 0700000000000000` right after the offset; 0xac to 0xb5.
-        "b50000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
+        // v44 (R2): Row gained a trailing u64 `heal_absorbed` — the
+        // `7017000000000000` (6 000) right after the absorb; 0xb5 to 0xbd.
+        "bd0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
          0100000000 d007000000000000 01000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000000000\
          0049400107400003000000000000000100000000000000010500000000000000060000000000000001f3760000012000\
-         0000 01 01feffffffffffffff 01 0700000000000000 01000000 00 02000000 00 00 00"
+         0000 01 01feffffffffffffff 01 0700000000000000 7017000000000000 01000000 00 02000000 00 00 00"
             .replace(' ', "")
     );
 
@@ -2026,17 +2075,22 @@ fn golden_bytes_pin_the_encoding() {
                 abilities: false,
                 pair: None,
                 energize: Vec::new(),
+                power: Vec::new(),
             }),
         }
         .encode()
     };
     let (got, bare) = (hex(&fight(Some(small_raid))[4..]), hex(&fight(None)[4..]));
     // v39: the series flag closes the frame after the raid, v42 the
-    // abilities flag and the pair's presence byte after that, and v43 the
-    // empty energize vec's count last.
-    let head = bare.strip_suffix("00000000 00 00 00 00 00000000".replace(' ', "").as_str());
+    // abilities flag and the pair's presence byte after that, v43 the
+    // empty energize vec's count and v44 the empty power vec's count last.
+    let head = bare.strip_suffix(
+        "00000000 00 00 00 00 00000000 00000000"
+            .replace(' ', "")
+            .as_str(),
+    );
     assert_eq!(
-        head.map(|h| format!("{h}00000000{tail}00000000000000")),
+        head.map(|h| format!("{h}00000000{tail}0000000000000000000000")),
         Some(got),
         "shields 0, then the raid"
     );
@@ -2083,6 +2137,8 @@ fn golden_bytes_pin_the_encoding() {
             tree: Default::default(),
             ability_series: Vec::new(),
             target_series: Vec::new(),
+            energize: Vec::new(),
+            power: Vec::new(),
         }),
         segment_count: 0,
         source: None,
@@ -2101,9 +2157,10 @@ fn golden_bytes_pin_the_encoding() {
         // stacking vec 0, stacks vec 0, stacks_dropped 0, stack_base vec 0
         // (16 zero bytes) | v28 (R9): deaths vec 0, death_index 00,
         // deaths_dropped 0 (9 more) | v36 (R26): the tree's two empty vecs and
-        // the two empty series (16 more) | segment_count 0, source 00, status
-        // 00 | v35 (R25): raid 00 — len 0xc5; v40: 0xcd; v43: 0xd5.
-        "d500000082010000000000000000000601000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a000000070000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // the two empty series (16 more) | v44 (R27, R28): the empty energize and
+        // power vecs (8 more) | segment_count 0, source 00, status 00 | v35
+        // (R25): raid 00 — len 0xc5; v40: 0xcd; v43: 0xd5; v44: 0xdd.
+        "dd00000082010000000000000000000601000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a0000000700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 }
 
@@ -2155,6 +2212,8 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
                 tree: Default::default(),
                 ability_series: Vec::new(),
                 target_series: Vec::new(),
+                energize: Vec::new(),
+                power: Vec::new(),
             }),
             segment_count: 0,
             source: None,
@@ -2169,8 +2228,9 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
     // deaths_dropped = 9 more).
     // v36 (R26): the tree's two empty vec counts and the two empty series
     // follow the range (16 bytes), counted into the tail so the zeros region
-    // below keeps its shape.
-    let tail = 7 + 16;
+    // below keeps its shape. v44 (R27, R28): the empty energize and power
+    // vec counts follow the series (8 more).
+    let tail = 7 + 16 + 8;
     // v33 added one more: the `range` presence byte.
     const V27_V28_ZEROS: usize = 26;
     assert_eq!(
@@ -2272,6 +2332,8 @@ fn v43_mitigation_is_96_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
             tree: Default::default(),
             ability_series: Vec::new(),
             target_series: Vec::new(),
+            energize: Vec::new(),
+            power: Vec::new(),
         }),
         segment_count: 5,
         source: Some("x.txt".to_string()),
@@ -2284,8 +2346,9 @@ fn v43_mitigation_is_96_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     // Both end with the v27 stack fields, v28's death fields and v33's range
     // (26 zero bytes) and v36's empty tree and series (16 more), then
     // segment_count (u32 5) + source + status: 4 + 1+4+5 + 1, and v35's raid
-    // presence byte.
-    let tail = 26 + 16 + 4 + 10 + 1 + 1;
+    // presence byte; v44's empty energize and power vec counts (8) follow
+    // the series.
+    let tail = 26 + 16 + 8 + 4 + 10 + 1 + 1;
     let (some_head, some_tail) = some.split_at(some.len() - tail);
     let (none_head, none_tail) = none.split_at(none.len() - tail);
     assert_eq!(some_tail, none_tail);
@@ -2330,7 +2393,7 @@ fn v43_mitigation_is_96_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
 /// order is proven, a round trip, and an unknown group kind refused.
 #[test]
 fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
-    use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
+    use wowdps_model::{Empower, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
     let tree = SpellTree {
         groups: vec![SpellGroup {
             key: "g".to_string(),
@@ -2353,6 +2416,16 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
             misses: 0x7172_7374_7576_7778,
             uptime_ms: 0x8182_8384_8586_8788,
             starts: 0x9192_9394_9596_9798,
+            // v44: an empowered row — a presence byte, then five u64.
+            empower: Empower {
+                stages: [
+                    0xa1a2_a3a4_a5a6_a7a8,
+                    0xb1b2_b3b4_b5b6_b7b8,
+                    0xc1c2_c3c4_c5c6_c7c8,
+                    0xd1d2_d3d4_d5d6_d7d8,
+                ],
+                cancelled: 0xe1e2_e3e4_e5e6_e7e8,
+            },
         }],
     };
     let make = |tree: SpellTree| DaemonMsg::Snapshot {
@@ -2374,9 +2447,10 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
     };
     let empty = make(SpellTree::default()).encode();
     let full = make(tree.clone()).encode();
-    // Both end with the two empty series (8 bytes, below), segment_count 0,
-    // source 00, status 00 and raid 00.
-    let tail = 8 + 7;
+    // Both end with the two empty series (8 bytes, below), v44's empty
+    // energize and power (8 more), segment_count 0, source 00, status 00
+    // and raid 00.
+    let tail = 8 + 8 + 7;
     let mut want = Vec::new();
     want.extend_from_slice(&1u32.to_le_bytes()); // groups len
     want.extend_from_slice(&1u32.to_le_bytes());
@@ -2401,6 +2475,16 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
     want.extend_from_slice(&0x7172_7374_7576_7778u64.to_le_bytes()); // misses
     want.extend_from_slice(&0x8182_8384_8586_8788u64.to_le_bytes()); // uptime_ms
     want.extend_from_slice(&0x9192_9394_9596_9798u64.to_le_bytes()); // v43: starts
+    want.push(1); // v44: the empower presence byte
+    for n in [
+        0xa1a2_a3a4_a5a6_a7a8u64,
+        0xb1b2_b3b4_b5b6_b7b8,
+        0xc1c2_c3c4_c5c6_c7c8,
+        0xd1d2_d3d4_d5d6_d7d8,
+        0xe1e2_e3e4_e5e6_e7e8,
+    ] {
+        want.extend_from_slice(&n.to_le_bytes());
+    }
     let start = empty.len() - tail - 8;
     assert_eq!(
         &empty[start..empty.len() - tail],
@@ -2466,7 +2550,8 @@ fn v36_the_stack_series_follow_the_tree() {
         vec![series("tb", &[1, 2])],
     )
     .encode();
-    let tail = 7;
+    // v44: the empty energize and power counts follow the series.
+    let tail = 8 + 7;
     let start = empty.len() - tail - 8;
     assert_eq!(&empty[start..empty.len() - tail], &[0u8; 8]);
     let mut want = Vec::new();

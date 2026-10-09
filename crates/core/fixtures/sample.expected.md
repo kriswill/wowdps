@@ -331,3 +331,23 @@ power type summed, four decimals) after `dot_uptime_ms`. The one
 `SPELL_ENERGIZE` here, P1 Thraxx's Second Wind at 20:05:20 in segment 2 (The
 Ashen Warden), gives him **20 rage** (type 1, nothing over the cap); every
 other row reads 0.0000.
+
+## Addendum — heal-absorbs, empowers and power (2026-10-09: R2, R26, R28; v44)
+
+`check.awk` emits eight more rows per player after `energize_wasted`:
+`heal_absorbed`, `empower_stage1`..`4`, `empower_cancelled`, `power_seconds`,
+`power_sum`, `power_max`. No heal here logs an `absorbed` above 0 and nobody
+empowers, so those read 0 everywhere (`support.txt` and `tree.txt` carry
+them). Power is reported on every advanced block describing a player, the
+last report of a second winning:
+
+- The Ashen Warden (segment 2, from 20:05:00): P1 Thraxx's rage on seven
+  seconds — 84, 60, 84, 55, 84, 84, 84 — **Σ 535, max 100**; P2 Mírelle's
+  mana at 0:22 and 0:30 (178 000 + 176 000 = **354 000**, max 250 000); P3
+  Kael'thar's focus once (**90**, max 120).
+- Verkath the Hollow (segment 4, from 20:08:00): Thraxx 84, 60, 60, 84, 84 —
+  **Σ 372** over five seconds; Kael'thar 90 once.
+- The trash pulls read nothing: Thraxx's swing at 20:04:02 (and 20:07:05)
+  OPENS its trash segment, and the report is read before its line can open
+  one — the R23 order — so it lands nowhere; no later line in those pulls
+  describes a player.

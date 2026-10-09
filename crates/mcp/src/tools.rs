@@ -8,9 +8,9 @@ use crate::json::Json;
 use crate::obj;
 
 use wowdps_model::{
-    COMBATANT_STATS, EnergizeRow, GearItem, Loadout, LoadoutAura, Mark, MissKind, Mitigation, Role,
-    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, SpellTree, StackCell,
-    Timeline, View, power_name,
+    COMBATANT_STATS, EnergizeRow, GearItem, Loadout, LoadoutAura, Mark, MissKind, Mitigation,
+    PowerSeries, Role, RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec,
+    SpellTree, StackCell, Timeline, View, power_name,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
@@ -101,7 +101,9 @@ pub fn catalog() -> Vec<Tool> {
                           `combat_ms` on the fight object; a keystone run's rows add \
                           run_per_sec over the key timer (`duration_ms`). The place to start for \
                           performance questions — view=taken (R17) is the tank side: \
-                          damage taken per player, per_sec = DTPS, extra = absorbed. A row \
+                          damage taken per player, per_sec = DTPS, extra = absorbed. On \
+                          healing a row also carries heal_absorbed (v44, R2): the part of \
+                          its amount a heal-absorb ate — healing done all the same. A row \
                           with mine: true is one of the user's own characters (v35: the \
                           addon's own-character set, the configured characters, the \
                           history owner). A `raid` object (R25, v35) is the whole group's \
@@ -179,6 +181,9 @@ pub fn catalog() -> Vec<Tool> {
                           under that ability name; 0 casts = none logged, as for a swing \
                           or a proc), `starts` (v43: SPELL_CAST_STARTs under that name — a cast-time \
                           spell's casts that began; starts beyond casts never went off), \
+                          `empower` (v44: an empowered spell's releases by stage — \
+                          `stages` [stage 1, 2, 3, 4], `cancelled` and `stage_avg`), a \
+                          healing ability's `heal_absorbed` (v44, R2: what a heal-absorb ate), \
                           `parts` (per spell id, periodic = a DoT/HoT tick, \
                           summing to the row), `misses` + `miss_pct` (the player's own \
                           misses under that name, of hits + misses) and a DoT's \
@@ -245,7 +250,8 @@ pub fn catalog() -> Vec<Tool> {
                           Tanks stay unranked (rank_measure null, rank_count = tanks in the \
                           fight) and are read through their own numbers instead: every \
                           me/peer row carries taken, mitigated, prevented, reduced (v43, 0 \
-                          until regrade_fights), mitigated_pct and dtps (R17), the healing split overheal / absorbed, the support \
+                          until regrade_fights), mitigated_pct and dtps (R17), the healing split overheal / absorbed / heal_absorbed (v44: what a heal-absorb ate of the healing, 0 until \
+                          regrade_fights), the support \
                           scalars support_given / support_received / effective_dps, \
                           healed_received / self_healed and `support` (true for a support \
                           spec), and — v25 (R18, step 4b) — am_uptime_pct (active \
@@ -585,7 +591,15 @@ pub fn catalog() -> Vec<Tool> {
                           waste_pct, count}, where wasted is what the cap ate (generated \
                           while the pool was full) and waste_pct its share of gained + \
                           wasted. Absent when nothing energized them, below the details \
-                          tier, and on a record written before it until regrade_fights.",
+                          tier, and on a record written before it until regrade_fights. With \
+                          `player` the answer also carries `power` (v44, R28): the player's \
+                          pools second by second, one entry per power type, the primary \
+                          first — {power_type, power, max, bucket_ms, per_sec}, per_sec the \
+                          pool on the last line of each second from the pull's start (null \
+                          where no line reported it; a pet's pool is never the player's). \
+                          ASK THIS for a healer's mana curve: when they ran dry, how long \
+                          they sat full. Absent below the details tier and on a record \
+                          written before it until regrade_fights.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -801,7 +815,7 @@ pub fn catalog() -> Vec<Tool> {
                           fight_id, encounter_id, difficulty, guid, name, class, spec, role \
                           (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
                           — on cards written since roadmap 1a — taken, mitigated, prevented, dtps, \
-                          mitigated_pct, overheal, absorbed, support_given, support_received, \
+                          mitigated_pct, overheal, absorbed, heal_absorbed (v44), support_given, support_received, \
                           healed_received, self_healed, effective_dps, plus effective_dps_sql \
                           (always present: recomputed, equals dps on older cards) and a derived \
                           support flag, and — v25 — am_uptime_ms, externals_given, \
@@ -821,8 +835,10 @@ pub fn catalog() -> Vec<Tool> {
                           the R18 aura rollup, uncapped) and coarse (v25: fight × guid × \
                           taken10 / heal10 as 10 s bucket lists and the marks) and shields \
                           (v26, R20: fight × guid × spell_id, label, applied, consumed, \
-                          wasted, count, unknown — the shield ledger rows) — present only \
-                          when the files carry them; `views` lists them. The recipes — AM \
+                          wasted, count, unknown — the shield ledger rows) and power \
+                          (v44, R28: fight × guid × power_type, max, bucket_ms, per_sec — a \
+                          BIGINT list of the pool each second, NULL where unreported) — present \
+                          only when the files carry them; `views` lists them. The recipes — AM \
                           uptime scatter, externals given per caster, co-tank splits, absorb \
                           efficiency by boss and the per-spell shield drill — are in \
                           the repo's docs/history-queries.md; `wowdps history role-night` \
@@ -1729,6 +1745,11 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         if !f.energize.is_empty() {
             o.push(("energize".to_string(), energize_json(&f.energize)));
         }
+        // R28 (v44): the drilled player's pools second by second, from
+        // the details tier — absent when no line reported one (and below it).
+        if !f.power.is_empty() {
+            o.push(("power".to_string(), power_json(&f.power)));
+        }
         // v39: a window answers only where the store keeps the seconds;
         // anywhere else the lists below would be the whole fight, so say so.
         if let (Some((lo, hi)), Some(b)) = (window, &f.breakdown) {
@@ -1908,6 +1929,36 @@ fn energize_json(rows: &[EnergizeRow]) -> Json {
                     "wasted": Json::num(round1(e.wasted)),
                     "waste_pct": Json::num(round1(e.waste_pct())),
                     "count": Json::u64(u64::from(e.count)),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// R28 (v44): the drilled player's pools for a reader — one entry per
+/// power type, the primary pool (the type reported in the most seconds)
+/// first: its `max` (the largest reported) and `per_sec`, the pool on the
+/// last line of each second from the pull's start, `null` where no line
+/// reported this type.
+fn power_json(series: &[PowerSeries]) -> Json {
+    let primary = wowdps_model::primary_power(series).map(|s| s.power_type);
+    let mut ordered: Vec<&PowerSeries> = series.iter().collect();
+    ordered.sort_by_key(|s| (Some(s.power_type) != primary, s.power_type));
+    Json::Arr(
+        ordered
+            .into_iter()
+            .map(|s| {
+                obj! {
+                    "power_type": Json::u64(u64::from(s.power_type)),
+                    "power": Json::str(power_name(s.power_type)),
+                    "max": Json::u64(u64::from(s.max)),
+                    "bucket_ms": Json::u64(u64::from(s.bucket_ms)),
+                    "per_sec": Json::Arr(
+                        s.per_sec
+                            .iter()
+                            .map(|v| v.map_or(Json::Null, |n| Json::u64(u64::from(n))))
+                            .collect(),
+                    ),
                 }
             })
             .collect(),
@@ -2213,6 +2264,9 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         // (derived from the spec, never stored).
         "overheal": Json::u64(me.overheal),
         "absorbed": Json::u64(me.absorbed),
+        // v44 (R2): the third half — what a heal-absorb ate of the
+        // healing; 0 on a card written before it.
+        "heal_absorbed": Json::u64(me.heal_absorbed),
         "support_given": Json::u64(me.support_given),
         "support_received": Json::u64(me.support_received),
         "effective_dps": Json::num(round1(me.effective_dps(c.rate_ms()))),
@@ -2450,6 +2504,7 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
             // Step 3b: the healing split and the support scalars on every row.
             "overheal": Json::u64(p.overheal),
             "absorbed": Json::u64(p.absorbed),
+            "heal_absorbed": Json::u64(p.heal_absorbed),
             "support_given": Json::u64(p.support_given),
             "support_received": Json::u64(p.support_received),
             "effective_dps": Json::num(round1(p.effective_dps(c.rate_ms()))),
@@ -3701,6 +3756,11 @@ fn meter_row(rank: usize, r: &Row, view: View, run_ms: Option<i64>) -> Json {
             },
             Json::u64(r.extra),
         ));
+        // v44 (R2): a Healing row's third half — what a heal-absorb ate,
+        // inside `amount`.
+        if view == View::Healing {
+            o.push(("heal_absorbed".to_string(), Json::u64(r.heal_absorbed)));
+        }
     }
     o.push(("events".to_string(), Json::u64(r.count)));
     // v35: one of the user's own characters, as the daemon resolves them.
@@ -3739,6 +3799,21 @@ fn tree_ability_row(r: &Row, view: View, tree: &SpellTree, fight_ms: i64) -> Jso
     // moved out of).
     if m.starts > 0 {
         o.push(("starts".to_string(), Json::u64(m.starts)));
+    }
+    // v44 (R26): an empowered spell's releases by stage (1–4) and its
+    // cancels, with the mean stage released.
+    if !m.empower.is_empty() {
+        let mut e = vec![
+            (
+                "stages".to_string(),
+                Json::Arr(m.empower.stages.iter().map(|n| Json::u64(*n)).collect()),
+            ),
+            ("cancelled".to_string(), Json::u64(m.empower.cancelled)),
+        ];
+        if let Some(avg) = m.empower.stage_avg() {
+            e.push(("stage_avg".to_string(), Json::num(round1(avg))));
+        }
+        o.push(("empower".to_string(), Json::Obj(e)));
     }
     if m.misses > 0 {
         let pct = m.misses as f64 / (r.count + m.misses) as f64 * 100.0;
@@ -3834,6 +3909,10 @@ fn ability_row(r: &Row, view: View) -> Json {
             o.push(("avg_hit".to_string(), Json::u64(avg)));
         }
         o.push(("per_sec".to_string(), Json::num(round1(r.per_sec))));
+    }
+    // v44 (R2): a healing ability's part a heal-absorb ate, when any.
+    if view == View::Healing && r.heal_absorbed > 0 {
+        o.push(("heal_absorbed".to_string(), Json::u64(r.heal_absorbed)));
     }
     if let Some((hp, max)) = r.hp {
         o.push((

@@ -221,6 +221,33 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                 (i, key.clone(), "energize_wasted".into()),
                 energize.iter().map(|r| r.wasted).sum(),
             );
+            let mut put_i = |metric: &str, v: i64| {
+                out.insert((i, key.clone(), metric.to_string()), v as f64);
+            };
+            // R2 (v44): the healing a heal-absorb ate — inside `heal`.
+            put_i("heal_absorbed", seg.heal_absorbed(key) as i64);
+            // R26 (v44): the empowered releases by stage, and the cancels.
+            let e = seg.empower(key);
+            for (n, c) in e.stages.iter().enumerate() {
+                put_i(&format!("empower_stage{}", n + 1), *c as i64);
+            }
+            put_i("empower_cancelled", e.cancelled as i64);
+            // R28 (v44): the power series — seconds reported, Σ of their
+            // values, Σ of each type's largest max.
+            let power = seg.power(key);
+            put_i(
+                "power_seconds",
+                power.iter().map(|p| p.reported() as i64).sum(),
+            );
+            put_i(
+                "power_sum",
+                power
+                    .iter()
+                    .flat_map(|p| p.per_sec.iter().flatten())
+                    .map(|v| i64::from(*v))
+                    .sum(),
+            );
+            put_i("power_max", power.iter().map(|p| i64::from(p.max)).sum());
         }
         let _ = result;
     }

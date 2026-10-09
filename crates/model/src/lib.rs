@@ -1145,6 +1145,49 @@ pub fn power_name(power_type: u32) -> &'static str {
     }
 }
 
+/// R28 (v44): one player's pool of one power type, second by second — the
+/// advanced block's current power on the last line of each second that
+/// described them (`per_sec[i]` covers `[i·bucket_ms, (i+1)·bucket_ms)` from
+/// the segment's start, `None` where no line reported this type), and `max`
+/// the largest maximum any of those lines gave. A Druid's shapeshifts read
+/// as two series with gaps, one per type; a pet's pool is never its owner's.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PowerSeries {
+    pub power_type: u32,
+    pub max: u32,
+    pub bucket_ms: u32,
+    pub per_sec: Vec<Option<u32>>,
+}
+
+impl PowerSeries {
+    /// Seconds with a report.
+    pub fn reported(&self) -> usize {
+        self.per_sec.iter().filter(|v| v.is_some()).count()
+    }
+
+    /// Each second's pool as a fraction of `max` (0..=1), `None` where no
+    /// line reported — or everywhere, with a `max` of 0.
+    pub fn fractions(&self) -> Vec<Option<f64>> {
+        self.per_sec
+            .iter()
+            .map(|v| {
+                v.filter(|_| self.max > 0)
+                    .map(|c| (f64::from(c) / f64::from(self.max)).min(1.0))
+            })
+            .collect()
+    }
+}
+
+/// R28: a player's primary pool among their series — the type reported in
+/// the most seconds (the lowest type on a tie), `None` with no series.
+pub fn primary_power(series: &[PowerSeries]) -> Option<&PowerSeries> {
+    series.iter().max_by(|a, b| {
+        a.reported()
+            .cmp(&b.reported())
+            .then(b.power_type.cmp(&a.power_type))
+    })
+}
+
 /// R20 (step 5): one row of a player's shield ledger — every shield of one
 /// spell they cast in the segment, folded: `applied` (the initial sizes plus
 /// refresh growth plus over-absorb excess), `consumed` (Σ `SPELL_ABSORBED`
@@ -1329,6 +1372,53 @@ pub struct SpellMeta {
     /// (when positive) is how many were cancelled, interrupted or pushed
     /// back past their end. 0 on an instant spell, which writes no start.
     pub starts: u64,
+    /// R26 (v44): an empowered spell's releases by stage and its cancels —
+    /// `SPELL_EMPOWER_END` / `_INTERRUPT` by the player and their pets under
+    /// the row's name. Empty on every other row.
+    pub empower: Empower,
+}
+
+/// R26 (v44): how a player released an empowered spell (an Evoker's Fire
+/// Breath, Dream Breath …): `stages[n]` the `SPELL_EMPOWER_END`s released
+/// at stage `n + 1` (1–4), `cancelled` the `SPELL_EMPOWER_INTERRUPT`s —
+/// charges let go of, or knocked out of, before a release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Empower {
+    pub stages: [u64; 4],
+    pub cancelled: u64,
+}
+
+impl Empower {
+    /// Nothing was empowered: no release and no cancel.
+    pub fn is_empty(&self) -> bool {
+        self.stages.iter().all(|n| *n == 0) && self.cancelled == 0
+    }
+
+    /// Every release, whatever its stage.
+    pub fn released(&self) -> u64 {
+        self.stages.iter().fold(0, |a, n| a.saturating_add(*n))
+    }
+
+    /// The mean stage released, `None` with no release.
+    pub fn stage_avg(&self) -> Option<f64> {
+        let n = self.released();
+        (n > 0).then(|| {
+            let weighted: f64 = self
+                .stages
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i as f64 + 1.0) * *c as f64)
+                .sum();
+            weighted / n as f64
+        })
+    }
+
+    pub fn merge(&mut self, other: &Empower) {
+        for (a, b) in self.stages.iter_mut().zip(other.stages) {
+            *a = a.saturating_add(b);
+        }
+        self.cancelled = self.cancelled.saturating_add(other.cancelled);
+    }
 }
 
 /// R26: how one player's by-ability rows nest — Damage and Healing only;
@@ -1378,6 +1468,7 @@ impl SpellTree {
             m.misses = 0;
             m.uptime_ms = 0;
             m.starts = 0;
+            m.empower = Empower::default();
         }
         self.rows.retain(|m| !m.group.is_empty());
         self
@@ -1725,6 +1816,13 @@ pub struct Row {
     /// — the advanced block's absorb field, from the same health report as
     /// `hp` (so `None` wherever `hp` is, and on recaps stored before v43).
     pub absorb: Option<u64>,
+    /// v44 (R2), Healing rows only — the meter row and its by-ability rows:
+    /// the part of `amount` a heal-absorb ate (the heal line's `absorbed`
+    /// field, capped at the line's `amount − overheal`) — healing done all
+    /// the same, beside `extra`'s overheal. 0 everywhere else, on rows the
+    /// per-second series build (a zoom window's, a comparison's — the
+    /// series keep no such split), and on rows stored before v44.
+    pub heal_absorbed: u64,
 }
 
 impl Row {
@@ -1999,6 +2097,10 @@ mod tests {
                     misses: 1,
                     uptime_ms: 9,
                     starts: 4,
+                    empower: Empower {
+                        stages: [1, 2, 0, 0],
+                        cancelled: 1,
+                    },
                 },
                 SpellMeta {
                     key: "Wither".into(),
@@ -2008,6 +2110,7 @@ mod tests {
                     misses: 0,
                     uptime_ms: 40_000,
                     starts: 0,
+                    empower: Empower::default(),
                 },
             ],
         };
@@ -2505,5 +2608,69 @@ mod tests {
         assert_eq!(effective(0, 5, 0), 0);
         assert_eq!(effective(0, 5, 10), 5);
         assert_eq!(effective(u64::MAX, 0, u64::MAX), u64::MAX);
+    }
+
+    /// R26 (v44): the mean stage is over releases alone — a cancel has no
+    /// stage — and nothing released has none.
+    #[test]
+    fn empower_averages_the_stages_released() {
+        let mut e = Empower {
+            stages: [1, 0, 3, 0],
+            cancelled: 2,
+        };
+        assert_eq!(e.released(), 4);
+        assert_eq!(e.stage_avg(), Some(2.5));
+        assert!(!e.is_empty());
+        e.merge(&Empower {
+            stages: [0, 0, 0, 1],
+            cancelled: 1,
+        });
+        assert_eq!((e.stages, e.cancelled), ([1, 0, 3, 1], 3));
+        let cancels = Empower {
+            stages: [0; 4],
+            cancelled: 1,
+        };
+        assert_eq!(cancels.stage_avg(), None);
+        assert!(!cancels.is_empty() && Empower::default().is_empty());
+    }
+
+    /// R28: a second with no report is no fraction, a pool past its max
+    /// reads full, and the primary pool is the one reported most.
+    #[test]
+    fn power_series_reads_as_fractions_and_names_its_primary() {
+        let mana = PowerSeries {
+            power_type: 0,
+            max: 1000,
+            bucket_ms: 1000,
+            per_sec: vec![Some(1000), None, Some(250), Some(1200)],
+        };
+        assert_eq!(
+            mana.fractions(),
+            vec![Some(1.0), None, Some(0.25), Some(1.0)]
+        );
+        assert_eq!(mana.reported(), 3);
+        let energy = PowerSeries {
+            power_type: 3,
+            max: 0,
+            bucket_ms: 1000,
+            per_sec: vec![Some(5), Some(9), Some(1)],
+        };
+        assert_eq!(
+            energy.fractions(),
+            vec![None, None, None],
+            "no max, no fraction"
+        );
+        assert_eq!(primary_power(&[mana.clone(), energy.clone()]), Some(&mana));
+        let tie = PowerSeries {
+            power_type: 3,
+            per_sec: vec![Some(1), Some(1), Some(1)],
+            ..energy
+        };
+        assert_eq!(
+            primary_power(&[tie, mana.clone()]),
+            Some(&mana),
+            "the lower type on a tie"
+        );
+        assert_eq!(primary_power(&[]), None);
     }
 }

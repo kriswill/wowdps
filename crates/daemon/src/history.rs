@@ -2976,6 +2976,7 @@ impl<B: Backend> Store<B> {
                 abilities: false,
                 pair: None,
                 energize: Vec::new(),
+                power: Vec::new(),
             });
         };
         let tier = if details.is_some() { 3 } else { 2 };
@@ -3213,12 +3214,15 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                     p.dps = r.per_sec;
                 }
                 // R2 amendment (step 3b): the row's `extra` is the
-                // overhealing — the one half of the healing split the
-                // row itself carries; `absorbed` comes from the meter below.
+                // overhealing — the half of the healing split the row
+                // itself carries; `absorbed` comes from the meter below.
                 View::Healing => {
                     p.healing = r.amount;
                     p.hps = r.per_sec;
                     p.overheal = r.extra;
+                    // v44 (R2): and the row carries the third half too — the
+                    // part a heal-absorb ate.
+                    p.heal_absorbed = r.heal_absorbed;
                 }
                 // R17: the same path as `dps` — the row's own rate over the
                 // R7 duration, so a stored dtps equals the live snapshot's.
@@ -3515,6 +3519,8 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                     .collect(),
                 // v43 (R27): what energized them, per power type.
                 energize: seg.energize(&p.guid),
+                // v44 (R28): their pools second by second, per power type.
+                power: seg.power(&p.guid),
             }
         })
         .collect();
@@ -3873,6 +3879,13 @@ fn answer(
     {
         dress(b, &p, detail(guid), class_spec(&card, guid), abilities, ask);
     }
+    // v44 (R27, R28): the drilled player's resources and pools ride the
+    // breakdown as they ride the live one — off the details tier, whatever
+    // the view; none below it.
+    if let (Some(b), Some(d)) = (breakdown.as_mut(), drill.and_then(detail)) {
+        b.energize.clone_from(&d.energize);
+        b.power.clone_from(&d.power);
+    }
     // v42: a pair compares off the details tier (each side's abilities and
     // curve); the series tier adds its windows and an ability's curve.
     let pair = match (drill, ask.pair.as_deref()) {
@@ -3932,6 +3945,10 @@ fn answer(
         energize: drill
             .and_then(detail)
             .map_or_else(Vec::new, |d| d.energize.clone()),
+        // v44 (R28): their pools second by second, likewise.
+        power: drill
+            .and_then(detail)
+            .map_or_else(Vec::new, |d| d.power.clone()),
     }
 }
 

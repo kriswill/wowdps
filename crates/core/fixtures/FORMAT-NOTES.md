@@ -81,6 +81,9 @@ damage/heal suffix by two columns.
 > fields 10–13 are `a|b` pairs (a Rogue's `3|4,191|5,250|7,25|5`: energy 191
 > of 250 costing 25, combo points 5 of 7 costing 5 — 439 such lines in a real
 > Heroic pull, every one a cast); the parser keeps the first of each.
+ R28 (v44) keeps a player's 10–12 as a 1 s series per power type (a
+> healer's mana reads `0,233204,250000`: type 0, 233 204 of 250 000; Astral
+> Power is in tenths, `8,902,1000`).
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 
@@ -141,10 +144,24 @@ Advanced block at 9-27, then:
 | 31 | `healed_to_hp` | NOT the heal amount |
 | 32 | `amount` | **canonical — INCLUDES overheal** |
 | 33 | `overheal` | |
-| 34 | `absorbed_to_shield` | already inside `amount`, do not subtract |
+| 34 | `absorbed` | what a heal-absorb ATE (R2, v44) — already inside `amount`, do not subtract |
 | 35 | `critical` | |
 
 Effective healing = `amount - overheal`.
+
+> **CORRECTION (v44) — offset 34 is the heal-absorb's part, not a shield.**
+> This file called it `absorbed_to_shield`. Measured on a real raid night
+> (2026-10-07, a 300 MB slice: 169 947 heal lines, 6 201 with it above 0):
+> it is the part of the heal a heal-absorb took — a boss's heal-absorb
+> debuff, Light of the Martyr's drawback, Death Pact — Earthliving, Healing
+> Rain and Beacon of Light top the list, and a Healing Stream Totem tick
+> logs `14053,0,14053,nil` (amount 14 053, overheal 0, all of it eaten).
+> `amount ≥ overheal + absorbed` on all but 56 of them, every exception a
+> Shadow Priest's self-heal (Vampiric Touch, Shadow Word: Madness, Touch of
+> the Grave) logging amount 0 with absorbed above it. R2 keeps it healing
+> done and surfaces it as `heal_absorbed`, capped at `amount − overheal`.
+> The absorb's own line is `SPELL_HEAL_ABSORBED`, which the parser leaves
+> `Other`.
 
 ### SPELL_ABSORBED — variable arity, 19 or 22 fields
 
@@ -271,8 +288,11 @@ of them on that pull. A cast-time spell writes it at the start and
 `SPELL_CAST_SUCCESS` when it goes off; a cancelled or kicked cast writes the
 start alone. `SPELL_EMPOWER_START` is the same 12 fields; `SPELL_EMPOWER_END`
 adds the stage released (`…,355936,"Dream Breath",0x8,1`) and
-`SPELL_EMPOWER_INTERRUPT` a trailing `0`. None of them is combat for the
-index scanner.
+`SPELL_EMPOWER_INTERRUPT` the stage the charge had reached when it was let
+go (`0` or `1` on a real night: 55 starts = 48 ends + 7 interrupts, the
+ends at stages 1–3; Font of Magic allows 4). None of them is combat for the
+index scanner; R26 (v44) counts the releases by stage and the interrupts
+as cancels on the spell's row.
 
 ### Count/flag events
 

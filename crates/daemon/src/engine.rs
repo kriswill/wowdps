@@ -1241,6 +1241,21 @@ impl Engine {
                         tree,
                         ability_series,
                         target_series,
+                        // v44 (R27): the drilled player's resources, whatever
+                        // the view — the enemies' view drills an enemy NAME,
+                        // whose pool nobody tallies.
+                        energize: if *view == View::EnemyTaken {
+                            Vec::new()
+                        } else {
+                            s.energize(key)
+                        },
+                        // v44 (R28): their pools second by second, for a
+                        // client that draws them (the window's inspector).
+                        power: if *with_series && *view != View::EnemyTaken {
+                            s.power(key)
+                        } else {
+                            Vec::new()
+                        },
                     }
                 });
                 // v35 (R25): the whole group's fight beside the rows, for a

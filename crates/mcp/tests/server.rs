@@ -1187,6 +1187,22 @@ fn history_tools_answer_over_the_store() {
     assert_eq!(str_of(&energize[0], "power"), "rage");
     assert_eq!(num_of(&energize[0], "gained"), 20.0);
     assert_eq!(num_of(&energize[0], "waste_pct"), 0.0);
+    // R28 (v44): and their pools second by second off the same tier —
+    // the warrior's rage, the one type the advanced block gave him, a null
+    // for every second no line described him.
+    let power = match doc.get("power") {
+        Some(Json::Arr(rows)) => rows.clone(),
+        other => panic!("power: {other:?}"),
+    };
+    assert_eq!(power.len(), 1, "{power:?}");
+    assert_eq!(str_of(&power[0], "power"), "rage");
+    assert_eq!(num_of(&power[0], "max"), 100.0);
+    let per_sec = power[0]
+        .get("per_sec")
+        .and_then(Json::as_arr)
+        .expect("per_sec");
+    assert!(per_sec.contains(&Json::Null), "{per_sec:?}");
+    assert!(per_sec.iter().any(|v| v.as_u64().is_some()), "{per_sec:?}");
 
     // Filters: by encounter id, by player name, by an unknown kind.
     let reply = drive(
@@ -2592,5 +2608,78 @@ fn a_drill_s_abilities_carry_the_ability_tree() {
             ("Eradicating Arcanocore", 45_000.0),
             ("Summon Infernal", 25_000.0),
         ]
+    );
+}
+
+/// R26 (v44): an empowered spell's row carries its releases by stage, its
+/// cancels and the mean stage — Fire Breath on the damage drill, Dream
+/// Breath on the healing one — and (R2) a healing row says what a
+/// heal-absorb ate of it.
+#[test]
+fn an_empowered_ability_carries_its_stages() {
+    let tmp = Temp::new("empower");
+    let socket = start_daemon_on(&tmp, TREE);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+    let replies = drive(&mut bridge, &[&call_line(1, "list_fights", "{}")]);
+    let doc = tool_doc(&replies[0]);
+    let pull = fights(&doc)
+        .iter()
+        .find(|f| str_of(f, "name") == "Tree Test Boss")
+        .expect("the tree fixture's pull is listed");
+    let id = num_of(pull, "id") as u64;
+    let empower_of = |bridge: &mut Bridge, n: u32, view: &str, name: &str| {
+        let replies = drive(
+            bridge,
+            &[&call_line(
+                n,
+                "breakdown",
+                &format!(r#"{{"segment_id":{id},"player":"Ember","view":"{view}"}}"#),
+            )],
+        );
+        let doc = tool_doc(&replies[0]);
+        let abilities = match doc.get("by_ability") {
+            Some(Json::Arr(a)) => a.clone(),
+            other => panic!("no abilities: {other:?}"),
+        };
+        abilities
+            .iter()
+            .find(|a| str_of(a, "name") == name)
+            .and_then(|a| a.get("empower").cloned())
+            .unwrap_or_else(|| panic!("{name}'s empower in {abilities:?}"))
+    };
+    let fire = empower_of(&mut bridge, 2, "damage", "Fire Breath");
+    let stages: Vec<f64> = fire
+        .get("stages")
+        .and_then(Json::as_arr)
+        .expect("stages")
+        .iter()
+        .filter_map(Json::as_f64)
+        .collect();
+    assert_eq!(stages, [1.0, 0.0, 1.0, 0.0]);
+    assert_eq!(num_of(&fire, "cancelled"), 1.0);
+    assert_eq!(num_of(&fire, "stage_avg"), 2.0);
+    let dream = empower_of(&mut bridge, 3, "healing", "Dream Breath");
+    assert_eq!(num_of(&dream, "stage_avg"), 4.0);
+    assert_eq!(num_of(&dream, "cancelled"), 1.0);
+    // R2 (v44): every healing meter row names its heal-absorbed part.
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(
+            4,
+            "fight",
+            &format!(r#"{{"segment_id":{id},"view":"healing"}}"#),
+        )],
+    );
+    let doc = tool_doc(&replies[0]);
+    let rows = match doc.get("rows") {
+        Some(Json::Arr(r)) => r.clone(),
+        other => panic!("no rows: {other:?}"),
+    };
+    assert!(!rows.is_empty());
+    assert!(
+        rows.iter()
+            .all(|r| r.get("heal_absorbed").and_then(Json::as_u64) == Some(0)),
+        "{rows:?}"
     );
 }

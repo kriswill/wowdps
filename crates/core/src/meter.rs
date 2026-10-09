@@ -11,11 +11,11 @@ use wowdps_model::series::{
     window_rows,
 };
 use wowdps_model::{AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
+use wowdps_model::{Empower, EnergizeRow, PowerSeries, StackBase, StackCell, StackingDebuff};
 use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
     RaidDeath, RaidTimeline, Rez, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
 };
-use wowdps_model::{EnergizeRow, StackBase, StackCell, StackingDebuff};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
 /// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
@@ -329,6 +329,15 @@ struct Summon {
     name: String,
 }
 
+/// R28 (v44): one player's pool of one power type while a segment records
+/// it — the largest maximum reported and the current power on the LAST line
+/// of each second that reported it (`None` = no line did), on the R12 grid.
+#[derive(Debug, Clone, Default)]
+struct PowerTrack {
+    max: u32,
+    buckets: Vec<Option<u32>>,
+}
+
 /// R26 (step 3): one debuff's union over the enemies it is up on.
 #[derive(Debug, Clone, Default)]
 struct DotUnion {
@@ -343,6 +352,7 @@ struct TreeRow {
     group: String,
     casts: u64,
     starts: u64,
+    empower: Empower,
     misses: u64,
     slot: SpellSlot,
 }
@@ -892,6 +902,20 @@ pub struct Segment {
     /// a pet's pool is its own, and folding it onto its owner would mix two
     /// pools of one type. Passive: counted only inside an open segment.
     energize: HashMap<String, BTreeMap<u32, EnergizeRow>>,
+    /// R26 (v44): `SPELL_EMPOWER_END` per stage and `SPELL_EMPOWER_INTERRUPT`
+    /// per RAW caster guid, per spell NAME — keyed, gated and folded exactly
+    /// like `casts`.
+    empower: HashMap<String, HashMap<String, Empower>>,
+    /// R2 (v44): the part of each heal a heal-absorb ate, per RAW healer
+    /// guid, per spell NAME (the by-spell rows' key) — the heal line's
+    /// `absorbed`, capped at its `amount − overheal` — folded onto owners at
+    /// read like `casts`. Still healing done: it is inside the row's amount.
+    heal_absorbed: HashMap<String, HashMap<String, u64>>,
+    /// R28 (v44): per RAW PLAYER guid, per power type, the 1 s series of
+    /// current power from the advanced block of every line describing them.
+    /// Players only, never folded — a pet's pool is its own (R27's rule).
+    /// Passive: recorded only inside an open segment.
+    power: HashMap<String, BTreeMap<u32, PowerTrack>>,
     /// R26 (step 3): `*_MISSED` lines per RAW attacker guid, per spell NAME
     /// (the attacker's side of R17's misses) — folded at read like `casts`.
     misses: HashMap<String, HashMap<String, u64>>,
@@ -1322,6 +1346,9 @@ impl Segment {
             casts: HashMap::new(),
             starts: HashMap::new(),
             energize: HashMap::new(),
+            empower: HashMap::new(),
+            heal_absorbed: HashMap::new(),
+            power: HashMap::new(),
             misses: HashMap::new(),
             dots: HashMap::new(),
             summons: HashMap::new(),
@@ -1627,6 +1654,20 @@ impl Segment {
                 row.count += r.count;
             }
         }
+        // R26 (v44): the empower counts and (R2) the heal-absorbed part sum
+        // per raw caster per spell name, like the casts.
+        for (caster, per_spell) in &other.empower {
+            let dst = self.empower.entry(caster.clone()).or_default();
+            for (spell, e) in per_spell {
+                dst.entry(spell.clone()).or_default().merge(e);
+            }
+        }
+        for (healer, per_spell) in &other.heal_absorbed {
+            let dst = self.heal_absorbed.entry(healer.clone()).or_default();
+            for (spell, n) in per_spell {
+                *dst.entry(spell.clone()).or_default() += n;
+            }
+        }
         for (k, v) in &other.summons {
             self.summons.entry(k.clone()).or_insert_with(|| v.clone());
         }
@@ -1704,6 +1745,27 @@ impl Segment {
                 for (i, v) in series.iter().enumerate() {
                     if let Some(slot) = dst.get_mut(shift + i) {
                         *slot += v;
+                    }
+                }
+            }
+        }
+        // R28 (v44): a member's power seconds land at the same shift — the
+        // members never overlap in time, so a second is one member's; where a
+        // clamp folds two onto the last bucket, the later member's report is
+        // the later one and wins, as the last report of a second does.
+        for (player, per_type) in &other.power {
+            let dst_types = self.power.entry(player.clone()).or_default();
+            for (power_type, t) in per_type {
+                let dst = dst_types.entry(*power_type).or_default();
+                dst.max = dst.max.max(t.max);
+                for (i, v) in t.buckets.iter().enumerate() {
+                    let Some(v) = v else { continue };
+                    let at = (shift + i).min(MAX_BUCKETS - 1);
+                    if dst.buckets.len() <= at {
+                        dst.buckets.resize(at + 1, None);
+                    }
+                    if let Some(slot) = dst.buckets.get_mut(at) {
+                        *slot = Some(*v);
                     }
                 }
             }
@@ -2019,6 +2081,7 @@ impl Segment {
                 school: 0,
                 mine: false,
                 offset_ms: None,
+                heal_absorbed: 0,
             })
             .collect();
         self.finish_rows(rows, View::EnemyTaken)
@@ -2076,6 +2139,12 @@ impl Segment {
                 school: 0,
                 mine: false,
                 offset_ms: None,
+                // v44 (R2): the eaten part of a player's healing.
+                heal_absorbed: if view == View::Healing {
+                    self.heal_absorbed(guid)
+                } else {
+                    0
+                },
             })
             .collect();
         let mut rows = self.finish_rows(rows, view);
@@ -2195,6 +2264,7 @@ impl Segment {
                     school,
                     mine: false,
                     offset_ms: None,
+                    heal_absorbed: 0,
                 })
                 .collect()
         };
@@ -2211,10 +2281,17 @@ impl Segment {
                 .map(|(k, t)| (k.clone(), k, 0, 0, t))
                 .collect(),
         );
-        let (spell_rows, target_rows) = (
+        let (mut spell_rows, target_rows) = (
             self.finish_rows(spell_rows, view),
             self.finish_rows(target_rows, view),
         );
+        // v44 (R2): each healing ability's eaten part, joined by row key.
+        if view == View::Healing {
+            let eaten = self.heal_absorbed_rows(player_guid);
+            for r in &mut spell_rows {
+                r.heal_absorbed = eaten.get(&r.key).copied().unwrap_or(0);
+            }
+        }
         // v38: a zoom window on Damage or Healing reads the abilities from
         // the sparse series, Damage's targets from R24's.
         match Self::snap_window(range).filter(|_| view.windows_drill()) {
@@ -2264,6 +2341,68 @@ impl Segment {
         self.energize
             .get(player_guid)
             .map(|per_type| per_type.values().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// R2 (v44): the part of the player's healing a heal-absorb ate — the
+    /// heal lines' `absorbed`, each capped at its `amount − overheal`, by
+    /// the player and their pets (folded like `casts`). Inside the Healing
+    /// row's amount, so never more than it.
+    pub fn heal_absorbed(&self, player_guid: &str) -> u64 {
+        self.heal_absorbed
+            .iter()
+            .filter(|(healer, _)| self.resolve_owner(healer) == player_guid)
+            .map(|(_, per_spell)| per_spell.values().sum::<u64>())
+            .sum()
+    }
+
+    /// R2 (v44): the heal-absorbed part per Healing by-ability row key —
+    /// the spell's name, or `spell\0pet` for a pet's — so a drill's rows
+    /// carry it as they carry their casts.
+    fn heal_absorbed_rows(&self, player_guid: &str) -> HashMap<String, u64> {
+        let mut out: HashMap<String, u64> = HashMap::new();
+        for (healer, per_spell) in &self.heal_absorbed {
+            if self.resolve_owner(healer) != player_guid {
+                continue;
+            }
+            let pet = (healer != player_guid).then(|| self.label_for(healer));
+            for (spell, n) in per_spell {
+                *out.entry(tree_key(spell, pet.as_deref())).or_default() += n;
+            }
+        }
+        out
+    }
+
+    /// R26 (v44): every empowered release by stage and every cancel by the
+    /// player and their pets, folded like `casts` — Σ over their spells.
+    pub fn empower(&self, player_guid: &str) -> Empower {
+        let mut out = Empower::default();
+        for (caster, per_spell) in &self.empower {
+            if self.resolve_owner(caster) == player_guid {
+                per_spell.values().for_each(|e| out.merge(e));
+            }
+        }
+        out
+    }
+
+    /// R28 (v44): the player's pools second by second, one series per power
+    /// type they were reported with (ascending by type); empty for a player
+    /// no line described with a pool. Their own guid's alone — a pet's pool
+    /// is never its owner's.
+    pub fn power(&self, player_guid: &str) -> Vec<PowerSeries> {
+        self.power
+            .get(player_guid)
+            .map(|per_type| {
+                per_type
+                    .iter()
+                    .map(|(power_type, t)| PowerSeries {
+                        power_type: *power_type,
+                        max: t.max,
+                        bucket_ms: BUCKET_MS as u32,
+                        per_sec: t.buckets.clone(),
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -2451,6 +2590,7 @@ impl Segment {
                 school: 0,
                 mine: false,
                 offset_ms: None,
+                heal_absorbed: 0,
             })
             .collect();
         self.finish_rows(rows, View::Damage)
@@ -2506,6 +2646,7 @@ impl Segment {
                 school: 0,
                 mine: false,
                 offset_ms: None,
+                heal_absorbed: 0,
             })
             .collect();
         self.finish_rows(rows, View::Damage)
@@ -2685,6 +2826,7 @@ impl Segment {
                 school: 0,
                 mine: false,
                 offset_ms: Some(offset),
+                heal_absorbed: 0,
             })
             .collect();
 
@@ -2717,6 +2859,7 @@ impl Segment {
                 school: 0,
                 mine: false,
                 offset_ms: None,
+                heal_absorbed: 0,
             })
             .collect();
         (events, self.finish_rows(attacker_rows, View::Deaths))
@@ -3140,6 +3283,19 @@ impl Segment {
                 }
             }
         }
+        // R26 (v44): an empowered spell's releases by stage and its
+        // cancels join their row by name, as the casts do.
+        for (caster, per_spell) in &self.empower {
+            if self.resolve_owner(caster) != player_guid {
+                continue;
+            }
+            let pet = (caster != player_guid).then(|| self.label_for(caster));
+            for (spell, e) in per_spell {
+                if let Some(acc) = rows.get_mut(&tree_key(spell, pet.as_deref())) {
+                    acc.empower.merge(e);
+                }
+            }
+        }
         // R26 (step 3): misses join the same way; a DoT's uptime is the
         // player's own debuff of the row's name.
         for (attacker, per_spell) in &self.misses {
@@ -3187,6 +3343,7 @@ impl Segment {
                 (!acc.group.is_empty()
                     || acc.casts > 0
                     || acc.starts > 0
+                    || !acc.empower.is_empty()
                     || acc.misses > 0
                     || uptime_ms > 0
                     || !parts.is_empty())
@@ -3195,6 +3352,7 @@ impl Segment {
                     group: acc.group,
                     casts: acc.casts,
                     starts: acc.starts,
+                    empower: acc.empower,
                     parts,
                     misses: acc.misses,
                     uptime_ms,
@@ -3337,6 +3495,7 @@ impl Segment {
                 school,
                 mine: false,
                 offset_ms: None,
+                heal_absorbed: 0,
             })
             .collect();
         rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
@@ -3422,6 +3581,7 @@ impl Segment {
                 school: 0,
                 mine: false,
                 offset_ms: None,
+                heal_absorbed: 0,
             })
             .collect();
         self.finish_window(rows, range)
@@ -4651,6 +4811,49 @@ impl Segment {
         bump(&mut self.starts, caster, spell);
     }
 
+    /// R26 (v44): one empowered release (`stage` 1–4) or cancel by a unit of
+    /// ours, on the spell's NAME like `note_cast`.
+    fn note_empower(&mut self, caster: &str, spell: &str, stage: Option<u32>, cancel: bool) {
+        let e = self
+            .empower
+            .entry(caster.to_string())
+            .or_default()
+            .entry(spell.to_string())
+            .or_default();
+        if cancel {
+            e.cancelled += 1;
+        } else if let Some(slot) = stage
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|i| e.stages.get_mut(i as usize))
+        {
+            *slot += 1;
+        }
+    }
+
+    /// R28 (v44): one power report on a player — the second it falls in
+    /// keeps the latest current, the type the largest max.
+    fn note_power(&mut self, player: &str, kind: u32, current: u64, max: u64, ts: i64) {
+        let i = (ts - self.start_ms).max(0) / BUCKET_MS;
+        let Ok(i) = usize::try_from(i) else { return };
+        if i >= MAX_BUCKETS {
+            return;
+        }
+        let narrow = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        let t = self
+            .power
+            .entry(player.to_string())
+            .or_default()
+            .entry(kind)
+            .or_default();
+        t.max = t.max.max(narrow(max));
+        if t.buckets.len() <= i {
+            t.buckets.resize(i + 1, None);
+        }
+        if let Some(slot) = t.buckets.get_mut(i) {
+            *slot = Some(narrow(current));
+        }
+    }
+
     /// R26 (step 3): one miss by a unit of ours, on the spell's NAME (or
     /// "Melee" for a swing) so it joins the attacker's by-spell row.
     fn note_miss(&mut self, attacker: &str, spell: &str) {
@@ -5728,6 +5931,21 @@ impl Meter {
         {
             s.seen_alive(&h.unit_guid, ts);
         }
+        // R28 (v44): the pool the advanced block reports beside the health.
+        // Every line describing a PLAYER with a pool (power fields 10–12; a
+        // cast spending two resources keeps the first) writes their 1 s
+        // series of that power type — the last report of a second wins, the
+        // largest max is kept. Never a pet's: its pool is its own (R27).
+        // Passive, like the sight of life above: it never opens, extends or
+        // splits a segment, and one past a pull's end or the trash gap lands
+        // nowhere, so a lazy load agrees.
+        if let Some(h) = &line.hp_hint
+            && h.unit_guid.starts_with("Player-")
+            && let Some(p) = h.power
+            && let Some(s) = self.open_segment_for_passive(ts)
+        {
+            s.note_power(&h.unit_guid, p.kind, p.current, p.max, ts);
+        }
 
         match &line.event {
             // R6: the logger restarted; accumulated state across the seam is
@@ -5854,8 +6072,24 @@ impl Meter {
                     s.note_start(&src.guid, &spell.name);
                 }
             }
-            // Parsed for its stage; nothing reads it yet. Passive.
-            Event::Empower { .. } => {}
+            // R26 (v44): an empowered spell's release, by its stage, or its
+            // cancel — counted beside the casts on the same row, through the
+            // same passive gate (the scanner counts neither line). A START
+            // counts nothing (the END or INTERRUPT after it does); a release
+            // whose stage is outside 1–4 is no stage we can name.
+            Event::Empower {
+                src,
+                spell,
+                stage,
+                interrupted,
+            } => {
+                if (*interrupted || stage.is_some())
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    s.note_empower(&src.guid, &spell.name, *stage, *interrupted);
+                }
+            }
             // R27: power gained and power lost to the cap, on the PLAYER it
             // landed on (a pet's pool is its own and is not tallied).
             // Passive like a cast: the scanner never counts the line, so it
@@ -6016,6 +6250,7 @@ impl Meter {
                 spell,
                 amount,
                 overheal,
+                absorbed,
                 critical,
                 periodic,
                 ..
@@ -6050,6 +6285,23 @@ impl Meter {
                     *critical,
                     *periodic,
                 );
+                // R2 (v44): what a heal-absorb ate of it — healing done all
+                // the same (it is inside `effective`), kept beside the
+                // overheal per healer per spell, in the segment `record`
+                // just chose. Capped at `effective`: a real line can log more
+                // eaten than it healed (a Shadow Priest's Vampiric Touch
+                // self-heal at amount 0 with thousands absorbed), and the
+                // eaten part is a part of the healing, never more.
+                let eaten = (*absorbed).min(effective);
+                if eaten > 0
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    *s.heal_absorbed
+                        .entry(guid.clone())
+                        .or_default()
+                        .entry(label.clone())
+                        .or_default() += eaten;
+                }
                 self.infer(src, spell);
                 // R2 amendment: the same effective amount lands on the
                 // VICTIM's side as healing received — from any source, an
@@ -11559,5 +11811,176 @@ mod tests {
             }
         }
         assert_eq!(segments_with_shares, 2, "the kill and the city pull");
+    }
+
+    /// R28 (v44): a line whose advanced block describes a player with a pool.
+    fn powered(ts: i64, who: &str, kind: u32, current: u64, max: u64) -> LogLine {
+        let mut l = at(ts, Event::Other);
+        l.hp_hint = Some(HpHint {
+            unit_guid: who.into(),
+            current: 100,
+            max: 100,
+            flags: 0,
+            absorb: 0,
+            power: Some(crate::parser::Power { kind, current, max }),
+        });
+        l
+    }
+
+    /// R28: each second keeps the LAST report of it, a type its largest max,
+    /// a shapeshift two series with gaps; a pet's pool is nobody's (never its
+    /// owner's), and a report outside an open segment — before the pull,
+    /// after its end — lands nowhere and opens nothing.
+    #[test]
+    fn r28_power_keeps_the_last_report_of_each_second_per_type() {
+        let m = fed(vec![
+            powered(500, P1, 0, 1_000, 1_000),
+            start(1_000, "Ashen Warden"),
+            powered(2_100, P1, 0, 900, 1_000),
+            powered(2_900, P1, 0, 800, 1_000),
+            powered(4_000, P1, 0, 600, 1_200),
+            powered(5_500, P1, 3, 40, 100),
+            powered(5_600, PET, 2, 90, 120),
+            end(7_000, "Ashen Warden", true),
+            powered(8_000, P1, 0, 1_200, 1_200),
+        ]);
+        assert_eq!(m.segments().len(), 1, "power is passive: no trash opened");
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.power(P1),
+            vec![
+                PowerSeries {
+                    power_type: 0,
+                    max: 1_200,
+                    bucket_ms: 1_000,
+                    per_sec: vec![None, Some(800), None, Some(600)],
+                },
+                PowerSeries {
+                    power_type: 3,
+                    max: 100,
+                    bucket_ms: 1_000,
+                    per_sec: vec![None, None, None, None, Some(40)],
+                },
+            ]
+        );
+        assert!(seg.power(PET).is_empty(), "a pet's pool is its own");
+        assert_eq!(seg.power(P1).len(), 2, "never the pet's focus beside it");
+        assert!(seg.power(P2).is_empty());
+    }
+
+    /// R28: an Overall lays each member's seconds at its own offset on the
+    /// visit's clock, as it does every other series.
+    #[test]
+    fn r28_an_overall_rebases_each_members_seconds() {
+        let m = fed(vec![
+            at(
+                0,
+                Event::ZoneChange {
+                    map_id: 2526,
+                    name: "Algeth'ar Academy".into(),
+                    difficulty: 8,
+                },
+            ),
+            damage(1_000, p1(), None, 300),
+            powered(1_200, P1, 0, 500, 1_000),
+            start(4_000, "Crawth"),
+            powered(5_300, P1, 0, 700, 1_000),
+            end(9_000, "Crawth", true),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let ov = m.overall(0).expect("the visit");
+        assert_eq!(
+            ov.power(P1).first().map(|s| s.per_sec.clone()),
+            Some(vec![None, Some(500), None, None, None, Some(700)]),
+            "on the visit's clock: the trash's second 0 at 1, the pull's second 1 at 5"
+        );
+    }
+
+    /// R2 (v44): what a heal-absorb ate of a heal is healing done all the
+    /// same — kept beside the overheal per healer per spell, folded onto
+    /// the owner of the unit that healed, capped at the line's healing.
+    #[test]
+    fn r2_a_heal_absorbs_part_is_capped_and_folded() {
+        let healed = |ts: i64, src: Unit, amount: u64, overheal: u64, absorbed: u64| {
+            at(
+                ts,
+                Event::Heal {
+                    src,
+                    dst: p2(),
+                    spell: sp(5394, "Healing Stream Totem"),
+                    amount,
+                    overheal,
+                    absorbed,
+                    critical: false,
+                    periodic: true,
+                },
+            )
+        };
+        let totem = unit("Creature-0-5394", "Healing Stream Totem", 0x2114);
+        let m = fed(vec![
+            start(0, "Ashen Warden"),
+            summon(500, p1(), totem.clone()),
+            healed(1_000, p1(), 1_000, 200, 300),
+            healed(2_000, totem, 1_000, 0, 1_000),
+            healed(3_000, p1(), 0, 0, 900),
+            end(4_000, "Ashen Warden", true),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.heal_absorbed(P1),
+            300 + 1_000,
+            "the line at 0 healed 0, ate 0"
+        );
+        let rows = seg.rows(View::Healing);
+        assert_eq!(row_of(&rows, P1).heal_absorbed, 1_300);
+        assert!(row_of(&rows, P1).heal_absorbed <= row_of(&rows, P1).amount);
+        let (spells, _) = seg.breakdown(P1, View::Healing);
+        let by_key: HashMap<&str, u64> = spells
+            .iter()
+            .map(|r| (r.key.as_str(), r.heal_absorbed))
+            .collect();
+        assert_eq!(by_key.get("Healing Stream Totem"), Some(&300));
+        assert_eq!(
+            by_key.get("Healing Stream Totem\u{0}Healing Stream Totem"),
+            Some(&1_000),
+            "the totem's own row, folded onto its shaman"
+        );
+    }
+    /// R26 (v44): a release counts under the stage it names (1–4; any other
+    /// is none we can name), a cancel counts whatever it trails, a START
+    /// counts nothing, and an NPC's charge is nobody's.
+    #[test]
+    fn r26_empower_counts_named_stages_and_every_cancel() {
+        let charge = |ts: i64, src: Unit, stage: Option<u32>, interrupted: bool| {
+            at(
+                ts,
+                Event::Empower {
+                    src,
+                    spell: sp(357208, "Fire Breath"),
+                    stage,
+                    interrupted,
+                },
+            )
+        };
+        let m = fed(vec![
+            start(0, "Ashen Warden"),
+            charge(500, p1(), None, false),
+            charge(1_000, p1(), Some(2), false),
+            charge(1_500, p1(), Some(5), false),
+            charge(1_600, p1(), Some(0), false),
+            charge(2_000, p1(), None, true),
+            charge(2_500, p1(), Some(1), true),
+            charge(3_000, boss(), Some(3), false),
+            end(4_000, "Ashen Warden", true),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.empower(P1),
+            Empower {
+                stages: [0, 1, 0, 0],
+                cancelled: 2,
+            }
+        );
+        assert!(seg.empower(BOSS).is_empty());
     }
 }

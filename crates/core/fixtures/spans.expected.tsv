@@ -53,6 +53,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	dot_uptime_ms	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	energize_gained	0.0000
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	energize_wasted	0.0000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	heal_absorbed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	empower_stage1	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	empower_stage2	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	empower_stage3	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	empower_stage4	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	empower_cancelled	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	power_seconds	1
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	power_sum	180000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	power_max	250000
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	damage	81000
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	overkill	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	petdamage	0
@@ -107,6 +116,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	dot_uptime_ms	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	energize_gained	0.0000
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	energize_wasted	0.0000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	heal_absorbed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	empower_stage1	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	empower_stage2	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	empower_stage3	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	empower_stage4	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	empower_cancelled	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	power_seconds	10
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	power_sum	600
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	power_max	100
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	damage	45000
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	overkill	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	petdamage	0
@@ -161,6 +179,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	dot_uptime_ms	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	energize_gained	0.0000
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	energize_wasted	0.0000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	heal_absorbed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	empower_stage1	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	empower_stage2	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	empower_stage3	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	empower_stage4	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	empower_cancelled	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	power_seconds	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	power_sum	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	power_max	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	damage	24000
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	overkill	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	petdamage	0
@@ -215,6 +242,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	dot_uptime_ms	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	energize_gained	0.0000
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	energize_wasted	0.0000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	heal_absorbed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	empower_stage1	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	empower_stage2	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	empower_stage3	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	empower_stage4	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	empower_cancelled	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	power_seconds	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	power_sum	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	power_max	0
 2	Trash	Trash		8000			Player-1168-0A1B2C34	damage	36000
 2	Trash	Trash		8000			Player-1168-0A1B2C34	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C34	petdamage	0
@@ -269,6 +305,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C34	dot_uptime_ms	0
 2	Trash	Trash		8000			Player-1168-0A1B2C34	energize_gained	0.0000
 2	Trash	Trash		8000			Player-1168-0A1B2C34	energize_wasted	0.0000
+2	Trash	Trash		8000			Player-1168-0A1B2C34	heal_absorbed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	empower_stage1	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	empower_stage2	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	empower_stage3	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	empower_stage4	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	empower_cancelled	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	power_seconds	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	power_sum	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	power_max	0
 2	Trash	Trash		8000			Player-1168-0A1B2C31	damage	6000
 2	Trash	Trash		8000			Player-1168-0A1B2C31	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C31	petdamage	0
@@ -323,3 +368,12 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C31	dot_uptime_ms	0
 2	Trash	Trash		8000			Player-1168-0A1B2C31	energize_gained	0.0000
 2	Trash	Trash		8000			Player-1168-0A1B2C31	energize_wasted	0.0000
+2	Trash	Trash		8000			Player-1168-0A1B2C31	heal_absorbed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	empower_stage1	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	empower_stage2	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	empower_stage3	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	empower_stage4	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	empower_cancelled	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	power_seconds	2
+2	Trash	Trash		8000			Player-1168-0A1B2C31	power_sum	120
+2	Trash	Trash		8000			Player-1168-0A1B2C31	power_max	100

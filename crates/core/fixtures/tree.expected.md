@@ -142,3 +142,39 @@ like a cast:
 So segment 1: **Vexxa 1.5 gained, 1.0 wasted** (40 % of 2.5 generated),
 **Lumen 2 500 / 0**; segment 2: **Vexxa 1.5 / 0.5**; segment 3: nothing. The
 visit's Σ sums Vexxa to 3.0 / 1.5 over 4 lines.
+
+## 2026-10-09: empowered spells (`empower_stage1`..`4`, `empower_cancelled`, R26)
+
+A Preservation-style Evoker, Ember (`0A1B2C63`), joins the pull: nineteen
+lines of Fire Breath (released 357208, its hits 357209) and Dream Breath
+(released 355936, its heal 355941). Starts count nothing; a release counts
+under the stage it trails, a cancel whatever it trails; passive like a cast:
+
+| ts | line | stage | lands |
+|---|---|---|---|
+| 22:04:59.0 | Fire Breath END | 2 | nowhere — before the pull |
+| 22:05:03.4 | Fire Breath END (+ its cast, its hit, a tick at 05.5) | 3 | the pull |
+| 22:05:11.9 | Fire Breath INTERRUPT | (0) | the pull — a cancel |
+| 22:05:13.8 | Fire Breath END (+ its cast and a crit) | 1 | the pull |
+| 22:05:17.2 | Dream Breath END (+ its cast, a 30 000 heal on Vexxa, 10 000 over) | 4 | the pull |
+| 22:05:20.1 | Dream Breath INTERRUPT | (1) | the pull — a cancel |
+| 22:05:30.8 | Fire Breath END | 2 | nowhere — after the kill |
+
+So segment 1: **Ember `empower_stage1` 1, `stage3` 1, `stage4` 1,
+`empower_cancelled` 2**; her Fire Breath row carries stages `[1, 0, 1, 0]`
+and one cancel (mean stage 2.0, two casts), her Dream Breath row `[0, 0, 0,
+1]` and one cancel. She deals 112 000 (Fire Breath 60 000 + 12 000 tick +
+40 000 crit) and heals 20 000, casts 3; the pull's `pct` column moves with
+her damage (Vexxa 88.57, Lumen 2.48, Ember 8.95) and Vexxa's
+`healed_received` gains the Dream Breath's 20 000 (93 000). Nothing else
+moves and the segment list is the same three.
+
+## 2026-10-09: power (`power_seconds` / `power_sum` / `power_max`, R28)
+
+Every block describing a player writes their second of that type. Vexxa
+reports mana (0 of 250 000 max) on her casts and the hits landing on her,
+and soul shards (type 7, max 50) on her energize lines — two series, so her
+`power_max` is 250 050 and the pull's Σ 1 350 066 over twelve seconds;
+Ember reports mana on her three casts (230 000, 210 000, 190 000: Σ
+630 000); Lumen's mana on four seconds (Σ 600 000). The trash pulls read
+Vexxa alone (2 seconds and 1).

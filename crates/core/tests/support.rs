@@ -900,3 +900,67 @@ fn the_support_fixture_exercises_every_ruling_branch() {
         "a support line inside open trash records"
     );
 }
+
+/// R2 (v44): a heal a heal-absorb ate is healing done all the same — its
+/// eaten part rides BESIDE the overheal: on the healer's Healing row and on
+/// the ability's, never on anyone else's, capped at what the line healed
+/// (the Priest's second Renew tick logs 9 000 absorbed of an 8 000 heal with
+/// 3 000 overheal and counts 5 000, as a real Shadow Priest's self-heals log
+/// more eaten than healed). On every row of every fixture the eaten part is
+/// at most the healing, and the abilities' parts sum to the player's.
+#[test]
+fn a_heal_absorbs_eaten_part_rides_beside_the_overheal() {
+    const PRIEST: &str = "Player-1168-0A1B2C24";
+    let text = std::fs::read_to_string(fixture_path("support.txt")).unwrap_or_default();
+    let meter = replay(&text);
+    let seg = &meter.segments()[0];
+    let rows = seg.rows(View::Healing);
+    let priest = rows
+        .iter()
+        .find(|r| r.key == PRIEST)
+        .expect("the Priest's row");
+    assert_eq!(priest.heal_absorbed, 6_000 + 5_000);
+    assert_eq!(seg.heal_absorbed(PRIEST), priest.heal_absorbed);
+    let (spells, _) = seg.breakdown(PRIEST, View::Healing);
+    let eaten = |label: &str| {
+        spells
+            .iter()
+            .find(|r| r.label == label)
+            .map(|r| r.heal_absorbed)
+    };
+    assert_eq!(eaten("Flash Heal"), Some(6_000));
+    assert_eq!(
+        eaten("Renew"),
+        Some(5_000),
+        "capped at the tick's 5 000 healed"
+    );
+    // Off the Healing view, and for everybody else, nothing.
+    assert!(seg.rows(View::Damage).iter().all(|r| r.heal_absorbed == 0));
+    assert!(
+        rows.iter()
+            .filter(|r| r.key != PRIEST)
+            .all(|r| r.heal_absorbed == 0)
+    );
+    // An Overall's is its members'.
+    let ov = meter.overall(0).expect("the raid visit's Σ");
+    assert_eq!(ov.heal_absorbed(PRIEST), 11_000);
+
+    let mut checked = 0;
+    for (name, text) in fixtures().into_iter().chain([(
+        "tree.txt",
+        std::fs::read_to_string(fixture_path("tree.txt")).unwrap_or_default(),
+    )]) {
+        let m = replay(&text);
+        for seg in m.segments() {
+            for r in seg.rows(View::Healing) {
+                assert!(r.heal_absorbed <= r.amount, "{name}: {r:?}");
+                let (spells, _) = seg.breakdown(&r.key, View::Healing);
+                let parts: u64 = spells.iter().map(|s| s.heal_absorbed).sum();
+                assert_eq!(parts, r.heal_absorbed, "{name}: {}", r.label);
+                assert!(spells.iter().all(|s| s.heal_absorbed <= s.amount));
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 0);
+}

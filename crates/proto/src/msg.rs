@@ -4,7 +4,9 @@
 //! exist to make that impossible to do by accident.
 use wowdps_model::LoadoutAura;
 
-use wowdps_model::{AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
+use wowdps_model::{
+    AbilitySeries, Empower, GroupKind, PowerSeries, SpellGroup, SpellMeta, SpellPart, SpellTree,
+};
 use wowdps_model::{
     Class, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
     MissKind, Mitigation, RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId,
@@ -17,7 +19,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 43;
+pub const PROTO_VERSION: u16 = 44;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -458,6 +460,11 @@ pub struct StoredFight {
     /// Empty without a drill, below tier 3, and on a details file written
     /// before it.
     pub energize: Vec<EnergizeRow>,
+    /// v44 (R28): the drilled player's pools second by second from the
+    /// details tier, one series per power type — whatever the view, like
+    /// `energize`. Empty without a drill, below tier 3, and on a details
+    /// file written before it.
+    pub power: Vec<PowerSeries>,
 }
 
 /// v42: a stored fight's comparison — the two sides and the window their
@@ -543,6 +550,16 @@ pub struct Breakdown {
     /// landed on — the largest targets, keyed by the names `spell_targets`
     /// carries. `Window` sessions only; empty elsewhere.
     pub target_series: Vec<AbilitySeries>,
+    /// v44 (R27): the drilled player's resources — per power type what
+    /// `SPELL_ENERGIZE` gave them and what the cap ate, whatever the view
+    /// (empty on the enemies' view, whose drill is an enemy). The stored
+    /// answer's from the details tier.
+    pub energize: Vec<EnergizeRow>,
+    /// v44 (R28): the drilled player's pools second by second on the
+    /// timeline's grid, one series per power type — for a `Window` session
+    /// (the inspector's line under the graph) and on a stored pull's
+    /// details tier; empty elsewhere and on the enemies' view.
+    pub power: Vec<PowerSeries>,
 }
 
 /// v28 (R9): one death of one player — its index and the moment it happened,
@@ -961,6 +978,8 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     // v43 (R9): a recap entry's shields after it, from the same health
     // report as `hp`.
     wire::put_opt(buf, r.absorb.as_ref(), |b, a| wire::put_u64(b, *a));
+    // v44 (R2): a Healing row's part a heal-absorb ate, 0 elsewhere.
+    wire::put_u64(buf, r.heal_absorbed);
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -983,6 +1002,7 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         mine: rd.bool()?,
         offset_ms: rd.opt(|r| r.i64())?,
         absorb: rd.opt(|r| r.u64())?,
+        heal_absorbed: rd.u64()?,
     })
 }
 
@@ -1345,13 +1365,18 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     // v36 (R26 step 2): the stack's curves, always written.
     wire::put_vec(buf, &b.ability_series, put_ability_series);
     wire::put_vec(buf, &b.target_series, put_ability_series);
+    // v44 (R27, R28): the drilled player's resources and pools, always
+    // written.
+    wire::put_vec(buf, &b.energize, put_energize_row);
+    wire::put_vec(buf, &b.power, put_power_series);
 }
 
 /// v36: `SpellTree` = vec<SpellGroup> groups | vec<SpellMeta> rows;
 /// `SpellGroup` = string key | string label | u32 spell_id | u8 kind
 /// (`GroupKind::code`; v37 adds 3, `Spell` — a proc under its driver; ≥ 4
 /// is `BadTag`); `SpellMeta` = string key | string
-/// group | u64 casts | vec<SpellPart> | u64 misses | u64 uptime_ms;
+/// group | u64 casts | vec<SpellPart> | u64 misses | u64 uptime_ms | (v43) u64
+/// starts | (v44) opt `Empower`, present only on an empowered spell's row;
 /// `SpellPart` = u32 spell_id | bool periodic | u64 amount | u64 extra | u64
 /// count | u64 crits.
 fn put_spell_tree(buf: &mut Vec<u8>, t: &SpellTree) {
@@ -1377,7 +1402,51 @@ fn put_spell_tree(buf: &mut Vec<u8>, t: &SpellTree) {
         wire::put_u64(b, m.uptime_ms);
         // v43 (R26): the casts that began, trailing.
         wire::put_u64(b, m.starts);
+        // v44 (R26): the empowered releases by stage and the cancels —
+        // a presence byte, then five u64 only on an empowered spell's row.
+        wire::put_opt(
+            b,
+            (!m.empower.is_empty()).then_some(&m.empower),
+            put_empower,
+        );
     });
+}
+
+/// v44 (R26): `Empower` = u64 stages[4] (stage 1 first) | u64 cancelled.
+fn put_empower(buf: &mut Vec<u8>, e: &Empower) {
+    for n in e.stages {
+        wire::put_u64(buf, n);
+    }
+    wire::put_u64(buf, e.cancelled);
+}
+
+fn get_empower(rd: &mut Reader) -> Result<Empower> {
+    let mut e = Empower::default();
+    for slot in &mut e.stages {
+        *slot = rd.u64()?;
+    }
+    e.cancelled = rd.u64()?;
+    Ok(e)
+}
+
+/// v44 (R28): `PowerSeries` = u32 power_type | u32 max | u32 bucket_ms |
+/// vec<opt u32> per_sec (a presence byte per second).
+fn put_power_series(buf: &mut Vec<u8>, s: &PowerSeries) {
+    wire::put_u32(buf, s.power_type);
+    wire::put_u32(buf, s.max);
+    wire::put_u32(buf, s.bucket_ms);
+    wire::put_vec(buf, &s.per_sec, |b, v| {
+        wire::put_opt(b, v.as_ref(), |b, n| wire::put_u32(b, *n))
+    });
+}
+
+fn get_power_series(rd: &mut Reader) -> Result<PowerSeries> {
+    Ok(PowerSeries {
+        power_type: rd.u32()?,
+        max: rd.u32()?,
+        bucket_ms: rd.u32()?,
+        per_sec: rd.vec(|r| r.opt(|r| r.u32()))?,
+    })
 }
 
 /// v36: `AbilitySeries` = string key | vec<u64> buckets.
@@ -1424,6 +1493,7 @@ fn get_spell_tree(rd: &mut Reader) -> Result<SpellTree> {
                 misses: r.u64()?,
                 uptime_ms: r.u64()?,
                 starts: r.u64()?,
+                empower: r.opt(get_empower)?.unwrap_or_default(),
             })
         })?,
     })
@@ -1525,6 +1595,8 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         tree: get_spell_tree(rd)?,
         ability_series: rd.vec(get_ability_series)?,
         target_series: rd.vec(get_ability_series)?,
+        energize: rd.vec(get_energize_row)?,
+        power: rd.vec(get_power_series)?,
     })
 }
 
@@ -1767,6 +1839,8 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     // v43 (R17 amendment): armor's share (`Mitigation::reduced`), trailing;
     // already inside `mitigated`, added to `mitigated_pct`'s swung total.
     wire::put_u64(buf, p.reduced);
+    // v44 (R2): what a heal-absorb ate of the healing, trailing.
+    wire::put_u64(buf, p.heal_absorbed);
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1804,6 +1878,7 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         // Fields evaluate in the order written: `reduced` trails `guild`
         // on the wire.
         reduced: rd.u64()?,
+        heal_absorbed: rd.u64()?,
     })
 }
 
@@ -2225,6 +2300,8 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
     });
     // v43 (R27): the drilled player's resources, trailing.
     wire::put_vec(buf, &f.energize, put_energize_row);
+    // v44 (R28): the drilled player's power series, trailing.
+    wire::put_vec(buf, &f.power, put_power_series);
 }
 
 /// v43 (R27): `EnergizeRow` = u32 power_type | f64 gained | f64 wasted |
@@ -2291,6 +2368,7 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
             })
         })?,
         energize: rd.vec(get_energize_row)?,
+        power: rd.vec(get_power_series)?,
     })
 }
 

@@ -336,6 +336,7 @@ fn blank() -> Row {
         mine: false,
         offset_ms: None,
         absorb: None,
+        heal_absorbed: 0,
     }
 }
 
@@ -433,6 +434,7 @@ mod tests {
             misses: 0,
             uptime_ms: 0,
             starts: 0,
+            empower: Default::default(),
         }
     }
 

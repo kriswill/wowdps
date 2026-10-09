@@ -53,6 +53,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	dot_uptime_ms	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	energize_gained	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	energize_wasted	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	heal_absorbed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	empower_stage1	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	empower_stage2	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	empower_stage3	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	empower_stage4	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	empower_cancelled	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	power_seconds	4
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	power_sum	240
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	power_max	100
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	damage	73000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	petdamage	0
@@ -107,6 +116,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	dot_uptime_ms	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	energize_gained	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	energize_wasted	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	heal_absorbed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	empower_stage1	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	empower_stage2	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	empower_stage3	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	empower_stage4	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	empower_cancelled	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	power_seconds	5
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	power_sum	300
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	power_max	100
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	damage	66000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	petdamage	0
@@ -161,6 +179,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	dot_uptime_ms	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	energize_gained	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	energize_wasted	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	heal_absorbed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	empower_stage1	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	empower_stage2	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	empower_stage3	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	empower_stage4	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	empower_cancelled	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	power_seconds	3
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	power_sum	180
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	power_max	100
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	damage	49000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	petdamage	0
@@ -215,6 +242,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	dot_uptime_ms	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	energize_gained	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	energize_wasted	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	heal_absorbed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	empower_stage1	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	empower_stage2	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	empower_stage3	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	empower_stage4	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	empower_cancelled	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	power_seconds	4
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	power_sum	240
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	power_max	100
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	damage	26000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	petdamage	0
@@ -269,6 +305,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	dot_uptime_ms	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	energize_gained	0.0000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	energize_wasted	0.0000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	heal_absorbed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	empower_stage1	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	empower_stage2	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	empower_stage3	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	empower_stage4	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	empower_cancelled	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	power_seconds	2
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	power_sum	120
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	power_max	100
 2	Trash	Trash		8000			Player-1168-0A1B2C43	damage	36000
 2	Trash	Trash		8000			Player-1168-0A1B2C43	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	petdamage	0
@@ -323,6 +368,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C43	dot_uptime_ms	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	energize_gained	0.0000
 2	Trash	Trash		8000			Player-1168-0A1B2C43	energize_wasted	0.0000
+2	Trash	Trash		8000			Player-1168-0A1B2C43	heal_absorbed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	empower_stage1	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	empower_stage2	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	empower_stage3	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	empower_stage4	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	empower_cancelled	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	power_seconds	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	power_sum	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	power_max	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	damage	6000
 2	Trash	Trash		8000			Player-1168-0A1B2C42	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	petdamage	0
@@ -377,3 +431,12 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	dot_uptime_ms	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	energize_gained	0.0000
 2	Trash	Trash		8000			Player-1168-0A1B2C42	energize_wasted	0.0000
+2	Trash	Trash		8000			Player-1168-0A1B2C42	heal_absorbed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	empower_stage1	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	empower_stage2	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	empower_stage3	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	empower_stage4	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	empower_cancelled	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	power_seconds	2
+2	Trash	Trash		8000			Player-1168-0A1B2C42	power_sum	120
+2	Trash	Trash		8000			Player-1168-0A1B2C42	power_max	100

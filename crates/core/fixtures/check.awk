@@ -5,7 +5,7 @@
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
 # stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6,
 # R7 (+ its 2026-10-02 combat clock), R17, R18, R19 (+ the R2 amendment), R20, R21,
-# R22 (+ friendly fire) and R26 semantics, written from the log grammar.
+# R22 (+ friendly fire), R26, R27 and R28 semantics, written from the log grammar.
 # It never calls, links, or consults the Rust implementation — that is the whole
 # point: the Rust is graded against this, not the other way round. R18 (aura
 # spans with caster and target) runs over a hard-coded copy of the FIXTURES'
@@ -560,6 +560,29 @@ ev == "COMBAT_LOG_VERSION" {
     }
     # R17: *_MISSED is never combat — it records into an already-open segment only
     # and never extends one (the index scanner ignores it; lockstep).
+    # ---- R28 (v44) the power series: a line whose ADVANCED block describes a
+    # PLAYER (block offset 0 is a `Player-` guid; the block starts at off12 on a
+    # spell-shaped line — SPELL_ / RANGE_ / DAMAGE_SHIELD and every _SUPPORT —
+    # else at off9; its max health, block offset 3, above 0) and carries a pool
+    # (block offsets 10–12: type, current, max — the first of an `a|b` pair —
+    # max above 0) writes the player's second of that type: the LAST report of
+    # a second wins, the type keeps the largest max. Raw guid, never folded (a
+    # pet's pool is its own). SPELL_ABSORBED has no advanced block. Passive, and
+    # read BEFORE this line can open or extend a segment (the Rust reads the
+    # advanced block ahead of the event), so a line past a pull's end or the
+    # trash gap lands nowhere.
+    if (ev != "SPELL_ABSORBED") {
+        pk = (ev ~ /^(SPELL_|RANGE_|DAMAGE_SHIELD)/ || ev ~ /_SUPPORT$/) ? 13 : 10
+        if ($pk ~ /^Player-/ && $(pk + 3) + 0 > 0 && !passive_stale()) {
+            pt = $(pk + 10); pc = $(pk + 11); pm = $(pk + 12)
+            sub(/\|.*/, "", pt); sub(/\|.*/, "", pc); sub(/\|.*/, "", pm)
+            if (pt ~ /^[0-9]+$/ && pc ~ /^[0-9]+$/ && pm ~ /^[0-9]+$/ && pm + 0 > 0) {
+                psec = int((now - segStart[cur]) / 1000)
+                powv[cur SUBSEP $pk SUBSEP pt SUBSEP psec] = pc + 0
+                if (pm + 0 > powm[cur SUBSEP $pk SUBSEP pt]) powm[cur SUBSEP $pk SUBSEP pt] = pm + 0
+            }
+        }
+    }
 }
 
 ev == "ENCOUNTER_START" {
@@ -678,6 +701,7 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
     if ($10 + 0 in excl) next
     amount = $33 + 0                   # off32 amount (INCLUDES overheal)
     over   = $34 + 0                   # off33 overheal
+    habs   = $35 + 0                   # off34 absorbed — a heal-absorb ate it (R2, v44)
     t = actor($6, $8)
     if (t != "" && friendlyGuid($6)) {                     # R17's universe, like taken()
         note(cur, t, "healed_received", amount - over)
@@ -686,6 +710,10 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
     a = actor($2, $4); if (a == "") next
     note(cur, a, "heal", amount - over); note(cur, a, "overheal", over)
     if (ev == "SPELL_PERIODIC_HEAL") note(cur, a, "heal_periodic", amount - over)   # R26: a tick
+    # R2 (v44): the eaten part — healing all the same — capped at what the line
+    # healed (a real line can log more absorbed than amount − overheal).
+    eff = amount - over; if (eff < 0) eff = 0
+    note(cur, a, "heal_absorbed", (habs < eff) ? habs : eff)
     next
 }
 
@@ -804,6 +832,19 @@ ev == "SPELL_CAST_START" {
     next
 }
 
+# ---- R26 (v44) empowered spells: a SPELL_EMPOWER_END by one of ours counts its
+# release under the stage it trails (1–4; any other stage is none we name), a
+# SPELL_EMPOWER_INTERRUPT counts a cancel whatever it trails. A START counts
+# nothing. Passive like a cast: one before the pull, after the kill or past the
+# trash gap lands nowhere; an NPC's is nobody's. No advanced block on either.
+ev == "SPELL_EMPOWER_END" || ev == "SPELL_EMPOWER_INTERRUPT" {
+    if (passive_stale()) next
+    a = actor($2, $4); if (a == "") next
+    if (ev == "SPELL_EMPOWER_INTERRUPT") { empc[cur SUBSEP a]++; next }
+    if ($13 ~ /^[0-9]+$/ && $13 + 0 >= 1 && $13 + 0 <= 4) emps[cur SUBSEP a SUBSEP ($13 + 0)]++
+    next
+}
+
 ev == "SPELL_INTERRUPT" { a = actor($2, $4); note(cur, a, "interrupts", 1); next }
 ev == "SPELL_DISPEL"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next }
 # R15 (2026-10-08): a Spellsteal is a dispel too — counted alike (the index
@@ -868,6 +909,10 @@ END {
     # count only — no applied, no wasted, unknown += 1 (the key's segment is
     # its own, so this is the per-segment close for every segment at once).
     for (k in shOpen) if (shOpen[k]) { shKnown[k] = 0; shWasteKnown[k] = 0; sh_close(k) }
+    # R28: per (segment, player) the seconds with a report, Σ of each second's
+    # last report and Σ over the player's types of the largest max.
+    for (k in powv) { split(k, kk, SUBSEP); powSec[kk[1] SUBSEP kk[2]]++; powSum[kk[1] SUBSEP kk[2]] += powv[k] }
+    for (k in powm) { split(k, kk, SUBSEP); powMax[kk[1] SUBSEP kk[2]] += powm[k] }
     if (SHIELDS) for (r in shRowCount) { split(r, kk, SUBSEP); printf "shield row: seg %d owner %s spell %d count %d applied %d consumed %d wasted %d unknown %d\n", kk[1], kk[2], kk[3], shRowCount[r], shRowApplied[r], shRowConsumed[r], shRowWasted[r], shRowUnknown[r] > "/dev/stderr" }
     for (s = 1; s <= nseg; s++) {
         dur = (segKind[s] == "Encounter" && segEnd[s] != "") \
@@ -978,6 +1023,17 @@ END {
             # R27: power gained and lost to the cap, every power type summed.
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tenergize_gained\t%.4f\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, engain[s SUBSEP g] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tenergize_wasted\t%.4f\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, enwaste[s SUBSEP g] + 0
+            # R2 (v44): the healing a heal-absorb ate (inside `heal`).
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\theal_absorbed\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "heal_absorbed"] + 0
+            # R26 (v44): empowered releases by stage, and the cancels.
+            for (st = 1; st <= 4; st++)
+                printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tempower_stage%d\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, st, emps[s SUBSEP g SUBSEP st] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tempower_cancelled\t%d\n",   s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, empc[s SUBSEP g] + 0
+            # R28 (v44): the power series — seconds reported, Σ of their
+            # values, Σ of each type's largest max.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpower_seconds\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, powSec[s SUBSEP g] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpower_sum\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, powSum[s SUBSEP g] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpower_max\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, powMax[s SUBSEP g] + 0
         }
         delete plist
     }
