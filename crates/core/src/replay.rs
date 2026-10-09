@@ -16,7 +16,7 @@
 //!   on the instance's map when the slice starts;
 //! - from the slice alone: everything else. Its first line is the cut's
 //!   start (t 0: ENCOUNTER_START for a pull, the run's first line for a
-//!   keystone run).
+//!   keystone run), then read as every other line is.
 //!
 //! THE FLOOR: the UiMap id the advanced block reports players at most often
 //! (a tie to the lower id). Only posts on it are kept — a pull is drawn on
@@ -29,16 +29,20 @@
 //! and spec from COMBATANT_INFO, else R8's inference from their casts); a
 //! unit some line flagged hostile (`0x40`) is a `boss` when an encounter in
 //! the slice names it (its title, or a name its commas and "and"s divide it
-//! into), else when its health is at least 30% of the strongest hostile's
-//! — an `add` otherwise; anything else is `friendly`.
+//! into), else when its health is at least 30% of the strongest posted
+//! hostile's (with none posted, none is) — an `add` otherwise; anything
+//! else is `friendly`.
 //!
 //! THE EVENTS (each kind's line, `model::replay::EventKind`): a player's
 //! death and an NPC's (a creature's or a vehicle's `UNIT_DIED`, or its
 //! `unconsciousOnDeath` going down); a resurrection on a player; a hostile
 //! unit's cast begun or landed (a unit flagged hostile by now, no player's
 //! or pet's), a player's interrupt of one; a player's cast begun, landed
-//! or failed; a hostile spell's hit on a player (where the victim stood,
-//! its amount before mitigation) or its miss; an aura from a hostile unit
+//! or failed; a spell's hit on a player from a source not ours (where the
+//! victim stood, its amount before mitigation) or its miss — ours being a
+//! player or a pet, or a unit one of ours summoned (R22's fold, so Spirit
+//! Link Totem's redistribution is no hit, while a neutral NPC's spell and
+//! one from no unit still are); an aura from a hostile unit
 //! or from no one going on a player, coming off, or its stacks changing.
 //!
 //! THE PLACED THINGS ([`PlacedTable`] says which spells): a player's landed
@@ -77,6 +81,10 @@
 //!   keeps counting up (the text cutter's time of day went negative).
 //! - COMBATANT_INFO is the parser's (its stat block can no longer pass for
 //!   an advanced block whose map field happens to equal the floor).
+//! - A hit's source is not ours: the text cutter took any source that was
+//!   not a player or a pet, so a totem or guardian of ours (Spirit Link
+//!   Totem's redistribution, a warlock's imps on a mind-controlled player)
+//!   made a hit and numbered a unit.
 //! - A world marker's number is one object: placed on one map it leaves any
 //!   other (the text cutter kept a placement per map and marker, so a marker
 //!   moved away and back could stand at its old place when a pull began).
@@ -271,6 +279,9 @@ struct Cutter {
     key: Option<(KeyHead, u32)>,
     /// World markers standing, per instance map: marker → (x, y).
     on: BTreeMap<u32, BTreeMap<u32, (i32, i32)>>,
+    /// Who summoned each unit (`SPELL_SUMMON`, seeds and slice; a version
+    /// line resets it): R22's fold, so a totem or guardian of ours is ours.
+    summoned: HashMap<String, String>,
     /// The slice: its start (local ms) and first line's facts.
     start: Option<i64>,
     head: Head,
@@ -297,10 +308,39 @@ impl Cutter {
         g
     }
 
+    /// One of ours: a player or a pet, or a unit one of ours summoned
+    /// (followed up the chain, as R22 folds it — a totem's last lines carry
+    /// a neutral NPC's flags, so no flag tells it). Never the nil unit, and
+    /// never by a line's flags: the log writes the nil unit with a player's
+    /// (a boss debuff whose caster is gone), and a boss that turns friendly
+    /// as it is beaten still ticks its debuffs on the raid.
+    fn ours_now(&self, u: &LogUnit) -> bool {
+        if ours(&u.guid) {
+            return true;
+        }
+        let mut cur = u.guid.as_str();
+        for _ in 0..8 {
+            match self.summoned.get(cur) {
+                Some(next) if next != cur => cur = next.as_str(),
+                _ => break,
+            }
+        }
+        cur != u.guid && ours(cur)
+    }
+
+    /// A `SPELL_SUMMON`: who made the unit (never itself, never no unit).
+    fn summon(&mut self, owner: &LogUnit, pet: &LogUnit) {
+        if pet.guid != owner.guid && pet.guid != NOBODY && pet.guid.contains('-') {
+            self.summoned.insert(pet.guid.clone(), owner.guid.clone());
+        }
+    }
+
     /// The state a seed line carries: specs, the zone, the keystone, the
-    /// markers. Nothing else of a seed reaches the cut.
+    /// markers, who summoned whom. Nothing else of a seed reaches the cut.
     fn seed(&mut self, line: &LogLine) {
         match &line.event {
+            Ev::Summon { owner, pet, .. } => self.summon(owner, pet),
+            Ev::Version { .. } => self.summoned.clear(),
             Ev::CombatantInfo {
                 guid,
                 spec_id: Some(id),
@@ -399,12 +439,14 @@ impl Cutter {
     }
 
     fn line(&mut self, raw: &str, line: &LogLine, placed: &dyn PlacedTable) {
-        let Some(start) = self.start else {
-            self.begin(raw, line);
-            if let Ev::EncounterStart { name, .. } = &line.event {
-                self.titles.push(name.clone());
+        // The slice's first line opens the cut, then reads as every line
+        // does: a run that opens on a hit keeps its post and its row.
+        let start = match self.start {
+            Some(start) => start,
+            None => {
+                self.begin(raw, line);
+                line.ts_ms
             }
-            return;
         };
         let t = u32::try_from((line.ts_ms - start).max(0)).unwrap_or(u32::MAX);
         let ev = &line.event;
@@ -510,6 +552,8 @@ impl Cutter {
                     self.specs.insert(guid.clone(), spec);
                 }
             }
+            Ev::Summon { owner, pet, .. } => self.summon(owner, pet),
+            Ev::Version { .. } => self.summoned.clear(),
             _ => {}
         }
     }
@@ -578,6 +622,10 @@ impl Cutter {
                     .is_some_and(|s| s.hostile)
         };
         let hostile_or_none = |c: &Cutter, u: &LogUnit| u.guid == NOBODY || hostile_now(c, u);
+        // A hit's source: anything but one of ours — a neutral NPC's spell
+        // that finds a player is still the room's — so a totem or guardian
+        // of ours (Spirit Link Totem's redistribution) is never one.
+        let foe = |c: &Cutter, u: &LogUnit| !c.ours_now(u);
         Some(match ev {
             Ev::Death { unit } if is_player(unit) => {
                 row(EventKind::Death, self.gix(&unit.guid), 0, "")
@@ -637,7 +685,7 @@ impl Cutter {
                 spell: Some(spell),
                 unmitigated,
                 ..
-            } if is_player(dst) && !ours(&src.guid) && spell.id != 0 => {
+            } if is_player(dst) && foe(self, src) && spell.id != 0 => {
                 // The victim's own block: only a hit placed on the floor
                 // makes a row (checked once the floor is known).
                 let at = line
@@ -656,7 +704,7 @@ impl Cutter {
                 dst,
                 spell: Some(spell),
                 ..
-            } if is_player(dst) && !ours(&src.guid) => {
+            } if is_player(dst) && foe(self, src) => {
                 let mut r = row(EventKind::Hit, self.gix(&dst.guid), spell.id, &spell.name);
                 r.src = self.src_of(src);
                 r
@@ -1018,8 +1066,11 @@ impl Cutter {
                         posts,
                     });
                 }
+                // With no hostile posted (no health to weigh), none is a boss
+                // by health: every hostile is an add.
                 let boss = if named.is_empty() {
-                    max_hp.get(&g).copied().unwrap_or(0) as f64 >= BOSS_SHARE * top as f64
+                    top > 0
+                        && max_hp.get(&g).copied().unwrap_or(0) as f64 >= BOSS_SHARE * top as f64
                 } else {
                     named.contains(&g)
                 };

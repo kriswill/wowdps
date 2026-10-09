@@ -487,6 +487,15 @@ function r_block(pk) {
     return 1
 }
 function r_ours(g) { return g ~ /^(Player|Pet)-/ }
+# A hit's source is anything but one of ours: a player or a pet, or a unit one
+# of ours SUMMONED (R22's chain — a totem's last lines carry a neutral NPC's
+# 0xa28, so no flag tells it); never the nil unit, whatever flags it wears.
+function r_friend(g,   top) {
+    if (r_ours(g)) return 1
+    if (g == "0000000000000000" || g !~ /-/) return 0
+    top = summoner(g)
+    return top != g && r_ours(top)
+}
 function r_side(s, g, f) { if (g ~ /-/ && and(strtonum(f), 0x40)) rH[s SUBSEP g] = 1 }
 function r_unit(s, g) { if (!((s SUBSEP g) in rU)) { rU[s SUBSEP g] = 1; rv[s SUBSEP "replay_units"]++ } }
 function r_src(s, g) { if (g != "" && g != "0000000000000000") r_unit(s, g) }
@@ -676,11 +685,11 @@ cur && (cur in rEnc) && ev != "ENCOUNTER_START" && ev != "ENCOUNTER_END" {
         r_unit(s, $2); r_target(s, $6)
     } else if (ev ~ /^(SPELL_DAMAGE|SPELL_PERIODIC_DAMAGE|RANGE_DAMAGE|SPELL_BUILDING_DAMAGE|DAMAGE_SHIELD)$/) {
         # A hit makes a row only where its victim's own block put them on the floor.
-        if ($6 ~ /^Player-/ && !r_ours($2) && $10 + 0 != 0 && r_block(13) && rguid == $6 && rmap == rFl[s]) {
+        if ($6 ~ /^Player-/ && !r_friend($2) && $10 + 0 != 0 && r_block(13) && rguid == $6 && rmap == rFl[s]) {
             r_count(s, "hit"); r_unit(s, $6); r_src(s, $2)
         }
     } else if (ev ~ /^(SPELL_MISSED|SPELL_PERIODIC_MISSED|RANGE_MISSED|DAMAGE_SHIELD_MISSED)$/) {
-        if ($6 ~ /^Player-/ && !r_ours($2)) { r_count(s, "hit"); r_unit(s, $6); r_src(s, $2) }
+        if ($6 ~ /^Player-/ && !r_friend($2)) { r_count(s, "hit"); r_unit(s, $6); r_src(s, $2) }
     } else if (ev == "SPELL_AURA_APPLIED" || ev == "SPELL_AURA_REMOVED") {
         if ($6 ~ /^Player-/ && ($2 == "0000000000000000" || r_hostile(s, $2))) {
             r_count(s, ev == "SPELL_AURA_APPLIED" ? "debuff_applied" : "debuff_removed"); r_unit(s, $6); r_src(s, $2)

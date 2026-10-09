@@ -198,6 +198,10 @@ fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
         .find(|e| e.spell == "Falling Rocks")
         .unwrap();
     assert_eq!((rocks.kind, rocks.src), (EventKind::Hit, None));
+    // Spirit Link Totem's redistribution (its last lines' neutral 0xa28) is
+    // one of ours by its summon: no hit, and the totem no unit.
+    assert!(c.events.iter().all(|e| e.spell != "Spirit Link"));
+    assert!(c.units.iter().all(|u| u.name != "Spirit Link Totem"));
     let markers: Vec<(u32, u8)> = c.markers.iter().map(|m| (m.t_ms, m.marker)).collect();
     assert_eq!(markers, [(0, 1), (0, 4), (6000, 4), (6250, 7)]);
     assert_eq!(
