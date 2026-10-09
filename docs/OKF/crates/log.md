@@ -1,5 +1,25 @@
 # Log
 
+## 2026-10-09
+
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the seasons
+  and the schema README live inside the crate (`seasons/<season>/…`,
+  `README.md`); the repository-root `rubric/` is gone, and every layer's
+  paths stay `<season>/<instance>/<file>` relative to `seasons/`.
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): an ordered layer
+  stack in three tiers (`Tier::User` the default), `Source` / `Origin`,
+  `with_curated`, `with_user`, `with_user_dir` and `user_errors`,
+  `encounter_traced` with its `Provenance`, `layers_of` / `has_user`
+  ([decision](../decisions/encounter-rubric-layers.md)).
+- **Creation** — [wowdps-encounter-rubric](encounter-rubric.md): the seasonal
+  encounter rubric brought to main from the replay branch under its new name
+  (it was `wowdps-rubric` there), with the generated drafts, the instance and
+  season files, and none of the hand-tuned curated files; `proto::dirs`
+  came with it.
+- **Update** — [wowdps-proto](proto.md): `dirs`, the XDG base directories
+  resolved once (an empty or relative variable counts as unset);
+  `talents::data_path` delegates to it.
+
 ## 2026-10-04
 
 - **Update** — [wowdps-extract](extract.md): stub upgraded with its seams — tables

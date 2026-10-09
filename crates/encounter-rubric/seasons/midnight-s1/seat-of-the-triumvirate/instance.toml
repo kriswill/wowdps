@@ -1,0 +1,6 @@
+# Seat of the Triumvirate: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Seat of the Triumvirate"
+kind = "dungeon"
+journal = 945
+map = 1753

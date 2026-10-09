@@ -1,0 +1,24 @@
+# Midnight Season 1: the client's DisplaySeason 34 (season 17), its
+# keystone pool and its three raids.
+schema = 1
+name = "Midnight Season 1"
+order = 17
+instances = [
+    1307, # The Voidspire
+    1308, # March on Quel'Danas
+    1314, # The Dreamrift
+    945,  # Seat of the Triumvirate
+    278,  # Pit of Saron
+    476,  # Skyreach
+    1201, # Algeth'ar Academy
+    1299, # Windrunner Spire
+    1300, # Magisters' Terrace
+    1316, # Nexus-Point Xenas
+    1315, # Maisara Caverns
+]
+
+[defaults.view]
+zoom = 1.15
+
+[defaults.map]
+ceiling = 25

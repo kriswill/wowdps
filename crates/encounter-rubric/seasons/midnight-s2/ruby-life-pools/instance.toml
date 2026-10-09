@@ -1,0 +1,6 @@
+# Ruby Life Pools: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Ruby Life Pools"
+kind = "dungeon"
+journal = 1202
+map = 2521

@@ -1,0 +1,6 @@
+# Temple of Sethraliss: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Temple of Sethraliss"
+kind = "dungeon"
+journal = 1030
+map = 1877

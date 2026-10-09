@@ -29,16 +29,11 @@ const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 // ---- dataset ---------------------------------------------------------------
 
 /// The per-machine data home's `wowdps/<file>` — `$XDG_DATA_HOME`, falling
-/// back to `~/.local/share`. Every generated cache (this dataset, the GUI's
-/// icon and art bins, saved simc pastes) resolves through here, so the
-/// fallback chain exists exactly once and cannot drift between readers.
+/// back to `~/.local/share` — as [`crate::dirs::data_path`] resolves it,
+/// kept under this name for the readers that reach the dataset, the GUI's
+/// icon and art bins and saved simc pastes through it.
 pub fn data_path(file: &str) -> Option<std::path::PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
-        })
-        .map(|d| d.join("wowdps").join(file))
+    crate::dirs::data_path(file)
 }
 
 /// Where the generated dataset lives; `$WOWDPS_TALENTS` overrides (tests,

@@ -1,0 +1,14 @@
+encounter = "Vashnik the Malignant"
+dungeon_encounter = 3455
+ui_map = 2608
+room_group = 79327
+x_max = 575.5
+y_max = -153.6
+ppy = 16
+width = 4036
+height = 3608
+wall_angle = 60.0
+wall_share = 0.61
+stencil = 1
+glow = "vashnik-the-malignant-glow-flame.png" key=flame x_max=437.25 y_max=-271.2875 width=602 height=1260
+glow = "vashnik-the-malignant-glow-shadow.png" key=shadow x_max=491.9375 y_max=-288.6 width=1197 height=721

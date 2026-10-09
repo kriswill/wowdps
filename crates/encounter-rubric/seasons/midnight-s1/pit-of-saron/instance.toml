@@ -1,0 +1,6 @@
+# Pit of Saron: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Pit of Saron"
+kind = "dungeon"
+journal = 278
+map = 658

@@ -10,6 +10,7 @@ members = [
     "crates/gui-logic",
     "crates/mcp",
     "crates/history",
+    "crates/encounter-rubric",
     "tools/extract",
 ]
 

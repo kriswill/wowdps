@@ -1,0 +1,6 @@
+# Voidscar Arena: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Voidscar Arena"
+kind = "dungeon"
+journal = 1313
+map = 2923

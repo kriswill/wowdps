@@ -1,0 +1,6 @@
+# Magisters' Terrace: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Magisters' Terrace"
+kind = "dungeon"
+journal = 1300
+map = 2811

@@ -1,0 +1,19 @@
+encounter = "The Golden Serpent"
+dungeon_encounter = 2139
+ui_map = 1004
+room_group = 57221
+x_max = -615.6425
+y_max = 3042.865
+ppy = 8
+width = 7057
+height = 7094
+wall_angle = 13.8
+wall_share = 0.36
+base = "the-golden-serpent-base.png"
+minimap = "the-golden-serpent-minimap.png" x_max=-465.64252 y_max=3192.865 ppy=0.96000004 width=1135 height=1140
+layer = "the-golden-serpent-layer-1779186.png" wmo=1779186 placement=19240584 x_max=-615.6425 y_max=2708.0908 width=4379 height=4551
+layer = "the-golden-serpent-layer-1538686-20856461.png" wmo=1538686 placement=20856461 x_max=-1037.8047 y_max=2558.7305 width=534 height=468
+layer = "the-golden-serpent-layer-1538686-21436402.png" wmo=1538686 placement=21436402 x_max=-986.69727 y_max=2631.1846 width=447 height=452
+layer = "the-golden-serpent-layer-1538686-21436403.png" wmo=1538686 placement=21436403 x_max=-986.77734 y_max=2636.3408 width=367 height=387
+layer = "the-golden-serpent-layer-1538686-21436405.png" wmo=1538686 placement=21436405 x_max=-980.93555 y_max=2640.626 width=461 height=474
+layer = "the-golden-serpent-layer-1538686-20856486.png" wmo=1538686 placement=20856486 x_max=-1100.0586 y_max=2633.1748 width=394 height=440
