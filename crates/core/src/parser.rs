@@ -1500,21 +1500,25 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         }),
         // R27: `amount, overEnergize, powerType, maxPower` after the
         // (optional) advanced block; a line whose amounts do not read is not
-        // one the meter can use.
+        // one the meter can use. `f64::from_str` also takes `inf`, `infinity`
+        // and `NaN`, which no log writes and which would poison every sum
+        // they reach, so a reading must be finite as well as non-negative.
         "SPELL_ENERGIZE" | "SPELL_PERIODIC_ENERGIZE" => {
-            let num = |i: usize| get(f, suffix + i).and_then(|s| s.parse::<f64>().ok());
+            let num = |i: usize| {
+                get(f, suffix + i)
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+            };
             match (num(0), num(1)) {
-                (Some(amount), Some(over)) if amount >= 0.0 && over >= 0.0 => {
-                    with_hint(Event::Energize {
-                        src: unit_at(f, 1),
-                        dst: unit_at(f, 5),
-                        spell: spell.unwrap_or_default(),
-                        amount,
-                        over,
-                        power_type: parse_u32(get(f, suffix + 2).unwrap_or_default()),
-                        max_power: parse_u32(get(f, suffix + 3).unwrap_or_default()),
-                    })
-                }
+                (Some(amount), Some(over)) => with_hint(Event::Energize {
+                    src: unit_at(f, 1),
+                    dst: unit_at(f, 5),
+                    spell: spell.unwrap_or_default(),
+                    amount,
+                    over,
+                    power_type: parse_u32(get(f, suffix + 2).unwrap_or_default()),
+                    max_power: parse_u32(get(f, suffix + 3).unwrap_or_default()),
+                }),
                 _ => with_hint(Event::Other),
             }
         }
@@ -3238,6 +3242,23 @@ mod tests {
             )),
             Event::Other
         );
+        // `f64::from_str` reads these; none is an amount the log writes, and a
+        // negative one is no gain either.
+        for (amount, over) in [
+            ("inf", "0.0000"),
+            ("0.0000", "infinity"),
+            ("NaN", "0.0000"),
+            ("1.0000", "-inf"),
+            ("-1.0000", "0.0000"),
+        ] {
+            assert_eq!(
+                parse(&format!(
+                    "SPELL_ENERGIZE,{PLAYER},{PLAYER},75,\"Auto Shot\",1,{amount},{over},2,125"
+                )),
+                Event::Other,
+                "{amount},{over}"
+            );
+        }
     }
 
     #[test]
