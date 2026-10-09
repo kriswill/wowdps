@@ -1,0 +1,363 @@
+segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	damage	1000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	overkill	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	petdamage	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	dps	33.33
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	combat_ms	30000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	pct	100.00
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	overheal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	absorbheal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	interrupts	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	cc	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	dispels	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	deaths	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	taken	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	absorbed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	blocked	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	prevented	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	misses	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stagger	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stagger_ticked	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	reduced	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	self_harm	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	friendly_fire	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	support_given	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	support_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	support_given_heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	support_received_heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	healed_received	100
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	self_healed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	effective	1000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	am_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	externals_given	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	externals_given_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	externals_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	externals_received_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	support_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	spans	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	taken10_0	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	absorb_applied	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	absorb_wasted	
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	shields_unknown	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stack_hits	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stack_sum	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stack_max	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stack_cells	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stack_auras	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	casts	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	cast_starts	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	damage_periodic	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	heal_periodic	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	misses_dealt	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	dot_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	energize_gained	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	energize_wasted	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	heal_absorbed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_stage1	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_stage2	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_stage3	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_stage4	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_cancelled	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_seconds	2
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_sum	200
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_max	100
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	damage	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	overkill	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	petdamage	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	dps	0.00
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	combat_ms	30000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	pct	0.00
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	overheal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	absorbheal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	interrupts	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	cc	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	dispels	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	deaths	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	taken	2584
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	absorbed	50
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	blocked	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	prevented	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	misses	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	stagger	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	stagger_ticked	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	reduced	96
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	self_harm	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	friendly_fire	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	support_given	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	support_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	support_given_heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	support_received_heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	healed_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	self_healed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	effective	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	am_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	externals_given	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	externals_given_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	externals_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	externals_received_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	support_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	spans	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	taken10_0	2584
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	absorb_applied	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	absorb_wasted	
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	shields_unknown	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	stack_hits	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	stack_sum	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	stack_max	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	stack_cells	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	stack_auras	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	casts	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	cast_starts	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	damage_periodic	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	heal_periodic	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	misses_dealt	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	dot_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	energize_gained	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	energize_wasted	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	heal_absorbed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	empower_stage1	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	empower_stage2	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	empower_stage3	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	empower_stage4	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	empower_cancelled	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	power_seconds	2
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	power_sum	200
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	power_max	100
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	damage	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	overkill	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	petdamage	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	dps	0.00
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	combat_ms	30000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	pct	0.00
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	heal	150
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	overheal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	absorbheal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	interrupts	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	cc	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	dispels	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	deaths	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	taken	300
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	absorbed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	blocked	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	prevented	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	misses	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	stagger	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	stagger_ticked	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	reduced	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	self_harm	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	friendly_fire	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	support_given	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	support_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	support_given_heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	support_received_heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	healed_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	self_healed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	effective	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	am_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	externals_given	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	externals_given_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	externals_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	externals_received_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	support_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	spans	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	taken10_0	300
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	absorb_applied	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	absorb_wasted	
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	shields_unknown	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	stack_hits	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	stack_sum	300
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	stack_max	300
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	stack_cells	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	stack_auras	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	casts	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	cast_starts	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	damage_periodic	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	heal_periodic	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	misses_dealt	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	dot_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	energize_gained	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	energize_wasted	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	heal_absorbed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	empower_stage1	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	empower_stage2	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	empower_stage3	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	empower_stage4	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	empower_cancelled	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	power_seconds	2
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	power_sum	99000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	power_max	60000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	damage	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	overkill	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	petdamage	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	dps	0.00
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	combat_ms	30000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	pct	0.00
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	overheal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	absorbheal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	interrupts	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	cc	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	dispels	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	deaths	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	taken	50
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	absorbed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	blocked	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	prevented	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	misses	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stagger	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stagger_ticked	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	reduced	10
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	self_harm	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	friendly_fire	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	support_given	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	support_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	support_given_heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	support_received_heal	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	healed_received	50
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	self_healed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	effective	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	am_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	externals_given	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	externals_given_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	externals_received	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	externals_received_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	support_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	spans	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	taken10_0	50
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	absorb_applied	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	absorb_wasted	
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	shields_unknown	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stack_hits	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stack_sum	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stack_max	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stack_cells	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stack_auras	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	casts	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	cast_starts	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	damage_periodic	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	heal_periodic	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	misses_dealt	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	dot_uptime_ms	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	energize_gained	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	energize_wasted	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	heal_absorbed	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	empower_stage1	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	empower_stage2	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	empower_stage3	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	empower_stage4	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	empower_cancelled	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	power_seconds	2
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	power_sum	170
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	power_max	120
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	damage	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	overkill	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	petdamage	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	dps	0.00
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	combat_ms	20000
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	pct	0.00
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	heal	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	overheal	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	absorbheal	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	interrupts	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	cc	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	dispels	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	deaths	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	taken	500
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	absorbed	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	blocked	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	prevented	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	misses	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	stagger	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	stagger_ticked	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	reduced	20
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	self_harm	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	friendly_fire	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	support_given	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	support_received	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	support_given_heal	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	support_received_heal	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	healed_received	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	self_healed	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	effective	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	am_uptime_ms	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	externals_given	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	externals_given_ms	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	externals_received	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	externals_received_ms	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	support_uptime_ms	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	spans	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	taken10_0	500
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	absorb_applied	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	absorb_wasted	
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	shields_unknown	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	stack_hits	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	stack_sum	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	stack_max	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	stack_cells	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	stack_auras	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	casts	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	cast_starts	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	damage_periodic	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	heal_periodic	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	misses_dealt	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	dot_uptime_ms	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	energize_gained	0.0000
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	energize_wasted	0.0000
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	heal_absorbed	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	empower_stage1	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	empower_stage2	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	empower_stage3	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	empower_stage4	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	empower_cancelled	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	power_seconds	1
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	power_sum	50
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	power_max	100
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_units	9
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_posts	11
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_floor	2434
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_hit	4
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_cast_start	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_cast_success	2
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pcast_start	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pcast_success	2
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pcast_failed	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_interrupt	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_debuff_applied	2
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_debuff_removed	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_debuff_dose	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_death	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_npc_died	2
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_rez	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_cast	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_summon	2
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_touch	3
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_gone	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_markers	4
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	replay_posts	2
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	replay_posts	2
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	replay_posts	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	replay_posts	2
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_units	3
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_posts	2
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_floor	2434
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_hit	1
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_cast_start	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_cast_success	2
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_pcast_start	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_pcast_success	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_pcast_failed	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_interrupt	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_debuff_applied	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_debuff_removed	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_debuff_dose	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_death	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_npc_died	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_rez	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_cast	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_summon	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_touch	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_gone	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_markers	2
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	replay_posts	1
