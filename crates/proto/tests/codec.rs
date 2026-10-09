@@ -351,6 +351,11 @@ fn client_msgs() -> Vec<ClientMsg> {
             difficulty: Some(14),
             kind: Some(FightKind::Key),
         },
+        // v45 (R29): one stored fight's replay tier.
+        ClientMsg::GetReplay {
+            req_id: 10,
+            fight_id: "x-1".to_string(),
+        },
         // v26: the role roster of one night, with and without a cutover.
         ClientMsg::GetHistory {
             req_id: 11,
@@ -617,6 +622,13 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 addon: Some("0.9.0".to_string()),
                 affiliations: 27,
                 affiliations_utc_ms: Some(1_700_000_000_000),
+                // v45: the replay tier and the kept-whole set by why.
+                replays: 12,
+                replay_bytes: 9_000_000_000,
+                kept_kills: 40,
+                kept_keys: 7,
+                kept_progression: 300,
+                kept_pins: 2,
             },
         },
         DaemonMsg::SetVisible(true),
@@ -915,6 +927,17 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
         DaemonMsg::HistoryChanged {
             fight_id: "x-1".to_string(),
         },
+        // v45 (R29): a replay tier's bytes, and the not-kept case.
+        DaemonMsg::Replay {
+            req_id: 3,
+            fight_id: "x-1".to_string(),
+            bytes: Some(b"WDRP\x01\0\0\0\0".to_vec()),
+        },
+        DaemonMsg::Replay {
+            req_id: 4,
+            fight_id: String::new(),
+            bytes: None,
+        },
     ]
 }
 
@@ -1019,8 +1042,8 @@ fn unknown_tags_are_rejected() {
     // 0x89 was free until v8 gave it to CompareSnapshot (R12); 0x07/0x8A
     // were free until v19 gave them to GetLoadout/Loadout.
     // v20 took 0x08–0x0C (history one-shots, Regrade last) and 0x8B–0x8D
-    // (their replies).
-    for tag in [0x00u8, 0x0D, 0x42, 0x80, 0x8E, 0xFF] {
+    // (their replies); v45 0x0D / 0x8E (GetReplay / Replay).
+    for tag in [0x00u8, 0x0E, 0x42, 0x80, 0x8F, 0xFF] {
         assert_eq!(ClientMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
         assert_eq!(DaemonMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
     }
@@ -1091,7 +1114,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 44, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 45, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1424,6 +1447,85 @@ fn golden_bytes_pin_the_encoding() {
         fight_id: "x-1".to_string(),
     };
     assert_eq!(hex(&changed.encode()), "080000008d03000000782d31");
+    // v45 (R29): GetReplay 0x0D (req_id | fight id), Replay 0x8E (req_id |
+    // fight id | Option of u32-length bytes).
+    let get_replay = ClientMsg::GetReplay {
+        req_id: 5,
+        fight_id: "x-1".to_string(),
+    };
+    assert_eq!(
+        hex(&get_replay.encode()),
+        "0c0000000d0500000003000000782d31"
+    );
+    let replay = DaemonMsg::Replay {
+        req_id: 5,
+        fight_id: "x-1".to_string(),
+        bytes: Some(b"WDRP".to_vec()),
+    };
+    assert_eq!(
+        hex(&replay.encode()),
+        "150000008e 05000000 03000000782d31 01 04000000 57445250".replace(' ', "")
+    );
+    let no_replay = DaemonMsg::Replay {
+        req_id: 5,
+        fight_id: "x-1".to_string(),
+        bytes: None,
+    };
+    assert_eq!(
+        hex(&no_replay.encode()),
+        "0d0000008e0500000003000000782d3100"
+    );
+    // v45: HistoryStatus + trailing u32 replays | u64 replay_bytes | u32
+    // kept_kills, kept_keys, kept_progression, kept_pins — the first pin
+    // of a Status frame (0x86), everything else zeroed.
+    let status = DaemonMsg::Status {
+        req_id: 1,
+        game_running: false,
+        source: None,
+        clients: 0,
+        linger: false,
+        overlay: OverlayState::Absent,
+        history: HistoryStatus {
+            enabled: true,
+            replays: 2,
+            replay_bytes: 3,
+            kept_kills: 4,
+            kept_keys: 5,
+            kept_progression: 6,
+            kept_pins: 7,
+            ..HistoryStatus::default()
+        },
+    };
+    assert_eq!(
+        hex(&status.encode()),
+        concat!(
+            "3e00000086",
+            "01000000",
+            "00",
+            "00",
+            "00000000",
+            "00",
+            "00",
+            // history: enabled, fights, dropped, importing, owner_inferred,
+            // error, addon, affiliations, affiliations_utc_ms
+            "01",
+            "00000000",
+            "00000000",
+            "00000000",
+            "00",
+            "00",
+            "00",
+            "00000000",
+            "00",
+            // v45
+            "02000000",
+            "0300000000000000",
+            "04000000",
+            "05000000",
+            "06000000",
+            "07000000",
+        )
+    );
     let imported = DaemonMsg::History {
         req_id: 7,
         answer: HistoryAnswer::Imported { queued: 9 },

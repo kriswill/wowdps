@@ -1046,6 +1046,11 @@ fn history_opts(tmp: &Temp) -> wowdps_daemon::history::HistoryOptions {
         keep_details_per_encounter: 10,
         details_min_wipe_secs: 60,
         keep_kills_whole: true,
+        // The fixture's 45 s wipe is an ordinary one here: what the tools
+        // say of a wipe that never earned details (v45 keeps a wipe on a
+        // boss never killed at its difficulty whole, as progression).
+        keep_progression_whole: false,
+        replay_mb: 4096,
         characters: Vec::new(),
         cache_dir: None,
         addon_dir: None,

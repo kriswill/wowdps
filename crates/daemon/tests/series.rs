@@ -45,6 +45,16 @@ fn closed_fights(path: &Path) -> Vec<ClosedFight> {
         .collect()
 }
 
+/// The v39/v42 rules these tests pin: the sample's Verkath wipe is an
+/// ordinary wipe. (v45 keeps a wipe on a boss never killed at its
+/// difficulty whole, as progression — `tests/progression.rs`.)
+fn old_rules() -> Retention {
+    Retention {
+        keep_progression: false,
+        ..Retention::default()
+    }
+}
+
 fn stored(cfg: Retention) -> (Store<MemBackend>, Vec<ClosedFight>, Vec<String>) {
     let path = Path::new(SAMPLE);
     let fights = closed_fights(path);
@@ -70,7 +80,7 @@ fn id_of(store: &Store<MemBackend>, name: &str) -> String {
 /// wipe (no details) and the raid's Σ (no verdict) keep none.
 #[test]
 fn a_kill_keeps_the_series_tier_and_a_short_wipe_does_not() {
-    let (store, _, _) = stored(Retention::default());
+    let (store, _, _) = stored(old_rules());
     let kill = id_of(&store, "The Ashen Warden");
     let wipe = id_of(&store, "Verkath the Hollow");
     assert!(store.has_series(&kill));
@@ -111,7 +121,7 @@ fn a_kill_keeps_the_series_tier_and_a_short_wipe_does_not() {
 fn a_pin_earns_a_wipe_its_series_and_letting_go_drops_it() {
     let cfg = Retention {
         details_min_wipe_secs: 30,
-        ..Retention::default()
+        ..old_rules()
     };
     let (mut store, fights, _) = stored(cfg);
     let wipe = id_of(&store, "Verkath the Hollow");
@@ -134,7 +144,7 @@ fn a_pin_earns_a_wipe_its_series_and_letting_go_drops_it() {
     // Details demoted: the series goes with them.
     let cfg = Retention {
         keep_details_per_encounter: 0,
-        ..Retention::default()
+        ..old_rules()
     };
     let (store, _, _) = stored(cfg);
     let kill = id_of(&store, "The Ashen Warden");
@@ -294,7 +304,10 @@ fn a_stored_window_answers_what_the_live_one_did() {
         }
     }
     assert!(compared >= 12, "{compared} windows compared");
-    // A fight without the tier answers whole and echoes nothing.
+    // v45: the wipe is progression (Verkath was never killed at this
+    // difficulty), kept whole as a kill is, so it keeps the tier too and
+    // answers the window. (A fight without the tier answering whole is
+    // `a_kill_keeps_the_series_tier_and_a_short_wipe_does_not`'s.)
     let short_wipe = mock.handle(ClientMsg::GetHistory {
         req_id: 2,
         query: HistoryQuery::Fights {
@@ -333,7 +346,7 @@ fn a_stored_window_answers_what_the_live_one_did() {
     let Some(DaemonMsg::Fight { fight: Some(f), .. }) = out.first() else {
         panic!("{out:?}");
     };
-    assert!(!f.series && f.breakdown.as_ref().is_none_or(|b| b.range.is_none()));
+    assert!(f.series && f.breakdown.as_ref().is_some_and(|b| b.range.is_some()));
 }
 
 /// v39 over a real log (`WOWDPS_REAL_LOG`): every kill or key it holds
@@ -352,7 +365,7 @@ fn real_log_stored_windows_match_the_live_meter() {
     let dir = tmp.0.clone();
     let fights = closed_fights(path);
     let facts = LogFacts::read(path);
-    let mut store = Store::open(DirBackend::new(dir.clone()), Retention::default());
+    let mut store = Store::open(DirBackend::new(dir.clone()), old_rules());
     let size = |sub: &str, id: &str, ext: &str| {
         std::fs::metadata(dir.join(sub).join(format!("{id}.{ext}"))).map_or(0, |m| m.len())
     };
@@ -652,7 +665,7 @@ fn a_kill_is_kept_whole_and_the_caps_count_the_rest() {
         keep_per_encounter: 0,
         keep_details_per_encounter: 0,
         details_min_wipe_secs: 30,
-        ..Retention::default()
+        ..old_rules()
     };
     let (store, _, _) = stored(cfg.clone());
     let kill = id_of(&store, "The Ashen Warden");
@@ -700,7 +713,7 @@ fn a_kill_is_kept_whole_and_the_caps_count_the_rest() {
 fn a_store_rewrites_what_it_promised_and_lost() {
     use wowdps_daemon::history::Backend;
     use wowdps_proto::series::{FightSeries, format_of};
-    let (store, fights, _) = stored(Retention::default());
+    let (store, fights, _) = stored(old_rules());
     let kill = id_of(&store, "The Ashen Warden");
     assert!(store.rewrites().is_empty(), "a fresh store is whole");
     assert_eq!(
@@ -721,7 +734,7 @@ fn a_store_rewrites_what_it_promised_and_lost() {
             backend.write(dir, &name, &bytes).unwrap();
         }
     }
-    let mut old = Store::open(backend, Retention::default());
+    let mut old = Store::open(backend, old_rules());
     assert!(!old.has_details(&kill));
     assert_eq!(old.series_format(&kill), Some(1));
     assert!(old.wants_rewrite(&kill), "a kill short of its details");
@@ -761,7 +774,7 @@ fn real_log_stored_kills_stack_and_open_as_the_live_meter() {
     let dir = tmp.0.clone();
     let fights = closed_fights(path);
     let facts = LogFacts::read(path);
-    let mut store = Store::open(DirBackend::new(dir.clone()), Retention::default());
+    let mut store = Store::open(DirBackend::new(dir.clone()), old_rules());
     let mine = store.mine();
     let (mut checked, mut v2_bytes, mut v1_bytes) = (0usize, 0u64, 0u64);
     for fight in &fights {
@@ -894,7 +907,7 @@ fn copied(store: &Store<MemBackend>, series: impl Fn(Vec<u8>) -> Vec<u8>) -> Sto
             backend.write(dir, &name, &bytes).unwrap();
         }
     }
-    Store::open(backend, Retention::default())
+    Store::open(backend, old_rules())
 }
 
 /// v42: a format-1 file — a kill stored before v42 whose log is gone —
@@ -906,7 +919,7 @@ fn copied(store: &Store<MemBackend>, series: impl Fn(Vec<u8>) -> Vec<u8>) -> Sto
 fn a_format_one_file_opens_no_ability_and_a_newer_one_is_left_alone() {
     use wowdps_daemon::history::Ask;
     use wowdps_proto::series::{FORMAT, FightSeries};
-    let (store, _, _) = stored(Retention::default());
+    let (store, _, _) = stored(old_rules());
     let kill = id_of(&store, "The Ashen Warden");
     let old = copied(&store, |b| FightSeries::decode(&b).unwrap().encode_as(1));
     assert!(old.has_series(&kill) && !old.has_abilities(&kill));
@@ -1008,7 +1021,7 @@ fn block_of(bytes: &[u8], guid: &str) -> (usize, usize) {
 #[test]
 fn a_pair_whose_side_cannot_read_its_seconds_echoes_no_window() {
     use wowdps_daemon::history::Ask;
-    let (store, _, _) = stored(Retention::default());
+    let (store, _, _) = stored(old_rules());
     let kill = id_of(&store, "The Ashen Warden");
     let guids: Vec<String> = store
         .card(&kill)
@@ -1062,7 +1075,7 @@ fn a_pair_whose_side_cannot_read_its_seconds_echoes_no_window() {
 /// fight below the details tier, or no drill, answers none.
 #[test]
 fn a_stored_kill_answers_the_drilled_players_resources() {
-    let (store, _, _) = stored(Retention::default());
+    let (store, _, _) = stored(old_rules());
     let kill = id_of(&store, "The Ashen Warden");
     let thraxx = "Player-1168-0A1B2C01";
     let f = store

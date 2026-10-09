@@ -13,6 +13,9 @@ repository.workspace = true
 wowdps-model = { path = "../model" }
 wowdps-core = { path = "../core" }
 wowdps-proto = { path = "../proto" }
+# v45 (R29): the placed-spells table the replay cut reads (the rubric is
+# the one engine-side crate naming serde/toml; CONTRACT §Dependencies).
+wowdps-encounter-rubric = { path = "../encounter-rubric" }
 
 [lints]
 workspace = true

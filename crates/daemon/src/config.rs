@@ -6,6 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
+/// v45 (R29): the replay tier's default size cap, MiB. Generous on purpose:
+/// a 10-minute 25-player raid pull is ~1.6 MB on disk and a wipe a fraction
+/// of that, so 4 GiB holds a few thousand pulls beyond the kept-whole set.
+pub const DEFAULT_REPLAY_MB: u64 = 4096;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     /// What to tail when no `--file`/`--logs` override is given. `None`
@@ -38,6 +43,14 @@ pub struct Config {
     /// v42: every boss kill and timed key is kept whole — never demoted or
     /// evicted, details and series alike — so the caps count the rest.
     pub history_keep_kills_whole: bool,
+    /// v45: every WIPE on a boss the store has not seen killed at that
+    /// difficulty (progression) is kept whole as a kill is, until the first
+    /// kill there lands.
+    pub history_keep_progression_whole: bool,
+    /// v45 (R29): the replay tier's size cap in MiB, over the fights
+    /// retention may touch (the kept-whole set and pins are never dropped by
+    /// it); 0 = no cap.
+    pub history_replay_mb: u64,
     /// "Name-Realm, …" that are "me"; empty = infer from COMBATANT_INFO.
     pub history_characters: Vec<String>,
 }
@@ -57,6 +70,8 @@ impl Default for Config {
             history_keep_details_per_encounter: 10,
             history_details_min_wipe_secs: 60,
             history_keep_kills_whole: true,
+            history_keep_progression_whole: true,
+            history_replay_mb: DEFAULT_REPLAY_MB,
             history_characters: Vec::new(),
         }
     }
@@ -188,6 +203,16 @@ impl Config {
                         cfg.history_keep_kills_whole = b;
                     }
                 }
+                "history_keep_progression_whole" => {
+                    if let Some(b) = parse_bool(value) {
+                        cfg.history_keep_progression_whole = b;
+                    }
+                }
+                "history_replay_mb" => {
+                    if let Ok(n) = value.parse::<u64>() {
+                        cfg.history_replay_mb = n;
+                    }
+                }
                 // The reader has no list type: one comma-separated string.
                 "history_characters" => {
                     if let Some(s) = parse_string(value) {
@@ -300,6 +325,16 @@ overlay_exit_grace_secs = 60
         // v42: kills and timed keys are kept whole unless told otherwise.
         assert!(Config::default().history_keep_kills_whole);
         assert!(!Config::parse("history_keep_kills_whole = false\n").history_keep_kills_whole);
+        assert!(Config::default().history_keep_progression_whole);
+        assert!(
+            !Config::parse("history_keep_progression_whole = false\n")
+                .history_keep_progression_whole
+        );
+        assert_eq!(Config::default().history_replay_mb, DEFAULT_REPLAY_MB);
+        assert_eq!(
+            Config::parse("history_replay_mb = 512\n").history_replay_mb,
+            512
+        );
         // Wrong type: the default stands.
         let cfg = Config::parse(r#"history_details_min_wipe_secs = "ninety""#);
         assert_eq!(cfg.history_details_min_wipe_secs, 60);
