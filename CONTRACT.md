@@ -898,14 +898,20 @@ false`, the version `gpui-pre-wgpu` locks) named only to build GPUI
 `RenderImage` frames. No `[patch]` of any `gpui-pre*` or Kit crate and no fork
 of GPUI: a capability GPUI lacks is designed around or contributed upstream.
 gui-logic (the framework-free GUI logic the gui draws from): model + proto +
-serde/toml. history: model + proto + duckdb
+serde/toml. encounter-rubric (`wowdps-encounter-rubric`, the seasonal
+encounter rubric, signed off 2026-10-05): serde (derive) + toml, the one
+engine-side crate that names them, plus proto for the XDG directories
+(`proto::dirs`) its per-machine text sidecars resolve through; the rubric is
+reviewed as TOML files under `rubric/` and embedded at build time, and every
+reader reads and writes it through this crate, never naming serde/toml
+itself. history: model + proto + duckdb
 (SYSTEM-linked to nixpkgs' libduckdb, the crate version pinned to the
 library's; never `bundled` — signed off 2026-09-02 for roadmap item 1, the one
 analytical engine in the tree, and it lives in the `wowdps-history` binary
 only, never in the daemon). Everything else stdlib unless justified and signed
 off. No chrono (hand-parse the timestamp), no tokio (threads +
-channels), no serde outside the gui crates (gui, gui-logic) — rules
-for our own code; a GUI framework accepted as a unit above may pull any of
+channels), no serde outside the gui crates (gui, gui-logic) and
+encounter-rubric — rules for our own code; a GUI framework accepted as a unit above may pull any of
 them transitively, and our code still never names them.
 
 Dev-dependencies (tests only, never linked into a binary): the gui may use

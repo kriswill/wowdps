@@ -36,6 +36,14 @@ for the window's command palette, which names a player the chart in hand
 may not hold yet (a view switch still on its way)
 ([the Redesign decision](../decisions/window-redesign.md)).
 
+`dirs` resolves the XDG base directories once (`data_home`, `cache_home`,
+`state_home`, `config_home`, `data_path`): an empty or relative variable
+counts as unset, as the spec words it, and `Base::resolve` is the rule as a
+pure function so its tests never touch the process environment.
+`talents::data_path` delegates to it, and
+[`wowdps-encounter-rubric`](encounter-rubric.md) resolves its text sidecars
+through it.
+
 ## Contract
 
 Public signatures and dependency policy: [`CONTRACT.md`](../../../CONTRACT.md).
