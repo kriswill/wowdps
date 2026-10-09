@@ -295,7 +295,11 @@ and contributes to nothing.
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
 - `COMBATANT_INFO` — `guid, faction, <22 stat scalars>, currentSpecID(field 25),
   [(traitNodeID,traitNodeEntryID,rank),…], (pvpTalents…), [(itemID,ilvl,
-  (enchantIDs),(bonusIDs),(gemIDs)),…], [(auras…)], …`. Field 25 is the LAST
+  (enchantIDs),(bonusIDs),(gemID,gemIlvl,…)),…], [(auras…)], …`. The gem
+  list is PAIRS: each socketed gem's item id, then the gem's own item level —
+  `(240892,295)` is one gem, `(240892,295,240983,295)` two (a real Heroic raid
+  pull, 2026-09-27: 366 empty lists, 89 of one gem, 13 of two, never an odd
+  length); the parser keeps the ids. Field 25 is the LAST
   scalar before the first `[`; a comma split shreds the brackets, so the parser
   scans the raw line bracket-aware (v19). Talent `rank` 0 = a granted/free node
   (matches the import-string codec's "selected but unpurchased"). The gear

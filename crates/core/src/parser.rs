@@ -152,8 +152,10 @@ pub enum Event {
         /// The line's talent bracket `[(nodeId,entryId,rank),…]`. Empty when
         /// the bracket is absent or unbalanced — never a parse failure.
         talents: Vec<TalentPick>,
-        /// The line's gear bracket `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]`,
-        /// in the log's inventory-slot order. Empty on absence, like `talents`.
+        /// The line's gear bracket
+        /// `[(itemId,ilvl,(enchants),(bonusIds),(gemId,gemIlvl,…)),…]`, in the
+        /// log's inventory-slot order, gems as ids alone. Empty on absence,
+        /// like `talents`.
         gear: Vec<GearItem>,
     },
     /// R10: the player moved zones. A nonzero `difficulty` marks instanced
@@ -897,6 +899,27 @@ fn u32_list(s: &str) -> Vec<u32> {
         .unwrap_or_default()
 }
 
+/// A gear tuple's `(gemId,gemIlvl,gemId,gemIlvl,…)` → the gem ids. The log
+/// pairs every socketed gem with its item level; flattening the pairs (as
+/// [`u32_list`] would) made one gem read as two, its item level as a second
+/// gem id. Positions are taken BEFORE parsing, so a malformed number can
+/// never shift an item level into the id slot; a dangling id with no level
+/// still counts.
+fn gem_ids(s: &str) -> Vec<u32> {
+    s.trim()
+        .strip_prefix('(')
+        .and_then(|r| r.strip_suffix(')'))
+        .filter(|inner| !inner.trim().is_empty())
+        .map(|inner| {
+            inner
+                .split(',')
+                .step_by(2)
+                .filter_map(|v| v.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// `[(nodeId,entryId,rank),…]` interior → picks; malformed tuples drop out
 /// individually.
 fn parse_talent_bracket(inner: &str) -> Vec<TalentPick> {
@@ -913,8 +936,11 @@ fn parse_talent_bracket(inner: &str) -> Vec<TalentPick> {
         .collect()
 }
 
-/// `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]` interior → items, in the
-/// log's slot order. Trailing elements a future patch appends are ignored.
+/// `[(itemId,ilvl,(enchants),(bonusIds),(gemId,gemIlvl,…)),…]` interior →
+/// items, in the log's slot order. Trailing elements a future patch appends
+/// are ignored. The gem list is PAIRS — each socketed gem's item id, then the
+/// gem's own item level (`(240892,295)` is ONE gem) — and only the ids are
+/// kept ([`gem_ids`]).
 /// The array is positional (slot = index), so a malformed item becomes an
 /// EMPTY slot (`item_id: 0`) rather than dropping out — dropping it would
 /// shift every later item into the wrong slot.
@@ -931,7 +957,7 @@ fn parse_gear_bracket(inner: &str) -> Vec<GearItem> {
                     ilvl,
                     enchants: parts.get(2).map(|s| u32_list(s)).unwrap_or_default(),
                     bonus_ids: parts.get(3).map(|s| u32_list(s)).unwrap_or_default(),
-                    gems: parts.get(4).map(|s| u32_list(s)).unwrap_or_default(),
+                    gems: parts.get(4).map(|s| gem_ids(s)).unwrap_or_default(),
                 },
                 _ => GearItem::default(),
             }
@@ -1542,7 +1568,7 @@ mod tests {
         // nested enchant/bonus/gem lists, then the aura bracket (ignored). The
         // rank-0 pick (a granted node) survives as written.
         let e = parse(
-            "COMBATANT_INFO,Player-1168-0A1B2C01,0,12480,3140,980,6420,0,0,0,3120,3120,3120,410,220,4870,4870,4870,190,3960,5210,5210,5210,0,0,71,[(91024,124871,1),(91025,124872,1),(91026,124873,0)],(0,0),[(212446,639,(),(6652,10356),()),(212449,639,(),(6652),(213743))],[(Player-1168-0A1B2C02,17,Player-1168-0A1B2C01,1126)]",
+            "COMBATANT_INFO,Player-1168-0A1B2C01,0,12480,3140,980,6420,0,0,0,3120,3120,3120,410,220,4870,4870,4870,190,3960,5210,5210,5210,0,0,71,[(91024,124871,1),(91025,124872,1),(91026,124873,0)],(0,0),[(212446,639,(),(6652,10356),()),(212449,639,(),(6652),(213743,619))],[(Player-1168-0A1B2C02,17,Player-1168-0A1B2C01,1126)]",
         );
         assert_eq!(
             e,
@@ -1605,6 +1631,27 @@ mod tests {
             "the corrupt tuple is an empty slot"
         );
         assert_eq!(gear[2].item_id, 212449, "the item after it keeps its slot");
+    }
+
+    #[test]
+    fn combatant_info_gems_are_id_and_item_level_pairs() {
+        // A real line's gem list (2026-09-27): `(240892,295)` is ONE gem — its
+        // id, then its own item level — never two gem ids. Two gems are four
+        // numbers; an empty list is none.
+        let e = parse(
+            "COMBATANT_INFO,Player-1168-0A1B2C01,0,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,71,[],(0,0),[(271465,334,(7991,0,0),(6652,13335),(240892,295)),(158366,321,(),(13440),(240892,295,240983,295)),(270175,334,(),(6652),())],[]",
+        );
+        let Event::CombatantInfo { gear, .. } = e else {
+            panic!("not COMBATANT_INFO: {e:?}");
+        };
+        let gems: Vec<&[u32]> = gear.iter().map(|g| g.gems.as_slice()).collect();
+        assert_eq!(
+            gems,
+            vec![&[240892][..], &[240892, 240983][..], &[][..]],
+            "ids only, the item levels dropped"
+        );
+        assert_eq!(gem_ids("(240892,295,240983)"), vec![240892, 240983]);
+        assert_eq!(gem_ids("(x,295,240983,295)"), vec![240983]);
     }
 
     #[test]

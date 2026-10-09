@@ -661,7 +661,7 @@ pub fn catalog() -> Vec<Tool> {
             name: "loadout",
             description: "One player's actual build as the combat log recorded it \
                           (COMBATANT_INFO): spec, talents and equipped gear with item \
-                          levels, enchants, gems and bonus ids. Talents come named \
+                          levels, enchants, gem item ids and bonus ids. Talents come named \
                           through the local talent dataset with an in-game import \
                           string when the dataset knows the spec, raw \
                           node/entry/rank picks otherwise (rank 0 = a granted node). \

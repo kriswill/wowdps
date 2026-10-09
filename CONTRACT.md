@@ -43,7 +43,8 @@ pub enum Event {
     CombatantInfo  { guid: String, faction: u32,     // faction = arena SIDE inside a match (R13)
                      talents: Vec<TalentPick>, gear: Vec<GearItem> }, // v19: the line's talent and
                                           // gear brackets, bracket-aware-scanned (empty when absent
-                                          // or unbalanced — never a parse failure); spec_id field 25
+                                          // or unbalanced — never a parse failure); spec_id field 25;
+                                          // a gear tuple's gems are (gemId, gemIlvl) PAIRS, ids kept
     Damage { src: Unit, dst: Unit, spell: Option<Spell>, amount: u64, overkill: i64, absorbed: u64, blocked: u64, critical: bool, periodic: bool }, // R17: blocked (partial); ENVIRONMENTAL_DAMAGE carries its envType as a spell named after it (id 0)
     Missed { src: Unit, dst: Unit, spell: Option<Spell>, kind: MissKind, off_hand: bool, prevented: u64, critical: bool, periodic: bool }, // R17: *_MISSED; prevented = BLOCK amount or ABSORB amountMissed, else 0; critical = the ABSORB tail's flag; periodic = SPELL_PERIODIC_MISSED; unknown missType → Other. An ABSORB is R1's hit.
     Support { src: Unit, dst: Unit, spell: Spell, supporter: String, amount: u64, healing: bool }, // R19: the six *_SUPPORT families; spell = the BUFF (never the hit), supporter = the trailing bare guid (nil / non-guid → Other), amount = the share (damage base amount, or amount − overheal for heals)
@@ -569,7 +570,8 @@ a rotated/unknown id, or a failed load all answer `loadout: None`, never an
 error. `Live` answers from the live meter, whose loadout map has seen every
 seed line since log start. The payload (`Loadout { spec_id: u16 raw specID
 (0 = none), talents: Vec<TalentPick { node_id, entry_id, rank: u32 }>, gear:
-Vec<GearItem { item_id, ilvl: u32, enchants/bonus_ids/gems: Vec<u32> }> }`) is
+Vec<GearItem { item_id, ilvl: u32, enchants/bonus_ids/gems: Vec<u32> }> }` — `gems`
+the item ids of the gear tuple's `(gemId, gemIlvl)` pairs, one per gem) is
 raw log data only — resolving picks against the talent dataset stays client-side
 in `proto::talents` (R14; `picks_to_selections` is the conversion into the
 codec's selections).

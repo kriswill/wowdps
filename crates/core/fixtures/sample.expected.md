@@ -216,7 +216,7 @@ validate here, and I am flagging them rather than implying coverage:
    log). It carries nested bracket/paren arrays with embedded commas, so the CSV stress
    is present in kind, but not at real scale. Since v19 the talent bracket
    `[(nodeId,entryId,rank),…]` and gear bracket
-   `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]` are contracted surface too
+   `[(itemId,ilvl,(enchants),(bonusIds),(gemId,gemIlvl,…)),…]` are contracted surface too
    (`Event::CombatantInfo.talents`/`gear`), parsed by a bracket-aware scan that keys
    on `[` positions rather than field counts — which is exactly why the short fixture
    shape and the real 461–508-field shape parse identically. The real-log gate

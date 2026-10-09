@@ -1678,6 +1678,11 @@ pub struct GearItem {
     pub ilvl: u32,
     pub enchants: Vec<u32>,
     pub bonus_ids: Vec<u32>,
+    /// Socketed gems' item ids, one per gem. The log writes each gem as an
+    /// `(id, item level)` pair; the parser keeps the ids (before 2026-10-08
+    /// it flattened the pairs, so a loadout stored earlier lists every gem
+    /// twice over — its id, then its item level — until a regrade rewrites
+    /// it).
     pub gems: Vec<u32>,
 }
 
