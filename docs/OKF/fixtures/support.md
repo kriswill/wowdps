@@ -14,6 +14,12 @@ Includes shares, a self-supported proc the log writes twice and a melee support 
 
 - [R19 Support attribution](../rulings/r19.md), [R2 Healing](../rulings/r2.md) (its amendment), [R1 Damage](../rulings/r1.md) (a hit absorbed whole).
 
+## A Spellsteal (2026-10-08)
+
+The Fire Mage steals Eternal Flame off the boss: a `SPELL_STOLEN` line,
+parsed apart from a dispel and counted on the Dispels view alike
+([R15](../rulings/r15.md)).
+
 ## Gate
 
 `crates/core/tests/support.rs` against `support.expected.tsv`; `check.awk`'s seven support/healing metrics; the ignored `real_log_support.rs` gate.

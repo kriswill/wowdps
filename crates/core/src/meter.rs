@@ -5423,6 +5423,32 @@ impl Meter {
         }
     }
 
+    /// R15: one dispel (or Spellsteal) by `src` on `dst` — a Dispels row
+    /// labelled "{removed} ({ability})" with the removed spell's id and
+    /// school, by-target the unit it came off. Combat, like every line the
+    /// scanner counts; the ability (never the removed aura, which is
+    /// someone else's) is the R8 class signal.
+    fn dispel(&mut self, ts: i64, src: &Unit, dst: &Unit, spell: &Spell, removed: &Spell) {
+        self.learn(src);
+        self.learn(dst);
+        let label = format!("{} ({})", removed.name, spell.name);
+        let (guid, target) = (src.guid.clone(), dst.name.clone());
+        self.record(
+            ts,
+            &guid,
+            View::Dispels,
+            &label,
+            removed.id,
+            removed.school,
+            &target,
+            1,
+            0,
+            false,
+            false,
+        );
+        self.infer(src, spell);
+    }
+
     /// R22: damage `src` dealt to ITSELF — the same raw guid, or a unit it
     /// SUMMONED (`summon_fold`, never the ownership map a charmed mob also
     /// writes to).
@@ -6181,28 +6207,26 @@ impl Meter {
                 self.infer(src, spell);
             }
 
+            // R15 (2026-10-08): the drill answers "what got dispelled", as the
+            // Interrupts drill answers "what got kicked" — the removed aura
+            // leads, the dispel ability in parens, the row wearing the
+            // removed spell's id and school. A Spellsteal is its own event
+            // since, and counts here exactly as before (the scanner counts
+            // both lines as combat, so both record through `record`).
             Event::Dispel {
-                src, dst, spell, ..
-            } => {
-                self.learn(src);
-                self.learn(dst);
-                let (guid, label, target) =
-                    (src.guid.clone(), spell.name.clone(), dst.name.clone());
-                self.record(
-                    ts,
-                    &guid,
-                    View::Dispels,
-                    &label,
-                    spell.id,
-                    spell.school,
-                    &target,
-                    1,
-                    0,
-                    false,
-                    false,
-                );
-                self.infer(src, spell);
-            }
+                src,
+                dst,
+                spell,
+                dispelled_spell,
+                ..
+            } => self.dispel(ts, src, dst, spell, dispelled_spell),
+            Event::Stolen {
+                src,
+                dst,
+                spell,
+                stolen_spell,
+                ..
+            } => self.dispel(ts, src, dst, spell, stolen_spell),
 
             Event::AuraApplied {
                 src,
@@ -7861,6 +7885,7 @@ mod tests {
                     dst: p1(),
                     spell: sp(527, "Purify"),
                     dispelled_spell: sp(2, "Curse"),
+                    aura_type: AuraType::Debuff,
                 },
             ),
         ]);
@@ -7868,6 +7893,55 @@ mod tests {
         assert_eq!(s.rows(View::Interrupts)[0].amount, 2);
         assert_eq!(s.rows(View::Dispels)[0].amount, 1);
         assert_eq!(s.rows(View::Dispels)[0].key, P2);
+    }
+
+    /// R15 (2026-10-08): the Dispels drill names what came off — "{removed}
+    /// ({ability})", wearing the removed spell's id and school — and a
+    /// Spellsteal, its own event since, counts and reads the same way.
+    #[test]
+    fn dispel_drill_names_the_removed_aura_and_counts_a_steal() {
+        let mut bite = sp(1287036, "Poisonous Bite");
+        bite.school = 8;
+        let m = fed(vec![
+            at(
+                0,
+                Event::Dispel {
+                    src: p2(),
+                    dst: p1(),
+                    spell: sp(4987, "Cleanse"),
+                    dispelled_spell: bite,
+                    aura_type: AuraType::Debuff,
+                },
+            ),
+            at(
+                500,
+                Event::Stolen {
+                    src: p2(),
+                    dst: boss(),
+                    spell: sp(30449, "Spellsteal"),
+                    stolen_spell: sp(156322, "Eternal Flame"),
+                    aura_type: AuraType::Buff,
+                },
+            ),
+        ]);
+        let s = &m.segments()[0];
+        assert_eq!(s.rows(View::Dispels)[0].amount, 2, "a steal is a dispel");
+        let (by_spell, by_target) = s.breakdown(P2, View::Dispels);
+        let mut labels: Vec<(&str, u32, u32)> = by_spell
+            .iter()
+            .map(|r| (r.label.as_str(), r.spell_id, r.school))
+            .collect();
+        labels.sort();
+        assert_eq!(
+            labels,
+            vec![
+                ("Eternal Flame (Spellsteal)", 156322, 1),
+                ("Poisonous Bite (Cleanse)", 1287036, 8),
+            ]
+        );
+        let mut targets: Vec<&str> = by_target.iter().map(|r| r.label.as_str()).collect();
+        targets.sort_unstable();
+        assert_eq!(targets, vec!["Alice", "Ulgrax"]);
     }
 
     #[test]

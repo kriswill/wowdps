@@ -357,3 +357,12 @@ Out of the raid (`ZONE_CHANGE` to Dornogal, difficulty 0, l.67).
 6. **Segment clock**: a support line is passive — it never opens, extends or
    splits a segment. Here every support line shares its hit's timestamp, so no
    duration depends on that; the trash still ends at the boar's hit (22:10:02).
+
+## 2026-10-08: a Spellsteal (R15)
+
+At 22:05:08.5 the Fire Mage (Ignatia, `0A1B2C22`) Spellsteals Eternal Flame off
+the boss — a `SPELL_STOLEN` line, which the parser keeps apart from a dispel
+(`Event::Stolen`) and the meter counts on the Dispels view all the same: her
+**`dispels` reads 1** in the encounter (0 before), its drill row
+"Eternal Flame (Spellsteal)". The line is combat to the index scanner, inside
+the pull, so no segment moves and nothing else does.

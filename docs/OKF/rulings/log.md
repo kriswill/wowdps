@@ -2,6 +2,9 @@
 
 ## 2026-10-08
 
+- **Update** — [R15 Count views & labels](r15.md): the Dispels drill names what
+  was dispelled ("{dispelled} ({ability})"); `SPELL_STOLEN` parses apart and
+  counts alike.
 - **Update** — [R8 Class/spec inference](r8.md): the logged loadout keeps
   COMBATANT_INFO's 22 stats and its pre-pull auras under the same per-field
   rule, and gem lists hold ids (the log's `(id, item level)` pairs), v43.

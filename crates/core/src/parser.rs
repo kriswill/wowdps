@@ -361,11 +361,28 @@ pub enum Event {
         aura_type: AuraType,
         absorb: Option<u64>,
     },
+    /// R15 (2026-10-08): `SPELL_DISPEL` — `spell` (the dispel ability)
+    /// removed `dispelled_spell` from `dst`; `aura_type` is the suffix's
+    /// `BUFF` / `DEBUFF` word after the dispelled spell (a purge of an enemy
+    /// buff, or a cleanse of a debuff on a friend).
     Dispel {
         src: Unit,
         dst: Unit,
         spell: Spell,
         dispelled_spell: Spell,
+        aura_type: AuraType,
+    },
+    /// R15 (2026-10-08): `SPELL_STOLEN` — the same line shape as a dispel,
+    /// but the aura MOVED to the caster (Spellsteal): `stolen_spell` came off
+    /// `dst` onto `src`. Parsed apart so a reader can tell a steal from a
+    /// purge; the meter counts it on the Dispels view exactly as before (the
+    /// scanner counts the line as combat, so it must record like a dispel).
+    Stolen {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        stolen_spell: Spell,
+        aura_type: AuraType,
     },
     /// R12: a cast that actually went off. The meter uses these for one
     /// thing only — telling a trinket the player *used* from one that fired
@@ -1391,15 +1408,32 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 interrupted_spell: spell_at(f, suffix),
             })
         }
+        // R15: `extraSpellId, extraSpellName, extraSchool, auraType` after
+        // the spell prefix (no advanced block); the BUFF/DEBUFF word is the
+        // fourth suffix field.
         "SPELL_DISPEL" | "SPELL_STOLEN" => {
             if f.len() <= suffix + 2 {
                 return with_hint(Event::Other);
             }
-            with_hint(Event::Dispel {
-                src: unit_at(f, 1),
-                dst: unit_at(f, 5),
-                spell: spell.unwrap_or_default(),
-                dispelled_spell: spell_at(f, suffix),
+            let (src, dst, spell) = (unit_at(f, 1), unit_at(f, 5), spell.unwrap_or_default());
+            let removed = spell_at(f, suffix);
+            let aura_type = aura_type(get(f, suffix + 3).unwrap_or_default());
+            with_hint(if ev == "SPELL_STOLEN" {
+                Event::Stolen {
+                    src,
+                    dst,
+                    spell,
+                    stolen_spell: removed,
+                    aura_type,
+                }
+            } else {
+                Event::Dispel {
+                    src,
+                    dst,
+                    spell,
+                    dispelled_spell: removed,
+                    aura_type,
+                }
             })
         }
         "SPELL_AURA_APPLIED" => {
@@ -2431,6 +2465,24 @@ mod tests {
         };
         assert_eq!(spell.name, "Purify");
         assert_eq!(dispelled_spell.name, "Carnivorous Contest");
+        // R15: the aura type is the fourth suffix field — a real cleanse
+        // (2026-09-27) and a real Spellsteal, which parses apart.
+        let e = parse(&format!(
+            "SPELL_DISPEL,{HEALER},{PLAYER},4987,\"Cleanse\",0x2,1287036,\"Poisonous Bite\",8,DEBUFF"
+        ));
+        assert!(
+            matches!(&e, Event::Dispel { aura_type: AuraType::Debuff, dispelled_spell, .. }
+                if dispelled_spell.id == 1287036 && dispelled_spell.school == 8),
+            "{e:?}"
+        );
+        let e = parse(&format!(
+            "SPELL_STOLEN,{PLAYER},{BOSS},30449,\"Spellsteal\",0x40,156322,\"Eternal Flame\",6,BUFF"
+        ));
+        assert!(
+            matches!(&e, Event::Stolen { aura_type: AuraType::Buff, stolen_spell, spell, .. }
+                if stolen_spell.name == "Eternal Flame" && spell.id == 30449),
+            "{e:?}"
+        );
     }
 
     #[test]

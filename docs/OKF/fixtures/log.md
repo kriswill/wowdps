@@ -2,6 +2,8 @@
 
 ## 2026-10-08
 
+- **Update** — [support.txt](support.md): a Spellsteal by the Fire Mage —
+  `SPELL_STOLEN` counts on the Dispels view (her `dispels` 1).
 - **Update** — [sample.txt](sample.md), [taken.txt](taken.md),
   [support.txt](support.md), [spans.txt](spans.md) and the negative control
   [corrupt.txt](corrupt.md): their COMBATANT_INFO aura brackets write the

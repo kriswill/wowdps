@@ -806,6 +806,9 @@ ev == "SPELL_CAST_START" {
 
 ev == "SPELL_INTERRUPT" { a = actor($2, $4); note(cur, a, "interrupts", 1); next }
 ev == "SPELL_DISPEL"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next }
+# R15 (2026-10-08): a Spellsteal is a dispel too — counted alike (the index
+# scanner counts SPELL_STOLEN as combat, like SPELL_DISPEL).
+ev == "SPELL_STOLEN"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next }
 
 ev == "SPELL_AURA_APPLIED" {
     dot_aura(1)                                  # R26: a player's DoT on an enemy

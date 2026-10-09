@@ -208,7 +208,13 @@ validate here, and I am flagging them rather than implying coverage:
    `SPELL_DISPEL` occurs **0 times**, `SPELL_STOLEN` 0 times; the only dispel-family
    event present is a single `SPELL_AURA_BROKEN_SPELL`. The Dispels view is therefore
    gated ONLY by synthetic fixture data. **If these offsets are wrong, every test in
-   this repo would still pass.**
+   this repo would still pass.** — **RESOLVED 2026-10-08:** a real Heroic raid pull
+   (2026-09-27) holds 13 `SPELL_DISPEL` lines and the three raid nights around it
+   929 more (one `SPELL_STOLEN`): the 16-field layout is exactly as written here
+   (`4987,"Cleanse",0x2,1287036,"Poisonous Bite",8,DEBUFF`), the BUFF/DEBUFF word
+   at offset 15. Since then the Dispels drill labels "{dispelled} ({ability})" (R15)
+   and the 20:05:36 / 20:08:22 Purifies read "Creeping Blight (Purify)" and
+   "Withering Curse (Purify)"; the counts do not move.
 3. **`*_SUPPORT` layout is spec-only** — no Augmentation Evoker in the 493 616-line
    real log, so the dedup rule is exercised only by the fixture.
 4. **Off-hand swing (39-field) is spec-only** — every real swing observed was 38-field.

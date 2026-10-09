@@ -10,7 +10,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	absorbheal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	interrupts	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	cc	0
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	dispels	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	dispels	1
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	deaths	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	taken	4000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	absorbed	0
