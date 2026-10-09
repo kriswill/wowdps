@@ -13,8 +13,13 @@ use std::borrow::Cow;
 use wowdps_model::{GearItem, MissKind, TalentPick};
 
 /// Number of fields in the advanced-combat-logging block. The wiki says 17; that is
-/// wrong for current retail — two always-zero fields sit between `absorb` and
-/// `power_type`.
+/// wrong for current retail. In order: `info_guid`, `owner_guid`, `current_hp`,
+/// `max_hp`, `attack_power`, `spell_power`, `armor`, `versatility`, `avoidance`,
+/// `absorb` (the unit's shields, in total), `power_type`, `current_power`,
+/// `max_power`, `power_cost`, `x`, `y`, `ui_map_id`, `facing`, `item_level` — the
+/// two fields the wiki lacks are versatility and avoidance, between `armor` and
+/// `absorb` (an earlier note here, after spec.json, put two always-zero fields
+/// after `absorb`; a real raid pull says otherwise, `fixtures/FORMAT-NOTES.md`).
 const ADVANCED_LEN: usize = 19;
 
 const FLAG_TYPE_PLAYER: u32 = 0x0000_0400;

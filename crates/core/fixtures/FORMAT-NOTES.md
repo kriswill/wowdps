@@ -44,9 +44,8 @@ Spell prefix (offsets 9-11, for `SPELL_*` / `RANGE_*`, **not** `SWING_*`):
 
 ## Advanced block — 19 fields, NOT 17
 
-The wiki lists 17. spec.json lists **19**: there are two always-zero `unknown` fields
-between `absorb` and `power_type`. Getting this wrong shifts every damage/heal suffix
-by two columns.
+The wiki lists 17. spec.json lists **19**. Getting the count wrong shifts every
+damage/heal suffix by two columns.
 
 ```
 0 info_guid      10 power_type
@@ -56,10 +55,27 @@ by two columns.
 4 attack_power   14 position_x
 5 spell_power    15 position_y
 6 armor          16 ui_map_id
-7 absorb         17 facing
-8 unknown_1 (0)  18 item_level
-9 unknown_2 (0)
+7 versatility    17 facing
+8 avoidance      18 item_level
+9 absorb
 ```
+
+> **CORRECTION (2026-10-08) — fields 7–9 were mislabeled here.** This file
+> (after spec.json) called field 7 `absorb` and 8–9 two always-zero
+> `unknown`s between `absorb` and `power_type`. Measured on a real Heroic raid
+> pull (2026-09-27, every player's `SPELL_HEAL` / `SPELL_DAMAGE` /
+> `SPELL_CAST_SUCCESS` / `SPELL_ENERGIZE` block): field 7 is **versatility** —
+> it moves with buffs and never drops below a raid buff's floor (300 = the 3 %
+> of Mark of the Wild, so a percentage × 100, not the rating COMBATANT_INFO
+> carries); field 8 is **avoidance** — constant per player (0, 176, 293, 328,
+> 453), nonzero exactly for the players whose COMBATANT_INFO avoidance rating
+> is; field 9 is the unit's **absorb** — the total of the shields on it, 0 to
+> ~900 k, zero 2–52 % of the time per player. Field 6 equals COMBATANT_INFO's
+> armor exactly. The two "extra" fields the wiki lacks sit between `armor` and
+> `absorb`, not after `absorb`. The 19-field count and every offset from 10 on
+> were right; only the names moved. Warcraft Logs' event fields agree
+> (`absorb` is the shield total). The parser reads 0–3 (the owner and health
+> hints) and nothing past them, so no number moved with the names.
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 
