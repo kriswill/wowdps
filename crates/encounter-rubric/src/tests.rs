@@ -2077,3 +2077,55 @@ fn the_user_directory_is_read_whole_and_its_bad_files_named_by_their_place() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_layer_file_where_no_reader_looks_is_refused() {
+    // A returning dungeon: an older season holds the raid too, and the
+    // newer season answers Ula'tek. A layer's file under the older copy
+    // would be laid and never read.
+    let older = "schema = 1\nname = \"Older\"\norder = 1\n";
+    let mut f = base_files();
+    f.extend(owned(&[
+        ("old/season.toml", older),
+        ("old/raid/instance.toml", INSTANCE),
+        ("old/raid/3492-ulatek.draft.toml", DRAFT),
+    ]));
+    let base = || Rubric::from_files(f.clone()).unwrap();
+    let r = base().with_user(owned(&[
+        (
+            "old/raid/3492-ulatek.toml",
+            "schema = 1\n[view]\nturn = 7\n",
+        ),
+        (
+            "old/raid/instance.toml",
+            "schema = 1\n[encounter.3492.view]\nturn = 8\n",
+        ),
+        // An id the newer season has no files for is the older season's.
+        (
+            "old/raid/3501-old-only.toml",
+            "schema = 1\nencounter = 3501\nname = \"Old\"\n",
+        ),
+    ]));
+    let errs = r.user_errors();
+    assert_eq!(errs.len(), 2, "{errs:?}");
+    for file in ["old/raid/3492-ulatek.toml", "old/raid/instance.toml"] {
+        assert!(
+            errs.iter()
+                .any(|e| e.starts_with(file) && e.contains("answered from s/raid")),
+            "{file}: {errs:?}"
+        );
+    }
+    assert_eq!(r.encounter(3492, None).unwrap().unwrap().view.turn, None);
+    assert!(!r.has_user(3492));
+    assert_eq!(r.encounter(3501, None).unwrap().unwrap().name, "Old");
+    let errs = base()
+        .with_curated(
+            "old",
+            owned(&[(
+                "old/raid/3492-ulatek.toml",
+                "schema = 1\n[view]\nturn = 7\n",
+            )]),
+        )
+        .unwrap_err();
+    assert!(errs[0].contains("answered from s/raid"), "{errs:?}");
+}

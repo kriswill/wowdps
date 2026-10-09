@@ -7,8 +7,10 @@
 //! `<season>/<instance>/instance.toml` (`[defaults]` and the
 //! `[encounter.<id>]` drawing tables an instance file may give) and
 //! `<season>/<instance>/<id>-<slug>.toml`; every season and instance it
-//! names must be the base's, an encounter's file keeps the slug its other
-//! files have, and a draft is the base's alone. Each file still carries
+//! names must be the base's, an encounter's file and drawing lie where the
+//! rubric answers the encounter (a returning dungeon's newest season), the
+//! file keeps the slug the encounter's other files have, and a draft is the
+//! base's alone. Each file still carries
 //! `schema = N`.
 //!
 //! A curated set is laid whole or not at all: any file it cannot lay, or
@@ -238,6 +240,8 @@ impl Rubric {
                             "{name}: [encounter.{id}]: the instance has no files for encounter {id}",
                             id = d.id
                         ));
+                    } else if let Some(e) = self.answered_elsewhere(d.id, season, instance) {
+                        errs.push(format!("{name}: [encounter.{}]: {e}", d.id));
                     }
                 }
                 if !errs.is_empty() {
@@ -306,6 +310,14 @@ impl Rubric {
                         }
                     }
                 }
+                // A file where no reader looks (an older season's copy of a
+                // returning dungeon) would be laid and never read.
+                if let Some(e) = self.answered_elsewhere(id, season, instance) {
+                    if new {
+                        self.forget_encounter(season, instance, id);
+                    }
+                    return Err(one(e));
+                }
                 let set = self.sets.get_mut(at).ok_or_else(|| one("no set".into()))?;
                 set.instance_mut(season, instance).encounters.insert(id, t);
                 Ok(Placed::Encounter {
@@ -351,6 +363,24 @@ impl Rubric {
                     self.forget_encounter(season, instance, *id);
                 }
             }
+        }
+    }
+
+    /// Why a layer's file for encounter `id` under `season`/`instance` would
+    /// never be read: the index answers the encounter from elsewhere (a
+    /// newer season holding a returning dungeon), or not at all. `None`
+    /// when it is answered from there.
+    fn answered_elsewhere(&self, id: u32, season: &str, instance: &str) -> Option<String> {
+        let at = self
+            .index
+            .get(&id)
+            .and_then(|(n, slug)| Some((self.seasons.get(*n)?.id.as_str(), slug.as_str())));
+        match at {
+            Some((s, i)) if s == season && i == instance => None,
+            Some((s, i)) => Some(format!(
+                "encounter {id} is answered from {s}/{i}; a layer's file for it goes there"
+            )),
+            None => Some(format!("no season answers encounter {id}")),
         }
     }
 

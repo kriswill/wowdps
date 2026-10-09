@@ -95,8 +95,10 @@ instance's drawing. Such a set's `season.toml` gives only `[defaults]`, and
 its `instance.toml` only `[defaults]` and `[encounter.<id>]` (the tables an
 instance file gives): what a season or an instance is (its name, kind,
 order) stays the base's. Every season and instance a set names must be the
-base's, an encounter's file keeps the slug its other files have, and a
-draft is never one of its files.
+base's, an encounter's file and drawing lie where the rubric answers the
+encounter (a returning dungeon's newest season, never an older copy no
+reader looks at), the file keeps the slug the encounter's other files
+have, and a draft is never one of its files.
 
 The difficulty overrides come last, after every source's own values: a
 draft's `[difficulty.heroic]` still wins over a curated or user file's
