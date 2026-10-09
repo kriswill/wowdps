@@ -155,8 +155,8 @@ pub fn ability_nums(r: &Row, view: View, t: Tally) -> Vec<Num> {
 }
 
 /// R17's record as the line says it (`.mit`): what was mitigated of
-/// everything swung, absorbed, blocked, prevented, staggered, and the
-/// misses by kind.
+/// everything swung, absorbed, blocked, prevented, reduced by armor and
+/// damage reduction, staggered, and the misses by kind.
 pub fn mit_pieces(m: &Mitigation, taken: u64) -> Vec<(String, String, String)> {
     let piece = |a: &str, b: String, c: &str| (a.to_string(), b, c.to_string());
     let mut out = vec![piece(
@@ -169,6 +169,10 @@ pub fn mit_pieces(m: &Mitigation, taken: u64) -> Vec<(String, String, String)> {
         out.push(piece("Blocked", commas(m.blocked), ""));
     }
     out.push(piece("Prevented", commas(m.prevented()), ""));
+    // R17 amendment (v43): what armor and damage reduction took off.
+    if m.reduced > 0 {
+        out.push(piece("Reduced", commas(m.reduced), " by armor and DR"));
+    }
     if m.stagger > 0 {
         out.push(piece("Staggered", commas(m.stagger), ""));
     }
@@ -185,4 +189,32 @@ pub fn mit_pieces(m: &Mitigation, taken: u64) -> Vec<(String, String, String)> {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn armor_reduction_joins_the_mitigation_line_only_when_it_happened() {
+        let mut m = Mitigation {
+            absorbed: 10_000,
+            ..Mitigation::default()
+        };
+        let labels = |m: &Mitigation, taken| -> Vec<String> {
+            mit_pieces(m, taken).into_iter().map(|p| p.0).collect()
+        };
+        assert!(!labels(&m, 40_000).contains(&"Reduced".to_string()));
+        // R17 amendment: 30 000 reduced joins `mitigated` and the swung
+        // total alike — (10 000 + 30 000) of (40 000 + 30 000) is 57 %.
+        m.reduced = 30_000;
+        let pieces = mit_pieces(&m, 40_000);
+        assert_eq!(pieces[0].1, "57%");
+        assert!(
+            pieces
+                .iter()
+                .any(|p| p.0 == "Reduced" && p.1 == "30,000" && p.2 == " by armor and DR"),
+            "{pieces:?}"
+        );
+    }
 }

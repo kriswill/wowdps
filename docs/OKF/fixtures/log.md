@@ -1,5 +1,14 @@
 # Log
 
+## 2026-10-08
+
+- **Update** — [taken.txt](taken.md): six hits carry real `unmitigated`
+  amounts (one amplified, floored at 0), and every golden gains `reduced`
+  after `stagger_ticked` — 33 000 / 13 500 / 1 000 here, 1 000 on
+  [sample.txt](sample.md)'s Hollow Rot tick, 0 elsewhere
+  ([decision](../decisions/armor-is-mitigation.md)). Every fixture's gear
+  bracket writes gems as `(id, item level)` pairs, as the log does.
+
 ## 2026-10-04
 
 - **Update** — [relog.txt](relog.md): its golden regains the 65 metric rows

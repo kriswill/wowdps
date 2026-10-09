@@ -48,9 +48,11 @@ stores one: join players on guid).
 `players` also carries the R17 tank measures taken / mitigated / prevented
 / dtps / mitigated_pct, with mitigated_pct_sql the same number recomputed
 in SQL — on a lake whose cards predate them only the two pct columns
-exist, both 0 — and R19's healing split and support scalars overheal /
-absorbed / support_given / support_received / healed_received /
-self_healed with the stored effective_dps beside effective_dps_sql =
+exist, both 0 — and (v43) reduced, what armor and damage reduction took
+off, inside mitigated and the swung total (0 on a card that predates it,
+whose pct is unchanged; the column always exists) — and R19's healing
+split and support scalars overheal / absorbed / support_given /
+support_received / healed_received / self_healed with the stored effective_dps beside effective_dps_sql =
 greatest(0, damage − support_received + support_given) per second, which
 reads as dps on a card that predates the scalars (their columns exist
 only once one card carries them; effective_dps_sql always does), and
@@ -66,8 +68,8 @@ player at all counts in neither that nor its complement, so on a real lake
 R17 (only on a lake whose rows files carry them — `regrade` fills an older
 one; `views` says which exist): taken (the Taken meter rows, one per player
 per fight — an arena's enemy players included, flagged `enemy`), mitigation
-(per friendly player: the record's seven amounts, the ten miss kinds as
-columns + their total, the two capped lists' `other_*` and
+(per friendly player: the record's seven amounts and (v43) reduced, the
+ten miss kinds as columns + their total, the two capped lists' `other_*` and
 `other_sources_*` rollups, taken, mitigated and mitigated_pct),
 taken_spells and taken_sources (the by-ability and by-attacker Taken
 drills, each at most 16 rows per player; Σ rows + the rollup = taken).

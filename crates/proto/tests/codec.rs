@@ -441,6 +441,8 @@ fn card() -> FightCard {
                 shields_unknown: u32::MAX - 1,
                 // v31: the guild the addon last saw them in.
                 guild: Some("Templars".to_string()),
+                // v43 (R17 amendment): armor's share, trailing.
+                reduced: 31_000,
             },
             CardPlayer::default(),
         ],
@@ -1052,7 +1054,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 42, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 43, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1475,8 +1477,9 @@ fn golden_bytes_pin_the_encoding() {
     // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
     // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
     // fields are the 32 bytes before the v23 48 before the v25 32 before
-    // the v26 13 before the v31 guild byte before those 50.
-    let player_end = zero.len() - 4 - 42 - 4 - 1 - 13;
+    // the v26 13 before the v31 guild byte and v43's 8-byte `reduced`
+    // before those 50.
+    let player_end = zero.len() - 4 - 42 - 4 - 8 - 1 - 13;
     let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
     assert_eq!(
         first_diff,
@@ -1585,6 +1588,26 @@ fn golden_bytes_pin_the_encoding() {
         unguilded.len(),
         zero.len() + 4,
         "seen unguilded is an empty Some"
+    );
+    // v43 (R17 amendment): u64 `reduced` right after the guild — armor's
+    // share, the card's last field.
+    let armored = one(CardPlayer {
+        absorb_wasted: Some(0),
+        reduced: 0x6162_6364_6566_6768,
+        ..CardPlayer::default()
+    });
+    assert_eq!(armored.len(), zero.len());
+    assert_eq!(&armored[4..player_end + 14], &zero[4..player_end + 14]);
+    assert_eq!(
+        &armored[player_end + 14..player_end + 22],
+        &0x6162_6364_6566_6768u64.to_le_bytes(),
+        "reduced"
+    );
+    assert_eq!(&zero[player_end + 14..player_end + 22], &[0u8; 8]);
+    assert_eq!(
+        &armored[player_end + 22..],
+        &zero[player_end + 22..],
+        "bosses untouched"
     );
 
     // v23: `StoredFight` gained a trailing Option<PlayerSupport>: presence
@@ -2037,18 +2060,19 @@ fn golden_bytes_pin_the_encoding() {
         // live 00, instance 00, pars 00, arena 00, encounter 00, combat 0) | rows 0 |
         // total_rows 0 | breakdown 01: by_spell 0, by_target 0, timeline 00,
         // spell_timeline 00, spell_targets 00, mitigation 01 + 6×u64 (1..6)
-        // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | v27 (R21):
+        // + 10×u32 (0x11..0x1a, Dodge first, Resist last) + (v43)
+        // u64 reduced (7) | v27 (R21):
         // stacking vec 0, stacks vec 0, stacks_dropped 0, stack_base vec 0
         // (16 zero bytes) | v28 (R9): deaths vec 0, death_index 00,
         // deaths_dropped 0 (9 more) | v36 (R26): the tree's two empty vecs and
         // the two empty series (16 more) | segment_count 0, source 00, status
-        // 00 | v35 (R25): raid 00 — len 0xc5; v40: 0xcd.
-        "cd00000082010000000000000000000601000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // 00 | v35 (R25): raid 00 — len 0xc5; v40: 0xcd; v43: 0xd5.
+        "d500000082010000000000000000000601000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a000000070000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 }
 
 /// v27 (R21): the three stack fields follow the mitigation presence byte
-/// (or its 88-byte record) in declaration order, every scalar distinct, and
+/// (or its 96-byte record, 88 before v43) in declaration order, every scalar distinct, and
 /// decode back; a snapshot with none of them carries exactly 12 zero bytes.
 #[test]
 fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
@@ -2170,6 +2194,7 @@ fn mitigation() -> Mitigation {
         stagger: 5,
         stagger_ticked: 6,
         misses: [0; MissKind::COUNT],
+        reduced: 7,
     };
     for (i, kind) in MissKind::ALL.iter().enumerate() {
         if let Some(slot) = m.misses.get_mut(kind.index()) {
@@ -2179,11 +2204,12 @@ fn mitigation() -> Mitigation {
     m
 }
 
-/// v21: the mitigation record is a fixed 88 bytes behind its presence byte,
+/// v21: the mitigation record is a fixed size behind its presence byte (88
+/// bytes, 96 since v43's trailing `reduced`),
 /// and a Breakdown whose presence byte is 0 decodes to `None` — proven by
 /// diffing the `Some` and `None` encodings of otherwise identical snapshots.
 #[test]
-fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() {
+fn v43_mitigation_is_96_bytes_behind_a_presence_byte_and_none_decodes_to_none() {
     let make = |mitigation: Option<Mitigation>| DaemonMsg::Snapshot {
         seq: 3,
         segment: SegmentRef::Id(SegmentId(4)),
@@ -2218,7 +2244,7 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     };
     let some = make(Some(mitigation())).encode();
     let none = make(None).encode();
-    assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4);
+    assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4 + 8);
     // Both end with the v27 stack fields, v28's death fields and v33's range
     // (26 zero bytes) and v36's empty tree and series (16 more), then
     // segment_count (u32 5) + source + status: 4 + 1+4+5 + 1, and v35's raid
@@ -2227,7 +2253,7 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     let (some_head, some_tail) = some.split_at(some.len() - tail);
     let (none_head, none_tail) = none.split_at(none.len() - tail);
     assert_eq!(some_tail, none_tail);
-    // Frame lengths differ by 88; everything else up to the presence byte
+    // Frame lengths differ by 96; everything else up to the presence byte
     // is byte-identical.
     assert_eq!(
         &some_head[4..none_head.len() - 1],
@@ -2236,11 +2262,16 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     assert_eq!(none_head[none_head.len() - 1], 0, "None = presence byte 0");
     assert_eq!(some_head[none_head.len() - 1], 1, "Some = presence byte 1");
     let m = &some_head[none_head.len()..];
-    assert_eq!(m.len(), 88);
+    assert_eq!(m.len(), 96);
     assert_eq!(&m[..8], &1u64.to_le_bytes());
     assert_eq!(&m[40..48], &6u64.to_le_bytes());
     assert_eq!(&m[48..52], &0x11u32.to_le_bytes(), "Dodge first");
     assert_eq!(&m[84..88], &0x1au32.to_le_bytes(), "Resist last");
+    assert_eq!(
+        &m[88..96],
+        &7u64.to_le_bytes(),
+        "v43: reduced trails the misses"
+    );
 
     for (frame, want) in [(&some, Some(mitigation())), (&none, None)] {
         let Ok(DaemonMsg::Snapshot {
@@ -2253,7 +2284,7 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     }
     // Truncating anywhere inside the record is an error, never a panic.
     let body_end = some.len() - tail;
-    for cut in (body_end - 88)..body_end {
+    for cut in (body_end - 96)..body_end {
         assert!(decode_daemon(&some[..cut]).is_err(), "cut at {cut}");
     }
 }

@@ -1,5 +1,12 @@
 # Log
 
+## 2026-10-08
+
+- **Update** — [R17 Damage taken & mitigation](r17.md): armor is mitigation —
+  the record keeps `reduced` (each Taken hit's `unmitigated` less `amount +
+  absorbed + blocked`, floored at 0), inside `mitigated` and the swung total
+  ([decision](../decisions/armor-is-mitigation.md)).
+
 ## 2026-10-04
 
 - **Update** — [R10 Visits & Overall](r10.md): a Σ starts knowing nobody and

@@ -150,6 +150,7 @@ fn card() -> FightCard {
                 shields_unknown: 1,
                 // v31: never stored, so a round trip reads `None` (proven below).
                 guild: None,
+                reduced: 0,
             },
             CardPlayer {
                 guid: "Player-1-B".to_string(),
@@ -183,6 +184,7 @@ fn card() -> FightCard {
                 absorb_wasted: None,
                 shields_unknown: 0,
                 guild: None,
+                reduced: 0,
             },
         ],
         bosses: Vec::new(),
@@ -200,6 +202,7 @@ fn mitigation() -> Mitigation {
         stagger: 5,
         stagger_ticked: 6,
         misses: [0; MissKind::COUNT],
+        reduced: 7,
     };
     for (i, kind) in MissKind::ALL.iter().enumerate() {
         if let Some(slot) = m.misses.get_mut(kind.index()) {
@@ -482,7 +485,7 @@ fn annotation() -> Annotation {
 
 // ---- goldens --------------------------------------------------------------------
 
-const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"combat_ms":null,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"am_uptime_pct":40,"absorb_efficiency":0.75,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"am_uptime_ms":24600,"externals_given":3,"externals_given_ms":38000,"externals_received":2,"externals_received_ms":60000,"effective_dps":2000,"absorb_wasted":1000,"shields_unknown":1},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"am_uptime_pct":0,"absorb_efficiency":null,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":0,"absorb_wasted":null,"shields_unknown":0}],"bosses":[]}"#;
+const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"combat_ms":null,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"am_uptime_pct":40,"absorb_efficiency":0.75,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"am_uptime_ms":24600,"externals_given":3,"externals_given_ms":38000,"externals_received":2,"externals_received_ms":60000,"effective_dps":2000,"absorb_wasted":1000,"shields_unknown":1,"reduced":0},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"am_uptime_pct":0,"absorb_efficiency":null,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":0,"absorb_wasted":null,"shields_unknown":0,"reduced":0}],"bosses":[]}"#;
 
 /// Step 3b: one supporter's block on the rows tier, every scalar distinct;
 /// `targets` is one `Segment::support_targets` row.
@@ -507,7 +510,7 @@ const STACKS_GOLDEN: &str = r#"{"guid":"Player-1-A","dropped":1,"debuffs":[{"spe
 /// non-zero and both lists visibly capped (`other.n` 3, `other_sources.n`
 /// 2); the ten miss keys in
 /// `MissKind::ALL` order.
-const MITIGATION_GOLDEN: &str = r#"{"guid":"Player-1-A","record":{"absorbed":1,"blocked":2,"absorbed_full":3,"blocked_full":4,"stagger":5,"stagger_ticked":6,"misses":{"dodge":17,"parry":18,"block":19,"miss":20,"absorb":21,"immune":22,"deflect":23,"evade":24,"reflect":25,"resist":26}},"taken_spells":[ROW_SMASH,ROW_MELEE],"other":{"amount":55,"extra":5,"count":9,"n":3},"taken_sources":[ROW_BOSS],"other_sources":{"amount":55,"extra":5,"count":9,"n":2}}"#;
+const MITIGATION_GOLDEN: &str = r#"{"guid":"Player-1-A","record":{"absorbed":1,"blocked":2,"absorbed_full":3,"blocked_full":4,"stagger":5,"stagger_ticked":6,"misses":{"dodge":17,"parry":18,"block":19,"miss":20,"absorb":21,"immune":22,"deflect":23,"evade":24,"reflect":25,"resist":26},"reduced":7},"taken_spells":[ROW_SMASH,ROW_MELEE],"other":{"amount":55,"extra":5,"count":9,"n":3},"taken_sources":[ROW_BOSS],"other_sources":{"amount":55,"extra":5,"count":9,"n":2}}"#;
 
 const ROW_GOLDEN: &str = r#"{"key":"Player-1-A","label":"Player-1-A-label","amount":100,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}"#;
 
@@ -821,7 +824,7 @@ fn mitigated_pct_is_derived_from_the_three_measures_not_stored() {
     assert_eq!(p.mitigated_pct(), 25.0, "12 000 of 48 000 swung");
     assert_eq!(
         p.mitigated_pct(),
-        wowdps_model::mitigated_pct(12_000, 40_000, 8_000),
+        wowdps_model::mitigated_pct(12_000, 40_000, 8_000, 0),
         "one helper for the card and the live record"
     );
     // The same numbers as a live record: partials 2 000 + 2 000, fulls
@@ -855,9 +858,13 @@ fn a_mitigation_record_round_trips_and_missing_miss_keys_are_zero() {
     assert_eq!(mitigation_from(&v), Some(m));
     assert_eq!(
         mitigation_json(&Mitigation::default()).to_line(),
-        r#"{"absorbed":0,"blocked":0,"absorbed_full":0,"blocked_full":0,"stagger":0,"stagger_ticked":0,"misses":{"dodge":0,"parry":0,"block":0,"miss":0,"absorb":0,"immune":0,"deflect":0,"evade":0,"reflect":0,"resist":0}}"#,
+        r#"{"absorbed":0,"blocked":0,"absorbed_full":0,"blocked_full":0,"stagger":0,"stagger_ticked":0,"misses":{"dodge":0,"parry":0,"block":0,"miss":0,"absorb":0,"immune":0,"deflect":0,"evade":0,"reflect":0,"resist":0},"reduced":0}"#,
         "all ten kinds are written, zeros included, for a stable column shape"
     );
+    // v43: a record written before `reduced` reads it 0.
+    assert_eq!(m.reduced, 7, "the round trip keeps it");
+    let v = json::parse(r#"{"absorbed":7}"#).unwrap();
+    assert_eq!(mitigation_from(&v).map(|m| m.reduced), Some(0));
     // A record from a build with fewer miss kinds: the rest default.
     let v = json::parse(r#"{"absorbed":7,"misses":{"parry":2,"unknown":9}}"#).unwrap();
     let m = mitigation_from(&v).unwrap();
@@ -1055,7 +1062,7 @@ fn effective_dps_is_derived_from_the_scalars_not_stored() {
     let alone = card().players[0].to_json().to_line();
     assert!(
         alone.ends_with(
-            r#","externals_received_ms":60000,"effective_dps":null,"absorb_wasted":1000,"shields_unknown":1}"#
+            r#","externals_received_ms":60000,"effective_dps":null,"absorb_wasted":1000,"shields_unknown":1,"reduced":0}"#
         ),
         "{alone}"
     );
@@ -1616,7 +1623,9 @@ fn a_card_without_shields_reads_unknown_and_derives_a_null_efficiency() {
         "{line}"
     );
     assert!(
-        line.contains(r#""effective_dps":2000,"absorb_wasted":null,"shields_unknown":0}"#),
+        line.contains(
+            r#""effective_dps":2000,"absorb_wasted":null,"shields_unknown":0,"reduced":0}"#
+        ),
         "{line}"
     );
     // An explicit `null` reads exactly as the missing key does.
@@ -1886,4 +1895,31 @@ fn a_pre_v36_details_file_reads_flat() {
     );
     assert_eq!(t.meta("y").map(|m| m.casts), Some(1));
     assert_eq!(t.meta("b").map(|m| m.group.as_str()), Some("a"));
+}
+
+/// v43 (R17 amendment): `reduced` — armor's share — round-trips on the
+/// card, joins the swung total `mitigated_pct` divides by (it is inside
+/// `mitigated` already), and a card written before it reads 0 and keeps
+/// the pct it always had.
+#[test]
+fn reduced_round_trips_on_the_card_and_joins_the_swung_total() {
+    let mut c = card();
+    let p = c.players.first_mut().unwrap();
+    p.mitigated += 30_000;
+    p.reduced = 30_000;
+    let want = (12_000.0 + 30_000.0) * 100.0 / (40_000.0 + 8_000.0 + 30_000.0);
+    assert!((p.mitigated_pct() - want).abs() < 1e-9);
+    let line = c.to_json().to_line();
+    assert!(
+        line.contains(r#""shields_unknown":1,"reduced":30000}"#),
+        "{line}"
+    );
+    let back = FightCard::from_json(&json::parse(&line).unwrap()).unwrap();
+    assert_eq!(back, c);
+    // The same line without the key is a pre-v43 card.
+    let old = CARD_GOLDEN.replace(r#","reduced":0"#, "");
+    assert_ne!(old, CARD_GOLDEN);
+    let back = FightCard::from_json(&json::parse(&old).unwrap()).unwrap();
+    assert_eq!(back, card());
+    assert_eq!(back.players[0].mitigated_pct(), 25.0);
 }

@@ -214,6 +214,11 @@ pub enum Event {
         blocked: u64,
         critical: bool,
         periodic: bool,
+        /// R17 amendment (2026-10-08): the suffix's second amount — the hit
+        /// before the target's armor and damage reduction (or, under a
+        /// vulnerability debuff, below what landed). `reduced` is what it
+        /// loses on the way to `amount + absorbed + blocked`, floored at 0.
+        unmitigated: u64,
     },
     /// R17: a swing or spell that did not land (`*_MISSED`). `prevented` is
     /// the BLOCK amount or the ABSORB `amountMissed`, else 0. A BLOCK's
@@ -231,6 +236,10 @@ pub enum Event {
         critical: bool,
         /// A `SPELL_PERIODIC_MISSED` tick.
         periodic: bool,
+        /// R17 amendment: the ABSORB tail's `unmitigated` amount (the hit a
+        /// shield took whole, before armor); 0 on every other kind, which
+        /// carries none.
+        unmitigated: u64,
     },
     /// R19: a `*_SUPPORT` twin of a hit or heal — the share of it that a
     /// supporter's buff (Ebon Might, Prescience …) accounts for. `spell` is
@@ -663,13 +672,16 @@ pub(crate) fn is_support_event(ev: &str) -> bool {
 }
 
 /// The damage suffix read forward from `s` (the field after the advanced
-/// block, or after envType for ENVIRONMENTAL_DAMAGE): `amount, raw_amount,
+/// block, or after envType for ENVIRONMENTAL_DAMAGE): `amount, unmitigated,
 /// overkill, school, resisted, blocked, absorbed, critical`. `None` when
 /// the line is too short to carry it.
 struct DamageSuffix {
-    /// suffix[0] is base_amount (post-mitigation, canonical); suffix[1] is
-    /// raw_amount (pre-mitigation, diagnostics only).
+    /// suffix[0] is the amount that reached the target (canonical, R1).
     amount: u64,
+    /// suffix[1]: the hit BEFORE the target's own modifiers — armor and
+    /// damage reduction take it down to `amount + absorbed + blocked`, a
+    /// vulnerability debuff can lift it above (R17's `reduced`).
+    unmitigated: u64,
     overkill: i64,
     absorbed: u64,
     blocked: u64,
@@ -683,6 +695,7 @@ fn damage_suffix(f: &[Cow<'_, str>], s: usize) -> Option<DamageSuffix> {
     }
     Some(DamageSuffix {
         amount: parse_u64(amount),
+        unmitigated: parse_u64(get(f, s + 1).unwrap_or_default()),
         overkill: parse_i64(get(f, s + 2).unwrap_or_default()),
         absorbed: parse_u64(get(f, s + 6).unwrap_or_default()),
         blocked: parse_u64(get(f, s + 5).unwrap_or_default()),
@@ -1197,6 +1210,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             blocked: d.blocked,
             critical: d.critical,
             periodic: ev.contains("_PERIODIC_"),
+            unmitigated: d.unmitigated,
         });
     }
 
@@ -1215,6 +1229,10 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         // ABSORB's tail is `amountMissed, unmitigated, critical`; a BLOCK
         // carries its amount alone (`BLOCK,nil,19215,ST` on a real log).
         let critical = kind == MissKind::Absorb && truthy(get(f, m + 4).unwrap_or_default());
+        let unmitigated = match kind {
+            MissKind::Absorb => parse_u64(get(f, m + 3).unwrap_or_default()),
+            _ => 0,
+        };
         return with_hint(Event::Missed {
             src: unit_at(f, 1),
             dst: unit_at(f, 5),
@@ -1224,6 +1242,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             prevented,
             critical,
             periodic: ev.contains("_PERIODIC_"),
+            unmitigated,
         });
     }
 
@@ -2723,6 +2742,79 @@ mod tests {
             "RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,ABSORB,nil,900,950,nil"
         ));
         assert_eq!(missed(e).3, 900);
+    }
+
+    /// R17 amendment: the second damage amount and the ABSORB tail's fourth
+    /// field are the hit before the target's armor — read, never confused
+    /// with the amount, and 0 on a miss kind that carries none.
+    #[test]
+    fn the_unmitigated_amount_rides_damage_and_absorb_misses() {
+        // A hostile spell on a player in a real line's shape: 30 000 landed
+        // of 45 000 swung, 12 000 of it on a shield.
+        let e = parse(&format!(
+            "SPELL_DAMAGE,{BOSS},{PLAYER},380001,\"Cinder Lash\",0x4,{},30000,45000,-1,4,0,0,12000,nil,nil,nil,ST",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        assert!(
+            matches!(
+                e,
+                Event::Damage {
+                    amount: 30_000,
+                    unmitigated: 45_000,
+                    absorbed: 12_000,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+        // A swing (no spell block): the same two amounts, forward from the
+        // block.
+        let e = parse(&format!(
+            "SWING_DAMAGE,{BOSS},{PLAYER},{},42000,90000,-1,1,0,18000,0,nil,nil,nil",
+            adv(BOSS_GUID, "0000000000000000")
+        ));
+        assert!(
+            matches!(
+                e,
+                Event::Damage {
+                    amount: 42_000,
+                    unmitigated: 90_000,
+                    blocked: 18_000,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+        // ABSORB: `amountMissed, unmitigated, critical`, with or without the
+        // ST/AOE trailer.
+        for line in [
+            format!("SWING_MISSED,{BOSS},{PLAYER},ABSORB,nil,12345,15000,nil"),
+            format!("SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,ABSORB,nil,12345,15000,1,ST"),
+            format!("RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,ABSORB,nil,12345,15000,nil"),
+        ] {
+            assert!(
+                matches!(
+                    parse(&line),
+                    Event::Missed {
+                        prevented: 12_345,
+                        unmitigated: 15_000,
+                        ..
+                    }
+                ),
+                "{line}"
+            );
+        }
+        // A BLOCK carries its amount alone; a dodge nothing.
+        for line in [
+            format!("SWING_MISSED,{BOSS},{PLAYER},BLOCK,nil,60693"),
+            format!("SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,BLOCK,nil,700,AOE"),
+            format!("SWING_MISSED,{BOSS},{PLAYER},DODGE,nil"),
+        ] {
+            assert!(
+                matches!(parse(&line), Event::Missed { unmitigated: 0, .. }),
+                "{line}"
+            );
+        }
     }
 
     #[test]

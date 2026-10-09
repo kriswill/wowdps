@@ -19,6 +19,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	misses	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	stagger	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	stagger_ticked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	reduced	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	self_harm	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	friendly_fire	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_given	0
@@ -69,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	misses	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	stagger	4000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	stagger_ticked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	reduced	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	self_harm	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	friendly_fire	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	support_given	0
@@ -119,6 +121,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	misses	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	stagger	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	stagger_ticked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	reduced	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	self_harm	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	friendly_fire	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_given	24100
@@ -169,6 +172,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	misses	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	stagger	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	stagger_ticked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	reduced	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	self_harm	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	friendly_fire	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	support_given	0
@@ -219,6 +223,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C22	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	support_given	0
@@ -269,6 +274,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C23	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	support_given	0
@@ -319,6 +325,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C21	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	support_given	80

@@ -306,3 +306,14 @@ In this log:
 Coverage-gap 3 above is now closed on the format side: the `*_SUPPORT` shapes
 were verified against a real Augmentation log on 2026-09-04 (FORMAT-NOTES,
 "`*_SUPPORT` events"), and `support.txt` gates the semantics.
+
+## Addendum — armor is mitigation (2026-10-08: R17's `reduced`)
+
+`check.awk` emits one more R17 row per player, `reduced`, right after
+`stagger_ticked`: per hit `taken` counts, the damage suffix's second amount
+(`unmitigated`) less `amount + absorbed + blocked`, floored at 0. This
+fixture's lines mostly log the two amounts equal, so every row reads 0 but
+one: a Hollow Rot tick on P1 Thraxx in segment 4, Verkath the Hollow (l.105,
+22 000 landed of 23 000 unmitigated, nothing absorbed or blocked) — **`reduced` 1 000**. No other
+number moves; `taken.txt` is the fixture built for the amendment
+(`taken.expected.md`, its last section).

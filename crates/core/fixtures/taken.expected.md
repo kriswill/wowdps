@@ -35,12 +35,14 @@ combat clock, the `dps` divisor) and `friendly_fire` right after `self_harm`
 | `misses` | count of `*_MISSED` lines with a friendly destination, IMMUNE included |
 | `stagger` | Σ `SPELL_ABSORBED` amounts whose absorb spell is in `NON_HEALING_ABSORBS` {114556, 31850, 31230, 115069} on the player (a subset of `absorbed`, never added again) |
 | `stagger_ticked` | Σ the 124255 self-tick amounts (src = dst) that re-deal staggered damage — the owner's own AND their pets' |
+| `reduced` | R17 amendment (2026-10-08): Σ over the hits `taken` counts of `unmitigated − (amount + absorbed + blocked)`, the RAW amount (overkill in), floored at 0 per hit; an ABSORB miss's `unmitigated − amountMissed`. What armor and damage reduction took off — never Taken. Emitted right after `stagger_ticked` |
 | `self_harm` | R22: Σ `amount + absorbed` over damage events whose FOLDED source equals their folded destination — held off `damage` entirely (the monk's two stagger ticks plus his ox's one). The identity uses the `on_friendly` subset (destination guid `Player-`/`Pet-`), which here is 10 000 of the 12 500 |
 
-`Mitigation.mitigated = absorbed + blocked + prevented` (the golden `absorbed`,
-whole absorbs included); `mitigated_pct = mitigated / (taken + prevented)` — the
-same number it was before R1 counted a whole absorb, which moved from the
-denominator's `prevented` half into its `taken` half. Both are derived, not
+`Mitigation.mitigated = absorbed + blocked + prevented + reduced` (the golden
+`absorbed`, whole absorbs included); `mitigated_pct = mitigated / (taken +
+prevented + reduced)` — before R1 counted a whole absorb it moved from the
+denominator's `prevented` half into its `taken` half, and before 2026-10-08
+neither side held `reduced` (armor's share). Both are derived, not
 emitted.
 
 ## Roster
@@ -138,7 +140,8 @@ R1 since 2026-10-02: nor is the killing blow's 25 000 overkill — it was 331 00
 | 23 | :11.000 | `SPELL_DAMAGE` boss→W "Cinder Lash" | W | 30 000 | **12 000** | 0 | +42 000 | absorbed +12 000 |
 
 - **taken = 42 000 + (30 000 + 12 000) = 84 000.** The 42 000 swing is post-block:
-  the 18 000 blocked is *not* added (raw 60 000 is diagnostics only). If you see
+  the 18 000 blocked is *not* added (its unmitigated 90 000 is the swing before
+  armor: 30 000 reduced, below). If you see
   102 000 the blocked field is being added; if you see 72 000 the absorbed field
   is not.
 - **absorbed 12 000**, **blocked 18 000**, **prevented 55 000** (the full BLOCK; the
@@ -148,8 +151,9 @@ R1 since 2026-10-02: nor is the killing blow's 25 000 overkill — it was 331 00
   absorber = W) — that line credits W with 12 000 *healing* and is **never read on
   the taken side**: taken already holds the 12 000 through the damage line's
   `absorbed` field. Counting both makes taken 96 000.
-- Derived: mitigated = 12 000 + 18 000 + 55 000 = 85 000;
-  mitigated_pct = 85 000 / (84 000 + 55 000) = 61.15 %.
+- Derived: mitigated = 12 000 + 18 000 + 55 000 + 33 000 reduced = 118 000;
+  mitigated_pct = 118 000 / (84 000 + 55 000 + 33 000) = 68.60 % (61.15 % before
+  armor counted: 85 000 / 139 000).
 
 #### M Zenlí (stagger: the hit is taken in full once; the ticks are not taken)
 
@@ -396,3 +400,28 @@ self-shields and long walls the taken graph marks), so `check.awk`'s `ROLE`
 subset carries them and the Mage's `spans` row reads **2** (it read 0 while
 neither was in the table). Nothing else moves: a defensive span opens no
 segment, adds no `am_uptime_ms` and gives no external.
+
+## 2026-10-08: armor is mitigation (`reduced`)
+
+The R17 amendment reads every damage line's second amount, `unmitigated` (the
+hit before the target's own modifiers), and the ABSORB miss's own. Six lines
+were given real values for it (their twins' `_LANDED` lines too, which
+nothing reads); every other hit's unmitigated equals what came out of it, so
+it adds 0. Nothing else in this file moves — no `taken`, no Taken row.
+
+| line | event | unmitigated | out (amount + absorbed + blocked) | → `reduced` |
+|---|---|---:|---:|---:|
+| 14 | boss swing → W (blocked 18 000) | 90 000 | 42 000 + 0 + 18 000 | W **+30 000** |
+| 23 | Cinder Lash → W (absorbed 12 000) | 45 000 | 30 000 + 12 000 + 0 | W **+3 000** |
+| 25 | boss swing → M (staggered 16 000) | 52 000 | 24 000 + 16 000 + 0 | M **+12 000** |
+| 32 | Ember Spit → M — **amplified** (a vulnerability) | 7 000 | 7 700 | M **+0**, not −700 (floored) |
+| 34 | Smoldering ABSORB miss → M (whole, 3 000) | 4 500 | 0 + 3 000 | M **+1 500** |
+| 56 | Cinder Lash → Water Elemental (folds onto F) | 5 000 | 4 000 | F **+1 000** |
+| 66 | boar swing → W (segment 2) | 2 000 | 1 500 | W **+500** (segment 2) |
+
+So segment 1: **W 33 000, M 13 500, F 1 000**; segment 2: **W 500**; segment 3:
+0 (the totem's redistribution and the HoT carry no reduction). The Stagger
+self-ticks (l.27, 31) and the Niuzao tick (l.42) are not Taken and add
+nothing. With it the three records' `mitigated` read 118 000 / 41 500 / 27 000
+and `mitigated_pct` 68.60 % / 47.87 % / 36.49 % (W: 118 000 / 172 000; M:
+41 500 / (73 200 + 13 500); F: 27 000 / (73 000 + 1 000)).

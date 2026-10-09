@@ -598,3 +598,48 @@ fn the_taken_fixture_exercises_every_ruling_branch() {
         );
     }
 }
+
+/// R17 amendment (2026-10-08): `reduced` is what armor and damage reduction
+/// took off — per hit the unmitigated amount less `amount + absorbed +
+/// blocked`, floored at 0 — on the victim's record, pets folded, never in
+/// Taken. `taken.txt`: Durgan's boss swing (90 000 swung, 42 000 landed,
+/// 18 000 blocked) and his partly absorbed Cinder Lash (45 000 swung, 42 000
+/// out); Zenlí's staggered swing (52 000 swung, 40 000 out), his whole-
+/// absorbed Smoldering tick (4 500 swung, 3 000 absorbed) and an Ember Spit
+/// a vulnerability lifted ABOVE its unmitigated amount (7 700 landed of
+/// 7 000), which counts 0, not −700; the Water Elemental's 1 000 on
+/// Pyralis; and a boar's 500 on Durgan in the trash after.
+#[test]
+fn reduced_is_armors_share_floored_and_never_taken() {
+    let text = std::fs::read_to_string(fixture_path("taken.txt")).unwrap_or_default();
+    let meter = replay(&text);
+    let segs = meter.segments();
+    let reduced = |seg: usize, guid: &str| {
+        segs.get(seg)
+            .and_then(|s| s.mitigation(guid))
+            .map(|m| m.reduced)
+    };
+    assert_eq!(reduced(0, "Player-1168-0A1B2C11"), Some(30_000 + 3_000));
+    assert_eq!(reduced(0, "Player-1168-0A1B2C12"), Some(12_000 + 1_500));
+    assert_eq!(
+        reduced(0, "Player-1168-0A1B2C13"),
+        Some(1_000),
+        "the pet's share folds onto its owner"
+    );
+    assert_eq!(reduced(1, "Player-1168-0A1B2C11"), Some(500));
+    // Inside `mitigated` and the swung total alike, never the Taken row.
+    let durgan = segs.first().and_then(|s| {
+        s.rows(View::Taken)
+            .into_iter()
+            .find(|r| r.key == "Player-1168-0A1B2C11")
+    });
+    let m = segs
+        .first()
+        .and_then(|s| s.mitigation("Player-1168-0A1B2C11"))
+        .unwrap_or_default();
+    let taken = durgan.map_or(0, |r| r.amount);
+    assert_eq!(taken, 84_000, "the Taken row does not move");
+    assert_eq!(m.mitigated(), 85_000 + 33_000);
+    let want = 118_000.0 * 100.0 / (84_000.0 + 55_000.0 + 33_000.0);
+    assert!((m.mitigated_pct(taken) - want).abs() < 1e-9);
+}

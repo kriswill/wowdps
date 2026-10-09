@@ -975,11 +975,11 @@ fn a_card_with_no_specs_at_all_still_answers_role_queries() {
 struct Taken {
     guid: &'static str,
     /// (column, expected) for every measure this fixture pins.
-    measures: [(&'static str, u64); 8],
+    measures: [(&'static str, u64); 9],
 }
 
 impl Taken {
-    const fn new(guid: &'static str, m: [u64; 8]) -> Self {
+    const fn new(guid: &'static str, m: [u64; 9]) -> Self {
         Self {
             guid,
             measures: [
@@ -991,6 +991,7 @@ impl Taken {
                 ("stagger", m[5]),
                 ("stagger_ticked", m[6]),
                 ("misses", m[7]),
+                ("reduced", m[8]),
             ],
         }
     }
@@ -1011,7 +1012,7 @@ const TAKEN_EXPECTED: [Taken; 3] = [
     // BLOCK miss of 55 000, and five misses.
     Taken::new(
         "Player-1168-0A1B2C11",
-        [84_000, 85_000, 55_000, 12_000, 18_000, 0, 0, 5],
+        [84_000, 118_000, 55_000, 12_000, 18_000, 0, 0, 5, 33_000],
     ),
     // M Zenlí, Brewmaster Monk: two staggered swings taken in full, the
     // 124255 self-ticks excluded (his own 10 000; Niuzao's 2 500 is R22
@@ -1019,14 +1020,14 @@ const TAKEN_EXPECTED: [Taken; 3] = [
     // one dot tick his shield absorbed whole — taken, 3 000 of it (R1).
     Taken::new(
         "Player-1168-0A1B2C12",
-        [73_200, 28_000, 0, 25_000, 0, 25_000, 10_000, 1],
+        [73_200, 41_500, 0, 25_000, 0, 25_000, 10_000, 1, 13_500],
     ),
     // F Pyralis, Fire Mage: both pet hits folded on, a full ABSORB of
     // 21 000 (taken since R1, not prevented), and five misses of five
     // different kinds.
     Taken::new(
         "Player-1168-0A1B2C13",
-        [73_000, 26_000, 0, 5_000, 0, 0, 0, 5],
+        [73_000, 27_000, 0, 5_000, 0, 0, 0, 5, 1_000],
     ),
 ];
 
@@ -1073,7 +1074,8 @@ fn assert_pcts_agree(lake: &Lake, tag: &str) {
     let t = lake
         .sql(
             "SELECT m.fight_id, m.guid, m.mitigated_pct, p.mitigated_pct, p.mitigated_pct_sql, \
-                    m.mitigated, m.taken, m.prevented, p.mitigated, p.taken, p.prevented \
+                    m.mitigated, m.taken, m.prevented, p.mitigated, p.taken, p.prevented, \
+                    m.reduced, p.reduced \
              FROM mitigation m JOIN players p USING (fight_id, guid) ORDER BY 1, 2",
         )
         .unwrap();
@@ -1088,10 +1090,12 @@ fn assert_pcts_agree(lake: &Lake, tag: &str) {
         assert_eq!(r[5].as_u64(), r[8].as_u64(), "{who}: mitigated");
         assert_eq!(r[6].as_u64(), r[9].as_u64(), "{who}: taken");
         assert_eq!(r[7].as_u64(), r[10].as_u64(), "{who}: prevented");
+        assert_eq!(r[11].as_u64(), r[12].as_u64(), "{who}: reduced");
         let model = wowdps_model::mitigated_pct(
             r[5].as_u64().unwrap(),
             r[6].as_u64().unwrap(),
             r[7].as_u64().unwrap(),
+            r[11].as_u64().unwrap(),
         );
         for (name, got) in [
             ("mitigation.mitigated_pct", sql_pct),
@@ -1126,8 +1130,8 @@ fn the_taken_views_answer_the_r17_fixture() {
     let t = lake
         .sql(
             "SELECT m.guid, m.taken, m.mitigated, m.prevented, m.absorbed, m.blocked, \
-                    m.stagger, m.stagger_ticked, m.misses, tk.amount, tk.extra, p.dtps, \
-                    p.duration_ms \
+                    m.stagger, m.stagger_ticked, m.misses, m.reduced, tk.amount, tk.extra, \
+                    p.dtps, p.duration_ms \
              FROM mitigation m JOIN taken tk USING (fight_id, guid) \
                   JOIN players p USING (fight_id, guid) ORDER BY m.guid",
         )
@@ -1136,7 +1140,7 @@ fn the_taken_views_answer_the_r17_fixture() {
     for (row, want) in t.rows.iter().zip(&TAKEN_EXPECTED) {
         let guid = want.guid;
         assert_eq!(cell_str(&row[0]), guid);
-        // The SELECT lists the eight measures in `Taken`'s own order.
+        // The SELECT lists the nine measures in `Taken`'s own order.
         for (i, (name, value)) in want.measures.iter().enumerate() {
             assert_eq!(row[i + 1].as_u64(), Some(*value), "{guid} {name}");
         }
@@ -1144,14 +1148,19 @@ fn the_taken_views_answer_the_r17_fixture() {
         // partial and whole, i.e. mitigated less the blocks — as `extra`;
         // dtps is it over the R7 duration (60.000 s).
         let taken = want.of("taken");
-        assert_eq!(row[9].as_u64(), Some(taken), "{guid} taken row amount");
+        assert_eq!(row[10].as_u64(), Some(taken), "{guid} taken row amount");
         assert_eq!(
-            row[10].as_u64(),
-            Some(want.of("mitigated") - want.of("blocked") - want.of("prevented")),
+            row[11].as_u64(),
+            Some(
+                want.of("mitigated")
+                    - want.of("blocked")
+                    - want.of("prevented")
+                    - want.of("reduced"),
+            ),
             "{guid} taken row extra"
         );
-        let secs = row[12].as_f64().unwrap() / 1000.0;
-        let dtps = row[11].as_f64().unwrap();
+        let secs = row[13].as_f64().unwrap() / 1000.0;
+        let dtps = row[12].as_f64().unwrap();
         assert!(
             (dtps - taken as f64 / secs).abs() < 1e-6,
             "{guid} dtps {dtps} over {secs}s"

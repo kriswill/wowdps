@@ -4956,6 +4956,10 @@ struct Hit<'a> {
     /// The shield took all of it: R17 files the absorb as `absorbed_full`
     /// and counts the miss by kind, where a partial one is `absorbed`.
     whole: bool,
+    /// R17 amendment: the line's unmitigated amount (the damage suffix's
+    /// second, an ABSORB miss's fourth tail field) — what `reduced` is
+    /// measured from.
+    unmitigated: u64,
 }
 
 #[derive(Debug, Default)]
@@ -5509,6 +5513,16 @@ impl Meter {
             m.absorbed += h.absorbed;
             m.blocked += h.blocked;
         }
+        // R17 amendment (2026-10-08): what armor and damage reduction took
+        // off before the hit landed — the unmitigated amount less what came
+        // out of it (the log's amount is post-block and includes overkill,
+        // so all three are added back). Floored at 0: under a vulnerability
+        // debuff a hit lands ABOVE its unmitigated amount (20 of 19 241
+        // hostile hits on a real Heroic pull, 1.1 M amplified), and that is
+        // not negative mitigation of anything this record reports.
+        m.reduced += h
+            .unmitigated
+            .saturating_sub(h.amount + h.absorbed + h.blocked);
         // R18: the taken series, same amount, same grid.
         s.bucket_taken(dst_guid, ts, dealt);
         // R21: the same hit, per hostile debuff open on the victim, at its
@@ -5758,7 +5772,7 @@ impl Meter {
                 blocked,
                 critical,
                 periodic,
-                ..
+                unmitigated,
             } => {
                 self.learn(src);
                 self.learn(dst);
@@ -5781,6 +5795,7 @@ impl Meter {
                         critical: *critical,
                         periodic: *periodic,
                         whole: false,
+                        unmitigated: *unmitigated,
                     },
                 );
                 self.name_trash(&guid, &dst_guid, &target);
@@ -6577,6 +6592,7 @@ impl Meter {
                 prevented,
                 critical,
                 periodic,
+                unmitigated,
                 ..
             } => {
                 self.learn(src);
@@ -6605,6 +6621,7 @@ impl Meter {
                                 critical: *critical,
                                 periodic: *periodic,
                                 whole: true,
+                                unmitigated: *unmitigated,
                             },
                         );
                     }
@@ -6868,6 +6885,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )
     }
@@ -6988,6 +7006,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             )
         }
@@ -7016,6 +7035,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
         ]);
@@ -7325,6 +7345,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )]);
         assert_eq!(m.segments()[0].rows(View::Damage)[0].amount, 1_250);
@@ -7346,6 +7367,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
         ]);
@@ -7372,6 +7394,7 @@ mod tests {
             blocked: 0,
             critical: false,
             periodic: false,
+            unmitigated: 0,
         };
         let m = fed(vec![
             at(0, killing(p1(), boss())),
@@ -7419,6 +7442,7 @@ mod tests {
             blocked: 0,
             critical: false,
             periodic: false,
+            unmitigated: 0,
         };
         let m = fed(vec![
             damage(0, p1(), None, 100),
@@ -7491,6 +7515,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
         ]);
@@ -7765,6 +7790,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         );
         if let Some((current, max)) = hp {
@@ -9068,6 +9094,7 @@ mod tests {
                     blocked: 0,
                     critical: true,
                     periodic: false,
+                    unmitigated: 0,
                 },
             )
         };
@@ -9201,6 +9228,7 @@ mod tests {
                     blocked: 0,
                     critical: true,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
             damage(1_000, p1(), Some(sp(116, "Frostbolt")), 999),
@@ -9581,6 +9609,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
         ]);
@@ -9617,6 +9646,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )]);
         assert!(!m.segments()[0].counts());
@@ -9634,6 +9664,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )]);
         assert!(m.segments()[0].counts());
@@ -9651,6 +9682,7 @@ mod tests {
                 blocked: 0,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )]);
         assert!(!m.segments()[0].counts());
@@ -9670,6 +9702,7 @@ mod tests {
                     blocked: 0,
                     critical: false,
                     periodic: false,
+                    unmitigated: 0,
                 },
             ),
             at(2_000, Event::Death { unit: p1() }),
@@ -9807,6 +9840,7 @@ mod tests {
                 blocked,
                 critical,
                 periodic: false,
+                unmitigated: 0,
             },
         )
     }
@@ -9830,6 +9864,7 @@ mod tests {
                 prevented,
                 critical: false,
                 periodic: false,
+                unmitigated: 0,
             },
         )
     }

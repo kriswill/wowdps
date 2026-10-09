@@ -174,6 +174,14 @@ pub struct Lake {
     /// them, and `union_by_name` only gives the struct the fields once ONE
     /// card in the lake does.
     players_have_taken: bool,
+    /// R17 amendment (v43): whether any card's player struct carries
+    /// `reduced` — what armor and damage reduction took off. A card
+    /// written before it has none (and its `mitigated` lacks it too, so
+    /// adding 0 keeps its pct); probed apart from the step 2b four, which
+    /// a lake can carry without it.
+    players_have_reduced: bool,
+    /// The same for the rows tier's mitigation records (`record.reduced`).
+    rows_have_reduced: bool,
     /// Whether any rows file carries a usable `mitigation` list — false on
     /// a lake whose rows all predate step 2b, and false too when every
     /// file's list is empty (DuckDB then types it JSON, not a struct list).
@@ -255,6 +263,8 @@ impl Lake {
             views: Vec::new(),
             players_have_role: false,
             players_have_taken: false,
+            players_have_reduced: false,
+            rows_have_reduced: false,
             rows_have_mitigation: false,
             players_have_support: false,
             players_have_spans: false,
@@ -362,12 +372,40 @@ impl Lake {
             // then has no stored `mitigated_pct` to offer, the computed 0
             // is named `mitigated_pct` as well, so `SELECT mitigated_pct
             // FROM players` answers on any lake.
-            let pct_sql = if self.players_have_taken {
-                ", CASE WHEN coalesce(p.taken, 0) + coalesce(p.prevented, 0) = 0 THEN 0.0 \
-                 ELSE coalesce(p.mitigated, 0) * 100.0 \
-                 / (coalesce(p.taken, 0) + coalesce(p.prevented, 0)) END AS mitigated_pct_sql"
+            // v43 (R17 amendment): `reduced` (armor and damage reduction)
+            // joins the swung total — it is inside `mitigated` already — on
+            // a card that carries it; 0 on one that does not, whose pct is
+            // unchanged. A lake with no such card exposes no `reduced`
+            // column through `p.*`, so it is named here as 0.
+            self.players_have_reduced = self
+                .sql(
+                    "SELECT reduced FROM \
+                     (SELECT unnest(players, recursive := true) FROM fights) LIMIT 0",
+                )
+                .is_ok();
+            let reduced = if self.players_have_reduced {
+                "coalesce(p.reduced, 0)"
             } else {
-                ", CAST(0.0 AS DOUBLE) AS mitigated_pct, CAST(0.0 AS DOUBLE) AS mitigated_pct_sql"
+                "0"
+            };
+            let reduced_col = if self.players_have_reduced {
+                ""
+            } else {
+                ", CAST(0 AS BIGINT) AS reduced"
+            };
+            let pct_sql = if self.players_have_taken {
+                format!(
+                    "{reduced_col}, CASE WHEN coalesce(p.taken, 0) + coalesce(p.prevented, 0) \
+                     + {reduced} = 0 THEN 0.0 \
+                     ELSE coalesce(p.mitigated, 0) * 100.0 \
+                     / (coalesce(p.taken, 0) + coalesce(p.prevented, 0) + {reduced}) END \
+                     AS mitigated_pct_sql"
+                )
+            } else {
+                format!(
+                    "{reduced_col}, CAST(0.0 AS DOUBLE) AS mitigated_pct, \
+                     CAST(0.0 AS DOUBLE) AS mitigated_pct_sql"
+                )
             };
             // R19 (step 3b): the healing split and the support scalars ride
             // the player struct too, written together — one probe. The six
@@ -727,7 +765,19 @@ impl Lake {
         // mitigated_pct`) — one column each, so no reader has to reassemble
         // them. A whole absorb is inside `taken` (R1), so only a full block
         // is added to it; a row written before that ruling reads its pct
-        // high by its whole absorbs until a regrade rewrites it.
+        // high by its whole absorbs until a regrade rewrites it. v43 (R17
+        // amendment): `reduced` — what armor and damage reduction took off —
+        // joins `mitigated` and the swung total alike, read only once a
+        // record carries it (probed: an older lake has no such field to
+        // select) and 0 on a record written before it.
+        self.rows_have_reduced = self
+            .sql("SELECT x.record.reduced FROM rows r, unnest(r.mitigation) AS u(x) LIMIT 0")
+            .is_ok();
+        let reduced = if self.rows_have_reduced {
+            "coalesce(m.rec.reduced, 0)"
+        } else {
+            "CAST(0 AS BIGINT)"
+        };
         self.rows_have_mitigation = self.probe_view(
             "mitigation",
             &format!(
@@ -741,6 +791,7 @@ impl Lake {
                           m.rec.absorbed_full AS absorbed_full, \
                           m.rec.blocked_full AS blocked_full, \
                           m.rec.stagger AS stagger, m.rec.stagger_ticked AS stagger_ticked, \
+                          {reduced} AS reduced, \
                           {}, ({}) AS misses, \
                           m.o.amount AS other_amount, m.o.extra AS other_extra, \
                           m.o.count AS other_count, m.o.n AS other_n, \
@@ -752,10 +803,10 @@ impl Lake {
                  ) \
                  SELECT j.*, \
                         blocked_full AS prevented, \
-                        absorbed + blocked + absorbed_full + blocked_full AS mitigated, \
-                        CASE WHEN taken + blocked_full = 0 THEN 0.0 \
-                             ELSE (absorbed + blocked + absorbed_full + blocked_full) * 100.0 \
-                                  / (taken + blocked_full) END AS mitigated_pct \
+                        absorbed + blocked + absorbed_full + blocked_full + reduced AS mitigated, \
+                        CASE WHEN taken + blocked_full + reduced = 0 THEN 0.0 \
+                             ELSE (absorbed + blocked + absorbed_full + blocked_full + reduced) \
+                                  * 100.0 / (taken + blocked_full + reduced) END AS mitigated_pct \
                  FROM j",
                 misses.join(", "),
                 miss_sum.join(" + "),
@@ -1088,6 +1139,7 @@ impl Lake {
         let dtps = col(self.players_have_taken, "dtps");
         let mitigated = col(self.players_have_taken, "mitigated");
         let prevented = col(self.players_have_taken, "prevented");
+        let reduced = col(self.players_have_reduced, "reduced");
         let healing = "coalesce(p.healing, 0)";
         let overheal = col(self.players_have_support, "overheal");
         let absorbed = col(self.players_have_support, "absorbed");
@@ -1104,9 +1156,9 @@ impl Lake {
                    SELECT p.guid, p.name, p.spec, p.role, p.start_utc_ms, \
                           CASE p.role WHEN 'healer' THEN p.hps \
                                       WHEN 'tank' THEN \
-                                        CASE WHEN {taken} + {prevented} = 0 THEN 0.0 \
+                                        CASE WHEN {taken} + {prevented} + {reduced} = 0 THEN 0.0 \
                                              ELSE CAST({mitigated} AS DOUBLE) * 100.0 \
-                                                  / CAST({taken} + {prevented} AS DOUBLE) END \
+                                                  / CAST({taken} + {prevented} + {reduced} AS DOUBLE) END \
                                       WHEN 'dps' THEN p.effective_dps_sql \
                                       ELSE 0.0 END AS measure, \
                           {taken} AS taken, {dtps} AS dtps, \

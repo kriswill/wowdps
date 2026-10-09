@@ -19,6 +19,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	misses	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stagger	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stagger_ticked	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	reduced	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	self_harm	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	friendly_fire	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_given	0
@@ -69,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	misses	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stagger	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stagger_ticked	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	reduced	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	self_harm	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	friendly_fire	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_given	0
@@ -119,6 +121,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		1500			Player-1168-0A1B2C61	misses	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	stagger	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	stagger_ticked	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	reduced	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	self_harm	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	friendly_fire	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	support_given	0
@@ -169,6 +172,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1500			Player-1168-0A1B2C61	misses	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	stagger	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	stagger_ticked	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	reduced	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	self_harm	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	friendly_fire	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	support_given	0

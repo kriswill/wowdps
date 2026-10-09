@@ -101,7 +101,7 @@ remembered owner from an earlier swing / the `0x1000` Pet unit flag).
 | off | field | note |
 |---|---|---|
 | 31 | `base_amount` | **effective damage post-mitigation — the canonical number** |
-| 32 | `raw_amount` | pre-mitigation, diagnostics only |
+| 32 | `unmitigated` | the hit BEFORE the target's own modifiers (an earlier note here said "pre-mitigation, diagnostics only"): armor and damage reduction bring it down to `base_amount + absorbed + blocked`, and it sits ABOVE that on every one of 19 120 hostile spell hits on players in a real Heroic pull — but BELOW it on 91 % of the group's 102 735 hits on enemies, whose vulnerability debuffs amplify the hit after it. R17's `reduced` = this − (amount + absorbed + blocked), floored at 0 |
 | 33 | `overkill` | **`-1` when not a killing blow** — clamp to 0 |
 | 34 | `school` | |
 | 35 | `resisted` | |
@@ -122,7 +122,7 @@ Advanced block at 9-27, then:
 | off | field |
 |---|---|
 | 28 | `base_amount` |
-| 29 | `raw_amount` |
+| 29 | `unmitigated` (as above) |
 | 30 | `overkill` |
 | 31 | `school` (always `1`) |
 | 32-34 | `resisted`, `blocked`, `absorbed` |

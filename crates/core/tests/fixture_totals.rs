@@ -120,6 +120,8 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                 put("misses", u64::from(m.misses()));
                 put("stagger", m.stagger);
                 put("stagger_ticked", m.stagger_ticked);
+                // R17 amendment: what armor and damage reduction took off.
+                put("reduced", m.reduced);
             }
             // R19 + the R2 amendment: the support ledger, the healing split
             // and healing received, and the DERIVED `effective` — the

@@ -15,7 +15,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 42;
+pub const PROTO_VERSION: u16 = 43;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -1517,8 +1517,8 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
 /// v21 (R17): the six u64 amounts in declaration order (`absorbed`,
 /// `blocked`, `absorbed_full`, `blocked_full`, `stagger`, `stagger_ticked`),
 /// then the ten miss counts as u32 in `MissKind::ALL` order (=
-/// `MissKind::index` order). Fixed 88 bytes, no counts — nothing an
-/// attacker can size. (Overkill is the R9 recap's, per death — not here.)
+/// `MissKind::index` order), then (v43) u64 `reduced`, trailing. Fixed 96
+/// bytes, no counts — nothing an attacker can size. (Overkill is the R9 recap's, per death — not here.)
 fn put_mitigation(buf: &mut Vec<u8>, m: &Mitigation) {
     wire::put_u64(buf, m.absorbed);
     wire::put_u64(buf, m.blocked);
@@ -1529,6 +1529,7 @@ fn put_mitigation(buf: &mut Vec<u8>, m: &Mitigation) {
     for kind in MissKind::ALL {
         wire::put_u32(buf, m.misses.get(kind.index()).copied().unwrap_or(0));
     }
+    wire::put_u64(buf, m.reduced);
 }
 
 fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
@@ -1540,6 +1541,7 @@ fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
         stagger: rd.u64()?,
         stagger_ticked: rd.u64()?,
         misses: [0; MissKind::COUNT],
+        reduced: 0,
     };
     for kind in MissKind::ALL {
         let n = rd.u32()?;
@@ -1547,6 +1549,7 @@ fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
             *slot = n;
         }
     }
+    m.reduced = rd.u64()?;
     Ok(m)
 }
 
@@ -1730,6 +1733,9 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     // v31: the guild the wowdps addon last saw the player in, trailing —
     // presence byte + string; `None` is unknown, `Some("")` unguilded.
     put_opt_str(buf, p.guild.as_deref());
+    // v43 (R17 amendment): armor's share (`Mitigation::reduced`), trailing;
+    // already inside `mitigated`, added to `mitigated_pct`'s swung total.
+    wire::put_u64(buf, p.reduced);
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1764,6 +1770,9 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         absorb_wasted: rd.opt(|r| r.u64())?,
         shields_unknown: rd.u32()?,
         guild: rd.opt(|r| r.string())?,
+        // Fields evaluate in the order written: `reduced` trails `guild`
+        // on the wire.
+        reduced: rd.u64()?,
     })
 }
 

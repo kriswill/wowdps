@@ -19,6 +19,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	misses	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	stagger	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	stagger_ticked	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	reduced	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	self_harm	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	friendly_fire	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C53	support_given	0
@@ -69,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	misses	1
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stagger	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stagger_ticked	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	reduced	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	self_harm	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	friendly_fire	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	support_given	0
@@ -119,6 +121,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	misses	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	stagger	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	stagger_ticked	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	reduced	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	self_harm	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	friendly_fire	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	support_given	0
@@ -169,6 +172,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C53	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C53	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C53	support_given	0
@@ -219,6 +223,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C51	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C51	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C51	support_given	0
@@ -269,6 +274,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1000			Player-1168-0A1B2C53	misses	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	stagger	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	stagger_ticked	0
+3	Trash	Trash		1000			Player-1168-0A1B2C53	reduced	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	self_harm	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	friendly_fire	0
 3	Trash	Trash		1000			Player-1168-0A1B2C53	support_given	0
@@ -319,6 +325,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1000			Player-1168-0A1B2C51	misses	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	stagger	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	stagger_ticked	0
+3	Trash	Trash		1000			Player-1168-0A1B2C51	reduced	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	self_harm	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	friendly_fire	0
 3	Trash	Trash		1000			Player-1168-0A1B2C51	support_given	0

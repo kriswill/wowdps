@@ -158,7 +158,10 @@ fn a_taken_watch_answers_rate_rows_and_a_drill_carries_the_mitigation_record() {
         assert_eq!(m.misses[kind.index()], 1, "{kind:?}");
     }
     assert_eq!(m.misses[MissKind::Miss.index()], 2);
-    assert_eq!(m.mitigated(), 85_000);
+    // R17 amendment: the boss swing's 30 000 and Cinder Lash's 3 000 that
+    // armor took off before anything landed.
+    assert_eq!(m.reduced, 33_000);
+    assert_eq!(m.mitigated(), 85_000 + 33_000);
 
     // The monk: stagger reported, never added; the ticks excluded. Niuzao's
     // own 2 500 is NOT here — a guardian logged as a `Creature-` unit is
@@ -173,7 +176,8 @@ fn a_taken_watch_answers_rate_rows_and_a_drill_carries_the_mitigation_record() {
     );
     assert_eq!((m.absorbed_full, m.blocked, m.blocked_full), (3_000, 0, 0));
     assert_eq!(m.misses(), 1);
-    assert_eq!(m.mitigated(), 28_000);
+    assert_eq!(m.reduced, 12_000 + 1_500);
+    assert_eq!(m.mitigated(), 28_000 + 13_500);
 
     // The mage and the pet: the pre-summon hit folds, "Environment" is an
     // attacker, and the add's EVADE of the mage's own cast is nobody's miss.
@@ -612,16 +616,17 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
     // self-ticks excluded), mitigated = partial absorbs + partial blocks +
     // full absorbs + full blocks, prevented = the full blocks (R1: a hit a
     // shield took whole is taken, like a partial absorb), dtps over the 60 s
-    // kill.
-    for (guid, taken, mitigated, prevented) in [
-        (DURGAN, 84_000u64, 85_000u64, 55_000u64),
-        (ZENLI, 73_200, 28_000, 0),
-        (PYRALIS, 73_000, 26_000, 0),
+    // kill; v43: `reduced` (armor and damage reduction) inside `mitigated`
+    // and the swung total.
+    for (guid, taken, mitigated, prevented, reduced) in [
+        (DURGAN, 84_000u64, 118_000u64, 55_000u64, 33_000u64),
+        (ZENLI, 73_200, 41_500, 0, 13_500),
+        (PYRALIS, 73_000, 27_000, 0, 1_000),
     ] {
         let p = player(card, guid);
         assert_eq!(
-            (p.taken, p.mitigated, p.prevented),
-            (taken, mitigated, prevented),
+            (p.taken, p.mitigated, p.prevented, p.reduced),
+            (taken, mitigated, prevented, reduced),
             "{guid}"
         );
         assert!(
@@ -632,7 +637,7 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
         assert!(
             close(
                 p.mitigated_pct(),
-                mitigated as f64 * 100.0 / (taken + prevented) as f64
+                mitigated as f64 * 100.0 / (taken + prevented + reduced) as f64
             ),
             "{guid} pct {}",
             p.mitigated_pct()
@@ -643,7 +648,7 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
     assert!(close(player(card, ZENLI).dtps, 1220.0));
     assert!(close(
         player(card, DURGAN).mitigated_pct(),
-        85_000.0 * 100.0 / 139_000.0
+        118_000.0 * 100.0 / 172_000.0
     ));
 
     // The derived pct is written for SQL and never read back.
@@ -653,7 +658,7 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
         .unwrap();
     let text = String::from_utf8(bytes).unwrap();
     assert!(
-        text.contains("\"taken\":84000,\"mitigated\":85000,\"prevented\":55000"),
+        text.contains("\"taken\":84000,\"mitigated\":118000,\"prevented\":55000"),
         "{text}"
     );
     assert_eq!(
@@ -723,7 +728,8 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
         assert_eq!(Some(m.record), seg.mitigation(&m.guid));
     }
     let durgan = rows.mitigation.iter().find(|m| m.guid == DURGAN).unwrap();
-    assert_eq!(durgan.record.mitigated(), 85_000);
+    assert_eq!(durgan.record.mitigated(), 118_000);
+    assert_eq!(durgan.record.reduced, 33_000, "v43: the rows tier keeps it");
     assert_eq!(durgan.record.prevented(), 55_000);
     assert!(
         durgan
@@ -1112,7 +1118,7 @@ fn a_regrade_back_fills_a_pre_2b_record_and_keeps_its_pin() {
     assert!(card.pinned, "the pin survived the rewrite");
     assert_eq!(card.id, kill);
     assert_eq!(player(card, DURGAN).taken, 84_000);
-    assert_eq!(player(card, DURGAN).mitigated, 85_000);
+    assert_eq!(player(card, DURGAN).mitigated, 118_000);
     assert!(
         reopened
             .cards()
@@ -1264,13 +1270,13 @@ fn a_trend_by_dtps_or_mitigated_pct_carries_the_tank_measures() {
     // MitigatedPct: amount = mitigated, per_sec = the derived percentage.
     let pct = trend_of(&store, DURGAN, TrendMeasure::MitigatedPct);
     assert_eq!(pct.len(), 1);
-    assert_eq!(pct[0].amount, 85_000, "the numerator is mitigated");
+    assert_eq!(pct[0].amount, 118_000, "the numerator is mitigated");
     assert!(
-        close(pct[0].per_sec, 85_000.0 * 100.0 / 139_000.0),
+        close(pct[0].per_sec, 118_000.0 * 100.0 / 172_000.0),
         "{}",
         pct[0].per_sec
     );
-    assert!(pct[0].per_sec > 61.1 && pct[0].per_sec < 61.2);
+    assert!(pct[0].per_sec > 68.6 && pct[0].per_sec < 68.7);
 
     // The monk and the mage answer their own rows, not the tank's.
     assert_eq!(
@@ -1279,7 +1285,7 @@ fn a_trend_by_dtps_or_mitigated_pct_carries_the_tank_measures() {
     );
     assert_eq!(
         trend_of(&store, PYRALIS, TrendMeasure::MitigatedPct)[0].amount,
-        26_000
+        27_000
     );
 
     // A Day bucket folds `per_sec` as a running MEAN of the per-fight
@@ -1303,7 +1309,7 @@ fn a_trend_by_dtps_or_mitigated_pct_carries_the_tank_measures() {
         close(day[0].per_sec, pct[0].per_sec),
         "one fight: the mean is it"
     );
-    assert_eq!(day[0].amount, 85_000);
+    assert_eq!(day[0].amount, 118_000);
 }
 
 fn fights_with(store: &Store<MemBackend>, guid: Option<&str>, role: Option<Role>) -> Vec<String> {

@@ -155,7 +155,11 @@ pub fn catalog() -> Vec<Tool> {
                           damage or taken total. With view=taken \
                           (R17) by_ability is what hit them and by_target who hit them, plus \
                           a mitigation object: absorbed / blocked / absorbed_full / \
-                          blocked_full, the derived prevented / mitigated / mitigated_pct, \
+                          blocked_full, reduced (v43: what armor and damage reduction \
+                          took off before the hit landed — the log's unmitigated amount \
+                          less amount + absorbed + blocked, floored at 0), the derived \
+                          prevented / mitigated / mitigated_pct (reduced inside both \
+                          mitigated and the swung total), \
                           the stagger pair, misses by kind, and by_ability_other / by_target_other = the \
                           player's taken total minus the sum of by_ability (0 on a boss \
                           pull; the folded remainder on a capped Σ drill). R21 (v27): a \
@@ -235,8 +239,8 @@ pub fn catalog() -> Vec<Tool> {
                           Augmentation. \
                           Tanks stay unranked (rank_measure null, rank_count = tanks in the \
                           fight) and are read through their own numbers instead: every \
-                          me/peer row carries taken, mitigated, prevented, mitigated_pct and \
-                          dtps (R17), the healing split overheal / absorbed, the support \
+                          me/peer row carries taken, mitigated, prevented, reduced (v43, 0 \
+                          until regrade_fights), mitigated_pct and dtps (R17), the healing split overheal / absorbed, the support \
                           scalars support_given / support_received / effective_dps, \
                           healed_received / self_healed and `support` (true for a support \
                           spec), and — v25 (R18, step 4b) — am_uptime_pct (active \
@@ -2153,6 +2157,8 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "taken": Json::u64(me.taken),
         "mitigated": Json::u64(me.mitigated),
         "prevented": Json::u64(me.prevented),
+        // v43: armor's share — 0 on a card written before it.
+        "reduced": Json::u64(me.reduced),
         "mitigated_pct": Json::num(round1(me.mitigated_pct())),
         "dtps": Json::num(round1(me.dtps)),
         // R19 / the R2 amendment (v23, step 3b): the healing split, the
@@ -2221,6 +2227,7 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
                             "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
                             "taken": Json::u64(p.taken),
                             "mitigated": Json::u64(p.mitigated),
+                            "reduced": Json::u64(p.reduced),
                             "mitigated_pct": Json::num(round1(p.mitigated_pct())),
                             "dtps": Json::num(round1(p.dtps)),
                             // Step 3b: a tank's own healing beside the external
@@ -3753,8 +3760,9 @@ fn ability_row(r: &Row, view: View) -> Json {
 /// R17: the mitigation record under a Taken drill — the split of what was
 /// swung at a player. `taken` is that player's own Taken row amount (every
 /// absorb included, a hit a shield took whole too — R1), which
-/// `mitigated_pct` is measured against with `prevented` (the full blocks); `misses` carries
-/// the total and only the kinds that actually happened, so a clean pull does
+/// `mitigated_pct` is measured against with `prevented` (the full blocks)
+/// and `reduced` (armor and damage reduction, v43); `misses` carries the
+/// total and only the kinds that actually happened, so a clean pull does
 /// not answer with ten zeros. `by_ability` is the drill's per-ability list:
 /// `by_ability_other` is what `taken` holds beyond its sum — 0 on a boss
 /// pull, the folded remainder on a stored Σ drill capped at 16 abilities
@@ -3774,6 +3782,9 @@ fn mitigation_json(m: &Mitigation, taken: u64, by_ability: &[Row], by_target: &[
         "absorbed_full": Json::u64(m.absorbed_full),
         "blocked_full": Json::u64(m.blocked_full),
         "prevented": Json::u64(m.prevented()),
+        // v43 (R17 amendment): what armor and damage reduction took off;
+        // inside `mitigated` and the swung total `mitigated_pct` divides by.
+        "reduced": Json::u64(m.reduced),
         "mitigated": Json::u64(m.mitigated()),
         "mitigated_pct": Json::num(round1(m.mitigated_pct(taken))),
         "stagger": Json::u64(m.stagger),

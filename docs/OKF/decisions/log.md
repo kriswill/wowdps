@@ -1,5 +1,12 @@
 # Log
 
+## 2026-10-08
+
+- **Creation** — [Armor Is Mitigation](armor-is-mitigation.md): R17's record
+  keeps what armor and damage reduction took off (`reduced`, from the damage
+  suffix's `unmitigated`), inside `mitigated_pct`; PROTO_VERSION 43, one bump
+  for the 2026-10-08 parser series.
+
 ## 2026-10-04
 
 - **Creation** — [A Σ Knows Only What Its Members Knew](a-sigma-knows-its-members.md):

@@ -19,6 +19,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	misses	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	stagger	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	stagger_ticked	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	reduced	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	self_harm	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	friendly_fire	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	support_given	0
@@ -69,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	misses	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	stagger	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	stagger_ticked	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	reduced	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	self_harm	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	friendly_fire	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	support_given	0
@@ -119,6 +121,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C01	misses	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	stagger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	reduced	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	self_harm	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	friendly_fire	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	support_given	0
@@ -169,6 +172,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	misses	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	stagger	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	stagger_ticked	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	reduced	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	self_harm	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	friendly_fire	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	support_given	0
@@ -219,6 +223,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	misses	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	stagger	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	stagger_ticked	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	reduced	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	self_harm	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	friendly_fire	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	support_given	0

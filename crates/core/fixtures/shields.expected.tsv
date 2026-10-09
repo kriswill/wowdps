@@ -19,6 +19,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	misses	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stagger	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stagger_ticked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	reduced	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	self_harm	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_given	0
@@ -69,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	misses	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stagger	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stagger_ticked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	reduced	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	self_harm	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_given	0
@@ -119,6 +121,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	misses	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stagger	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stagger_ticked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	reduced	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	self_harm	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_given	0
@@ -169,6 +172,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	misses	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stagger	3000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stagger_ticked	1500
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	reduced	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	self_harm	1500
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_given	0
@@ -219,6 +223,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	misses	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stagger	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stagger_ticked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	reduced	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	self_harm	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	friendly_fire	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_given	0
@@ -269,6 +274,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C43	misses	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	stagger	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	stagger_ticked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	reduced	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	self_harm	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	friendly_fire	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	support_given	0
@@ -319,6 +325,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	misses	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	stagger	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	stagger_ticked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	reduced	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	self_harm	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	friendly_fire	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	support_given	0

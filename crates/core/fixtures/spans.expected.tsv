@@ -19,6 +19,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	misses	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	stagger	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	stagger_ticked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	reduced	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	self_harm	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	friendly_fire	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	support_given	0
@@ -69,6 +70,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	misses	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	stagger	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	stagger_ticked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	reduced	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	self_harm	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	friendly_fire	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	support_given	0
@@ -119,6 +121,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	misses	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	stagger	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	stagger_ticked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	reduced	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	self_harm	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	friendly_fire	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	support_given	0
@@ -169,6 +172,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	misses	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	stagger	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	stagger_ticked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	reduced	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	self_harm	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	friendly_fire	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	support_given	0
@@ -219,6 +223,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C34	misses	0
 2	Trash	Trash		8000			Player-1168-0A1B2C34	stagger	0
 2	Trash	Trash		8000			Player-1168-0A1B2C34	stagger_ticked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	reduced	0
 2	Trash	Trash		8000			Player-1168-0A1B2C34	self_harm	0
 2	Trash	Trash		8000			Player-1168-0A1B2C34	friendly_fire	0
 2	Trash	Trash		8000			Player-1168-0A1B2C34	support_given	0
@@ -269,6 +274,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C31	misses	0
 2	Trash	Trash		8000			Player-1168-0A1B2C31	stagger	0
 2	Trash	Trash		8000			Player-1168-0A1B2C31	stagger_ticked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	reduced	0
 2	Trash	Trash		8000			Player-1168-0A1B2C31	self_harm	0
 2	Trash	Trash		8000			Player-1168-0A1B2C31	friendly_fire	0
 2	Trash	Trash		8000			Player-1168-0A1B2C31	support_given	0

@@ -292,12 +292,14 @@ impl MissKind {
 
 /// R17: `mitigated` as a percentage of everything swung with an amount —
 /// `taken` (the Taken row amount, every absorb included, partial or whole)
-/// plus `prevented` (full blocks, the one amount that never became Taken).
-/// 0..100; 0.0 when nothing was swung. One definition for the live
-/// `Mitigation` record and the history store's `CardPlayer`, so every
-/// reader derives the same number.
-pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64) -> f64 {
-    let swung = taken + prevented;
+/// plus `prevented` (full blocks) plus `reduced` (what armor and damage
+/// reduction took off before the hit landed): the two amounts that never
+/// became Taken. 0..100; 0.0 when nothing was swung. One definition for the
+/// live `Mitigation` record and the history store's `CardPlayer`, so every
+/// reader derives the same number; a card stored before `reduced` existed
+/// reads it 0 and keeps the pct it always had.
+pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64, reduced: u64) -> f64 {
+    let swung = taken + prevented + reduced;
     if swung == 0 {
         0.0
     } else {
@@ -308,8 +310,9 @@ pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64) -> f64 {
 /// R17: one player's mitigation over a segment — what was swung at them
 /// and did not land on health. The Taken row itself (amount = R1's
 /// `amount + absorbed`, a hit a shield took whole included, `extra` =
-/// `absorbed + absorbed_full`, `count` incl. misses) carries the totals; this record carries the split. Every field is additive
-/// under the R10 merge.
+/// `absorbed + absorbed_full`, `count` incl. misses) carries the totals;
+/// this record carries the split. Every field is additive under the R10
+/// merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Mitigation {
     /// Partial absorbs on damage events (the Taken row's `extra`); the
@@ -332,20 +335,31 @@ pub struct Mitigation {
     pub stagger_ticked: u64,
     /// Miss counts by `MissKind::index`.
     pub misses: [u32; MissKind::COUNT],
+    /// R17 amendment (2026-10-08): what armor and damage reduction took
+    /// off — per hit the damage suffix's `unmitigated` amount less what
+    /// came out of it (`amount + absorbed + blocked`; an ABSORB miss's own
+    /// `unmitigated` less its `amountMissed`), floored at 0, since a
+    /// vulnerability debuff can amplify a hit past its unmitigated amount.
+    /// Never Taken; trailing on the wire (v43). 0 on a record read from
+    /// before it.
+    pub reduced: u64,
 }
 
 impl Mitigation {
-    /// Damage that was swung with an amount and did not land:
-    /// partial absorbs and blocks plus full absorbs and blocks. Dodges,
-    /// parries and misses carry no amount and are counts only.
+    /// Damage that was swung with an amount and did not land: partial
+    /// absorbs and blocks, full absorbs and blocks, and what armor and
+    /// damage reduction took off (`reduced`). Dodges, parries and misses
+    /// carry no amount and are counts only.
     pub fn mitigated(&self) -> u64 {
-        self.absorbed + self.blocked + self.absorbed_full + self.blocked_full
+        self.absorbed + self.blocked + self.absorbed_full + self.blocked_full + self.reduced
     }
 
     /// Damage prevented outright — the amount a `*_MISSED` line carried
     /// that never became Taken: full blocks. A full absorb is Taken since
     /// R1 counts it (as a partial block's part never was, and a partial
-    /// absorb's always was).
+    /// absorb's always was). `reduced` never became Taken either, but it is
+    /// its own number: `prevented` keeps the meaning every stored card
+    /// gave it.
     pub fn prevented(&self) -> u64 {
         self.blocked_full
     }
@@ -357,12 +371,12 @@ impl Mitigation {
     }
 
     /// `mitigated` over everything swung with an amount: `taken` (the
-    /// Taken row amount, every absorb included) plus `prevented`.
-    /// 0..100; 0 when nothing was swung. The arithmetic is the free
-    /// [`mitigated_pct`], shared with the history store's card so a stored
-    /// pct can never disagree with a live one.
+    /// Taken row amount, every absorb included) plus `prevented` plus
+    /// `reduced`. 0..100; 0 when nothing was swung. The arithmetic is the
+    /// free [`mitigated_pct`], shared with the history store's card so a
+    /// stored pct can never disagree with a live one.
     pub fn mitigated_pct(&self, taken: u64) -> f64 {
-        mitigated_pct(self.mitigated(), taken, self.prevented())
+        mitigated_pct(self.mitigated(), taken, self.prevented(), self.reduced)
     }
 
     pub fn miss(&mut self, kind: MissKind) {
@@ -387,6 +401,7 @@ impl Mitigation {
         self.blocked_full += other.blocked_full;
         self.stagger += other.stagger;
         self.stagger_ticked += other.stagger_ticked;
+        self.reduced += other.reduced;
         for (a, b) in self.misses.iter_mut().zip(other.misses.iter()) {
             *a += *b;
         }

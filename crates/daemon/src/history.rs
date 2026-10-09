@@ -3280,6 +3280,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         if let Some(m) = seg.mitigation(guid) {
             p.mitigated = m.mitigated();
             p.prevented = m.prevented();
+            p.reduced = m.reduced;
         }
         // Step 3b: the healing split's absorb half (the absorber-credited
         // R3 total, ≤ the Healing row), the DAMAGE halves of the support

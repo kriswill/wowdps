@@ -106,6 +106,8 @@ pub fn mitigation_line(m: &Mitigation, taken: u64) -> String {
         ("absorbed", m.absorbs()),
         ("blocked", m.blocked),
         ("prevented", m.prevented()),
+        // R17 amendment: what armor and damage reduction took off.
+        ("reduced", m.reduced),
         ("stagger", m.stagger),
         // R22: the staggered portion re-dealt to themselves. Held off their
         // Damage row, so this line is the only place it is reported.
