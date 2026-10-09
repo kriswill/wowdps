@@ -34,7 +34,8 @@ repository by design. Nothing on main reads the crate yet.
 
 It is the one engine-side crate that names serde/toml (CONTRACT.md
 §Dependencies), and it takes [`wowdps-proto`](proto.md) for `proto::dirs`,
-the XDG directories its text sidecars resolve through. Beside the rubric it
+the XDG directories its text sidecars and the user's rubric directory
+resolve through. Beside the rubric it
 holds the formats the replay branch's extractor writes and its GUI reads for
 an encounter's art, one reader and writer each: `floor` (a rendered floor's
 placement sidecar, `Floors::scan` over the floors cache) and `portraits`
@@ -56,20 +57,29 @@ that is not per encounter.
   repository's `rubric/` and writes an `include_str!` per `.toml` into
   `OUT_DIR`. The flake's source set lists `./rubric` for the same reason
   it lists `./addon`.
-- **Raw tables merge before anything is typed.** Layers merge as
-  `toml::Table`s, key by key, in this order: season defaults, instance
-  defaults, draft, the instance file's `[encounter.<id>]` (the encounter's
-  map and NPCs), tuned file, difficulty overrides. Only the result is
-  deserialized. So an override can name one key of an inline table
-  (`shape = { length = 45 }`), and the typed structs never see a partial
-  entry.
-- **Two tiers, the base standing alone.** `Tier::Base` resolves the
-  season, the instance and the draft, which are what extraction gives.
-  `Tier::Curated` lays a tuned file over them. `encounter_at` takes the
-  tier per encounter, `with_tier` caps it for the whole rubric, and
-  `has_curated` names the encounters with a tuned file. The embedded test
-  resolves and `check`s every encounter at both tiers, so no base leans on
-  a tuned file; on main, with none, the two tiers answer alike.
+- **Raw tables merge before anything is typed.** Sources merge as
+  `toml::Table`s, key by key, in the stack's order: season defaults,
+  instance defaults, draft, the instance file's `[encounter.<id>]` (the
+  encounter's map and NPCs), each curated set, the user's files, then every
+  source's difficulty overrides. Only the result is deserialized. So an
+  override can name one key of an inline table (`shape = { length = 45 }`),
+  and the typed structs never see a partial entry.
+- **Three tiers, an ordered stack, the base standing alone.** Each
+  `Source` names its `Tier` (`Base < Curated < User`, the default `User`):
+  the base's four (`Season`, `Instance`, `Draft`, `Drawing`), then
+  `Curated(Origin)` for each curated set in the order laid (a tuned file
+  embedded beside its draft is `Curated(Embedded)`, a runtime
+  `with_curated` bundle `Curated(Bundle(name))`), then `User`
+  (`with_user`, `with_user_dir` over `$XDG_CONFIG_HOME/wowdps/rubric/`). A
+  set is one block (its `season.toml`, its `instance.toml`, the encounter's
+  file) laid over everything under it; a draft is never in one. A bundle is
+  laid whole or refused; a bad user file goes to `user_errors` and is left
+  out. `encounter_at` takes the tier per encounter, `with_tier` caps it,
+  `layers_of` lists an encounter's sources, and `encounter_traced` answers
+  a `Provenance` (per key path, who last set it, through which difficulty
+  override) with the same `Encounter`. The embedded test resolves and
+  `check`s every encounter at every tier, so no base leans on a curated
+  file ([Resolve An Encounter Through An Ordered Layer Stack](../decisions/encounter-rubric-layers.md)).
 - **An encounter's map is the base's.** The instance file gives each
   encounter's `map` and `view` by DungeonEncounterID, however hand-made,
   and what changes the map in the fight: its `room`s, `place`s and the
@@ -97,8 +107,9 @@ that is not per encounter.
   back byte for byte from what it reads as, with no game install.
 - **Versioned twice.** Every file carries `schema = N`. `migrate` brings
   older files forward and refuses newer ones. `Rubric::version()` is the
-  seasons plus an FNV-1a hash over every file, which an interpretation
-  records so a stored fight regrades when the rubric changes.
+  seasons plus an FNV-1a hash over every file laid (the base's, the
+  curated sets', the user's), which an interpretation records so a stored
+  fight regrades when the rubric changes; laying nothing leaves it.
 - **Blizzard's words stay on the machine.** An ability's `text` is never in
   a committed file. The generator writes each encounter's journal text to
   a per-machine sidecar,

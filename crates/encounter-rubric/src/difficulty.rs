@@ -65,6 +65,13 @@ pub fn fallbacks(name: &str) -> &'static [&'static str] {
     chain_named(name).get(1..).unwrap_or(&[])
 }
 
+/// One log id of every difficulty, in `NAMES`' order: what a reader that
+/// must try an encounter on every difficulty reads it on (`chain` gives
+/// every id of a difficulty the same chain).
+pub fn probes() -> impl Iterator<Item = u32> {
+    CHAINS.iter().filter_map(|(ids, _)| ids.first().copied())
+}
+
 /// Whether an entry limited to `only` (difficulty names; empty: all)
 /// appears on the difficulty whose chain this is: its own name, exactly,
 /// not the ones it falls back to. The journal lists an ability's

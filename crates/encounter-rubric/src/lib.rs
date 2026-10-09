@@ -15,30 +15,44 @@
 //! rubric/<season>/<instance>/<id>-<slug>.toml         tuned by hand
 //! ```
 //!
-//! An encounter resolves by laying, each over the last: the season's
-//! defaults, the instance's, the generated draft, the encounter's map and
-//! NPCs as the instance's file gives them (`[encounter.<id>]`: its `map`
-//! and `view`, what changes the map: its `room`s, `place`s and the `event`s
-//! they key on, and an `npc` the draft lacks or has wrong), the tuned
-//! file, then the difficulty overrides its fallback
-//! chain names, the most general first (`difficulty`). Tables merge key by
-//! key; anything else is replaced. An entry with `enabled = false`, or
-//! whose `only` leaves the difficulty out, is dropped.
+//! An encounter resolves through an ordered stack of SOURCES (`Source`),
+//! each laid over the last: the season's defaults, the instance's, the
+//! generated draft, the encounter's map and NPCs as the instance's file
+//! gives them (`[encounter.<id>]`: its `map` and `view`, what changes the
+//! map: its `room`s, `place`s and the `event`s they key on, and an `npc`
+//! the draft lacks or has wrong); then every curated file set in the order
+//! it was laid (a tuned file embedded beside its draft, then each bundle
+//! `Rubric::with_curated` lays in); then the user's own files
+//! (`Rubric::with_user`, `with_user_dir`). Last come the difficulty
+//! overrides the difficulty's fallback chain names, the most general
+//! first (`difficulty`), each difficulty's from every source in the
+//! stack's order. Tables merge key by key; anything else is replaced
+//! whole. An entry with `enabled = false`, or whose `only` leaves the
+//! difficulty out, is dropped. `Rubric::encounter_traced` answers who set
+//! each key (`Provenance`).
 //!
-//! An encounter resolves at a `Tier`: the BASE is what extraction gives,
-//! and its map and NPCs, with no other hand amendment (the season's and
-//! the instance's files and the generated draft, with the draft's own
-//! difficulty overrides); CURATED lays the tuned file over the base. The
-//! map is the base's, however much it was worked on by hand (a stencil, a
-//! level, the view's turn, a platform that breaks on an event, a room off
-//! the arena), because a room should look and change the same at every
-//! tier; so is what an NPC is where the journal is silent or wrong (Ula'tek's
-//! Venomous Heart, sharing Ula'tek's health), because who is in the room
-//! should too. The curated layer is what the fight does in it. The two live side
-//! by side under `rubric/` for now, but nothing in the base depends on a
-//! tuned file, so the curated layer can be shipped apart from it. A reader
-//! asks for a tier per encounter (`encounter_at`); the rubric's own
-//! (`with_tier`) is the most it will answer.
+//! The sources belong to three TIERS, ordered (`Tier`):
+//!
+//! - BASE: what extraction gives, and the encounter's map and NPCs, with
+//!   no other hand amendment (the season's and the instance's files, the
+//!   draft with its own difficulty overrides, the instance's drawing). The
+//!   map is the base's, however much it was worked on by hand (a stencil,
+//!   a level, the view's turn, a platform that breaks on an event, a room
+//!   off the arena), because a room should look and change the same at
+//!   every tier; so is what an NPC is where the journal is silent or wrong
+//!   (Ula'tek's Venomous Heart, sharing Ula'tek's health), because who is
+//!   in the room should too. The base must stand alone: nothing in it
+//!   leans on a curated or user file, and neither ever adds a draft.
+//! - CURATED: what the fight does in the room, found by investigating it.
+//!   The public repository carries the base alone; a tuned file beside its
+//!   draft still reads as curated, so a tree that holds them works
+//!   unchanged, and a curated set ships apart from the base as a bundle.
+//! - USER: the files on this machine, laid last, so a user can override
+//!   anything for themselves.
+//!
+//! A reader asks for a tier per encounter (`encounter_at`); the rubric's
+//! own (`with_tier`, the user tier unless lowered) is the most it will
+//! answer.
 //!
 //! The journal's words for each ability are not in the repository: they
 //! live in a per-machine sidecar (`text`) a reader lays over an encounter
@@ -56,9 +70,11 @@
 mod check;
 pub mod difficulty;
 pub mod floor;
+mod layer;
 pub mod placed;
 pub mod portraits;
 pub mod schema;
+mod stack;
 pub mod text;
 pub mod write;
 
@@ -66,10 +82,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub use check::check;
+pub use layer::{Origin, Provenance, SetBy, Source};
+use layer::{Set, lay};
 use schema::Gated;
 pub use schema::*;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+pub use stack::user_dir;
 use toml::{Table, Value};
 
 /// The rubric format this build reads and writes. A file in an older one is
@@ -86,34 +105,38 @@ mod embedded {
     include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
 }
 
-/// Which of an encounter's layers it resolves with, the lesser first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+/// Which of an encounter's sources it resolves with, the lesser first:
+/// each tier reads its own sources and every lesser tier's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Tier {
-    /// What extraction gives with no hand amendment: the season's and the
-    /// instance's files and the generated draft (`gen-rubric`).
+    /// What extraction gives with no hand amendment but the map and its
+    /// NPCs: the season's and the instance's files, the generated draft
+    /// (`gen-rubric`) and the instance's drawing of the encounter.
     Base,
-    /// The tuned file laid over the base: what was found by investigating
-    /// the fight and checking it against logs and the game.
-    #[default]
+    /// The curated sets laid over the base: what was found by
+    /// investigating the fight and checking it against logs and the game.
     Curated,
+    /// The user's own files laid over everything: all this machine has.
+    #[default]
+    User,
 }
 
 impl Tier {
+    /// Every tier, the lesser first.
+    pub const ALL: [Tier; 3] = [Tier::Base, Tier::Curated, Tier::User];
+
     /// Its name, as a control or a command line spells it.
     pub fn name(self) -> &'static str {
         match self {
             Tier::Base => "base",
             Tier::Curated => "curated",
+            Tier::User => "user",
         }
     }
 
     /// The tier a name spells (`name`).
     pub fn from_name(s: &str) -> Option<Tier> {
-        match s {
-            "base" => Some(Tier::Base),
-            "curated" => Some(Tier::Curated),
-            _ => None,
-        }
+        Tier::ALL.into_iter().find(|t| t.name() == s)
     }
 }
 
@@ -124,11 +147,20 @@ pub struct Rubric {
     /// Every encounter it answers, by id: its season's place in `seasons`
     /// and its instance's slug (`index`).
     index: BTreeMap<u32, (usize, String)>,
+    /// FNV-1a over every file the rubric holds, the base's and every set
+    /// laid over it alike (`version`).
+    hash: u64,
     version: String,
     /// Each encounter's journal text on this machine, by id (`with_texts`).
     texts: BTreeMap<u32, text::Texts>,
     /// The sidecars `with_texts` found and could not read.
     text_errors: Vec<String>,
+    /// The file sets laid over the base, in the stack's order: the
+    /// curated in the order laid (the embedded tuned files first), then
+    /// the user's.
+    sets: Vec<Set>,
+    /// The user's files `with_user` and `with_user_dir` could not lay.
+    user_errors: Vec<String>,
     /// The most any encounter resolves with (`with_tier`).
     tier: Tier,
 }
@@ -176,8 +208,9 @@ pub struct Instance {
     encounters: BTreeMap<u32, Layers>,
 }
 
-/// One encounter's two files, and its map and NPCs as its instance's file
-/// gives them.
+/// One encounter's base: its files' stem, its draft, and its map and NPCs
+/// as its instance's file gives them. Its curated and user files are the
+/// rubric's sets'.
 #[derive(Debug, Clone, Default)]
 struct Layers {
     stem: String,
@@ -185,7 +218,6 @@ struct Layers {
     /// `[encounter.<id>]` of the instance's file: `{ map = …, view = …,
     /// room = …, place = …, event = …, npc = … }`.
     drawing: Option<Table>,
-    tuned: Option<Table>,
 }
 
 /// What a file under `rubric/` is, by where it lies.
@@ -308,6 +340,17 @@ fn typed<T: DeserializeOwned>(mut t: Table) -> Result<T, String> {
     T::deserialize(Value::Table(t)).map_err(|e| e.to_string())
 }
 
+/// Fold `(path, text)` pairs into an FNV-1a hash, in the order given.
+fn hash_files<'a>(mut hash: u64, files: impl IntoIterator<Item = (&'a str, &'a str)>) -> u64 {
+    for (path, text) in files {
+        for b in path.bytes().chain(text.bytes()) {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    hash
+}
+
 impl Rubric {
     /// The rubric this binary was built with.
     pub fn embedded() -> Result<Rubric, Vec<String>> {
@@ -319,18 +362,17 @@ impl Rubric {
     }
 
     /// The rubric from `(path, text)` pairs, paths relative to `rubric/`.
+    /// A tuned `<id>-<slug>.toml` among them is the curated tier's first
+    /// set (`Source::Curated(Origin::Embedded)`); the rest is the base.
     pub fn from_files(
         files: impl IntoIterator<Item = (String, String)>,
     ) -> Result<Rubric, Vec<String>> {
         let mut files: Vec<(String, String)> = files.into_iter().collect();
         files.sort();
-        let mut hash = 0xcbf2_9ce4_8422_2325u64;
-        for (path, text) in &files {
-            for b in path.bytes().chain(text.bytes()) {
-                hash ^= u64::from(b);
-                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-        }
+        let hash = hash_files(
+            0xcbf2_9ce4_8422_2325,
+            files.iter().map(|(p, t)| (p.as_str(), t.as_str())),
+        );
         let mut errs = Vec::new();
         let mut roles = Vec::new();
         for (path, text) in &files {
@@ -393,6 +435,8 @@ impl Rubric {
                 Err(e) => errs.push(format!("{path}: {e}")),
             }
         }
+        // The tuned files beside their drafts: the curated tier's first set.
+        let mut tuned = Set::new(Source::Curated(Origin::Embedded));
         for &(path, text, ref role) in &roles {
             let FileRole::Encounter {
                 season,
@@ -423,12 +467,14 @@ impl Rubric {
                 continue;
             }
             layers.stem = stem.to_string();
-            let file = if draft {
-                &mut layers.draft
+            if draft {
+                layers.draft = Some(t);
             } else {
-                &mut layers.tuned
-            };
-            *file = Some(t);
+                tuned
+                    .instance_mut(season, instance)
+                    .encounters
+                    .insert(id, t);
+            }
         }
         for d in drawings {
             match seasons
@@ -450,15 +496,19 @@ impl Rubric {
         let mut seasons: Vec<Season> = seasons.into_values().collect();
         seasons.sort_by_key(|s| std::cmp::Reverse(s.order));
         let index = index(&seasons)?;
-        let version = format!("{}+{hash:016x}", seasons_ids(&seasons));
-        Ok(Rubric {
+        let mut r = Rubric {
             seasons,
             index,
-            version,
+            hash,
+            version: String::new(),
             texts: BTreeMap::new(),
             text_errors: Vec::new(),
-            tier: Tier::Curated,
-        })
+            sets: vec![tuned],
+            user_errors: Vec::new(),
+            tier: Tier::default(),
+        };
+        r.version = r.versioned();
+        Ok(r)
     }
 
     /// Every season, newest first.
@@ -467,9 +517,14 @@ impl Rubric {
     }
 
     /// What an interpretation records it ran under: the seasons and a hash
-    /// of every file.
+    /// of every file, the base's and every curated and user file laid over
+    /// it. A reader that records it should record the tier it read at too.
     pub fn version(&self) -> &str {
         &self.version
+    }
+
+    fn versioned(&self) -> String {
+        format!("{}+{:016x}", seasons_ids(&self.seasons), self.hash)
     }
 
     /// The rubric with the journal's text laid over every encounter it
@@ -522,8 +577,8 @@ impl Rubric {
         self
     }
 
-    /// The most any encounter resolves with (`with_tier`; curated unless
-    /// lowered).
+    /// The most any encounter resolves with (`with_tier`; the user tier,
+    /// everything this machine has, unless lowered).
     pub fn tier(&self) -> Tier {
         self.tier
     }
@@ -536,35 +591,75 @@ impl Rubric {
         self.encounter_at(id, difficulty, self.tier)
     }
 
-    /// Whether an encounter has a curated layer over its base: a tuned file.
-    pub fn has_curated(&self, id: u32) -> bool {
-        self.find(id).is_some_and(|(_, _, l)| l.tuned.is_some())
-    }
-
     /// An encounter as `encounter` gives it, at `tier` or the rubric's own,
-    /// whichever is less. `None` too when the base is asked for and the
-    /// encounter has no draft.
+    /// whichever is less. `None` too when no source at that tier holds the
+    /// encounter's own file: the base answers an encounter with a draft, the
+    /// curated tier one with a draft or a curated file, the user tier one
+    /// with any of them or a user file.
     pub fn encounter_at(
         &self,
         id: u32,
         difficulty: Option<u32>,
         tier: Tier,
     ) -> Option<Result<Encounter, String>> {
-        let tier = tier.min(self.tier);
-        let (season, inst, layers) = self.find(id)?;
-        if tier == Tier::Base && layers.draft.is_none() {
-            return None;
+        self.answer(id, difficulty, tier.min(self.tier), None)
+    }
+
+    /// An encounter as `encounter_at` gives it, and who set each of its
+    /// keys: the same `Encounter`, with its `Provenance`.
+    pub fn encounter_traced(
+        &self,
+        id: u32,
+        difficulty: Option<u32>,
+        tier: Tier,
+    ) -> Option<Result<(Encounter, Provenance), String>> {
+        let mut prov = Provenance::default();
+        let e = self.answer(id, difficulty, tier.min(self.tier), Some(&mut prov))?;
+        Some(e.map(|e| (e, prov)))
+    }
+
+    /// The sources with a file this encounter reads, in the stack's order:
+    /// the base's (its season's and instance's files always, its draft and
+    /// its drawing where it has them), then each curated set and the
+    /// user's that holds its file, its drawing, or its instance's or
+    /// season's. A set laid twice in a row is listed once. Empty when no
+    /// season has the encounter.
+    pub fn layers_of(&self, id: u32) -> Vec<Source> {
+        let Some((season, inst, layers)) = self.find(id) else {
+            return Vec::new();
+        };
+        let mut out = vec![Source::Season, Source::Instance];
+        if layers.draft.is_some() {
+            out.push(Source::Draft);
         }
-        let mut e = resolve(season, inst, layers, difficulty, tier);
-        if let (Ok(e), Some(texts)) = (&mut e, self.texts.get(&id)) {
-            texts.lay(e, difficulty);
+        if layers.drawing.is_some() {
+            out.push(Source::Drawing);
         }
-        Some(e)
+        for set in &self.sets {
+            if set.touches(&season.id, &inst.slug, id) && out.last() != Some(&set.source) {
+                out.push(set.source.clone());
+            }
+        }
+        out
+    }
+
+    /// Whether an encounter has a curated layer over its base: any curated
+    /// set with a file it reads (`layers_of`).
+    pub fn has_curated(&self, id: u32) -> bool {
+        self.layers_of(id)
+            .iter()
+            .any(|s| matches!(s, Source::Curated(_)))
+    }
+
+    /// Whether the user's files touch an encounter (`layers_of`).
+    pub fn has_user(&self, id: u32) -> bool {
+        self.layers_of(id).contains(&Source::User)
     }
 
     /// Every encounter id the rubric answers, with the season and instance
     /// it answers it from: the newest season's, seasons newest first, each
-    /// id once.
+    /// id once. An id whose only file is curated or the user's is listed
+    /// too; `encounter_at` answers it from that tier up.
     pub fn encounters(&self) -> Vec<(u32, &Season, &Instance)> {
         let mut out = Vec::new();
         for (n, s) in self.seasons.iter().enumerate() {
@@ -589,6 +684,160 @@ impl Rubric {
         let season = self.seasons.get(*n)?;
         let inst = season.instances.get(slug)?;
         Some((season, inst, inst.encounters.get(&id)?))
+    }
+
+    /// An encounter at `tier`, uncapped, who set each key kept in `prov`:
+    /// `None` when no source up to `tier` holds its own file.
+    fn answer(
+        &self,
+        id: u32,
+        difficulty: Option<u32>,
+        tier: Tier,
+        prov: Option<&mut Provenance>,
+    ) -> Option<Result<Encounter, String>> {
+        let found @ (season, inst, layers) = self.find(id)?;
+        let stands = layers.draft.is_some()
+            || self.sets.iter().any(|set| {
+                set.source.tier() <= tier && set.has_encounter(&season.id, &inst.slug, id)
+            });
+        if !stands {
+            return None;
+        }
+        let mut e = self.resolve(found, id, difficulty, tier, prov);
+        if let (Ok(e), Some(texts)) = (&mut e, self.texts.get(&id)) {
+            texts.lay(e, difficulty);
+        }
+        Some(e)
+    }
+
+    /// Lay an encounter's sources up to `tier`, then the difficulty
+    /// overrides `difficulty` reads, and type the result.
+    fn resolve(
+        &self,
+        (season, inst, layers): (&Season, &Instance, &Layers),
+        id: u32,
+        difficulty: Option<u32>,
+        tier: Tier,
+        prov: Option<&mut Provenance>,
+    ) -> Result<Encounter, String> {
+        let where_ = format!("{}/{}/{}", season.id, inst.slug, layers.stem);
+        let mut stack = Stacked {
+            t: Table::new(),
+            overrides: Vec::new(),
+            prov,
+            where_: &where_,
+        };
+        stack.lay(Source::Season, &season.defaults)?;
+        stack.lay(Source::Instance, &inst.defaults)?;
+        if let Some(d) = &layers.draft {
+            stack.lay(Source::Draft, d)?;
+        }
+        // The map as the instance's file gives it: by hand, but part of the
+        // base, so a room looks and changes the same at every tier.
+        if let Some(d) = &layers.drawing {
+            stack.lay(Source::Drawing, d)?;
+        }
+        // Each set over the base as one block: its season's file, its
+        // instance's, its drawing of the encounter, the encounter's own.
+        for set in self.sets.iter().filter(|s| s.source.tier() <= tier) {
+            let Some(s) = set.season(&season.id) else {
+                continue;
+            };
+            if let Some(t) = &s.defaults {
+                stack.lay(set.source.clone(), t)?;
+            }
+            let Some(i) = s.instances.get(&inst.slug) else {
+                continue;
+            };
+            if let Some(t) = &i.defaults {
+                stack.lay(set.source.clone(), t)?;
+            }
+            if let Some(t) = i.drawings.get(&id) {
+                stack.lay(set.source.clone(), t)?;
+            }
+            if let Some(t) = i.encounters.get(&id) {
+                stack.lay(set.source.clone(), t)?;
+            }
+        }
+        let chain = difficulty.map(difficulty::chain).unwrap_or(&[]);
+        let Stacked {
+            mut t,
+            overrides,
+            mut prov,
+            ..
+        } = stack;
+        // The difficulty overrides last, the most general difficulty first,
+        // and each difficulty's in the stack's order.
+        for name in chain.iter().rev() {
+            for (source, o) in &overrides {
+                if let Some(Value::Table(o)) = o.get(*name) {
+                    let by = SetBy {
+                        source: source.clone(),
+                        difficulty: Some(name),
+                    };
+                    lay(&mut t, o.clone(), "", prov.as_deref_mut().map(|p| (p, &by)));
+                }
+            }
+        }
+        if !t.contains_key("instance") {
+            t.insert("instance".into(), Value::String(inst.slug.clone()));
+            if let Some(p) = prov {
+                p.set(
+                    "instance",
+                    SetBy {
+                        source: Source::Instance,
+                        difficulty: None,
+                    },
+                );
+            }
+        }
+        let mut e =
+            Encounter::deserialize(Value::Table(t)).map_err(|e| format!("{where_}: {e}"))?;
+        gate(&mut e, |g| {
+            g.enabled() && (difficulty.is_none() || difficulty::applies(g.only(), chain))
+        });
+        // An ability under one this difficulty does not have stands alone.
+        let kept: std::collections::BTreeSet<String> = e.ability.keys().cloned().collect();
+        for a in e.ability.values_mut() {
+            if a.under.as_ref().is_some_and(|u| !kept.contains(u)) {
+                a.under = None;
+            }
+        }
+        Ok(e)
+    }
+}
+
+/// An encounter's table as its sources are laid on it: their own values
+/// at once, their difficulty overrides kept, in the stack's order, for
+/// the end.
+struct Stacked<'a, 'p> {
+    t: Table,
+    overrides: Vec<(Source, Table)>,
+    prov: Option<&'p mut Provenance>,
+    where_: &'a str,
+}
+
+impl Stacked<'_, '_> {
+    /// Lay one file of `source`: its `[difficulty]` overrides kept apart,
+    /// checked, the rest laid at once.
+    fn lay(&mut self, source: Source, file: &Table) -> Result<(), String> {
+        let mut file = file.clone();
+        let o =
+            take_difficulties(&mut file).map_err(|e| format!("{} ({source}): {e}", self.where_))?;
+        let by = SetBy {
+            source,
+            difficulty: None,
+        };
+        lay(
+            &mut self.t,
+            file,
+            "",
+            self.prov.as_deref_mut().map(|p| (p, &by)),
+        );
+        if !o.is_empty() {
+            self.overrides.push((by.source, o));
+        }
+        Ok(())
     }
 }
 
@@ -661,25 +910,17 @@ fn migrate(t: Table) -> Result<Table, String> {
 
 /// Lay `over` onto `base`: tables merge key by key, anything else replaces.
 fn merge(base: &mut Table, over: Table) {
-    for (k, v) in over {
-        match (base.get_mut(&k), v) {
-            (Some(Value::Table(b)), Value::Table(o)) => merge(b, o),
-            (_, v) => {
-                base.insert(k, v);
-            }
-        }
-    }
+    lay(base, over, "", None);
 }
 
-/// Take `t`'s `[difficulty]` overrides out of it and lay the ones `chain`
-/// names over it, the most general first (`chain` is the most specific
-/// first, as `difficulty::chain` gives it). A `difficulty` that is no
-/// table, or an override named for no difficulty, is an error.
-fn lay_difficulties(t: &mut Table, chain: &[&str]) -> Result<(), String> {
-    let mut overlays = match t.remove("difficulty") {
+/// Take `t`'s `[difficulty]` overrides out of it, by difficulty name. A
+/// `difficulty` that is no table, or an override named for no difficulty,
+/// is an error.
+fn take_difficulties(t: &mut Table) -> Result<Table, String> {
+    let overlays = match t.remove("difficulty") {
         Some(Value::Table(o)) => o,
         Some(_) => return Err("`difficulty` is a table of difficulty names".into()),
-        None => return Ok(()),
+        None => return Ok(Table::new()),
     };
     if let Some(name) = overlays
         .keys()
@@ -690,55 +931,21 @@ fn lay_difficulties(t: &mut Table, chain: &[&str]) -> Result<(), String> {
             difficulty::NAMES.join(", ")
         ));
     }
+    Ok(overlays)
+}
+
+/// Take `t`'s `[difficulty]` overrides out of it and lay the ones `chain`
+/// names over it, the most general first (`chain` is the most specific
+/// first, as `difficulty::chain` gives it). A `difficulty` that is no
+/// table, or an override named for no difficulty, is an error.
+fn lay_difficulties(t: &mut Table, chain: &[&str]) -> Result<(), String> {
+    let mut overlays = take_difficulties(t)?;
     for name in chain.iter().rev() {
         if let Some(Value::Table(o)) = overlays.remove(*name) {
             merge(t, o);
         }
     }
     Ok(())
-}
-
-fn resolve(
-    season: &Season,
-    inst: &Instance,
-    layers: &Layers,
-    difficulty: Option<u32>,
-    tier: Tier,
-) -> Result<Encounter, String> {
-    let mut t = Table::new();
-    merge(&mut t, season.defaults.clone());
-    merge(&mut t, inst.defaults.clone());
-    if let Some(d) = &layers.draft {
-        merge(&mut t, d.clone());
-    }
-    // The map as the instance's file gives it: by hand, but part of the
-    // base, so a room looks and changes the same at every tier.
-    if let Some(d) = &layers.drawing {
-        merge(&mut t, d.clone());
-    }
-    // The tuned file and its difficulty overrides are the curated layer.
-    if tier == Tier::Curated
-        && let Some(u) = &layers.tuned
-    {
-        merge(&mut t, u.clone());
-    }
-    let where_ = format!("{}/{}/{}", season.id, inst.slug, layers.stem);
-    let chain = difficulty.map(difficulty::chain).unwrap_or(&[]);
-    lay_difficulties(&mut t, chain).map_err(|e| format!("{where_}: {e}"))?;
-    t.entry("instance")
-        .or_insert_with(|| Value::String(inst.slug.clone()));
-    let mut e = Encounter::deserialize(Value::Table(t)).map_err(|e| format!("{where_}: {e}"))?;
-    gate(&mut e, |g| {
-        g.enabled() && (difficulty.is_none() || difficulty::applies(g.only(), chain))
-    });
-    // An ability under one this difficulty does not have stands alone.
-    let kept: std::collections::BTreeSet<String> = e.ability.keys().cloned().collect();
-    for a in e.ability.values_mut() {
-        if a.under.as_ref().is_some_and(|u| !kept.contains(u)) {
-            a.under = None;
-        }
-    }
-    Ok(e)
 }
 
 /// Drop every named entry `keep` refuses: one switched off, or kept to

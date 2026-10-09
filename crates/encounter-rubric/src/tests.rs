@@ -339,17 +339,30 @@ fn the_base_leaves_the_tuned_file_and_its_difficulty_overrides_out() {
 #[test]
 fn the_rubric_tier_is_the_most_it_answers() {
     let r = Rubric::from_files(files(&[])).unwrap();
-    assert_eq!(r.tier(), Tier::Curated);
+    // Everything the machine has, unless lowered.
+    assert_eq!(r.tier(), Tier::User);
     assert_eq!(r.encounter(3492, None).unwrap().unwrap(), ulatek(None));
     let r = r.with_tier(Tier::Base);
     let base = r.encounter_at(3492, None, Tier::Base).unwrap().unwrap();
     assert_eq!(r.encounter(3492, None).unwrap().unwrap(), base);
+    for tier in [Tier::Curated, Tier::User] {
+        assert_eq!(r.encounter_at(3492, None, tier).unwrap().unwrap(), base);
+    }
+}
+
+#[test]
+fn a_tier_is_named_and_ordered() {
+    for tier in Tier::ALL {
+        assert_eq!(Tier::from_name(tier.name()), Some(tier));
+    }
     assert_eq!(
-        r.encounter_at(3492, None, Tier::Curated).unwrap().unwrap(),
-        base
+        Tier::ALL.map(Tier::name),
+        ["base", "curated", "user"],
+        "the lesser first"
     );
-    assert_eq!(Tier::from_name(Tier::Base.name()), Some(Tier::Base));
-    assert_eq!(Tier::from_name(Tier::Curated.name()), Some(Tier::Curated));
+    assert!(Tier::Base < Tier::Curated && Tier::Curated < Tier::User);
+    assert_eq!(Tier::default(), Tier::User);
+    assert_eq!(Tier::from_name("tuned"), None);
 }
 
 #[test]
@@ -406,8 +419,9 @@ fn the_embedded_rubric_resolves_every_encounter_on_every_difficulty() {
             Some(17),
         ] {
             // The base alone must stand too: nothing in it may lean on a
-            // tuned file.
-            for tier in [Tier::Base, Tier::Curated] {
+            // tuned file. (This repository carries none, so every tier
+            // reads the base; a tree that holds tuned files checks them.)
+            for tier in Tier::ALL {
                 match r.encounter_at(id, d, tier) {
                     Some(Ok(e)) => problems.extend(
                         check(&e)
@@ -1511,4 +1525,555 @@ fn a_season_and_an_instance_are_read_as_they_are_written() {
 
 fn f_path(n: usize) -> String {
     files(&[]).remove(n).0
+}
+
+// ---- the layer stack -------------------------------------------------------
+
+/// The test raid's base alone: the season, the instance and the draft, no
+/// tuned file.
+fn base_files() -> Vec<(String, String)> {
+    files(&[])
+        .into_iter()
+        .filter(|(p, _)| p != "s/raid/3492-ulatek.toml")
+        .collect()
+}
+
+fn owned(files: &[(&str, &str)]) -> Vec<(String, String)> {
+    files
+        .iter()
+        .map(|(p, t)| (p.to_string(), t.to_string()))
+        .collect()
+}
+
+/// The tuned file embedded beside the draft, for the stack: a scalar, a
+/// list and one key of the bite's shape, and a Heroic override.
+const STACK_TUNED: &str = r#"
+schema = 1
+
+[view]
+turn = 90
+
+[ability.bite]
+spell = [3]
+shape = { length = 40 }
+
+[difficulty.heroic.ability.bite]
+shape = { length = 42 }
+"#;
+
+/// Two bundles, laid in this order: the second's name sorts first, so the
+/// call order, not the name, is what lays it over the first.
+const ZETA: &str = r#"
+schema = 1
+
+[view]
+turn = 45
+
+[ability.bite]
+spell = [4, 5]
+shape = { angle = 70 }
+"#;
+
+const ALPHA: &str = r#"
+schema = 1
+
+[view]
+turn = 30
+"#;
+
+/// The user's: the turn again, one more key of the shape, and a Mythic
+/// override of the shape's length.
+const MINE: &str = r#"
+schema = 1
+
+[view]
+turn = 10
+
+[ability.bite.shape]
+length = 50
+
+[difficulty.mythic.ability.bite.shape]
+length = 60
+"#;
+
+/// The whole stack over the test raid: the base (with the instance's
+/// drawing and a default of the instance's), the tuned file embedded,
+/// two bundles and the user's file.
+fn stacked() -> Rubric {
+    let mut f = drawn("");
+    f[1].1 = f[1]
+        .1
+        .replace("map = 3004\n", "map = 3004\n\n[defaults.map]\nlevel = 5\n");
+    f[3].1 = STACK_TUNED.to_string();
+    Rubric::from_files(f)
+        .unwrap()
+        .with_curated("zeta", owned(&[("s/raid/3492-ulatek.toml", ZETA)]))
+        .unwrap()
+        .with_curated("alpha", owned(&[("s/raid/3492-ulatek.toml", ALPHA)]))
+        .unwrap()
+        .with_user(owned(&[("s/raid/3492-ulatek.toml", MINE)]))
+}
+
+fn bite(e: &Encounter) -> (Vec<u32>, f32, f32) {
+    match &e.ability["bite"].shape {
+        Some(Shape::Cone { length, angle }) => (e.ability["bite"].spell.clone(), *length, *angle),
+        s => panic!("{s:?}"),
+    }
+}
+
+fn bundle(name: &str) -> Source {
+    Source::Curated(Origin::Bundle(name.into()))
+}
+
+#[test]
+fn the_stack_lays_base_curated_bundles_then_the_user() {
+    let r = stacked();
+    assert!(r.user_errors().is_empty(), "{:?}", r.user_errors());
+    let at = |tier| r.encounter_at(3492, None, tier).unwrap().unwrap();
+    // The base: the draft's list and cone; no turn but the drawing's zoom.
+    let base = at(Tier::Base);
+    assert_eq!(bite(&base), (vec![1, 2], 35.0, 60.0));
+    assert_eq!(base.view.turn, None);
+    // Curated: the embedded file, then the bundles in the order laid. A
+    // scalar is the last one's (alpha's turn over zeta's), a list is
+    // replaced whole (zeta's spells, none of the draft's or the tuned
+    // file's), a table merges key by key (the tuned length, zeta's angle).
+    let curated = at(Tier::Curated);
+    assert_eq!(curated.view.turn, Some(30.0));
+    assert_eq!(bite(&curated), (vec![4, 5], 40.0, 70.0));
+    // The user's over all of it.
+    let user = at(Tier::User);
+    assert_eq!(user.view.turn, Some(10.0));
+    assert_eq!(bite(&user), (vec![4, 5], 50.0, 70.0));
+    // What none of them names stays the base's.
+    assert_eq!(user.view.zoom, Some(2.0));
+    assert_eq!(user.map.floor.as_deref(), Some("ulatek"));
+    assert_eq!(user.map.stencil.len(), 2);
+    assert_eq!(r.encounter(3492, None).unwrap().unwrap(), user);
+}
+
+#[test]
+fn provenance_names_the_source_that_last_set_each_key() {
+    let r = stacked();
+    let traced = |tier, d| r.encounter_traced(3492, d, tier).unwrap().unwrap().1;
+    let p = traced(Tier::User, None);
+    let src = |p: &Provenance, path: &str| {
+        let by = p.source_of(path).unwrap_or_else(|| panic!("{path}"));
+        (by.source.clone(), by.difficulty)
+    };
+    assert_eq!(src(&p, "view.zoom"), (Source::Drawing, None));
+    assert_eq!(src(&p, "map.ceiling"), (Source::Season, None));
+    assert_eq!(src(&p, "map.level"), (Source::Instance, None));
+    assert_eq!(src(&p, "map.floor"), (Source::Draft, None));
+    assert_eq!(src(&p, "map.stencil"), (Source::Drawing, None));
+    assert_eq!(src(&p, "map.layer.platform.wmo"), (Source::Drawing, None));
+    assert_eq!(src(&p, "instance"), (Source::Instance, None));
+    assert_eq!(src(&p, "ability.bite.shape.kind"), (Source::Draft, None));
+    assert_eq!(src(&p, "ability.bite.shape.angle"), (bundle("zeta"), None));
+    assert_eq!(src(&p, "ability.bite.spell"), (bundle("zeta"), None));
+    assert_eq!(src(&p, "ability.bite.shape.length"), (Source::User, None));
+    assert_eq!(src(&p, "view.turn"), (Source::User, None));
+    // A list is laid whole: a key inside it answers for the list.
+    assert_eq!(src(&p, "map.stencil.1"), (Source::Drawing, None));
+    // A table merged key by key is no path of its own.
+    assert!(p.source_of("ability.bite").is_none());
+    assert_eq!(p.under("ability.bite.shape").count(), 3);
+    // At the curated tier the embedded file and alpha speak where the user
+    // did; at the base, the draft.
+    let p = traced(Tier::Curated, None);
+    assert_eq!(src(&p, "view.turn"), (bundle("alpha"), None));
+    assert_eq!(
+        src(&p, "ability.bite.shape.length"),
+        (Source::Curated(Origin::Embedded), None)
+    );
+    let p = traced(Tier::Base, None);
+    assert_eq!(src(&p, "ability.bite.shape.length"), (Source::Draft, None));
+    assert!(p.source_of("view.turn").is_none());
+    // A difficulty's overrides come last, each naming its difficulty: the
+    // embedded Heroic length on Heroic and, through the chain, on Mythic
+    // until the user's own Mythic override.
+    let p = traced(Tier::User, Some(15));
+    assert_eq!(
+        src(&p, "ability.bite.shape.length"),
+        (Source::Curated(Origin::Embedded), Some("heroic"))
+    );
+    let p = traced(Tier::User, Some(16));
+    assert_eq!(
+        src(&p, "ability.bite.shape.length"),
+        (Source::User, Some("mythic"))
+    );
+    let p = traced(Tier::Curated, Some(16));
+    assert_eq!(
+        src(&p, "ability.bite.shape.length"),
+        (Source::Curated(Origin::Embedded), Some("heroic"))
+    );
+    // The draft's own Mythic-only entry, and its switch.
+    let p = traced(Tier::User, None);
+    assert_eq!(src(&p, "ability.mythic-only.only"), (Source::Draft, None));
+}
+
+#[test]
+fn a_user_difficulty_override_applies_only_where_asked() {
+    let r = stacked();
+    let length = |d| bite(&r.encounter(3492, d).unwrap().unwrap()).1;
+    // No difficulty, and Normal: the user's own length.
+    assert_eq!(length(None), 50.0);
+    assert_eq!(length(Some(14)), 50.0);
+    // Heroic: the tuned file's Heroic override, laid after every source's
+    // own values.
+    assert_eq!(length(Some(15)), 42.0);
+    // Mythic and a keystone, which reads Mythic's: the user's Mythic one.
+    assert_eq!(length(Some(16)), 60.0);
+    assert_eq!(length(Some(8)), 60.0);
+}
+
+#[test]
+fn the_tier_caps_the_stack_at_each_tier() {
+    let r = stacked();
+    let turns = |r: &Rubric| -> Vec<Option<f32>> {
+        Tier::ALL
+            .iter()
+            .map(|&t| r.encounter_at(3492, None, t).unwrap().unwrap().view.turn)
+            .collect()
+    };
+    assert_eq!(turns(&r), [None, Some(30.0), Some(10.0)]);
+    let capped = r.clone().with_tier(Tier::Curated);
+    assert_eq!(capped.tier(), Tier::Curated);
+    assert_eq!(turns(&capped), [None, Some(30.0), Some(30.0)]);
+    assert_eq!(
+        capped.encounter(3492, None).unwrap().unwrap(),
+        r.encounter_at(3492, None, Tier::Curated).unwrap().unwrap()
+    );
+    let base = r.clone().with_tier(Tier::Base);
+    assert_eq!(turns(&base), [None, None, None]);
+    let user = base.with_tier(Tier::User);
+    assert_eq!(turns(&user), turns(&r));
+}
+
+#[test]
+fn a_tuned_file_embedded_and_laid_in_resolve_alike() {
+    let embedded = Rubric::from_files(files(&[])).unwrap();
+    let laid = Rubric::from_files(base_files())
+        .unwrap()
+        .with_curated("pack", owned(&[("s/raid/3492-ulatek.toml", TUNED)]))
+        .unwrap();
+    for tier in Tier::ALL {
+        for d in [None, Some(14), Some(15), Some(16), Some(8)] {
+            assert_eq!(
+                embedded.encounter_at(3492, d, tier).unwrap().unwrap(),
+                laid.encounter_at(3492, d, tier).unwrap().unwrap(),
+                "{} {d:?}",
+                tier.name()
+            );
+        }
+    }
+    // The same keys, set by the curated layer under either name.
+    let (_, a) = embedded
+        .encounter_traced(3492, None, Tier::Curated)
+        .unwrap()
+        .unwrap();
+    let (_, b) = laid
+        .encounter_traced(3492, None, Tier::Curated)
+        .unwrap()
+        .unwrap();
+    let rename = |s: &Source| match s {
+        Source::Curated(_) => Source::Curated(Origin::Embedded),
+        s => s.clone(),
+    };
+    let a: Vec<(&str, Source)> = a.iter().map(|(k, by)| (k, rename(&by.source))).collect();
+    let b: Vec<(&str, Source)> = b.iter().map(|(k, by)| (k, rename(&by.source))).collect();
+    assert_eq!(a, b);
+    assert_eq!(
+        embedded.layers_of(3492).last(),
+        Some(&Source::Curated(Origin::Embedded))
+    );
+    assert_eq!(laid.layers_of(3492).last(), Some(&bundle("pack")));
+}
+
+#[test]
+fn a_traced_encounter_is_the_one_answered_untraced() {
+    let r = stacked();
+    for tier in Tier::ALL {
+        for d in [None, Some(14), Some(15), Some(16), Some(8)] {
+            let (traced, p) = r.encounter_traced(3492, d, tier).unwrap().unwrap();
+            assert_eq!(traced, r.encounter_at(3492, d, tier).unwrap().unwrap());
+            assert!(!p.is_empty() && p.len() == p.iter().count());
+        }
+    }
+    // A failing encounter fails the same traced, and an absent one is absent.
+    let mut f = files(&[]);
+    f[3].1 = format!("{TUNED}\n[view.extra]\nzom = 1\n");
+    let bad = Rubric::from_files(f).unwrap();
+    assert_eq!(
+        bad.encounter_traced(3492, None, Tier::User)
+            .unwrap()
+            .unwrap_err(),
+        bad.encounter_at(3492, None, Tier::User)
+            .unwrap()
+            .unwrap_err()
+    );
+    assert!(r.encounter_traced(9, None, Tier::User).is_none());
+}
+
+#[test]
+fn every_key_of_a_draft_is_the_drafts_until_a_layer_sets_it() {
+    let draft = write::draft_text(&every_key(), &BTreeMap::new(), "every key").unwrap();
+    let r = Rubric::from_files(files(&[("s/raid/1-boss.draft.toml", &draft)])).unwrap();
+    let (e, p) = r.encounter_traced(1, None, Tier::User).unwrap().unwrap();
+    assert_eq!(e, r.encounter(1, None).unwrap().unwrap());
+    // Every key the draft wrote is the draft's: the season's defaults it
+    // also sets are its own now.
+    let not_draft: Vec<(&str, &SetBy)> = p
+        .iter()
+        .filter(|(k, by)| by.source != Source::Draft && *k != "instance")
+        .collect();
+    assert!(not_draft.is_empty(), "{not_draft:?}");
+    // A user file setting one key moves that key alone (and the format
+    // number every file carries).
+    let r = r.with_user(owned(&[(
+        "s/raid/1-boss.toml",
+        "schema = 1\n[view]\nturn = 12\n",
+    )]));
+    let (_, q) = r.encounter_traced(1, None, Tier::User).unwrap().unwrap();
+    let moved: Vec<&str> = q
+        .iter()
+        .filter(|(k, by)| p.source_of(k) != Some(by))
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(moved, ["schema", "view.turn"]);
+    assert_eq!(q.source_of("view.turn").unwrap().source, Source::User);
+}
+
+#[test]
+fn a_bad_user_file_is_named_and_the_rest_are_laid() {
+    let r = Rubric::from_files(files(&[])).unwrap().with_user(owned(&[
+        // A key the schema lacks: it would make Ula'tek unreadable.
+        ("s/raid/3492-ulatek.toml", "schema = 1\n[view]\nzom = 1\n"),
+        // Not TOML.
+        ("s/raid/7-x.toml", "schema = 1\n[view\n"),
+        // A draft is the base's.
+        ("s/raid/3492-ulatek.draft.toml", "schema = 1\n"),
+        // No such instance in the base.
+        ("s/nowhere/instance.toml", "schema = 1\n"),
+        // What a season is stays the base's.
+        ("s/season.toml", "schema = 1\nname = \"Mine\"\n"),
+        // And one that is fine: a season-wide default.
+        ("s/other.txt", "not a rubric file"),
+    ]));
+    let errs = r.user_errors();
+    for (file, says) in [
+        ("s/raid/3492-ulatek.toml", "zom"),
+        ("s/raid/7-x.toml", "7-x"),
+        ("s/raid/3492-ulatek.draft.toml", "a draft is the base's"),
+        ("s/nowhere/instance.toml", "no s/nowhere"),
+        ("s/season.toml", "`name`"),
+        ("s/other.txt", "not where a rubric file goes"),
+    ] {
+        assert!(
+            errs.iter().any(|e| e.starts_with(file) && e.contains(says)),
+            "{file}: {errs:?}"
+        );
+    }
+    assert_eq!(errs.len(), 6, "{errs:?}");
+    // Nothing of them was laid: Ula'tek reads as it did, and the user
+    // touches nothing.
+    assert_eq!(r.encounter(3492, None).unwrap().unwrap(), ulatek(None));
+    assert!(!r.has_user(3492));
+    // A good file beside a bad one is laid.
+    let r = Rubric::from_files(files(&[])).unwrap().with_user(owned(&[
+        ("s/raid/3492-ulatek.toml", "schema = 1\n[view]\nzom = 1\n"),
+        ("s/season.toml", "schema = 1\n[defaults.view]\nzoom = 3\n"),
+    ]));
+    assert_eq!(r.user_errors().len(), 1, "{:?}", r.user_errors());
+    let e = r.encounter(3492, None).unwrap().unwrap();
+    assert_eq!(e.view.zoom, Some(3.0));
+    assert!(r.has_user(3492));
+    assert_ne!(
+        r.version(),
+        Rubric::from_files(files(&[])).unwrap().version()
+    );
+}
+
+#[test]
+fn a_bad_curated_bundle_is_refused_whole() {
+    let base = || Rubric::from_files(base_files()).unwrap();
+    let errs = base()
+        .with_curated(
+            "broken",
+            owned(&[
+                ("s/raid/3492-ulatek.toml", "schema = 1\n[view]\nturn = 5\n"),
+                ("s/raid/3492-ulatek.draft.toml", DRAFT),
+            ]),
+        )
+        .unwrap_err();
+    assert!(
+        errs.len() == 1 && errs[0].contains("a draft is the base's"),
+        "{errs:?}"
+    );
+    let errs = base()
+        .with_curated(
+            "typo",
+            owned(&[("s/raid/3492-ulatek.toml", "schema = 1\n[view]\nzom = 1\n")]),
+        )
+        .unwrap_err();
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("curated \"typo\"") && e.contains("zom")),
+        "{errs:?}"
+    );
+    // A slug the encounter's other files do not have.
+    let errs = base()
+        .with_curated("slug", owned(&[("s/raid/3492-other.toml", "schema = 1\n")]))
+        .unwrap_err();
+    assert!(
+        errs[0].contains("already has files named 3492-ulatek"),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn a_layer_lays_a_season_an_instance_and_a_new_entry() {
+    // A bundle's season and instance defaults reach every encounter of
+    // theirs, its drawing reaches its encounter, and an entry the base
+    // lacks is added.
+    let r = Rubric::from_files(base_files())
+        .unwrap()
+        .with_curated(
+            "pack",
+            owned(&[
+                ("s/season.toml", "schema = 1\n[defaults.map]\nceiling = 40\n"),
+                (
+                    "s/raid/instance.toml",
+                    "schema = 1\n[defaults.view]\nzoom = 1.5\n[encounter.3492.npc.heart]\nname = \"Venomous Heart\"\nshares = \"ulatek\"\n",
+                ),
+                (
+                    "s/raid/3492-ulatek.toml",
+                    "schema = 1\n[ability.extra]\nname = \"Extra\"\nby = \"ulatek\"\n",
+                ),
+            ]),
+        )
+        .unwrap();
+    let (e, p) = r
+        .encounter_traced(3492, None, Tier::Curated)
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.map.ceiling, Some(40.0));
+    assert_eq!(e.view.zoom, Some(1.5));
+    assert_eq!(e.npc["heart"].shares.as_deref(), Some("ulatek"));
+    assert!(e.ability.contains_key("extra"));
+    assert!(check(&e).is_empty(), "{:?}", check(&e));
+    for path in [
+        "map.ceiling",
+        "view.zoom",
+        "npc.heart.shares",
+        "ability.extra.name",
+    ] {
+        assert_eq!(p.source_of(path).unwrap().source, bundle("pack"), "{path}");
+    }
+    // The base under it is untouched.
+    let base = r.encounter_at(3492, None, Tier::Base).unwrap().unwrap();
+    assert_eq!(base.map.ceiling, Some(25.0));
+    assert!(!base.ability.contains_key("extra"));
+    // A drawing for an encounter the instance has no files for is refused.
+    let errs = Rubric::from_files(base_files())
+        .unwrap()
+        .with_curated(
+            "pack",
+            owned(&[(
+                "s/raid/instance.toml",
+                "schema = 1\n[encounter.9.map]\nlevel = 1\n",
+            )]),
+        )
+        .unwrap_err();
+    assert!(errs[0].contains("no files for encounter 9"), "{errs:?}");
+}
+
+#[test]
+fn a_layer_may_bring_an_encounter_the_base_lacks_from_its_tier_up() {
+    let r = Rubric::from_files(base_files())
+        .unwrap()
+        .with_user(owned(&[(
+            "s/raid/3500-new-boss.toml",
+            "schema = 1\nencounter = 3500\nname = \"New Boss\"\n",
+        )]));
+    assert!(r.user_errors().is_empty(), "{:?}", r.user_errors());
+    assert!(r.encounter_at(3500, None, Tier::Base).is_none());
+    assert!(r.encounter_at(3500, None, Tier::Curated).is_none());
+    assert_eq!(r.encounter(3500, None).unwrap().unwrap().name, "New Boss");
+    assert!(r.encounters().iter().any(|(id, _, _)| *id == 3500));
+    assert_eq!(
+        r.layers_of(3500),
+        [Source::Season, Source::Instance, Source::User]
+    );
+}
+
+#[test]
+fn layers_of_lists_the_sources_with_a_file_an_encounter_reads() {
+    let r = stacked();
+    assert_eq!(
+        r.layers_of(3492),
+        [
+            Source::Season,
+            Source::Instance,
+            Source::Draft,
+            Source::Drawing,
+            Source::Curated(Origin::Embedded),
+            bundle("zeta"),
+            bundle("alpha"),
+            Source::User,
+        ]
+    );
+    assert!(r.has_curated(3492) && r.has_user(3492));
+    let base = Rubric::from_files(base_files()).unwrap();
+    assert_eq!(
+        base.layers_of(3492),
+        [Source::Season, Source::Instance, Source::Draft]
+    );
+    assert!(!base.has_curated(3492) && !base.has_user(3492));
+    assert!(base.layers_of(9).is_empty());
+    // A user season file touches every encounter of its season.
+    let r = base.with_user(owned(&[(
+        "s/season.toml",
+        "schema = 1\n[defaults.view]\nzoom = 3\n",
+    )]));
+    assert_eq!(r.layers_of(3492).last(), Some(&Source::User));
+}
+
+#[test]
+fn the_user_directory_is_read_whole_and_its_bad_files_named_by_their_place() {
+    let root = std::env::temp_dir().join(format!(
+        "wowdps-encounter-rubric-user-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("s/raid")).unwrap();
+    std::fs::write(root.join("README.md"), "my notes\n").unwrap();
+    std::fs::write(
+        root.join("s/season.toml"),
+        "schema = 1\n[defaults.view]\nzoom = 3\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("s/raid/3492-ulatek.toml"), "schema = 1\n[view\n").unwrap();
+    let r = Rubric::from_files(base_files())
+        .unwrap()
+        .with_user_dir(Some(root.clone()));
+    let errs = r.user_errors().to_vec();
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    let shown = root.join("s/raid/3492-ulatek.toml").display().to_string();
+    assert!(errs[0].starts_with(&shown), "{errs:?}");
+    assert_eq!(
+        r.encounter(3492, None).unwrap().unwrap().view.zoom,
+        Some(3.0)
+    );
+    // A directory that is not there lays nothing and says nothing.
+    let none = Rubric::from_files(base_files())
+        .unwrap()
+        .with_user_dir(Some(root.join("missing")));
+    assert!(none.user_errors().is_empty() && !none.has_user(3492));
+    assert_eq!(
+        none.version(),
+        Rubric::from_files(base_files()).unwrap().version(),
+        "laying nothing leaves the version"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

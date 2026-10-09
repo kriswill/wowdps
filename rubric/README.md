@@ -12,7 +12,8 @@ combat log and the game's tables give for free:
 - the moments that change the room
 
 It is TOML, reviewed like code, and embedded in the binaries at build time
-(`crates/encounter-rubric`, `wowdps-encounter-rubric`). A change takes a rebuild.
+(`crates/encounter-rubric`, `wowdps-encounter-rubric`). A change takes a
+rebuild.
 
 ## Files
 
@@ -20,13 +21,18 @@ It is TOML, reviewed like code, and embedded in the binaries at build time
 rubric/<season>/season.toml                        the season and its defaults
 rubric/<season>/<instance>/instance.toml           a raid or dungeon
 rubric/<season>/<instance>/<id>-<slug>.draft.toml  generated, never edited
-rubric/<season>/<instance>/<id>-<slug>.toml        tuned by hand
+rubric/<season>/<instance>/<id>-<slug>.toml        tuned by hand (curated)
 ```
+
+The public repository carries the BASE: the drafts and the instance and
+season files. The tuned files are the curated layer and ship apart from it,
+by design (How an encounter resolves, below).
 
 `<id>` is the encounter's DungeonEncounterID, the number the combat log's
 `ENCOUNTER_START` writes.
 
-- **The draft** is written by `tools/gen-rubric.sh` from the client's tables:
+- **The draft** is written by `tools/gen-rubric.sh` (on the replay branch,
+  with the generator's other tools) from the client's tables:
   the journal (names, creatures, ability sections, stage headers,
   difficulty scoping), `EncounterEvent` (the abilities the game's own
   timeline alerts on) and the spell tables (how far each spell reaches, how
@@ -65,29 +71,82 @@ the schema number moves and the migration is code.
 
 ## How an encounter resolves
 
-Each layer is laid over the last:
+An encounter resolves through an ordered stack of sources, each laid over
+the last:
 
-1. the season's `[defaults]`
-2. the instance's `[defaults]`
-3. the draft
+1. the season's `[defaults]` (the `season` source)
+2. the instance's `[defaults]` (`instance`)
+3. the draft (`draft`)
 4. the encounter's map and NPCs from the instance file, `[encounter.<id>]`
-5. the tuned file
-6. the difficulty overrides, `[difficulty.<name>]`, in the order the
-   client's fallback chain gives them, the most general first
+   (`drawing`)
+5. each curated set, in the order it was laid (`curated`): a tuned file
+   embedded beside its draft first, then each bundle laid in at runtime
+6. the user's own files (`user`)
+7. the difficulty overrides, `[difficulty.<name>]`, in the order the
+   client's fallback chain gives them, the most general first; each
+   difficulty's from every source above, in the stack's order
 
-**Two tiers.** An encounter resolves at a tier. The **base** is what
-extraction gives, and the encounter's map and NPCs, with no other hand
-amendment:
-layers 1 to 4, with the draft's own difficulty overrides. **Curated** lays
-the tuned file and its overrides over the base: what the fight does in the
-room. The two sit side by side in these directories,
-but the base never leans on a tuned file: every encounter's base resolves
-and checks clean on its own (a test holds it), so the curated layer can
-ship apart from it. A reader asks for a tier per encounter
-(`Rubric::encounter_at`); `Rubric::with_tier` caps what it will answer, and
-`Rubric::has_curated` says whether an encounter has a tuned file at all.
-The replay spike switches between them with `a`, the panel's Rubric
-switch, or `--rubric base`.
+A curated set, or the user's, is a file tree shaped like this directory,
+laid as one block: its `season.toml`, its `instance.toml`, then the
+encounter's `<id>-<slug>.toml`, each over the last, and the whole block
+over everything under it. So a user's `season.toml` with `[defaults.view]`
+sets the view of every encounter of the season, over the draft and the
+instance's drawing. Such a set's `season.toml` gives only `[defaults]`, and
+its `instance.toml` only `[defaults]` and `[encounter.<id>]` (the tables an
+instance file gives): what a season or an instance is (its name, kind,
+order) stays the base's. Every season and instance a set names must be the
+base's, an encounter's file keeps the slug its other files have, and a
+draft is never one of its files.
+
+The difficulty overrides come last, after every source's own values: a
+draft's `[difficulty.heroic]` still wins over a curated or user file's
+plain value on Heroic. To change a value on a difficulty, a layer
+overrides it on that difficulty.
+
+**Three tiers.** Each source belongs to a tier, and the tiers are ordered:
+
+- **Base** (sources 1 to 4, with the draft's own difficulty overrides):
+  what extraction gives, and the encounter's map and NPCs, with no other
+  hand amendment.
+- **Curated** (5): what the fight does in the room, found by investigating
+  it and checking it against logs and the game.
+- **User** (6): the files on this machine, laid last, so a user can
+  override anything for themselves.
+
+The base must stand alone. Every encounter's base resolves and checks clean
+on its own (a test holds it, at every tier), and a curated or user layer
+never adds a draft. A reader asks for a tier per encounter
+(`Rubric::encounter_at`), and the rubric answers at the user tier unless
+`Rubric::with_tier` caps it lower. `Rubric::layers_of` lists the sources an
+encounter reads; `has_curated` and `has_user` say whether a curated set or
+the user's touches it. `Rubric::encounter_traced` answers who set each key
+(`Provenance`): per key path, such as `ability.serpents-bite.shape.length`
+or `map.stencil`, the source that last set it and the difficulty override
+it came through. An encounter whose only file is curated or the user's
+answers from that tier up, and not below.
+
+**The curated layer comes two ways.** A tuned `<id>-<slug>.toml` beside its
+draft in this tree reads as curated (`embedded`). The public repository
+carries the base alone, so there are none there, but a tree that holds
+them works unchanged. And `Rubric::with_curated(origin, files)` lays a named bundle in
+at runtime: a file set in the same `rubric/`-relative tree, laid after any
+embedded tuned file and every bundle laid before it. A bundle is laid whole
+or refused whole: a file it cannot lay, or an encounter it would make
+unreadable, is an error naming it.
+
+**The user's files** live in `$XDG_CONFIG_HOME/wowdps/rubric/` (else
+`~/.config/wowdps/rubric/`), in the same tree: `<season>/season.toml`,
+`<season>/<instance>/instance.toml` and
+`<season>/<instance>/<id>-<slug>.toml`. `Rubric::with_user_dir(None)` reads
+every `.toml` there, and `with_user(files)` lays a file set given in hand.
+A file that cannot be read, parsed or laid, or that would make an
+encounter unreadable, is named in `Rubric::user_errors()` and left out, and
+the rest are laid: a user's mistake never takes the rubric down.
+
+`Rubric::version()` hashes every file laid, the base's, the curated sets'
+and the user's alike, so an interpretation that records it regrades when
+any of them changes. A reader that records it should record the tier it
+read at too.
 
 Tables merge key by key; anything else (a number, a list) is replaced.
 Named entries are tables keyed by a slug (`[npc.ulatek]`,
