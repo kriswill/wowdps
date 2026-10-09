@@ -433,3 +433,33 @@ fn unconscious_npcs_go_down_feigning_players_do_not() {
     assert_eq!(kinds, [EventKind::NpcDied]);
     assert_eq!(c.head.success, Some(false));
 }
+
+/// With no hostile posted there is no health to weigh: no hostile is a
+/// boss by health (an unnamed one is an add, never every one a boss).
+#[test]
+fn with_no_hostile_posted_none_is_a_boss_by_health() {
+    let log = concat!(
+        "10/7/2026 22:00:00.000-7  ENCOUNTER_START,3001,\"Council\",16,20,3004\r\n",
+        "10/7/2026 22:00:01.000-7  SPELL_CAST_START,Creature-0-1-2-3-700-EE,\"Shade\",0xa48,0x80000000,0000000000000000,nil,0x80000000,0x80000000,7001,\"Spit\",0x8\r\n",
+        "10/7/2026 22:00:02.000-7  SPELL_CAST_START,Creature-0-1-2-3-701-FF,\"Wisp\",0xa48,0x80000000,0000000000000000,nil,0x80000000,0x80000000,7002,\"Glow\",0x8\r\n",
+        "10/7/2026 22:00:03.000-7  ENCOUNTER_END,3001,\"Council\",16,20,0,3000\r\n",
+    );
+    let c = cut(std::iter::empty(), log.split("\r\n"), &NoPlaced, None);
+    let kinds: Vec<UnitKind> = c.units.iter().map(|u| u.kind).collect();
+    assert_eq!(kinds, [UnitKind::Add, UnitKind::Add]);
+}
+
+/// The slice's first line opens the cut and is read as every other: a run
+/// that opens on a hit keeps that hit's row and its victim's post at t 0.
+#[test]
+fn a_slice_opening_on_a_hit_keeps_its_row_and_post() {
+    let c = cut(lines(0, 11), lines(11, 30), &Table, Some("Player-1-A"));
+    let first = &c.events[0];
+    assert_eq!(
+        (first.t_ms, first.kind, first.spell.as_str()),
+        (0, EventKind::Hit, "Venom")
+    );
+    let tank = &c.units[first.unit as usize];
+    assert_eq!(tank.name, "Tank-Realm-US");
+    assert_eq!(tank.posts.first().map(|p| p.t_ms), Some(0));
+}

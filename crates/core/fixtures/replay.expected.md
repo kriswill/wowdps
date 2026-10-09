@@ -36,10 +36,12 @@ spells are the fixtures' own, hard-coded beside check.awk's other tables
 | Healer | `Player-1-B` | COMBATANT_INFO 105 (Restoration Druid) |
 | Hunt | `Player-1-H` | COMBATANT_INFO 254 (Marksmanship); feigns death |
 | Lock | `Player-1-W` | no COMBATANT_INFO: Warlock, Destruction by R8 (Incinerate 29722) |
+| Shaman | `Player-1-S` | summons Spirit Link Totem; no other line |
 | Ula'tek | `Creature-…-500-AA` | hostile (`0xa48`), the encounter's title: the boss |
 | Egg | `Creature-…-501-BB` | hostile, a tenth of the boss's health: an add |
 | Coil, the Lesser | `Creature-…-502-CC` | hostile, a comma in its name; goes down unconscious |
 | Wind Rush Totem | `Creature-…-97285-WR` | friendly (`0x2111`), summoned, never posted |
+| Spirit Link Totem | `Creature-…-53006-SL` | the Shaman's summon; its damage line reads a neutral `0xa28` |
 | Demonic Circle | `GameObject-…-191083-DC` | created, never posted |
 | Twin Venoms | `Creature-…-600-DD` | the second pull's boss |
 
@@ -62,10 +64,10 @@ the pull: no row.
 **The floor.** Player blocks: Tank 20:01:00.5 and 01.0 (2434), Hunt 01.5
 (2434), Healer 08.5 and 09.5 (2434 — the second a `DAMAGE_SPLIT`, its block at
 off12 behind its spell prefix), Hunt 09.8 (**2435**, a heal finding him on
-another floor), Lock 12.0 and 14.5 (2434): 2434 seven votes, 2435 one —
-**floor 2434**.
+another floor), Lock 12.0 and 14.5 (2434), Tank 14.2 and Healer 14.25 (2434,
+Spirit Link's two halves): 2434 nine votes, 2435 one — **floor 2434**.
 
-**Posts (11).** Tank 2, Hunt 1 (his 2435 post is not kept), Healer 2, Lock
+**Posts (13).** Tank 3, Hunt 1 (his 2435 post is not kept), Healer 3, Lock
 2; Ula'tek 2 (its Spit landing at 02.5, the Incinerate finding it at 16.0),
 Egg 1, Coil 1 (a swing — its block at off9 describes the SOURCE — whose
 amount, 2434, is the floor's id: no line is read twice for it).
@@ -98,6 +100,9 @@ amount, 2434, is the floor's id: no line is read twice for it).
 | 11.0 | Tank dies | `death` |
 | 11.5 | Healer's Rebirth on Tank | `rez`, src Healer |
 | 12.0 | Lock casts Demonic Gateway | `pcast_success` |
+| 14.1 | Shaman summons Spirit Link Totem | — (no placing spell) |
+| 14.2 | Spirit Link on Tank from the totem, `0xa28` | — (one of ours by its summon: no hit) |
+| 14.25 | Spirit Link's heal on Healer | — (a post, no row) |
 
 `hit` 4, `cast_start` 1, `cast_success` 2, `pcast_start` 1, `pcast_success`
 2, `pcast_failed` 1, `interrupt` 1, `debuff_applied` 2, `debuff_removed` 1,
@@ -118,7 +123,8 @@ another map's.
 
 **Units (9).** Tank, Ula'tek, Hunt, Egg, Coil, Healer, Lock — then the two
 only the placed rows name, the totem and the circle. The nil unit is no
-unit; the pet is never numbered.
+unit; the pet is never numbered; Spirit Link Totem, named by no row, is no
+unit.
 
 ## Segment 2 — Twin Venoms (encounter 3001, Mythic, wipe, 20 s)
 

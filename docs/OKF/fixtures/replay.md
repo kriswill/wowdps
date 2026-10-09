@@ -1,7 +1,7 @@
 ---
 type: Fixture
 title: replay.txt
-description: 'The replay cut''s fixture (R29, v45) — two boss pulls with world markers placed and replaced before the first, posts on two floors, every event kind a replay draws (a ranged hit, a miss, a hit from no source, a failed cast, a Feign Death, a creature down unconscious, a rez), a warlock known by R8, and what players place: a gateway, a totem''s summon, touches, a create, a totem destroyed.'
+description: 'The replay cut''s fixture (R29, v45) — two boss pulls with world markers placed and replaced before the first, posts on two floors, every event kind a replay draws (a ranged hit, a miss, a hit from no source, a friendly totem''s tick that is none, a failed cast, a Feign Death, a creature down unconscious, a rez), a warlock known by R8, and what players place: a gateway, a totem''s summon, touches, a create, a totem destroyed.'
 resource: crates/core/fixtures/replay.txt
 tags: [fixture]
 status: stable
@@ -24,6 +24,10 @@ check.awk as its other tables are.
   start (a marker removed and re-placed before the pull) and each change;
   a swing whose amount equals the floor's id posted once, as the parser
   reads it; a name with a comma.
+- [R22 Self-harm](../rulings/r22.md): Spirit Link Totem's
+  redistribution (its damage line a neutral `0xa28`) is friendly fire under
+  the Shaman who summoned it and stays in the Tank's Taken — and, one of ours
+  by that summon, it is no replay hit and numbers no unit.
 - [R9 Deaths](../rulings/r9.md): a Feign Death (`unconsciousOnDeath` 1 on a
   player) is no death; a creature's is down for the replay alone.
 - [R8 Class inference](../rulings/r8.md): the warlock with no
