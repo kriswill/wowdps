@@ -5440,3 +5440,69 @@ fn a_mixed_lake_opens_and_says_which_shield_views_exist() {
     assert_eq!(healer.pulls, 3);
     assert_eq!(healer.absorb_efficiency, Some(0.8));
 }
+
+/// v45 (R29): the daemon cuts the fixture's two boss pulls into the replay
+/// tier on import; `stats` counts the tier and the kept-whole set (the
+/// kill, and Verkath's wipe as progression); `replay-export` writes the
+/// seven files from the tier alone, `raid.csv` from the details tier — its
+/// seconds summing to the friendly Damage rows' total, R25's identity.
+#[test]
+fn the_replay_tier_exports_offline_and_stats_count_it() {
+    let tmp = Temp::new("replay");
+    let (socket, hist, _done) = start(&tmp);
+    let mut client =
+        DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
+    wait_for_store(&mut client, 2);
+    let deadline = Instant::now() + DEADLINE;
+    let replays = || {
+        std::fs::read_dir(hist.join("replay"))
+            .map(|d| d.flatten().count())
+            .unwrap_or(0)
+    };
+    while replays() < 2 {
+        assert!(Instant::now() < deadline, "the replays never landed");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let stats = Lake::open(&hist).unwrap().stats();
+    let num = |path: &[&str]| {
+        path.iter()
+            .try_fold(&stats, |v, k| v.get(k))
+            .and_then(Json::as_u64)
+    };
+    assert_eq!(num(&["replay", "files"]), Some(2));
+    assert_eq!(num(&["cards_without_replay"]), Some(0));
+    assert_eq!(num(&["kept", "kills"]), Some(1));
+    assert_eq!(
+        num(&["kept", "progression"]),
+        Some(1),
+        "Verkath, never killed"
+    );
+    let cards = stored_cards(&hist);
+    let kill = cards.iter().find(|c| c.success == Some(true)).unwrap();
+    let out = tmp.0.join("export");
+    let said = wowdps_history::replay_export(&hist, &kill.id, &out).unwrap();
+    assert!(said.contains("units"), "{said}");
+    for f in wowdps_proto::replay::csv::FILES {
+        assert!(out.join(f).is_file(), "{f}");
+    }
+    let raid = std::fs::read_to_string(out.join("raid.csv")).unwrap();
+    let total: u64 = raid
+        .lines()
+        .skip(1)
+        .filter_map(|l| l.split_once(',')?.1.parse::<u64>().ok())
+        .sum();
+    let damage: u64 = kill
+        .players
+        .iter()
+        .filter(|p| !p.enemy)
+        .map(|p| p.damage)
+        .sum();
+    assert_eq!(total, damage, "Σ raid.csv = the friendly Damage rows");
+    let pull = std::fs::read_to_string(out.join("pull.txt")).unwrap();
+    assert!(pull.starts_with("title = The Ashen Warden\n"), "{pull}");
+    assert!(
+        pull.contains(&format!("log = history:{}\n", kill.id)),
+        "{pull}"
+    );
+    assert!(wowdps_history::replay_export(&hist, "nope", &out).is_err());
+}

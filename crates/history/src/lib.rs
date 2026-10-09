@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use duckdb::types::Value;
 use duckdb::{Config, Connection};
 use wowdps_model::{Role, RoleNightRow, Spec};
+use wowdps_proto::history::{FightCard, FightDetails, FightKind};
 use wowdps_proto::json::Json;
 use wowdps_proto::obj;
 
@@ -1051,7 +1052,7 @@ impl Lake {
                 obj! { "files": Json::u64(n), "bytes": Json::u64(bytes) },
             ));
         }
-        obj! {
+        let mut out = obj! {
             "dir": Json::str(self.dir.display().to_string()),
             "views": Json::Arr(self.views.iter().map(|v| Json::str(*v)).collect()),
             "directories": Json::Obj(o),
@@ -1064,7 +1065,13 @@ impl Lake {
             "cards_without_shields": Json::u64(self.cards_without_shields()),
             "rows_without_shields": Json::u64(self.rows_without_shields()),
             "rows_without_stacks": Json::u64(self.rows_without_stacks()),
+        };
+        // v45 (R29): the replay tier, `cards_without_replay` and the
+        // kept-whole set by why ([`replay_stats`]).
+        if let (Json::Obj(fields), Json::Obj(more)) = (&mut out, replay_stats(&self.dir)) {
+            fields.extend(more);
         }
+        out
     }
 
     /// R20 (step 5): cards written before the shield ledger — some player
@@ -1515,4 +1522,152 @@ pub fn value_json(v: Value) -> Json {
         ),
         other => Json::str(format!("{other:?}")),
     }
+}
+
+// ---- v45 (R29): the replay tier ---------------------------------------------------
+
+/// Every card in `fights/`, parsed (an unreadable one skipped).
+fn read_cards(dir: &Path) -> Vec<FightCard> {
+    std::fs::read_dir(dir.join("fights"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            FightCard::from_json(&wowdps_proto::json::parse(&text).ok()?)
+        })
+        .collect()
+}
+
+/// v45 (R29): what `stats` says of the replay tier and the kept-whole set,
+/// from the files alone: the tier's files and bytes; `cards_without_replay`,
+/// boss pulls and keystone runs with no `replay/<id>.bin` (the daemon keeps
+/// one for every fight retention keeps whole or protects and the newest of
+/// the rest per boss and difficulty, so a demoted wipe counts here by
+/// design); and the cards the DEFAULT rules keep whole, by why — a kill, a
+/// timed key, a progression wipe (a boss no card killed at that
+/// difficulty), a pin — each card once, under the first reason that holds.
+pub fn replay_stats(dir: &Path) -> Json {
+    let cards = read_cards(dir);
+    let replays: Vec<(String, u64)> = std::fs::read_dir(dir.join("replay"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let id = name.strip_suffix(".bin")?.to_string();
+            Some((id, e.metadata().map(|m| m.len()).unwrap_or(0)))
+        })
+        .collect();
+    let has = |id: &str| replays.iter().any(|(r, _)| r == id);
+    let without = cards
+        .iter()
+        .filter(|c| matches!(c.kind, FightKind::Encounter | FightKind::Key) && !has(&c.id))
+        .count();
+    let killed: std::collections::HashSet<(u32, u32)> = cards
+        .iter()
+        .filter(|c| c.kind == FightKind::Encounter && c.success == Some(true) && !c.aborted)
+        .filter_map(|c| c.encounter.map(|e| (e.id, e.difficulty)))
+        .collect();
+    let (mut kills, mut keys, mut progression, mut pins) = (0u64, 0u64, 0u64, 0u64);
+    for c in &cards {
+        let won = c.success == Some(true) && !c.aborted;
+        if won && c.kind == FightKind::Encounter {
+            kills += 1;
+        } else if won && c.kind == FightKind::Key {
+            keys += 1;
+        } else if c.kind == FightKind::Encounter
+            && c.success == Some(false)
+            && !c.aborted
+            && c.encounter
+                .is_some_and(|e| !killed.contains(&(e.id, e.difficulty)))
+        {
+            progression += 1;
+        } else if c.pinned {
+            pins += 1;
+        }
+    }
+    obj! {
+        "replay": obj! {
+            "files": Json::u64(replays.len() as u64),
+            "bytes": Json::u64(replays.iter().map(|(_, b)| b).sum()),
+        },
+        "cards_without_replay": Json::u64(without as u64),
+        "kept": obj! {
+            "kills": Json::u64(kills),
+            "timed_keys": Json::u64(keys),
+            "progression": Json::u64(progression),
+            "pins": Json::u64(pins),
+        },
+    }
+}
+
+/// v45 (R29): `replay-export` — one stored fight's replay tier written out
+/// as the seven files a replay reads (`proto::replay::csv`), offline: the
+/// tier file for the units, tracks, events, placed things and markers; the
+/// details tier, when the store still keeps it, for `raid.csv` (R25's raid
+/// series: the friendly players' 1 s damage summed, never stored twice);
+/// the card for `pull.txt`'s owner. `pull.txt` names the instance by the
+/// log's zone (the rubric's journal name is the extractor's) and its log as
+/// `history:<fight id>`: the store knows a log by its identity, not its
+/// file name. A one-line summary of what was written.
+pub fn replay_export(dir: &Path, fight_id: &str, out: &Path) -> Result<String, String> {
+    let path = dir.join("replay").join(format!("{fight_id}.bin"));
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let cut = wowdps_proto::replay::decode(&bytes)
+        .ok_or_else(|| format!("{}: not a replay this build reads", path.display()))?;
+    let read = |sub: &str| -> Option<Json> {
+        let text = std::fs::read_to_string(dir.join(sub).join(format!("{fight_id}.json"))).ok()?;
+        wowdps_proto::json::parse(&text).ok()
+    };
+    let card = read("fights").and_then(|v| FightCard::from_json(&v));
+    let details = read("details").and_then(|v| FightDetails::from_json(&v));
+    // R25 over the details tier, friendly players alone, as the store's own
+    // stored raid timeline sums it.
+    let raid: Option<(Vec<u64>, u64)> = details.map(|d| {
+        let friendly = |guid: &str| {
+            card.as_ref()
+                .is_none_or(|c| c.players.iter().any(|p| p.guid == guid && !p.enemy))
+        };
+        let mut sum: Vec<u64> = Vec::new();
+        let mut bucket = 1000u64;
+        for p in d.players.iter().filter(|p| friendly(&p.guid)) {
+            bucket = u64::from(p.damage_timeline.bucket_ms.max(1));
+            if sum.len() < p.damage_timeline.buckets.len() {
+                sum.resize(p.damage_timeline.buckets.len(), 0);
+            }
+            for (slot, v) in sum.iter_mut().zip(&p.damage_timeline.buckets) {
+                *slot += v;
+            }
+        }
+        (sum, bucket)
+    });
+    let log = format!("history:{fight_id}");
+    let facts = wowdps_proto::replay::csv::PullFacts {
+        instance: None,
+        log: &log,
+        owner: card.as_ref().and_then(|c| c.owner.as_deref()),
+        order: None,
+    };
+    wowdps_proto::replay::csv::write_dir(
+        out,
+        &cut,
+        raid.as_ref().map(|(s, b)| (s.as_slice(), *b)),
+        &facts,
+    )
+    .map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok(format!(
+        "{}: {} units, {} posts, {} events, {} placed, {} markers{}\n",
+        out.display(),
+        cut.units.len(),
+        cut.posts(),
+        cut.events.len(),
+        cut.placed.len(),
+        cut.markers.len(),
+        if raid.is_some() {
+            ""
+        } else {
+            "; no details tier, raid.csv is its heading alone"
+        }
+    ))
 }
