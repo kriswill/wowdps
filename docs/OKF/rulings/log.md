@@ -2,6 +2,12 @@
 
 ## 2026-10-09
 
+- **Creation** — [R29 The replay cut](r29.md): a boss pull or keystone run cut
+  from its parsed lines — units by first sight, posts on the floor, the
+  events a replay draws, what players placed, the world markers — into the
+  history store's replay tier (v45; [decision](../decisions/replay-tier-in-the-store.md)).
+- **Update** — [R9 Deaths & recap](r9.md): a Feign Death parses as
+  `Unconscious` (v45), still no death.
 - **Creation** — [R28 Power (the pool, second by second)](r28.md): each
   player's power per type as a 1 s series — the last report of a second, the
   largest max, gaps empty, never a pet's — passive, on the details tier and

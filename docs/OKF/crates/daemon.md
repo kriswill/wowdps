@@ -26,6 +26,14 @@ marks each snapshot's rows, drill and raid deaths from it before they go
 out; the store marks a stored fight's when it answers
 ([the Wire decision](../decisions/raid-timeline-and-mine-on-the-wire.md)).
 
+Since v45 the store keeps the REPLAY tier too ([R29](../rulings/r29.md)):
+`replay.rs` implements core's `PlacedTable` over the encounter rubric's
+generated table, the loader cuts a segment beside its meter from one parse
+(`CutJob`), a live close queues a cut alone, and retention keeps a replay in
+the details tier's slots and all season for the protected set
+([why](../decisions/replay-tier-in-the-store.md)) — which since v45 holds
+every progression wipe ([A Progression Wipe Is Kept Whole](../decisions/progression-kept-whole.md)).
+
 ## Overlay supervisor
 
 `overlay.rs` spawns `<gui_binary> --overlay` when the game appears. The
