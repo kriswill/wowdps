@@ -2,6 +2,10 @@
 
 ## 2026-10-09
 
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the seasons
+  and the schema README live inside the crate (`seasons/<season>/…`,
+  `README.md`); the repository-root `rubric/` is gone, and every layer's
+  paths stay `<season>/<instance>/<file>` relative to `seasons/`.
 - **Update** — [wowdps-encounter-rubric](encounter-rubric.md): an ordered layer
   stack in three tiers (`Tier::User` the default), `Source` / `Origin`,
   `with_curated`, `with_user`, `with_user_dir` and `user_errors`,
