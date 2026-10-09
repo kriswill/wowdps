@@ -1923,10 +1923,10 @@ mod tests {
                 })
                 .count()
         };
-        // Five before the first pull; the second pull's seeds add the three
+        // Five before the first pull; the second pull's seeds add the five
         // the first one changed.
         assert_eq!(markers(&idx.segments[0]), 5);
-        assert_eq!(markers(&idx.segments[1]), 8);
+        assert_eq!(markers(&idx.segments[1]), 10);
     }
 
     /// R19: every support family, a self-supported proc, a buffed pet and

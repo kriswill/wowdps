@@ -203,7 +203,15 @@ fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
     assert!(c.events.iter().all(|e| e.spell != "Spirit Link"));
     assert!(c.units.iter().all(|u| u.name != "Spirit Link Totem"));
     let markers: Vec<(u32, u8)> = c.markers.iter().map(|m| (m.t_ms, m.marker)).collect();
-    assert_eq!(markers, [(0, 1), (0, 4), (6000, 4), (6250, 7)]);
+    assert_eq!(
+        markers,
+        [(0, 1), (0, 4), (6000, 4), (6250, 7), (6260, 5), (6350, 5)],
+        "5 placed here, then on another map: it left"
+    );
+    assert_eq!(
+        c.markers[5].kind,
+        wowdps_core::model::replay::MarkerKind::Removed
+    );
     assert_eq!(
         c.markers[0].at,
         Some((9500, -1200)),

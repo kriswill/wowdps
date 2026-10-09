@@ -117,9 +117,10 @@ Lock's Demonic Circle (`SPELL_CREATE`: a `summon`, the circle numbered here);
 15.5 the totem destroyed (`gone`). `placed_cast` 1, `placed_summon` 2,
 `placed_touch` 3, `placed_gone` 1.
 
-**Markers (4).** The two standing (1 at 95.00, −12.00; 4) at t 0, 4 removed at
-6 000 ms, 7 placed on 3004 at 6 250 ms; the placement on 9999 at 6 300 ms is
-another map's.
+**Markers (6).** The two standing (1 at 95.00, −12.00; 4) at t 0, 4 removed at
+6 000 ms, 7 placed on 3004 at 6 250 ms, 5 at 6 260 ms; the placement of 3 on
+9999 at 6 300 ms is another map's, but 5 placed there at 6 350 ms LEFT 3004 (a
+marker's number is one object): a removal row.
 
 **Units (9).** Tank, Ula'tek, Hunt, Egg, Coil, Healer, Lock — then the two
 only the placed rows name, the totem and the circle. The nil unit is no

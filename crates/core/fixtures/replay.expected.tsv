@@ -397,7 +397,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_summon	2
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_touch	3
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_gone	1
-1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_markers	4
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_markers	6
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	replay_posts	3
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	replay_posts	3
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	replay_posts	1
