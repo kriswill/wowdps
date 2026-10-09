@@ -1400,6 +1400,9 @@ fn a_pull_closed_live_is_cut_into_the_replay_tier() {
     let hist = tmp.join("history");
     let d = start(options(&tmp, SourceSpec::Dir(logs), hist.clone()));
     wait_for_fights(&d.socket, 2);
+    // A session listening for the store's broadcasts.
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
     // A third pull, written as the game writes it, after the daemon caught up.
     let pull = concat!(
         "7/27/2026 21:00:00.000-4  ENCOUNTER_START,3130,\"The Ashen Warden\",15,3,2769\n",
@@ -1422,6 +1425,37 @@ fn a_pull_closed_live_is_cut_into_the_replay_tier() {
         );
         thread::sleep(Duration::from_millis(20));
     }
+    // The card's broadcast went out when the pull was stored, before its
+    // replay was cut; a second one says the replay landed, so a client that
+    // asked first (and was told `None`) knows to ask again — and is answered.
+    let mut told: Vec<String> = Vec::new();
+    let mut answered = None;
+    let deadline = Instant::now() + DEADLINE;
+    while answered.is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "no second HistoryChanged and replay: {told:?}"
+        );
+        for msg in client.poll() {
+            match msg {
+                DaemonMsg::HistoryChanged { fight_id } => {
+                    if told.contains(&fight_id) {
+                        client.send(&ClientMsg::GetReplay {
+                            req_id: 9,
+                            fight_id: fight_id.clone(),
+                        });
+                    }
+                    told.push(fight_id);
+                }
+                DaemonMsg::Replay {
+                    req_id: 9, bytes, ..
+                } => answered = Some(bytes),
+                _ => {}
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(answered.unwrap().is_some(), "the replay answers once told");
     stop(d);
     let newest = std::fs::read_dir(hist.join("replay"))
         .unwrap()

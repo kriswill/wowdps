@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use wowdps_core::index::{self, load_segment_text};
 use wowdps_core::tail::TailEvent;
 use wowdps_daemon::engine::{Engine, EngineEvent};
-use wowdps_daemon::history::{ClosedFight, LogFacts, MemBackend, Retention, Store};
+use wowdps_daemon::history::{Backend, ClosedFight, LogFacts, MemBackend, Retention, Store};
 use wowdps_daemon::mock::MockDaemon;
 use wowdps_daemon::replay::cut_text;
 use wowdps_proto::history::FightKind;
@@ -383,17 +383,106 @@ fn the_size_cap_takes_the_oldest_unprotected_replay() {
         "two fit: the kill and the newest wipe"
     );
     assert!(store.status().replay_bytes <= one * 2);
-    // At the cap a wipe is no longer backfilled; the kill always would be.
+    // At the cap a wipe older than every unprotected replay held is not
+    // backfilled: the trim would only take it again.
     assert!(!store.wants_recut(&ids[0]));
     assert!(store.recuts().is_empty());
 }
 
-/// `GetReplay` answers the tier's bytes — the mock cuts every fixture fight
-/// its store wants as the rewrite queue would — and `None` for a fight it
-/// does not keep.
+/// A store full to the byte still takes its newest wipe: the backfill cuts
+/// it and the trim takes the oldest unprotected replay in its place, as
+/// retention counts the cap (`>`), never stuck at it.
+#[test]
+fn a_store_at_the_cap_still_takes_its_newest_wipe() {
+    let tmp = Temp::new("cap-newest");
+    let (path, fights) = log_of(&tmp, &[(70, false, 15), (70, false, 15), (70, false, 15)]);
+    let facts = LogFacts::read(&path);
+    let one = {
+        let mut probe = Store::open(MemBackend::new(), Retention::default());
+        let id = probe.store(&fights[0], facts).unwrap();
+        assert!(cut_into(&mut probe, &path, &id));
+        probe.status().replay_bytes
+    };
+    let mut store = Store::open(
+        MemBackend::new(),
+        cfg(|r| {
+            r.keep_progression = false;
+            r.replay_bytes = one * 2;
+        }),
+    );
+    let ids: Vec<String> = fights
+        .iter()
+        .map(|f| store.store(f, facts).unwrap())
+        .collect();
+    // The two older wipes fill the tier exactly; the newest never got its
+    // cut (a live close whose recut has not run yet).
+    assert!(cut_into(&mut store, &path, &ids[0]));
+    assert!(cut_into(&mut store, &path, &ids[1]));
+    assert_eq!(store.status().replay_bytes, one * 2, "exactly at the cap");
+    assert!(
+        store.wants_recut(&ids[2]),
+        "the newest wipe is still wanted"
+    );
+    assert_eq!(store.recuts(), [ids[2].clone()]);
+    assert!(cut_into(&mut store, &path, &ids[2]));
+    let has: Vec<bool> = ids.iter().map(|id| store.has_replay(id)).collect();
+    assert_eq!(has, [false, true, true], "the oldest made room");
+    assert!(!store.wants_recut(&ids[0]), "and is not cut again");
+}
+
+/// An aborted fight (a pull the log abandoned) keeps no replay: it would
+/// read as a wipe at 0:00. No slot, no cut, nothing backfilled.
+#[test]
+fn an_aborted_pull_keeps_no_replay() {
+    let tmp = Temp::new("aborted");
+    let (path, fights) = log_of(&tmp, &[(70, false, 15)]);
+    let facts = LogFacts::read(&path);
+    let mut store = Store::open(MemBackend::new(), Retention::default());
+    let mut abandoned = fights[0].clone();
+    abandoned.aborted = true;
+    let id = store.store(&abandoned, facts).unwrap();
+    assert!(store.card(&id).unwrap().aborted);
+    assert!(!store.replay_slots().contains(&id));
+    assert!(!store.wants_recut(&id) && store.recuts().is_empty());
+    assert!(!cut_into(&mut store, &path, &id), "offered, refused");
+    assert_eq!(store.status().replays, 0);
+}
+
+/// A read-through store learns each replay's size and head without reading
+/// the files whole: `MemBackend` answers both from what it holds, a seeded
+/// file by its metadata and one range.
+#[test]
+fn a_read_through_store_sizes_replays_without_reading_them() {
+    let tmp = Temp::new("over-dir");
+    std::fs::create_dir_all(tmp.0.join("replay")).unwrap();
+    std::fs::write(tmp.0.join("replay").join("x.bin"), b"WDRP\x01abcdefgh").unwrap();
+    let mut b = MemBackend::over_dir(&tmp.0);
+    assert_eq!(b.size("replay", "x.bin"), Some(13));
+    assert_eq!(
+        b.read_range("replay", "x.bin", 0, 5).as_deref(),
+        Some(&b"WDRP\x01"[..])
+    );
+    assert_eq!(b.read_range("replay", "x.bin", 10, 9), None, "past the end");
+    b.write("replay", "y.bin", b"WDRP").unwrap();
+    assert_eq!(b.size("replay", "y.bin"), Some(4));
+    assert_eq!(
+        b.read_range("replay", "y.bin", 1, 2).as_deref(),
+        Some(&b"DR"[..])
+    );
+    assert_eq!(b.size("replay", "nope.bin"), None);
+}
+
+/// `GetReplay` answers the tier's bytes — the mock cuts the fight asked for
+/// as the rewrite queue would, lazily, on the first ask — and `None` for a
+/// fight it does not keep.
 #[test]
 fn get_replay_answers_the_tier() {
     let mut mock = MockDaemon::fixture().with_history();
+    assert_eq!(
+        mock.history().status().replays,
+        0,
+        "a mock with history cuts nothing until asked"
+    );
     let kill = mock
         .history()
         .cards()
@@ -431,7 +520,7 @@ fn get_replay_answers_the_tier() {
     );
     assert_eq!(
         mock.history().status().replays,
-        2,
-        "both of the sample's pulls"
+        1,
+        "the one asked for, cut on the ask"
     );
 }

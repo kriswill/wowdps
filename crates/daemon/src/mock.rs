@@ -244,6 +244,7 @@ impl MockDaemon {
             }
             // v45 (R29): the replay tier, as the history thread reads it.
             ClientMsg::GetReplay { req_id, fight_id } => {
+                self.cut_replay(&fight_id);
                 let bytes = self.history.replay_file(&fight_id);
                 out.push(DaemonMsg::Replay {
                     req_id,
@@ -352,43 +353,40 @@ impl MockDaemon {
                 self.history.store(&fight, self.log_facts);
             }
         }
-        self.cut_replays();
         self.pending.clear();
         self
     }
 
-    /// v45 (R29): what the history thread's rewrite queue does for every
-    /// fight the store wants a replay of — find it in the log's index, cut
-    /// it from its seeds and slice, keep it — here at once, in line.
-    fn cut_replays(&mut self) {
+    /// v45 (R29): what the history thread's rewrite queue does for a fight
+    /// the store wants a replay of — find it in the log's index, cut it from
+    /// its seeds and slice, keep it — here in line, LAZILY: on the first
+    /// `GetReplay` that asks for it, so a mock built with history (over a
+    /// season's read-through store, or for a test that never asks) cuts
+    /// nothing it is not asked for.
+    fn cut_replay(&mut self, id: &str) {
+        if !self.history.wants_recut(id) {
+            return;
+        }
+        let Some((start, sigma)) = self.history.card(id).map(|c| {
+            (
+                c.start_local_ms,
+                c.kind == wowdps_proto::history::FightKind::Key,
+            )
+        }) else {
+            return;
+        };
         let Ok(mut file) = std::fs::File::open(&self.path) else {
             return;
         };
         let idx = index::scan(&mut file);
-        // The store's own list, its protected set made once (a read-through
-        // store directory can hold a season of cards).
-        let recuts: std::collections::HashSet<String> = self.history.recuts().into_iter().collect();
-        let wanted: Vec<(String, i64, bool)> = self
-            .history
-            .cards()
+        let metas = if sigma { &idx.overalls } else { &idx.segments };
+        if let Some(text) = metas
             .iter()
-            .filter(|c| recuts.contains(&c.id))
-            .map(|c| {
-                let sigma = c.kind == wowdps_proto::history::FightKind::Key;
-                (c.id.clone(), c.start_local_ms, sigma)
-            })
-            .collect();
-        for (id, start, sigma) in wanted {
-            let metas = if sigma { &idx.overalls } else { &idx.segments };
-            let Some(text) = metas
-                .iter()
-                .find(|m| m.start_ms == start)
-                .and_then(|m| load_segment_text(&self.path, m).ok())
-            else {
-                continue;
-            };
+            .find(|m| m.start_ms == start)
+            .and_then(|m| load_segment_text(&self.path, m).ok())
+        {
             self.history
-                .store_replay(&id, crate::replay::cut_text(&text, None));
+                .store_replay(id, crate::replay::cut_text(&text, None));
         }
     }
 
