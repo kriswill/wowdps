@@ -635,11 +635,13 @@ ev == "COMBAT_LOG_VERSION" {
     }
 }
 
-# ---- R29 the world markers: the standing set over the whole log (a placement
-# per map and marker; a removal off every map), counted while a boss pull is
-# open — a placement on its instance map, any removal.
+# ---- R29 the world markers: the standing set over the whole log (a marker
+# number is one object: a placement moves it to its map, off any other; a
+# removal takes it off every map), counted while a boss pull is open — a
+# placement on its instance map, any removal.
 ev == "WORLD_MARKER_PLACED" {
     if (cur && (cur in rEnc) && $2 + 0 == rMap[cur]) r_count(cur, "markers")
+    for (k in mOn) { split(k, kk, SUBSEP); if (kk[2] + 0 == $3 + 0) delete mOn[k] }
     mOn[($2 + 0) SUBSEP ($3 + 0)] = 1
     next
 }

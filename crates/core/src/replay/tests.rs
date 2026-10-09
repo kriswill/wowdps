@@ -234,6 +234,22 @@ fn markers_standing_then_changing() {
     );
 }
 
+/// A marker's number is one object: moved to another map, it no longer
+/// stands on the one it left, however the pull comes back there.
+#[test]
+fn a_marker_moved_to_another_map_leaves_the_first() {
+    let mut seeds = lines(0, 8);
+    seeds.push("10/7/2026 20:00:30.000-7  WORLD_MARKER_PLACED,9999,4,5.00,6.00");
+    let c = cut(seeds, lines(8, 30), &Table, Some("Player-1-A"));
+    let standing: Vec<u8> = c
+        .markers
+        .iter()
+        .filter(|m| m.t_ms == 0)
+        .map(|m| m.marker)
+        .collect();
+    assert_eq!(standing, [1]);
+}
+
 /// The index's seeds (every COMBATANT_INFO, ZONE_CHANGE and marker line)
 /// make the same cut as every line before the slice does.
 #[test]
