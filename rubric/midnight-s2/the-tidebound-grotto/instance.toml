@@ -1,0 +1,23 @@
+# The Tidebound Grotto: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "The Tidebound Grotto"
+kind = "raid"
+journal = 1317
+map = 2987
+
+# Every boss room here has a stencil, small enough to render at twice the
+# tool's density: zoomed in, its edges and textures hold.
+[defaults.map]
+ppy = 16
+
+# Each boss's map, by DungeonEncounterID: how its room is drawn and first
+# shown, and what changes it in the fight (rooms off it, its places, the
+# events its layers break on). Part of the base: a room looks and changes
+# the same at every tier.
+
+# Nymrissa Wavecaller. The island and a band of the lagoon round it. The
+# rest of the lagoon and its rocky shore are left out.
+[encounter.3379.map]
+stencil = [
+    { center = [4762.9, -12083.0], radius = 72.0 },
+]

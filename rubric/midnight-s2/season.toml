@@ -1,0 +1,26 @@
+# Midnight Season 2: the client's DisplaySeason 37 (season 18). Its
+# keystone pool is MythicPlusSeasonTrackedMap's eight dungeons for that
+# season; its raids are the journal's current tier. gen-rubric drafts every
+# encounter of these JournalInstances.
+schema = 1
+name = "Midnight Season 2"
+order = 18
+instances = [
+    1320, # The Venomous Abyss
+    1317, # The Tidebound Grotto
+    1322, # Altar of Fangs
+    1202, # Ruby Life Pools
+    1030, # Temple of Sethraliss
+    1041, # Kings' Rest
+    1309, # The Blinding Vale
+    1313, # Voidscar Arena
+    1311, # Den of Nalorakk
+    1304, # Murder Row
+]
+
+# What every encounter of the season starts from.
+[defaults.view]
+zoom = 1.15
+
+[defaults.map]
+ceiling = 25

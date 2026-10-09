@@ -1,0 +1,6 @@
+# Windrunner Spire: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Windrunner Spire"
+kind = "dungeon"
+journal = 1299
+map = 2805

@@ -1,0 +1,18 @@
+encounter = "Ula'tek"
+dungeon_encounter = 3492
+ui_map = 2610
+room_group = 79429
+x_max = 1687
+y_max = 150.6
+ppy = 16
+width = 4768
+height = 4456
+wall_angle = 0.0
+wall_share = 0.22
+base = "ulatek-base.png"
+stencil = 1
+layer = "ulatek-layer-7549724.png" wmo=7549724 placement=68066522 x_max=1591.7744 y_max=38.083984 width=1219 height=1219
+layer = "ulatek-layer-7754174.png" wmo=7754174 placement=69542630 x_max=1592.6943 y_max=40.677734 width=653 height=612
+layer = "ulatek-layer-7754173.png" wmo=7754173 placement=69542631 x_max=1552.8271 y_max=39.16211 width=624 height=633
+layer = "ulatek-layer-7549725.png" wmo=7549725 placement=69542632 x_max=1593.6729 y_max=-0.7519531 width=619 height=623
+layer = "ulatek-layer-7754172.png" wmo=7754172 placement=69542633 x_max=1553.5859 y_max=-0.28515625 width=656 height=645

@@ -1,0 +1,6 @@
+# Skyreach: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Skyreach"
+kind = "dungeon"
+journal = 476
+map = 1209

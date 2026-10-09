@@ -1,5 +1,16 @@
 # Log
 
+## 2026-10-09
+
+- **Creation** — [wowdps-encounter-rubric](encounter-rubric.md): the seasonal
+  encounter rubric brought to main from the replay branch under its new name
+  (it was `wowdps-rubric` there), with the generated drafts, the instance and
+  season files, and none of the hand-tuned curated files; `proto::dirs`
+  came with it.
+- **Update** — [wowdps-proto](proto.md): `dirs`, the XDG base directories
+  resolved once (an empty or relative variable counts as unset);
+  `talents::data_path` delegates to it.
+
 ## 2026-10-04
 
 - **Update** — [wowdps-extract](extract.md): stub upgraded with its seams — tables

@@ -1,0 +1,31 @@
+# March on Quel'Danas: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "March on Quel'Danas"
+kind = "raid"
+journal = 1308
+map = 2913
+
+# Every boss room here has a stencil, small enough to render at twice the
+# tool's density: zoomed in, its edges and textures hold.
+[defaults.map]
+ppy = 16
+
+# Each boss's map, by DungeonEncounterID: how its room is drawn and first
+# shown, and what changes it in the fight (rooms off it, its places, the
+# events its layers break on). Part of the base: a room looks and changes
+# the same at every tier.
+
+# Midnight Falls. The round platform about the void pit, and the crescent
+# terrace with its pylons round one side of it. The other platforms in the
+# sky are left out.
+[encounter.3183.map]
+stencil = [
+    { center = [11019.5, -4617.2], radius = 86.0 },
+    { points = [
+        [11013.5, -4486.3], [10991.0, -4489.3], [10969.1, -4496.2], [10948.9, -4506.8],
+        [10930.8, -4520.8], [10915.4, -4537.7], [10903.2, -4556.9], [10894.4, -4578.0],
+        [10889.6, -4600.3], [10888.6, -4623.1], [10891.6, -4645.7], [10898.5, -4667.6],
+        [10909.1, -4687.8], [10923.1, -4705.9], [10940.0, -4721.3], [10970.9, -4680.8],
+        [11015.9, -4537.3],
+    ] },
+]

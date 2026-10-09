@@ -1,0 +1,6 @@
+# Altar of Fangs: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Altar of Fangs"
+kind = "dungeon"
+journal = 1322
+map = 2993

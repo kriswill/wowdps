@@ -1,0 +1,72 @@
+# The Voidspire: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "The Voidspire"
+kind = "raid"
+journal = 1307
+map = 2912
+
+# Every boss room here has a stencil, small enough to render at twice the
+# tool's density: zoomed in, its edges and textures hold.
+[defaults.map]
+ppy = 16
+
+# Each boss's map, by DungeonEncounterID: how its room is drawn and first
+# shown, and what changes it in the fight (rooms off it, its places, the
+# events its layers break on). Part of the base: a room looks and changes
+# the same at every tier.
+
+# Imperator Averzian. The platform out to its railings, its six pylons and
+# the stairs off one side. The void cloud round it is left out.
+[encounter.3176.map]
+stencil = [
+    { points = [
+        [4197.0, 1056.8], [4279.6, 969.7], [4266.5, 957.4], [4274.8, 948.6],
+        [4232.7, 908.7], [4224.4, 917.4], [4212.1, 905.7], [4129.5, 992.8],
+    ] },
+    { center = [4209.3, 1054.7], radius = 10.0 },
+    { center = [4246.1, 1020.7], radius = 10.0 },
+    { center = [4281.2, 978.9], radius = 10.0 },
+    { center = [4128.0, 981.7], radius = 10.0 },
+    { center = [4164.9, 940.9], radius = 10.0 },
+    { center = [4208.3, 907.9], radius = 10.0 },
+]
+
+# Vorasius. Open ground with no wall to cut at: a circle taking in the ring
+# of the beast's bones round the fight. The void plain past it is left out.
+[encounter.3177.map]
+stencil = [
+    { center = [4691.7, 905.0], radius = 100.0 },
+]
+
+# Fallen-King Salhadaar. The platform inside its golden frame, and the
+# framed gantry off one corner. The beams sticking out of the frame and the
+# void below are left out.
+[encounter.3179.map]
+stencil = [
+    { points = [
+        [4129.4, 503.8], [4163.1, 467.4], [4146.4, 433.8], [4157.4, 416.1],
+        [4153.2, 385.9], [4145.8, 367.4], [4107.0, 342.3], [4088.6, 341.5],
+        [4069.1, 344.5], [4031.7, 367.5], [4014.6, 400.1], [4025.7, 428.0],
+        [4032.0, 450.4], [4096.7, 463.9], [4119.4, 494.9],
+    ] },
+]
+
+# Lightblinded Vanguard. The platform inside its spiked ring, the node on
+# the ring where players stood, and the stairs down from one side. The void
+# round it is left out.
+[encounter.3180.map]
+stencil = [
+    { points = [
+        [5012.3, 237.3], [5034.9, 240.3], [5030.0, 220.9], [5047.5, 174.0],
+        [5026.6, 130.6], [4996.8, 100.8], [4968.7, 95.5], [4915.6, 126.4],
+        [4893.3, 174.6], [4872.7, 187.6], [4887.1, 215.3], [4896.6, 249.6],
+        [4959.3, 275.9], [4974.9, 254.2], [4968.8, 243.0],
+    ] },
+]
+
+# Crown of the Cosmos. The round platform and its ring. The blades floating
+# round it and the void are left out.
+[encounter.3181.map]
+stencil = [
+    { center = [4791.0, 363.4], radius = 70.0 },
+]

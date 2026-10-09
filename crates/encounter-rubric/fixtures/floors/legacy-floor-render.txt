@@ -1,0 +1,14 @@
+encounter = "Ula'tek"
+ui_map = 2610
+room_group = 79429
+x_max = 1748.1788
+y_max = 194.49818
+ppy = 12
+width = 4668
+height = 5688
+base = "ulatek-base.png"
+layer = "ulatek-layer-7549724.png" wmo=7549724 placement=68066522 x_max=1591.7744 y_max=38.083984 width=914 height=914
+layer = "ulatek-layer-7754174.png" wmo=7754174 placement=69542630 x_max=1592.6943 y_max=40.677734 width=490 height=459
+layer = "ulatek-layer-7754173.png" wmo=7754173 placement=69542631 x_max=1552.8271 y_max=39.16211 width=468 height=475
+layer = "ulatek-layer-7549725.png" wmo=7549725 placement=69542632 x_max=1593.6729 y_max=-0.7519531 width=465 height=467
+layer = "ulatek-layer-7754172.png" wmo=7754172 placement=69542633 x_max=1553.5859 y_max=-0.28515625 width=492 height=484

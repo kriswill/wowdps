@@ -1,0 +1,6 @@
+# The Dreamrift: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "The Dreamrift"
+kind = "raid"
+journal = 1314
+map = 2939

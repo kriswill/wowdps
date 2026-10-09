@@ -1,0 +1,371 @@
+# The Venomous Abyss: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "The Venomous Abyss"
+kind = "raid"
+journal = 1320
+map = 3004
+
+# Every boss room here has a stencil, small enough to render at twice the
+# tool's density: zoomed in, its edges and textures hold.
+[defaults.map]
+ppy = 16
+
+# Each boss's map, by DungeonEncounterID: how its room is drawn and first
+# shown, and what changes it in the fight (rooms off it, its places, the
+# events its layers break on). Part of the base: a room looks and changes
+# the same at every tier.
+
+# Sszorak. The octagonal platform the fight keeps to, out past its rim. The
+# venom field round it and the buildings at the room's edge are left out.
+[encounter.3420.map]
+stencil = [
+    { points = [
+        [428.0, 460.6], [453.5, 416.5], [440.3, 367.3], [396.1, 341.8],
+        [347.0, 355.0], [321.5, 399.1], [334.6, 448.3], [378.8, 473.8],
+    ] },
+]
+
+# The Twin Fangs. The triangular platform out past its rim, its venom middle
+# kept. The venom field round it, the stairs past it and the side platforms
+# no one stands on are left out.
+[encounter.3421.map]
+stencil = [
+    { points = [
+        [692.5, 16.6], [692.5, -16.4], [586.5, -76.9], [557.0, -68.4],
+        [557.0, 68.6], [586.5, 76.6],
+    ] },
+]
+
+# The Coiled Altar. The square platform out to the rail round it, and its
+# four corner pillars. The moss round it, its rocks and the room's outer
+# walls are left out.
+[encounter.3429.map]
+stencil = [
+    { points = [
+        [1100.1, 57.6], [1215.1, 57.4], [1214.9, -57.1], [1099.9, -56.9],
+    ] },
+    { center = [1106.9, 51.3], radius = 16.0 },
+    { center = [1208.5, 51.1], radius = 16.0 },
+    { center = [1106.7, -50.3], radius = 16.0 },
+    { center = [1208.3, -50.5], radius = 16.0 },
+]
+
+# Entombed Sentinels. The pool holds two strips 5 yd under its venom in a
+# flat yellow (material 1092, shader 4), wider than the venom's grid: their
+# ends show past the pool's edge, as on the game's own minimap, where no
+# player sees them.
+#
+# The fight keeps to the platform: drawn are the platform, the venom gutter
+# round it, the alcoves on its long sides with their pillars, and the steps
+# up to both corridors. The venom plane under it all (210 yd across) and the
+# corridors past the steps are left out. Corners run clockwise as the
+# replay turns the room (60.1°, steps top and bottom), from the platform's
+# top left.
+[encounter.3445.map]
+exclude_textures = [4516750]
+stencil = [{ points = [
+    [697.4, -285.6], [723.8, -300.8], [732.9, -285.0], [769.8, -306.2],
+    [760.7, -322.0], [787.1, -337.2], [764.4, -376.6], [784.6, -388.2],
+    [765.9, -420.7], [745.7, -409.1], [725.2, -444.9], [698.7, -429.7],
+    [688.7, -447.0], [651.9, -425.9], [661.9, -408.5], [635.4, -393.3],
+    [655.4, -358.6], [635.2, -347.0], [653.9, -314.5], [674.1, -326.1],
+] }]
+
+# Vashnik the Malignant: the whole hall, its middle chamber with the side
+# alcoves, the venom pool and the stairs down from it, and past the pool
+# the nave to the hall's head, its two corridors and the galleries beyond
+# them. On Mythic a Malignant Tumor rises anywhere in the hall, far from the
+# raid too: two of the nine the log placed on 10/5 stood past the middle
+# chamber's walls, at (412.3, -242.8) and (497.3, -288.8).
+[encounter.3455.map]
+stencil = [
+    { points = [
+        [358.7, -381.8], [383.7, -338.5], [366.5, -328.4], [351.0, -287.2],
+        [370.5, -253.4], [384.8, -226.6], [377.4, -207.4], [375.9, -188.0],
+        [387.4, -168.1], [403.9, -161.5], [432.1, -154.6], [450.6, -160.7],
+        [475.1, -170.2], [528.8, -201.2], [548.2, -221.6], [565.5, -231.6],
+        [568.9, -241.7], [574.5, -260.0], [572.3, -267.9], [556.3, -295.6],
+        [541.1, -301.9], [524.7, -306.2], [507.3, -332.4], [487.8, -366.2],
+        [447.9, -375.4], [423.6, -361.5], [398.6, -404.8],
+    ] },
+]
+
+# The view keeps to the whole hall, the stencil's bounds, not to where the
+# players went, and opens turned with the stairs at the top, the Cavity at
+# the bottom, Shadow's fountain left and Flame's right, framed on the middle
+# chamber, where the fight is.
+[encounter.3455.view]
+turn = 240
+zoom = 2.0
+center = [440.0, -300.0]
+arena = [351.0, -404.8, 574.5, -154.6]
+
+# The Malignant Cavity: the venom pool at the middle chamber's head.
+# Living venoms crawl to it and burst there (Malignant Burst, a stacking
+# raid DoT). None reached it on the 9/30 Heroic kill or a top guild's
+# Mythic kill; at the end of the 10/5 Mythic wipes the venoms seen bursting
+# stood at its rim, 14.5 and 18.9 yd from the pool's middle. The circle
+# covers the pool.
+[encounter.3455.place.malignant-cavity]
+name = "Malignant Cavity"
+kind = "pool"
+tint = "green"
+at = [452.6, -272.0]
+radius = 20
+
+# The fountains Vashnik drinks from with Imbibe, snake heads in the
+# alcoves either side of the hall: the Fountain of Flame, whose Burning
+# Venoms are first seen by it (393, -286 on 10/5 Mythic), and the Fountain
+# of Shadow, whose Shrouded Venoms are first seen toward the boss from it
+# (463-469, -326..-333). Every Imbibe on both kills and the 10/5 wipes
+# drew from these two: the Fire and Shadow Fountain Stalkers carry its
+# debuffs (1284670 and 1284671), which the log never places. No pull drew
+# from the Fountain of Blood (no Clotting Venom in any log), so it is not
+# placed.
+#
+# The tell (the user's, from the game): as a fountain erupts, the poison
+# flowing from its snake's head glows, red for flame and purple for
+# shadow, and so does its channel to the Cavity. A channel is the stepped
+# groove running diagonally from each alcove to a bottom corner of the
+# pool, ending at a green glyph: flame's at (432.1, -278.9), shadow's at
+# (456.0, -289.7), where the 10/5 wipes' Shrouded Venoms burst (455.9,
+# -290.6 and 454.3, -286.4): the venoms crawl to the Cavity along the
+# channels. A fountain erupts as Imbibe's debuff leaves its stalker, at
+# the cast's end: its Expulsion hits the raid and its venoms appear in the
+# same 0.1 s (24.0, 108.0, 192.0, 276.0 and 360.0 s on the top kill). Which
+# two erupt is the stalkers' debuffs, but the replay knows a trigger only
+# about a unit it can place, and the log never places a stalker; so the
+# moment is Imbibe's cast, which ends as they erupt: both channels glow.
+[encounter.3455.event.fountains-erupt]
+name = "The fountains erupt"
+on = { cast = { spell = 1284663, by = "vashnik-the-malignant" } }
+
+# The fountains' liquid, as the game shows it (the user's screenshots):
+# the flow is red or violet from the basin under each snake's mouth, down
+# its channel under the dark lattice, all the way to the Cavity, which
+# stays green, as do the two pools beside each snake's head. The flow is
+# not geometry at all: under the lattice, at 557.0-557.5, lies only the
+# groove's floor at 554.6, two yards under the arena's 556.6, and the last
+# yards to the Cavity are venom-green liquid. Each area wraps a fountain's
+# alcove and its channel to the Cavity's rim, short of its liquid; within
+# it the groove's floor and the liquid take the color, the lattice keeping
+# its own, but for the snake's side pools, cut out as circles round the
+# render's own regions of that liquid (half a yard to spare, 6.9 yd or
+# more clear of the channel's). The colors are the screenshots': the
+# flame's flow runs from (208, 69, 28) to an orange (255, 158, 65) at its
+# hottest, the shadow's has no green in it at all, (89, 0, 181) to
+# (134, 0, 255) and (194, 0, 248) at its brightest.
+[encounter.3455.map.glow.flame]
+name = "Fountain of Flame"
+color = [200, 55, 22]
+hot = [255, 140, 50]
+area = [{ points = [
+    [431.2, -271.3], [436.3, -275.5], [437.2, -280.0], [437.2, -283.0],
+    [434.6, -286.9], [392.0, -295.9], [384.5, -308.9], [358.5, -293.9],
+    [371.5, -271.4], [385.4, -279.4],
+] }]
+except = [
+    { center = [378.3, -285.8], radius = 6.5 },
+    { center = [381.3, -296.8], radius = 6.4 },
+    { center = [365.6, -287.9], radius = 2.4 },
+]
+below = 1
+on = { event = "fountains-erupt" }
+
+[encounter.3455.map.glow.shadow]
+name = "Fountain of Shadow"
+color = [100, 0, 195]
+hot = [185, 20, 255]
+area = [{ points = [
+    [462.2, -289.2], [458.5, -288.6], [453.0, -288.6], [446.9, -294.0],
+    [460.4, -335.4], [452.9, -348.4], [478.9, -363.4], [491.9, -340.9],
+    [478.0, -332.9],
+] }]
+except = [
+    { center = [466.0, -346.3], radius = 6.6 },
+    { center = [476.8, -343.3], radius = 6.5 },
+    { center = [482.4, -355.1], radius = 2.2 },
+    { center = [478.0, -362.0], radius = 1.8 },
+]
+below = 1
+on = { event = "fountains-erupt" }
+
+[encounter.3455.place.flame-fountain]
+name = "Fountain of Flame"
+kind = "spawn"
+tint = "red"
+at = [378.9, -290.6]
+radius = 4
+
+[encounter.3455.place.shadow-fountain]
+name = "Fountain of Shadow"
+kind = "spawn"
+tint = "purple"
+at = [471.6, -344.1]
+radius = 4
+
+# Nek'zali the Soulcoiler. The arena lit as the game lights it: the light
+# baked into its floor and props, over the map's own ambient (Light 16313,
+# clear weather: (35, 63, 63), no sun). The building's ambient grade turned
+# its teal-gray stone warm; near the well an in-game screenshot reads
+# (20, 50, 65), this (23, 46, 45).
+#
+# The octagon out to its walls, with the stairs down from it and the shrine
+# opposite. The colonnades round it are left out.
+[encounter.3470.map]
+light = "baked"
+stencil = [
+    { points = [
+        [262.7, 25.7], [262.7, 23.1], [293.7, 23.1], [293.7, -18.9],
+        [262.7, -18.9], [262.7, -21.5], [229.3, -54.9], [182.1, -54.9],
+        [148.7, -21.5], [148.7, -18.9], [113.7, -18.9], [113.7, 23.1],
+        [148.7, 23.1], [148.7, 25.7], [182.1, 59.1], [229.3, 59.1],
+    ] },
+]
+
+# The Soulcoil Well: the room's middle, where Nek'zali begins and every
+# Drowned Echo wakes. Its area trigger's size is the server's, not in the
+# client's tables. An Echo's death throws the players inside it out at its
+# edge, 13 of 27 at exactly 11.3 yd (10/4 Mythic kill and wipe).
+[encounter.3470.place.soulcoil-well]
+name = "Soulcoil Well"
+kind = "pool"
+tint = "teal"
+at = [206.9, 0.0]
+radius = 11.3
+
+# Inside the well (Mythic): each time a Drowned Echo wakes in it, the raid
+# outside takes Grasping Depths (1293214) every second and is pulled toward
+# the well until the Echo is beaten. One team drops in, beats the Echo in a
+# round chamber amid Swirling Spirits and Immortal Coil, and comes back up
+# with Soul Exhaustion (1300235), which keeps it from going in again: two
+# teams take the six Echoes in turn (five, then four, on the 10/4 kill).
+#
+# The log keeps the divers on the arena's map (UiMap 2606, as the game's
+# own minimap does), round the well's middle: within 21 yd of it, where the
+# Echo is posted: an Immortal Coil tick on a diver reads UiMap 2606, map
+# 3004, at (218.9, 11.0). Inside is the arena's own floor round the well,
+# phased: the same medallion, lit dark navy with the vortex round it, as an
+# in-game screenshot inside shows (its floor (8, 24, 41) to (8, 31, 49)).
+# So it is drawn at the arena's level by the light baked into the floor's
+# vertices, which the arena's grade would turn olive. (The pit under the
+# well's mouth, sand and rock down to 492, is no one's floor.) The phase's
+# floor is that medallion smaller, its open mouth floored over: the divers
+# stand at the rim of its dark middle, which the log puts 4.3 yd out (the
+# nearest 5% of 2,052 positions, a sharp edge, none nearer but at the
+# well's middle as they drop in), where the arena's mouth ends 7.6 yd out.
+# Its picture is drawn at that ratio, 0.57; the phase's own geometry is
+# not in the files.
+# A dive is Grasping Depths coming off a player who stands in the well:
+# all 27 on the kill came off within 2 yd of its middle, and the other 89
+# removals (the raid's, as an Echo is beaten) found no one nearer than 15.6.
+# The way is open while the Echo lives: each team's first diver went in
+# 0-0.9 s before the Echo's first cast, though Grasping Depths had begun
+# 6-17 s earlier. An Echo never dies in the log: it is beaten at 0%, the
+# raid's Grasping Depths comes off that moment, and its team comes up with
+# Soul Exhaustion 5.8 s later, all six times on the kill.
+[encounter.3470.room.the-well]
+name = "Inside the well"
+about = "grasping-depths"
+through = "soulcoil-well"
+enter = [{ aura_removed = { spell = 1293214 } }]
+leave = [{ aura_applied = { spell = 1300235 } }]
+npc = ["drowned-echo"]
+radius = 21
+light = "baked"
+scale = 0.57
+only = ["mythic"]
+
+# Ula'tek. The ring of terraces round the venom lake, the lake and the
+# platform in it, cut short of the corridor. What lies past the ring is
+# left out.
+[encounter.3492.map]
+stencil = [
+    { points = [
+        [1686.0, 82.4], [1686.0, -79.2], [1618.8, -146.4], [1496.2, -146.4],
+        [1409.5, -59.7], [1409.5, 62.9], [1496.2, 149.6], [1618.8, 149.6],
+    ] },
+]
+
+# The arena's platform, a building of its own placed on the floor, stands
+# until The Shattering, 45 s into the Intermission, then stands as its four
+# quarters. Those break one at a time in Stage Three, one to each Circling
+# Prey: which quarter goes at which cast is read from where the players
+# stood (the one they left nearest to it). The last quarter stands to the
+# kill.
+[encounter.3492.map.layer.starting-platform]
+wmo = 7549724
+breaks = { event = "the-shattering" }
+
+[encounter.3492.map.layer.quarter-1]
+wmo = 7754174
+breaks = { event = "circling-prey" }
+
+[encounter.3492.map.layer.quarter-2]
+wmo = 7754173
+breaks = { event = "circling-prey" }
+
+[encounter.3492.map.layer.quarter-3]
+wmo = 7754172
+breaks = { event = "circling-prey" }
+
+[encounter.3492.map.layer.quarter-4]
+wmo = 7549725
+breaks = { event = "circling-prey" }
+
+# The Shattering: the raid is flung into the air and the platform cracks
+# into its four quarters. The log writes no line for it. The fight runs on a
+# fixed clock (on Heroic, Rage of the Shackled at 135.5 and 284.5 s,
+# Circling Prey at 430.2, 481.2 and 542.2 s in every long pull), and the
+# raid stops casting at 352.5–354.5 s into every Heroic pull that reached
+# it: ten pulls on four nights, 353.1 s in the 9/27 kill. Mythic's clock
+# runs 10 s later, and not to the tenth: on three Mythic kills the raid
+# stopped at 363.0, 363.2 and 360.8 s, the last on a kill whose second rage
+# landed 2.3 s early. So it is timed from that rage, which every pull
+# writes: 68.5 s after it lands (68.6 s on the 9/27 kill; 68.5, 68.6 and
+# 68.5 on the Mythic ones).
+[encounter.3492.event.the-shattering]
+name = "The Shattering"
+on = { after = { secs = 68.5, since = { cast = { spell = 1286860, by = "ulatek" } }, nth = 2 } }
+
+# Circling Prey destroys a portion of the platform and knocks back the
+# players near it (the spell's text). Ula'tek casts it as 1315341, 8 s from
+# start to landing.
+[encounter.3492.event.circling-prey]
+name = "Circling Prey"
+on = { cast = { spell = 1315341, by = "ulatek" } }
+
+# The Venomous Heart is a part of Ula'tek, not one more boss: they share one
+# health pool (Ula'tek's Bond, "All aspects of Ula'tek's form share damage
+# taken"). The journal lists no creature for it, so the draft holds none.
+# The heart is out 20 s from each Rage of the Shackled, taking 100% more
+# damage, which the pool takes with it; the log posts it only then.
+[encounter.3492.npc.venomous-heart]
+name = "Venomous Heart"
+creature = [267460]
+role = "boss"
+shares = "ulatek"
+
+# On Mythic a spectral Ula'tek sends Toxic Incubation at the newest
+# Blightscale Wretch, three times a kill, and does nothing else. The log
+# names it Ula'tek too, as creature 268029, two units a cast: one begins it
+# unposted, 8 s before another lands it, posted once as it does, at a
+# corner of the platform or off an edge: (1593, 40), (1514, ±39), (1498, 0)
+# in Stage One, (1575, 52) and (1532, ±51) in Stage Three, on three kills.
+# It loses no health. It is not the boss: an object, with no frame, its
+# venom's line drawn from where it stood. The journal lists no creature for
+# it.
+[encounter.3492.npc.spectral-ulatek]
+name = "Spectral Ula'tek"
+creature = [268029]
+role = "object"
+
+# The Lost Explorers. The octagonal platform in the middle. The gulf round
+# it and the ring of walkways and rooms past it are left out.
+[encounter.3497.map]
+stencil = [
+    { points = [
+        [757.2, 495.0], [757.2, 447.0], [723.2, 413.0], [675.2, 413.0],
+        [641.2, 447.0], [641.2, 495.0], [675.2, 529.0], [723.2, 529.0],
+    ] },
+]

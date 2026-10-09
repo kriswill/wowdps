@@ -1,0 +1,6 @@
+# Algeth'ar Academy: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Algeth'ar Academy"
+kind = "dungeon"
+journal = 1201
+map = 2526

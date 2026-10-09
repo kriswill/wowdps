@@ -1,0 +1,6 @@
+# Kings' Rest: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
+schema = 1
+name = "Kings' Rest"
+kind = "dungeon"
+journal = 1041
+map = 1762

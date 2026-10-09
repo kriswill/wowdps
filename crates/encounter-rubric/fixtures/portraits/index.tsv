@@ -1,0 +1,9 @@
+portrait	x	y	side	chosen	season	season_order	season_name	instance	instance_order	instance_kind	instance_name	encounter	encounter_order	encounter_name	npc	npc_name	role	creatures	icon	display	portraits	file
+7966629	34	0	64	1	midnight-s2	18	Midnight Season 2	altar-of-fangs	2	dungeon	Altar of Fangs	3456	1	Rav'i	ravi	Rav'i	boss	259445	7966629	144110	7966629	npc/3456-ravi.png
+	0	0	0	0	midnight-s2	18	Midnight Season 2	altar-of-fangs	2	dungeon	Altar of Fangs	3457	2	The Writhing Coil	rattling-writhe	Rattling Writhe	add	262011	0	0	7966635	
+	0	0	0	0	midnight-s2	18	Midnight Season 2	den-of-nalorakk	8	dungeon	Den of Nalorakk	3207	1	The Hoardmonger	rotten-mushroom	Rotten Mushroom	add		0	0	7455022	
+7372495	13	4	50	1	midnight-s2	18	Midnight Season 2	murder-row	9	dungeon	Murder Row	3101	0	Kystia Manaheart	kystia-manaheart	Kystia Manaheart	boss	234648,255050	7372495	124578	7372495	npc/3101-kystia-manaheart.png
+r110633	43	12	44	1	midnight-s2	18	Midnight Season 2	ruby-life-pools	3	dungeon	Ruby Life Pools	2609	1	Melidrussa Chillworn	infused-whelp	Infused Whelp	add	187894,189893	0	110633	4741523	npc/2609-infused-whelp.png
+7372516	35	1	50	0	midnight-s2	18	Midnight Season 2	murder-row	9	dungeon	Murder Row	3102	1	Zaen Bladesorrow	zaen-bladesorrow	Zaen Bladesorrow	boss	234649	7372516	124592	7372516	npc/3102-zaen-bladesorrow.png
+r141675	41	3	51	0	midnight-s2	18	Midnight Season 2	the-venomous-abyss	0	raid	The Venomous Abyss	3445	2	Entombed Sentinels	vashnik-the-malignant	Vashnik the Malignant	object	266403	0	141675	7966628	npc/3445-vashnik-the-malignant.png
+r84272	49	10	41	1	midnight-s2	18	Midnight Season 2	kings-rest	5	dungeon	Kings' Rest	2140	3	The Council of Tribes	kula-the-butcher	Kula the Butcher	boss	269811	0	84272	2176750	npc/2140-kula-the-butcher.png
