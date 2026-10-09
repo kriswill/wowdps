@@ -61,7 +61,7 @@ open any stored pull.[^plan]
   damage per second is NOT kept again — R25 answers it from the details
   tier, and the CSV writer takes it from there.[^contract]
 - **Kept like the details.** Written for every boss pull and keystone run,
-  wipes included (never trash, arenas or a raid night's Σ); a fight keeps it
+  wipes included (never trash, arenas, an aborted pull or a raid night's Σ); a fight keeps it
   while protected — every kill, timed key, progression wipe
   ([A Progression Wipe Is Kept Whole](progression-kept-whole.md)) and pin all
   season — else among the newest `history_keep_details_per_encounter` of its

@@ -838,18 +838,16 @@ impl<B: Backend> Worker<B> {
                 }
                 match result {
                     Ok(loaded) => {
+                        let mut changed = None;
                         if let Some(meter) = loaded.meter.as_deref()
                             && let Some(fight) = fight_from_import(&job, meter)
                         {
                             let facts = self.facts(&fight.log.path);
-                            let written = if job.regrade {
+                            changed = if job.regrade {
                                 self.store.regrade(&fight, facts)
                             } else {
                                 self.store.store(&fight, facts)
                             };
-                            if let Some(id) = written {
-                                self.changed(id);
-                            }
                         }
                         // v45 (R29): the cut, once its card is in the store
                         // (written just now, or current already).
@@ -859,7 +857,17 @@ impl<B: Backend> Worker<B> {
                                 job.meta.start_ms,
                                 job.meta.kind == SegmentKind::Overall,
                             );
-                            self.store.store_replay(&id, *cut);
+                            if self.store.store_replay(&id, *cut) {
+                                changed.get_or_insert(id);
+                            }
+                        }
+                        // One broadcast, once everything the job wrote is
+                        // in: a client told of the card can ask for its
+                        // replay, and one told nothing (a cut that landed
+                        // after its card — a live close, a pin) hears of
+                        // the replay that answered `None` before.
+                        if let Some(id) = changed {
+                            self.changed(id);
                         }
                     }
                     Err(e) => self.store.last_error = Some(e),
@@ -966,7 +974,13 @@ impl<B: Backend> Worker<B> {
                 continue;
             }
             self.queued.insert(id);
-            let cut = CutJob::of(&meta, meta.visit.is_some_and(|v| keyed.contains(&v)));
+            // An aborted fight keeps no replay (`Retention::wants_replay`):
+            // no cut to make for it.
+            let cut = if aborted {
+                CutJob::No
+            } else {
+                CutJob::of(&meta, meta.visit.is_some_and(|v| keyed.contains(&v)))
+            };
             self.queue.push_back(ImportJob {
                 log: log.clone(),
                 meta,
@@ -1032,42 +1046,41 @@ impl<B: Backend> Worker<B> {
         self.regrade_picked(picked)
     }
 
-    /// v42: [`Worker::regrade`] of the cards named in `ids` — the backfill's
-    /// batch, one log's fights at a time (`backfill_next`).
-    fn regrade_ids(&mut self, ids: &HashSet<String>) -> u32 {
+    /// v42: the backfill's batch — one log's fights at a time
+    /// (`backfill_next`): each card named in `full` rewritten from its log,
+    /// and (v45) each named in `cut_only` cut alone, its card current and its
+    /// replay not — one scan of the log for both.
+    fn backfill_ids(
+        &mut self,
+        full: &HashSet<String>,
+        cut_only: &HashSet<String>,
+        slots: &HashSet<String>,
+    ) -> u32 {
         let picked = self
             .store
             .cards()
             .iter()
-            .filter(|c| ids.contains(&c.id))
+            .filter(|c| full.contains(&c.id) || cut_only.contains(&c.id))
             .map(|c| (c.id.clone(), c.log, c.start_local_ms, c.kind))
             .collect();
-        self.regrade_picked(picked)
-    }
-
-    /// v45 (R29): a replay cut, alone, for each card named in `ids` — the
-    /// backfill's batch of fights whose card is current and replay is not.
-    fn recut_ids(&mut self, ids: &HashSet<String>) -> u32 {
-        let picked = self
-            .store
-            .cards()
-            .iter()
-            .filter(|c| ids.contains(&c.id))
-            .map(|c| (c.id.clone(), c.log, c.start_local_ms, c.kind))
-            .collect();
-        self.queue_picked(picked, true)
+        self.queue_picked(picked, cut_only, slots)
     }
 
     /// Queue the rewrite of each picked card (id, log, start, kind).
     fn regrade_picked(&mut self, picked: Vec<(String, u64, i64, FightKind)>) -> u32 {
-        self.queue_picked(picked, false)
+        let slots = self.store.replay_slots();
+        self.queue_picked(picked, &HashSet::new(), &slots)
     }
 
     /// Queue a job per picked card: its rewrite — the replay cut beside it
-    /// when the fight holds a replay slot (v45) — or, `only_cut`, the cut
-    /// alone.
-    fn queue_picked(&mut self, picked: Vec<(String, u64, i64, FightKind)>, only_cut: bool) -> u32 {
-        let slots = self.store.replay_slots();
+    /// when the fight holds one of the replay `slots` (v45) — or, for an id
+    /// in `cut_only`, the cut alone.
+    fn queue_picked(
+        &mut self,
+        picked: Vec<(String, u64, i64, FightKind)>,
+        cut_only: &HashSet<String>,
+        slots: &HashSet<String>,
+    ) -> u32 {
         // One scan per LOG, not per card — `--kind encounter` picks hundreds
         // of cards out of a few dozen logs — and the logs side by side: the
         // requester's answer (and every other mailbox message) waits on them
@@ -1117,6 +1130,7 @@ impl<B: Backend> Worker<B> {
             let Some((meta, aborted)) = closed.or(open) else {
                 continue;
             };
+            let only_cut = cut_only.contains(&id);
             let cut = if only_cut {
                 CutJob::Only
             } else if slots.contains(&id)
@@ -1305,13 +1319,8 @@ impl<B: Backend> Worker<B> {
             .filter(|id| self.store.wants_replay_rewrite(id, &slots, &protected))
             .cloned()
             .collect();
-        if !full.is_empty() {
-            self.regrade_ids(&full);
-        }
-        if !recut.is_empty() {
-            self.recut_ids(&recut);
-        }
         if !full.is_empty() || !recut.is_empty() {
+            self.backfill_ids(&full, &recut, &slots);
             self.dispatch();
         }
     }
@@ -1522,6 +1531,22 @@ pub trait Backend {
     fn remove(&mut self, dir: &str, name: &str) -> io::Result<()>;
 }
 
+/// `len` bytes of a file at `offset`, read alone. The length comes from a
+/// file's own index: never trusted past the file's end, so a torn file
+/// costs a `None`, not an allocation.
+fn read_file_range(path: &Path, offset: u64, len: usize) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let size = f.metadata().ok()?.len();
+    if offset.checked_add(len as u64)? > size {
+        return None;
+    }
+    f.seek(SeekFrom::Start(offset)).ok()?;
+    let mut buf = vec![0u8; len];
+    f.read_exact(&mut buf).ok()?;
+    Some(buf)
+}
+
 pub struct DirBackend {
     root: PathBuf,
 }
@@ -1557,18 +1582,7 @@ impl Backend for DirBackend {
     }
 
     fn read_range(&self, dir: &str, name: &str, offset: u64, len: usize) -> Option<Vec<u8>> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut f = std::fs::File::open(self.root.join(dir).join(name)).ok()?;
-        // The length comes from the file's own index: never trust it past
-        // the file's end, so a torn file costs a `None`, not an allocation.
-        let size = f.metadata().ok()?.len();
-        if offset.checked_add(len as u64)? > size {
-            return None;
-        }
-        f.seek(SeekFrom::Start(offset)).ok()?;
-        let mut buf = vec![0u8; len];
-        f.read_exact(&mut buf).ok()?;
-        Some(buf)
+        read_file_range(&self.root.join(dir).join(name), offset, len)
     }
 
     fn exists(&self, dir: &str, name: &str) -> bool {
@@ -1667,6 +1681,28 @@ impl Backend for MemBackend {
         match self.files.get(&Self::key(dir, name)) {
             Some(bytes) => Some(bytes.clone()),
             None => std::fs::read(self.seeded(dir, name)?).ok(),
+        }
+    }
+
+    // A size and a range from what is in hand: a read-through store's
+    // open learns every replay's size and head, and must not read a
+    // season's files whole to do it.
+    fn size(&self, dir: &str, name: &str) -> Option<u64> {
+        match self.files.get(&Self::key(dir, name)) {
+            Some(bytes) => Some(bytes.len() as u64),
+            None => std::fs::metadata(self.seeded(dir, name)?)
+                .ok()
+                .map(|m| m.len()),
+        }
+    }
+
+    fn read_range(&self, dir: &str, name: &str, offset: u64, len: usize) -> Option<Vec<u8>> {
+        match self.files.get(&Self::key(dir, name)) {
+            Some(bytes) => {
+                let at = usize::try_from(offset).ok()?;
+                bytes.get(at..at.checked_add(len)?).map(<[u8]>::to_vec)
+            }
+            None => read_file_range(&self.seeded(dir, name)?, offset, len),
         }
     }
 
@@ -1778,11 +1814,12 @@ impl Retention {
     }
 
     /// v45 (R29): whether a fight is cut into the REPLAY tier at all — every
-    /// boss pull and keystone run, wipes included; never trash, an arena or
-    /// a raid night's Σ. Which of them keep it is retention's
-    /// ([`Store::replay_slots`]).
+    /// boss pull and keystone run, wipes included; never trash, an arena, a
+    /// raid night's Σ or an aborted fight (a pull the log abandoned, which
+    /// would read as a wipe at 0:00 — the details rule leaves it out too).
+    /// Which of them keep it is retention's ([`Store::replay_slots`]).
     pub fn wants_replay(&self, card: &FightCard) -> bool {
-        matches!(card.kind, FightKind::Encounter | FightKind::Key)
+        matches!(card.kind, FightKind::Encounter | FightKind::Key) && !card.aborted
     }
 }
 
@@ -2048,9 +2085,9 @@ impl<B: Backend> Store<B> {
 
     /// v45: a fight that wants its replay (re)cut from its log: a boss pull
     /// or a run in a replay slot whose file is missing, has no replay head
-    /// or is older than this build's (never a newer one) — and, past the
-    /// size cap, only one retention protects (a backfill never pushes the
-    /// tier over its cap).
+    /// or is older than this build's (never a newer one) — and, at the size
+    /// cap, only one retention protects or one the trim would keep (newer
+    /// than the oldest unprotected replay held).
     pub fn wants_replay_rewrite(
         &self,
         id: &str,
@@ -2070,8 +2107,21 @@ impl<B: Backend> Store<B> {
         if !stale {
             return false;
         }
-        let capped = self.cfg.replay_bytes > 0 && self.replay_total() >= self.cfg.replay_bytes;
-        !capped || protected.contains(id)
+        let cap = self.cfg.replay_bytes;
+        if cap == 0 || protected.contains(id) || self.replay_total() < cap {
+            return true;
+        }
+        // At or past the cap, as the trim counts it (oldest unprotected
+        // first): a fight newer than the oldest unprotected replay held is
+        // cut, and the trim takes that one in its place — so a store full to
+        // the byte still takes its newest wipes — while an older one would
+        // only be cut to be trimmed again.
+        let pos = |id: &str| self.cards.iter().position(|c| c.id == id);
+        let oldest = self
+            .cards
+            .iter()
+            .position(|c| self.replays.contains_key(&c.id) && !protected.contains(&c.id));
+        oldest.is_some_and(|o| pos(id).is_some_and(|p| p > o))
     }
 
     /// [`Store::wants_replay_rewrite`] for one fight, its sets made here.
@@ -2082,17 +2132,25 @@ impl<B: Backend> Store<B> {
     }
 
     /// v45 (R29): keep `cut` as the fight's replay tier, its owner the
-    /// card's, when the fight earns a replay slot; retention then runs (the
-    /// size cap may take the oldest unprotected replay). `false` when the
-    /// card is unknown, earns none, or the write fails.
+    /// card's, when the fight earns a replay slot; then the size cap may
+    /// take the oldest unprotected replay. Adding a replay moves no card and
+    /// no slot, so the size cap is all it can break: one walk of the
+    /// protected set serves the slot test and the trim, never a whole
+    /// retention pass (an import's `store` has just run one). `false` when
+    /// the card is unknown, earns none, or the write fails.
     pub fn store_replay(&mut self, id: &str, mut cut: Cut) -> bool {
         let Some(card) = self.card(id) else {
             return false;
         };
-        if !self.cfg.wants_replay(card) || !self.replay_slots().contains(id) {
+        if !self.cfg.wants_replay(card) {
             return false;
         }
-        cut.set_owner(card.owner.as_deref());
+        let owner = card.owner.clone();
+        let protected = self.protected();
+        if !self.slots_from(&protected).contains(id) {
+            return false;
+        }
+        cut.set_owner(owner.as_deref());
         let bytes = replay_tier::encode(&cut);
         if let Err(e) = self.backend.write("replay", &format!("{id}.bin"), &bytes) {
             self.last_error = Some(format!("history write failed: {e}"));
@@ -2102,8 +2160,34 @@ impl<B: Backend> Store<B> {
             id.to_string(),
             (Some(replay_tier::FORMAT), bytes.len() as u64),
         );
-        self.retain();
+        self.trim_replays(&protected);
         true
+    }
+
+    /// v45: past `history_replay_mb`, the oldest unprotected replays go
+    /// until the tier is back under it — never a protected one.
+    fn trim_replays(&mut self, protected: &HashSet<String>) {
+        if self.cfg.replay_bytes == 0 {
+            return;
+        }
+        let mut total = self.replay_total();
+        if total <= self.cfg.replay_bytes {
+            return;
+        }
+        // Oldest first: the cards are sorted by start.
+        let oldest: Vec<String> = self
+            .cards
+            .iter()
+            .filter(|c| self.replays.contains_key(&c.id) && !protected.contains(&c.id))
+            .map(|c| c.id.clone())
+            .collect();
+        for id in oldest {
+            if total <= self.cfg.replay_bytes {
+                break;
+            }
+            total = total.saturating_sub(self.replays.get(&id).map_or(0, |r| r.1));
+            self.drop_replay(&id);
+        }
     }
 
     /// v45: remove a fight's replay tier, if it has one.
@@ -2737,6 +2821,7 @@ impl<B: Backend> Store<B> {
             // store no longer keeps would answer nothing.
             self.drop_series(&id);
         }
+        let evicted = !evict.is_empty();
         evict.sort_unstable();
         for i in evict.into_iter().rev() {
             if i < self.cards.len() {
@@ -2749,8 +2834,16 @@ impl<B: Backend> Store<B> {
             }
         }
         // v45: an evicted kill (`history_keep_kills_whole` off) can reopen
-        // its boss's progression.
+        // its boss's progression. The protected set is walked again only
+        // when a card went (it can move the owner, the kills): a pass that
+        // evicted nothing keeps the one in hand.
+        let killed = self.killed.clone();
         self.refresh_killed();
+        let protected = if !evicted && self.killed == killed {
+            protected
+        } else {
+            self.protected()
+        };
         // v39: and none outlives its reason — an unpinned wipe's goes.
         let unwanted: Vec<String> = self
             .series
@@ -2764,7 +2857,6 @@ impl<B: Backend> Store<B> {
         // v45 (R29): a replay outside the slots is demoted with the details
         // caps, and past the size cap the oldest unprotected go next — never
         // a protected one (kills, timed keys, progression, pins …).
-        let protected = self.protected();
         let slots = self.slots_from(&protected);
         let unslotted: Vec<String> = self
             .replays
@@ -2775,23 +2867,7 @@ impl<B: Backend> Store<B> {
         for id in unslotted {
             self.drop_replay(&id);
         }
-        if self.cfg.replay_bytes > 0 {
-            let mut total = self.replay_total();
-            // Oldest first: the cards are sorted by start.
-            let oldest: Vec<String> = self
-                .cards
-                .iter()
-                .filter(|c| self.replays.contains_key(&c.id) && !protected.contains(&c.id))
-                .map(|c| c.id.clone())
-                .collect();
-            for id in oldest {
-                if total <= self.cfg.replay_bytes {
-                    break;
-                }
-                total = total.saturating_sub(self.replays.get(&id).map_or(0, |r| r.1));
-                self.drop_replay(&id);
-            }
-        }
+        self.trim_replays(&protected);
     }
 
     /// v39: remove a fight's series tier, if it has one.

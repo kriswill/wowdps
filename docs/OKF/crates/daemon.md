@@ -33,6 +33,11 @@ generated table, the loader cuts a segment beside its meter from one parse
 the details tier's slots and all season for the protected set
 ([why](../decisions/replay-tier-in-the-store.md)) — which since v45 holds
 every progression wipe ([A Progression Wipe Is Kept Whole](../decisions/progression-kept-whole.md)).
+A replay that lands after its card (a live close, a pin) is broadcast as
+`HistoryChanged` on its own, so a client told `None` asks again; adding one
+trims by size alone over one walk of the protected set, and a backfill batch
+scans its log once for its rewrites and its cuts together. `MemBackend`
+answers a size and a range without reading a read-through file whole.
 
 ## Overlay supervisor
 
