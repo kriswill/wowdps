@@ -1532,6 +1532,8 @@ fn read_cards(dir: &Path) -> Vec<FightCard> {
         .into_iter()
         .flatten()
         .flatten()
+        // Committed cards alone: an atomic write's temporary file is not one.
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .filter_map(|e| {
             let text = std::fs::read_to_string(e.path()).ok()?;
             FightCard::from_json(&wowdps_proto::json::parse(&text).ok()?)
