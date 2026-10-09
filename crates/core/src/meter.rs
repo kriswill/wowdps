@@ -6504,6 +6504,8 @@ impl Meter {
                 faction,
                 talents,
                 gear,
+                stats,
+                auras,
             } => {
                 // R13: inside a match the faction field is the player's SIDE.
                 if self.in_arena && !guid.is_empty() {
@@ -6540,6 +6542,19 @@ impl Meter {
                             prev.map(|p| p.gear.clone()).unwrap_or_default()
                         } else {
                             gear.clone()
+                        },
+                        // v43: the same rule for the stat scalars and the aura
+                        // bracket — the last list of auras sits at the line's
+                        // end, the first thing a mid-write read cuts off.
+                        stats: if stats.is_empty() {
+                            prev.map(|p| p.stats.clone()).unwrap_or_default()
+                        } else {
+                            stats.clone()
+                        },
+                        auras: if auras.is_empty() {
+                            prev.map(|p| p.auras.clone()).unwrap_or_default()
+                        } else {
+                            auras.clone()
                         },
                     });
                     self.loadouts.insert(guid.clone(), Arc::clone(&loadout));
@@ -8818,6 +8833,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
         ]);
@@ -8837,6 +8854,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
             at(
@@ -8907,6 +8926,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
         ]);
@@ -8931,6 +8952,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
             damage(1_000, p1(), Some(sp(12294, "Mortal Strike")), 500),
@@ -8981,6 +9004,8 @@ mod tests {
                     faction: 0,
                     talents: picks.clone(),
                     gear: gear.clone(),
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
             damage(1_000, p1(), None, 500),
@@ -8993,6 +9018,8 @@ mod tests {
             spec_id: Some(71),
             talents: picks,
             gear,
+            stats: vec![],
+            auras: vec![],
         };
         assert_eq!(m.loadout(P1), Some(&want));
         for s in m.segments() {
@@ -9003,7 +9030,12 @@ mod tests {
 
     #[test]
     fn empty_brackets_do_not_wipe_an_established_loadout() {
-        use wowdps_model::{GearItem, Loadout, TalentPick};
+        use wowdps_model::{GearItem, Loadout, LoadoutAura, TalentPick};
+        let flask = LoadoutAura {
+            caster: P1.into(),
+            spell_id: 1235110,
+            stacks: 1,
+        };
         let picks = vec![TalentPick {
             node_id: 1,
             entry_id: 2,
@@ -9030,6 +9062,8 @@ mod tests {
                     faction: 0,
                     talents: picks.clone(),
                     gear: gear.clone(),
+                    stats: vec![1, 2, 3],
+                    auras: vec![flask.clone()],
                 },
             ),
             damage(1_000, p1(), None, 500),
@@ -9044,6 +9078,10 @@ mod tests {
                     faction: 0,
                     talents: repicks.clone(),
                     gear: vec![],
+                    // v43: the stats before the brackets read; the auras at
+                    // the line's end were cut off with the gear.
+                    stats: vec![4, 5, 6],
+                    auras: vec![],
                 },
             ),
             // A fully truncated re-fire carries nothing and changes nothing.
@@ -9055,6 +9093,8 @@ mod tests {
                     faction: 0,
                     talents: vec![],
                     gear: vec![],
+                    stats: vec![],
+                    auras: vec![],
                 },
             ),
         ]);
@@ -9062,6 +9102,8 @@ mod tests {
             spec_id: Some(71),
             talents: repicks,
             gear,
+            stats: vec![4, 5, 6],
+            auras: vec![flask],
         };
         assert_eq!(m.loadout(P1), Some(&want));
     }

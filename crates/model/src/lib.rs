@@ -1772,7 +1772,61 @@ pub struct Loadout {
     pub spec_id: Option<u32>,
     pub talents: Vec<TalentPick>,
     pub gear: Vec<GearItem>,
+    /// v43: the line's 22 stat scalars between `faction` and the spec, in
+    /// the log's order ([`COMBATANT_STATS`] names each position) — the
+    /// player's secondary ratings and primaries at the pull. Empty on a
+    /// loadout read from before v43.
+    pub stats: Vec<u32>,
+    /// v43: the auras on the player when the line was written — the
+    /// bracket after the gear, `(caster guid, spell id, stacks)` triples:
+    /// flask, food, augment rune, vantus rune, raid buffs, a priest's
+    /// shield. Empty when the line listed none (or before v43).
+    pub auras: Vec<LoadoutAura>,
 }
+
+/// v43: one aura on a player at their COMBATANT_INFO line.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LoadoutAura {
+    /// Who put it there (their own guid for a flask or food).
+    pub caster: String,
+    pub spell_id: u32,
+    pub stacks: u32,
+}
+
+/// v43: what each of COMBATANT_INFO's 22 stat positions is, as the
+/// retail log writes them (verified on a real Heroic raid pull,
+/// 2026-09-27, against Warcraft Logs' names for the same fields). Two
+/// positions are not pinned: 4 and 5 read 0 for every player of every
+/// log on hand, one of them dodge (a guardian druid's, which no log here
+/// holds, would say which) — so neither is named. Position 6 is parry (a
+/// Blood Death Knight's and a Vengeance Demon Hunter's equal their crit,
+/// as Warcraft Logs reports their parry), 7 block (by elimination; 0 for
+/// every class here). The three crit, haste and versatility triples are
+/// melee/ranged/spell and done/healing/taken.
+pub const COMBATANT_STATS: [&str; 22] = [
+    "strength",
+    "agility",
+    "stamina",
+    "intellect",
+    "",
+    "",
+    "parry",
+    "block",
+    "crit_melee",
+    "crit_ranged",
+    "crit_spell",
+    "speed",
+    "leech",
+    "haste_melee",
+    "haste_ranged",
+    "haste_spell",
+    "avoidance",
+    "mastery",
+    "versatility_done",
+    "versatility_healing",
+    "versatility_taken",
+    "armor",
+];
 
 /// A key press translated into intent. Keeps the keymap testable on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -20,6 +20,7 @@
 use crate::json::Json;
 use crate::lua::Lua;
 use crate::obj;
+use wowdps_model::LoadoutAura;
 use wowdps_model::{
     Class, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
     Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
@@ -1592,6 +1593,14 @@ impl StoredLoadout {
                 "bonus_ids": u32s_json(&g.bonus_ids),
                 "gems": u32s_json(&g.gems),
             }).collect()),
+            // v43: the stat scalars in the log's order and the auras at
+            // the line, after the gear.
+            "stats": u32s_json(&l.stats),
+            "auras": Json::Arr(l.auras.iter().map(|a| obj! {
+                "caster": Json::str(&*a.caster),
+                "spell": Json::num(a.spell_id),
+                "stacks": Json::num(a.stacks),
+            }).collect()),
         }
     }
 
@@ -1635,6 +1644,23 @@ impl StoredLoadout {
                 spec_id: u32_of(v, "spec_id"),
                 talents,
                 gear,
+                // v43: absent on a file written before them, and empty then.
+                stats: u32s_from(v.get("stats")),
+                auras: v
+                    .get("auras")
+                    .and_then(Json::as_arr)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| {
+                                Some(LoadoutAura {
+                                    caster: str_of(x, "caster")?.to_string(),
+                                    spell_id: u32_of(x, "spell")?,
+                                    stacks: u32_of(x, "stacks").unwrap_or(0),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             },
         })
     }

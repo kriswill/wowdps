@@ -2,6 +2,9 @@
 
 ## 2026-10-08
 
+- **Update** — [R8 Class/spec inference](r8.md): the logged loadout keeps
+  COMBATANT_INFO's 22 stats and its pre-pull auras under the same per-field
+  rule, and gem lists hold ids (the log's `(id, item level)` pairs), v43.
 - **Creation** — [R27 Resources (energize)](r27.md): `SPELL_ENERGIZE` per player
   per power type, gained and lost to the cap, passive, on the details tier
   and `stored_fight { player }` (v43).

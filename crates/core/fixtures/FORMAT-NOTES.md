@@ -346,7 +346,19 @@ index scanner.
   list is PAIRS: each socketed gem's item id, then the gem's own item level —
   `(240892,295)` is one gem, `(240892,295,240983,295)` two (a real Heroic raid
   pull, 2026-09-27: 366 empty lists, 89 of one gem, 13 of two, never an odd
-  length); the parser keeps the ids. Field 25 is the LAST
+  length); the parser keeps the ids. The 22 stat scalars (fields 3–24),
+  measured on a real Heroic pull against Warcraft Logs' names for the same
+  fields: strength, agility, stamina, intellect, two fields that read 0 for
+  every player of every log on hand (one of them dodge: a guardian druid
+  would tell which), parry (a Blood Death Knight's and a Vengeance Demon
+  Hunter's equal their crit, as WCL reports their parry), block, crit ×3
+  (melee, ranged, spell), speed, leech, haste ×3, avoidance, mastery,
+  versatility ×3 (done, healing, taken), armor (equal to the advanced
+  block's field 6). The aura bracket after the gear is FLAT triples —
+  `[casterGUID,spellID,stacks,…]` (`…,Player-…,41635,8,…` is a Prayer of
+  Mending at 8 stacks) — then four trailing scalars (`374,0,0,0`). (Older
+  fixtures here wrote `[(caster,spell,caster,spell)]`; they write the real
+  shape since 2026-10-08.) Field 25 is the LAST
   scalar before the first `[`; a comma split shreds the brackets, so the parser
   scans the raw line bracket-aware (v19). Talent `rank` 0 = a granted/free node
   (matches the import-string codec's "selected but unpurchased"). The gear

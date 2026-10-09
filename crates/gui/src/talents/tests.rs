@@ -298,6 +298,8 @@ fn logged() -> Loadout {
             bonus_ids: Vec::new(),
             gems: vec![1],
         }],
+        stats: vec![],
+        auras: vec![],
     }
 }
 

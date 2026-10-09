@@ -60,6 +60,8 @@ fn fixture_loadout() -> Loadout {
             bonus_ids: Vec::new(),
             gems: vec![1, 2],
         }],
+        stats: vec![],
+        auras: vec![],
     }
 }
 

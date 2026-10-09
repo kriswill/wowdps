@@ -2,6 +2,7 @@
 //! decodes from `(tag, body)`. Changing the shape of anything here — fields,
 //! order, enum codes — is a `PROTO_VERSION` bump; the golden-bytes tests
 //! exist to make that impossible to do by accident.
+use wowdps_model::LoadoutAura;
 
 use wowdps_model::{AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_model::{
@@ -1600,7 +1601,9 @@ fn get_gear_item(rd: &mut Reader) -> Result<GearItem> {
 
 /// The v19 wire encoding of a loadout on its own — what the history store
 /// content-addresses (`proto::history::loadout_hash`), so the same build
-/// hashes the same whether it came off the socket or out of a file.
+/// hashes the same whether it came off the socket or out of a file. Since
+/// v43 it carries the stats and auras too, so a loadout is the build AS
+/// LOGGED AT ONE LINE: two pulls whose buffs differ write two files.
 pub fn loadout_bytes(l: &Loadout) -> Vec<u8> {
     let mut buf = Vec::new();
     put_loadout(&mut buf, l);
@@ -1612,6 +1615,13 @@ fn put_loadout(buf: &mut Vec<u8>, l: &Loadout) {
     wire::put_u16(buf, l.spec_id.map_or(0, |s| s as u16));
     wire::put_vec(buf, &l.talents, put_talent_pick);
     wire::put_vec(buf, &l.gear, put_gear_item);
+    // v43: the 22 stat scalars and the aura triples, trailing.
+    wire::put_vec(buf, &l.stats, |b, v| wire::put_u32(b, *v));
+    wire::put_vec(buf, &l.auras, |b, a| {
+        wire::put_str(b, &a.caster);
+        wire::put_u32(b, a.spell_id);
+        wire::put_u32(b, a.stacks);
+    });
 }
 
 fn get_loadout(rd: &mut Reader) -> Result<Loadout> {
@@ -1620,6 +1630,14 @@ fn get_loadout(rd: &mut Reader) -> Result<Loadout> {
         spec_id: (spec != 0).then_some(spec as u32),
         talents: rd.vec(get_talent_pick)?,
         gear: rd.vec(get_gear_item)?,
+        stats: rd.vec(|r| r.u32())?,
+        auras: rd.vec(|r| {
+            Ok(LoadoutAura {
+                caster: r.string()?,
+                spell_id: r.u32()?,
+                stacks: r.u32()?,
+            })
+        })?,
     })
 }
 

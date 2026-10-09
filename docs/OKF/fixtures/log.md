@@ -2,6 +2,11 @@
 
 ## 2026-10-08
 
+- **Update** — [sample.txt](sample.md), [taken.txt](taken.md),
+  [support.txt](support.md), [spans.txt](spans.md) and the negative control
+  [corrupt.txt](corrupt.md): their COMBATANT_INFO aura brackets write the
+  real flat `(caster, spell, stacks)` triples the parser now reads (they held
+  an older `(caster, spell, caster, spell)` shape nothing read); no golden moves.
 - **Update** — [tree.txt](tree.md): eight energize lines for
   [R27](../rulings/r27.md), gated as `energize_gained` / `energize_wasted`, two
   new golden rows on every fixture.

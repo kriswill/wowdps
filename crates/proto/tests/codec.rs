@@ -2,6 +2,7 @@
 //! panics), garbage is rejected, and golden bytes force a conscious
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
+use wowdps_model::LoadoutAura;
 use wowdps_model::{
     Class, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
     MissKind, Mitigation, RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId,
@@ -632,6 +633,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     },
                     GearItem::default(),
                 ],
+                stats: vec![],
+                auras: vec![],
             }),
         },
         DaemonMsg::Loadout {
@@ -1340,12 +1343,23 @@ fn golden_bytes_pin_the_encoding() {
                 bonus_ids: vec![11],
                 gems: vec![],
             }],
+            // v43: the stat scalars and one aura triple, trailing.
+            stats: vec![7, 8],
+            auras: vec![LoadoutAura {
+                caster: "C".to_string(),
+                spell_id: 12,
+                stacks: 2,
+            }],
         }),
     };
     assert_eq!(
         hex(&loadout.encode()),
-        "390000008a0300000001000000470147000100000001000000020000000300000001000000090000000a0000\
-         0000000000010000000b00000000000000"
+        // v43: + stats 02000000 07000000 08000000 | auras 01000000 "C"
+        // 0100000043 0c000000 02000000 — 29 bytes, the frame 0x39 to 0x56.
+        "560000008a0300000001000000470147000100000001000000020000000300000001000000090000000a0000\
+         0000000000010000000b00000000000000 02000000 07000000 08000000 01000000 0100000043 0c000000 \
+         02000000"
+            .replace(' ', "")
     );
 
     // v20: the history one-shots. The small ones are pinned byte for byte;

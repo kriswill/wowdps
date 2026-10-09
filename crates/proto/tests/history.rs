@@ -4,6 +4,7 @@
 //! compatibility (a document with fields this build doesn't know), and the
 //! never-panics fuzz over truncated documents.
 
+use wowdps_model::LoadoutAura;
 use wowdps_model::{
     Class, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
     Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
@@ -72,6 +73,13 @@ fn loadout() -> Loadout {
             enchants: vec![],
             bonus_ids: vec![11, 12],
             gems: vec![13],
+        }],
+        // v43: the stats and an aura.
+        stats: vec![14, 15],
+        auras: vec![LoadoutAura {
+            caster: "Player-1-B".to_string(),
+            spell_id: 1459,
+            stacks: 1,
         }],
     }
 }
@@ -526,7 +534,7 @@ const MITIGATION_GOLDEN: &str = r#"{"guid":"Player-1-A","record":{"absorbed":1,"
 
 const ROW_GOLDEN: &str = r#"{"key":"Player-1-A","label":"Player-1-A-label","amount":100,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}"#;
 
-const LOADOUT_GOLDEN: &str = r#"{"schema":1,"hash":"HASH","spec_id":64,"talents":[{"node":1,"entry":2,"rank":3}],"gear":[{"item":9,"ilvl":10,"enchants":[],"bonus_ids":[11,12],"gems":[13]}]}"#;
+const LOADOUT_GOLDEN: &str = r#"{"schema":1,"hash":"HASH","spec_id":64,"talents":[{"node":1,"entry":2,"rank":3}],"gear":[{"item":9,"ilvl":10,"enchants":[],"bonus_ids":[11,12],"gems":[13]}],"stats":[14,15],"auras":[{"caster":"Player-1-B","spell":1459,"stacks":1}]}"#;
 
 const ANNOTATION_GOLDEN: &str = r#"{"schema":1,"ts_utc_ms":1722000000000,"kind":"note","author":"coach","rubric":null,"body":"late \"pot\"\nline two","tags":["dps"]}"#;
 

@@ -8,8 +8,9 @@ use crate::json::Json;
 use crate::obj;
 
 use wowdps_model::{
-    EnergizeRow, GearItem, Loadout, Mark, MissKind, Mitigation, Role, RoleNightRow, Row, SegmentId,
-    SegmentInfo, SegmentKind, ShieldRow, Spec, SpellTree, StackCell, Timeline, View, power_name,
+    COMBATANT_STATS, EnergizeRow, GearItem, Loadout, LoadoutAura, Mark, MissKind, Mitigation, Role,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, SpellTree, StackCell,
+    Timeline, View, power_name,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
@@ -676,7 +677,11 @@ pub fn catalog() -> Vec<Tool> {
             name: "loadout",
             description: "One player's actual build as the combat log recorded it \
                           (COMBATANT_INFO): spec, talents and equipped gear with item \
-                          levels, enchants, gem item ids and bonus ids. Talents come named \
+                          levels, enchants, gem item ids and bonus ids. Since v43 also the \
+                          line's `stats` (by name — strength … mastery, versatility \
+                          done/healing/taken, armor — plus the raw 22) and its `auras` \
+                          ({spell, stacks, caster: self or a guid}: flask, food, rune, \
+                          vantus, raid buffs at the pull). Talents come named \
                           through the local talent dataset with an in-game import \
                           string when the dataset knows the spec, raw \
                           node/entry/rank picks otherwise (rank 0 = a granted node). \
@@ -3063,7 +3068,7 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         Err(damage_err) => resolve_player(bridge, segment, View::Healing, args, "player")
             .map_err(|_| damage_err)?,
     };
-    let Some(l) = bridge.loadout(segment, key)? else {
+    let Some(l) = bridge.loadout(segment, key.clone())? else {
         return Ok(obj! {
             "player": player_ident(&row),
             "logged": Json::Bool(false),
@@ -3105,6 +3110,9 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .unwrap_or(Json::Null),
         "talents": talents_json(&l),
         "gear": gear_json(&l.gear),
+        // v43: the stats and the auras at the line.
+        "stats": stats_json(&l.stats),
+        "auras": auras_json(&l.auras, &key),
     })
 }
 
@@ -3217,6 +3225,47 @@ const GEAR_SLOTS: [&str; 18] = [
 ];
 
 /// Ids only — the log carries no item names. Zeroed tuples are empty slots.
+/// v43: the line's 22 stat scalars by name where the position is pinned
+/// (`COMBATANT_STATS`), with the raw list beside them for the two that are
+/// not. Null on a loadout logged before v43.
+fn stats_json(stats: &[u32]) -> Json {
+    if stats.is_empty() {
+        return Json::Null;
+    }
+    let mut o: Vec<(String, Json)> = COMBATANT_STATS
+        .iter()
+        .zip(stats)
+        .filter(|(name, _)| !name.is_empty())
+        .map(|(name, v)| (name.to_string(), Json::u64(u64::from(*v))))
+        .collect();
+    o.push((
+        "raw".to_string(),
+        Json::Arr(stats.iter().map(|v| Json::u64(u64::from(*v))).collect()),
+    ));
+    Json::Obj(o)
+}
+
+/// v43: the auras on the player at the line — flask, food, rune, vantus,
+/// raid buffs — each with who put it there (`self` for their own).
+fn auras_json(auras: &[LoadoutAura], guid: &str) -> Json {
+    Json::Arr(
+        auras
+            .iter()
+            .map(|a| {
+                obj! {
+                    "spell": Json::u64(u64::from(a.spell_id)),
+                    "stacks": Json::u64(u64::from(a.stacks)),
+                    "caster": if a.caster == guid {
+                        Json::str("self")
+                    } else {
+                        Json::str(a.caster.clone())
+                    },
+                }
+            })
+            .collect(),
+    )
+}
+
 fn gear_json(gear: &[GearItem]) -> Json {
     let labeled = gear.len() <= GEAR_SLOTS.len();
     let ids = |v: &[u32]| Json::Arr(v.iter().map(|&x| Json::u64(x as u64)).collect());
@@ -4029,6 +4078,9 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
             .unwrap_or(Json::Null),
         "talents": talents_json(&l),
         "gear": gear_json(&l.gear),
+        // v43: the stats and the auras at the line.
+        "stats": stats_json(&l.stats),
+        "auras": auras_json(&l.auras, &p.guid),
     })
 }
 
@@ -5204,6 +5256,8 @@ mod tests {
             spec_id: None,
             talents: vec![pick],
             gear: Vec::new(),
+            stats: vec![],
+            auras: vec![],
         };
         let j = talents_json(&no_spec);
         assert!(

@@ -677,6 +677,18 @@ fn talent_tools_over_a_fixture_dataset() {
     );
     assert_eq!(num_of(gear, "avg_ilvl"), 639.0);
 
+    // v43: the line's stats by name (and raw), and its aura triples — the
+    // fixture's Power Word: Shield from Mírelle and a Mark of the Wild.
+    let stats = doc.get("stats").expect("stats");
+    assert_eq!(num_of(stats, "strength"), 12480.0);
+    assert!(matches!(stats.get("raw"), Some(Json::Arr(r)) if r.len() == 22));
+    let Some(Json::Arr(auras)) = doc.get("auras") else {
+        panic!("no auras: {}", doc.to_line());
+    };
+    let spells: Vec<f64> = auras.iter().map(|a| num_of(a, "spell")).collect();
+    assert_eq!(spells, vec![17.0, 1126.0]);
+    assert_eq!(str_of(&auras[1], "caster"), "self");
+
     // An unknown player is a tool-level error, exactly like breakdown's.
     assert!(is_error(&replies[1]), "{}", replies[1].to_line());
 }

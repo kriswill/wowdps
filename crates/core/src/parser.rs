@@ -10,7 +10,7 @@
 
 use std::borrow::Cow;
 
-use wowdps_model::{GearItem, MissKind, TalentPick};
+use wowdps_model::{GearItem, LoadoutAura, MissKind, TalentPick};
 
 /// Number of fields in the advanced-combat-logging block. The wiki says 17; that is
 /// wrong for current retail. In order: `info_guid`, `owner_guid`, `current_hp`,
@@ -182,6 +182,13 @@ pub enum Event {
         /// log's inventory-slot order, gems as ids alone. Empty on absence,
         /// like `talents`.
         gear: Vec<GearItem>,
+        /// v43: the 22 stat scalars between faction and the spec, in the
+        /// log's order (`wowdps_model::COMBATANT_STATS` names them).
+        stats: Vec<u32>,
+        /// v43: the aura bracket after the gear — `(caster, spell, stacks)`
+        /// triples: flask, food, rune, raid buffs at the line. Empty on
+        /// absence.
+        auras: Vec<LoadoutAura>,
     },
     /// R10: the player moved zones. A nonzero `difficulty` marks instanced
     /// content (dungeon, keystone, raid, delve); the open world logs 0.
@@ -858,32 +865,45 @@ pub fn parse_line(line: &str) -> Option<LogLine> {
 }
 
 /// COMBATANT_INFO, from the text after `"COMBATANT_INFO,"`. Fields 1 (guid),
-/// 2 (faction) and 25 (currentSpecID) are scalars preceding the first `[`;
-/// then come the talent bracket, a PvP/stats tuple (skipped), the gear
-/// bracket, and the auras bracket (ignored). Anything malformed degrades to
+/// 2 (faction) and 25 (currentSpecID) are scalars preceding the first `[`,
+/// with (v43) the 22 stat scalars between them; then come the talent
+/// bracket, a PvP talent tuple (skipped), the gear bracket, and (v43) the
+/// aura bracket of `(caster, spell, stacks)` triples. Anything malformed degrades to
 /// empty vectors or `None` — this event never fails a line.
 fn parse_combatant_info(body: &str) -> Event {
     let first = body.find('[');
     let scalars = body.get(..first.unwrap_or(body.len())).unwrap_or_default();
-    let mut f = scalars.split(',');
-    let guid = f.next().unwrap_or_default().to_string();
-    let faction = parse_u32(f.next().unwrap_or_default());
-    // Line field 25 = body index 24; two next() calls consumed 0 and 1.
-    let spec_id = f.nth(22).and_then(|v| v.parse().ok());
+    let f: Vec<&str> = scalars.split(',').collect();
+    let guid = f.first().copied().unwrap_or_default().to_string();
+    let faction = parse_u32(f.get(1).copied().unwrap_or_default());
+    // v43: the 22 stat scalars sit between faction and the spec (body
+    // indices 2..24); a short line keeps what it has, never a guess.
+    let stats: Vec<u32> = f
+        .iter()
+        .skip(2)
+        .take(22)
+        .filter_map(|v| v.trim().parse().ok())
+        .collect();
+    // Line field 25 = body index 24.
+    let spec_id = f.get(24).and_then(|v| v.parse().ok());
 
     let mut talents = Vec::new();
     let mut gear = Vec::new();
+    let mut auras = Vec::new();
     if let Some(open) = first
         && let Some(t_end) = bracket_end(body, open)
     {
         talents = parse_talent_bracket(body.get(open + 1..t_end).unwrap_or_default());
-        if let Some(g_open) = body
-            .get(t_end + 1..)
-            .and_then(|s| s.find('['))
-            .map(|i| i + t_end + 1)
+        if let Some(g_open) = next_bracket(body, t_end)
             && let Some(g_end) = bracket_end(body, g_open)
         {
             gear = parse_gear_bracket(body.get(g_open + 1..g_end).unwrap_or_default());
+            // v43: the aura bracket follows the gear.
+            if let Some(a_open) = next_bracket(body, g_end)
+                && let Some(a_end) = bracket_end(body, a_open)
+            {
+                auras = parse_aura_bracket(body.get(a_open + 1..a_end).unwrap_or_default());
+            }
         }
     }
     Event::CombatantInfo {
@@ -892,7 +912,35 @@ fn parse_combatant_info(body: &str) -> Event {
         faction,
         talents,
         gear,
+        stats,
+        auras,
     }
+}
+
+/// The offset of the next `[` after `after`, if any.
+fn next_bracket(body: &str, after: usize) -> Option<usize> {
+    body.get(after + 1..)
+        .and_then(|s| s.find('['))
+        .map(|i| i + after + 1)
+}
+
+/// v43: `[caster,spellId,stacks,caster,spellId,stacks,…]` interior → the
+/// auras, a flat list of triples (a real line: `[Player-5-0E…,1296934,1,…,
+/// Player-5-0D…,41635,8,…]`). A triple whose caster is no guid or whose
+/// numbers do not read is dropped alone.
+fn parse_aura_bracket(inner: &str) -> Vec<LoadoutAura> {
+    let fields: Vec<&str> = inner.split(',').map(str::trim).collect();
+    fields
+        .chunks(3)
+        .filter_map(|t| match t {
+            [caster, spell, stacks] if is_guid(caster) => Some(LoadoutAura {
+                caster: (*caster).to_string(),
+                spell_id: spell.parse().ok()?,
+                stacks: stacks.parse().ok()?,
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Index of the `]` balancing the `[` at `open`, or `None` when the bracket
@@ -1668,6 +1716,8 @@ mod tests {
                     },
                 ],
                 gear: vec![],
+                stats: vec![7549, 3591],
+                auras: vec![],
             }
         );
     }
@@ -1691,6 +1741,11 @@ mod tests {
                     rank: 1
                 }],
                 gear: vec![],
+                stats: vec![
+                    2129, 217, 26548, 664, 0, 0, 0, 0, 968, 968, 968, 221, 0, 668, 668, 668, 0,
+                    1062, 73, 73, 73, 2361,
+                ],
+                auras: vec![],
             }
         );
     }
@@ -1698,10 +1753,10 @@ mod tests {
     #[test]
     fn combatant_info_gear_bracket_yields_items_and_skips_the_pvp_tuple() {
         // Fixture shape: talents, then the (0,0) PvP/stats tuple, then gear with
-        // nested enchant/bonus/gem lists, then the aura bracket (ignored). The
+        // nested enchant/bonus/gem lists, then the aura bracket (v43: read). The
         // rank-0 pick (a granted node) survives as written.
         let e = parse(
-            "COMBATANT_INFO,Player-1168-0A1B2C01,0,12480,3140,980,6420,0,0,0,3120,3120,3120,410,220,4870,4870,4870,190,3960,5210,5210,5210,0,0,71,[(91024,124871,1),(91025,124872,1),(91026,124873,0)],(0,0),[(212446,639,(),(6652,10356),()),(212449,639,(),(6652),(213743,619))],[(Player-1168-0A1B2C02,17,Player-1168-0A1B2C01,1126)]",
+            "COMBATANT_INFO,Player-1168-0A1B2C01,0,12480,3140,980,6420,0,0,0,3120,3120,3120,410,220,4870,4870,4870,190,3960,5210,5210,5210,0,0,71,[(91024,124871,1),(91025,124872,1),(91026,124873,0)],(0,0),[(212446,639,(),(6652,10356),()),(212449,639,(),(6652),(213743,619))],[Player-1168-0A1B2C02,17,1,Player-1168-0A1B2C01,1126,1]",
         );
         assert_eq!(
             e,
@@ -1740,6 +1795,22 @@ mod tests {
                         enchants: vec![],
                         bonus_ids: vec![6652],
                         gems: vec![213743],
+                    },
+                ],
+                stats: vec![
+                    12480, 3140, 980, 6420, 0, 0, 0, 3120, 3120, 3120, 410, 220, 4870, 4870, 4870,
+                    190, 3960, 5210, 5210, 5210, 0, 0,
+                ],
+                auras: vec![
+                    LoadoutAura {
+                        caster: "Player-1168-0A1B2C02".into(),
+                        spell_id: 17,
+                        stacks: 1,
+                    },
+                    LoadoutAura {
+                        caster: "Player-1168-0A1B2C01".into(),
+                        spell_id: 1126,
+                        stacks: 1,
                     },
                 ],
             }
@@ -1787,6 +1858,48 @@ mod tests {
         assert_eq!(gem_ids("(x,295,240983,295)"), vec![240983]);
     }
 
+    /// v43: a real line's tail — the gear bracket, then the auras as a FLAT
+    /// list of `(caster, spell, stacks)` triples (a Prayer of Mending at 8
+    /// stacks, an Arcane Intellect from another player), then four trailing
+    /// scalars — and the 22 stats before the spec.
+    #[test]
+    fn combatant_info_reads_the_stats_and_the_aura_triples() {
+        let e = parse(
+            "COMBATANT_INFO,Player-5-0A1B2C,1,2588,217,46775,664,0,0,0,0,1047,1047,1047,98,0,992,992,992,0,1177,69,69,69,2959,70,[(81523,102493,1)],(0,210256,410126,204018),[(271465,334,(7991,0,0),(6652),(240892,295)),(0,0,(),(),())],[Player-5-0A1B2C,1235110,1,Player-5-0A1B2D,1459,1,Player-5-0A1B2E,41635,8,nil,5,1],374,0,0,0",
+        );
+        let Event::CombatantInfo {
+            stats,
+            auras,
+            gear,
+            spec_id,
+            ..
+        } = e
+        else {
+            panic!("not COMBATANT_INFO: {e:?}")
+        };
+        assert_eq!(spec_id, Some(70));
+        assert_eq!(stats.len(), 22);
+        assert_eq!(
+            (stats[0], stats[2], stats[21]),
+            (2588, 46775, 2959),
+            "str, stam, armor"
+        );
+        assert_eq!(gear.len(), 2);
+        let got: Vec<(&str, u32, u32)> = auras
+            .iter()
+            .map(|a| (a.caster.as_str(), a.spell_id, a.stacks))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Player-5-0A1B2C", 1235110, 1),
+                ("Player-5-0A1B2D", 1459, 1),
+                ("Player-5-0A1B2E", 41635, 8),
+            ],
+            "the malformed triple (a nil caster) drops alone"
+        );
+    }
+
     #[test]
     fn combatant_info_unbalanced_bracket_degrades_to_empty_vectors() {
         // A truncated line (mid-write tail read) must never fail: scalars parse,
@@ -1802,6 +1915,11 @@ mod tests {
                 faction: 1,
                 talents: vec![],
                 gear: vec![],
+                stats: vec![
+                    2129, 217, 26548, 664, 0, 0, 0, 0, 968, 968, 968, 221, 0, 668, 668, 668, 0,
+                    1062, 73, 73, 73, 2361,
+                ],
+                auras: vec![],
             }
         );
     }
