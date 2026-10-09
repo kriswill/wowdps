@@ -49,6 +49,7 @@
 
 use std::collections::HashMap;
 
+use crate::varint::{Cur, put_opt, put_varint, put_zz};
 use wowdps_model::replay::{
     Cut, EncounterHead, Event, EventKind, Head, KeyHead, Marker, MarkerKind, Placed, PlacedKind,
     Post, Power, Unit, UnitKind,
@@ -794,83 +795,9 @@ fn read_marks(c: &mut Cur) -> Option<Vec<Marker>> {
     c.done().then_some(out)
 }
 
-// ---- varints ----------------------------------------------------------------------
+// ---- the replay tier's own reads -----------------------------------------------------
 
-fn put_varint(out: &mut Vec<u8>, mut v: u64) {
-    loop {
-        let byte = (v & 0x7f) as u8;
-        v >>= 7;
-        if v == 0 {
-            out.push(byte);
-            return;
-        }
-        out.push(byte | 0x80);
-    }
-}
-
-fn put_zz(out: &mut Vec<u8>, v: i64) {
-    put_varint(out, ((v << 1) ^ (v >> 63)) as u64);
-}
-
-fn put_opt(out: &mut Vec<u8>, v: Option<u64>) {
-    match v {
-        Some(v) => {
-            out.push(1);
-            put_varint(out, v);
-        }
-        None => out.push(0),
-    }
-}
-
-/// A bounds-checked cursor: every read is `None` past the end.
-struct Cur<'a> {
-    b: &'a [u8],
-}
-
-impl<'a> Cur<'a> {
-    fn new(b: &'a [u8]) -> Self {
-        Self { b }
-    }
-
-    fn left(&self) -> usize {
-        self.b.len()
-    }
-
-    fn u8(&mut self) -> Option<u8> {
-        let (&first, rest) = self.b.split_first()?;
-        self.b = rest;
-        Some(first)
-    }
-
-    fn varint(&mut self) -> Option<u64> {
-        let mut v = 0u64;
-        for shift in (0..64).step_by(7) {
-            let byte = self.u8()?;
-            v |= u64::from(byte & 0x7f).checked_shl(shift)?;
-            if byte & 0x80 == 0 {
-                return Some(v);
-            }
-        }
-        None
-    }
-
-    fn zz(&mut self) -> Option<i64> {
-        let v = self.varint()?;
-        Some((v >> 1) as i64 ^ -((v & 1) as i64))
-    }
-
-    fn u32(&mut self) -> Option<u32> {
-        u32::try_from(self.varint()?).ok()
-    }
-
-    fn i32(&mut self) -> Option<i32> {
-        i32::try_from(self.zz()?).ok()
-    }
-
-    fn usize(&mut self) -> Option<usize> {
-        usize::try_from(self.varint()?).ok()
-    }
-
+impl Cur<'_> {
     /// A unit number, which must name one of `n` units.
     fn unit(&mut self, n: usize) -> Option<u32> {
         let u = self.u32()?;
@@ -880,27 +807,6 @@ impl<'a> Cur<'a> {
     /// A string by its index into the table.
     fn name(&mut self, strs: &[String]) -> Option<String> {
         strs.get(self.usize()?).cloned()
-    }
-
-    /// A count of items each at least `min` bytes long: more than the
-    /// bytes left could hold is a lie, refused before any allocation.
-    fn count(&mut self, min: usize) -> Option<usize> {
-        let n = self.usize()?;
-        (n.saturating_mul(min) <= self.b.len()).then_some(n)
-    }
-
-    fn str(&mut self) -> Option<String> {
-        let len = self.usize()?;
-        if len > self.b.len() {
-            return None;
-        }
-        let (s, rest) = self.b.split_at(len);
-        self.b = rest;
-        String::from_utf8(s.to_vec()).ok()
-    }
-
-    fn done(&self) -> bool {
-        self.b.is_empty()
     }
 }
 
