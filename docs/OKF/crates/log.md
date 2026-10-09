@@ -2,6 +2,14 @@
 
 ## 2026-10-09
 
+- **Update** — [wowdps-gui](gui.md), [wowdps-core](core.md),
+  [wowdps-proto](proto.md), [wowdps-daemon](daemon.md), [wowdps-mcp](mcp.md),
+  [wowdps-history](history.md): the architecture prose the agent instructions
+  carried moves here — the GUI as built, surface by surface; core's modules
+  and gates; proto's and the daemon's modules and the store's tiers; mcp's
+  tools; history's views and subcommands — so the instructions (AGENTS.md
+  per area) can stay rules. [wowdps-encounter-rubric](encounter-rubric.md):
+  the daemon reads its `placed` table since v45.
 - **Update** — [wowdps-core](core.md), [wowdps-model](model.md),
   [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
   [wowdps-history](history.md): the replay tier (R29, v45) — the cut, its
