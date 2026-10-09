@@ -242,6 +242,15 @@ impl MockDaemon {
                     answer: wowdps_proto::HistoryAnswer::Imported { queued: 0 },
                 });
             }
+            // v45 (R29): the replay tier, as the history thread reads it.
+            ClientMsg::GetReplay { req_id, fight_id } => {
+                let bytes = self.history.replay_file(&fight_id);
+                out.push(DaemonMsg::Replay {
+                    req_id,
+                    fight_id,
+                    bytes,
+                });
+            }
             _ => {}
         }
         out
@@ -343,8 +352,44 @@ impl MockDaemon {
                 self.history.store(&fight, self.log_facts);
             }
         }
+        self.cut_replays();
         self.pending.clear();
         self
+    }
+
+    /// v45 (R29): what the history thread's rewrite queue does for every
+    /// fight the store wants a replay of — find it in the log's index, cut
+    /// it from its seeds and slice, keep it — here at once, in line.
+    fn cut_replays(&mut self) {
+        let Ok(mut file) = std::fs::File::open(&self.path) else {
+            return;
+        };
+        let idx = index::scan(&mut file);
+        // The store's own list, its protected set made once (a read-through
+        // store directory can hold a season of cards).
+        let recuts: std::collections::HashSet<String> = self.history.recuts().into_iter().collect();
+        let wanted: Vec<(String, i64, bool)> = self
+            .history
+            .cards()
+            .iter()
+            .filter(|c| recuts.contains(&c.id))
+            .map(|c| {
+                let sigma = c.kind == wowdps_proto::history::FightKind::Key;
+                (c.id.clone(), c.start_local_ms, sigma)
+            })
+            .collect();
+        for (id, start, sigma) in wanted {
+            let metas = if sigma { &idx.overalls } else { &idx.segments };
+            let Some(text) = metas
+                .iter()
+                .find(|m| m.start_ms == start)
+                .and_then(|m| load_segment_text(&self.path, m).ok())
+            else {
+                continue;
+            };
+            self.history
+                .store_replay(&id, crate::replay::cut_text(&text, None));
+        }
     }
 
     /// The in-memory history store, for tests of what a session wrote.
