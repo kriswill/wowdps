@@ -273,7 +273,10 @@ pub fn catalog() -> Vec<Tool> {
                           filters the fights to ones where the SUBJECT (the `player` \
                           argument, else the store's owner) played that role; with neither \
                           an owner nor a player the filter is a no-op and every fight comes \
-                          back. `players: all` rows also carry the same scalars.",
+                          back. `players: all` rows also carry the same scalars, but of \
+                          the R17 tank split only taken and dtps: mitigated, prevented, \
+                          reduced and mitigated_pct ride me/peer alone (as do tank_pair \
+                          and healers).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
