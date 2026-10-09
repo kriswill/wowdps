@@ -2,6 +2,14 @@
 
 ## 2026-10-09
 
+- **Creation** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
+  R29 cuts every boss pull and keystone run from its parsed lines into a
+  binary replay tier (`replay/<id>.bin`), kept on the details caps and all
+  season for the protected set; the replay spike's text cutter is rewritten
+  onto the parser; PROTO_VERSION 45 (`GetReplay`).
+- **Creation** — [A Progression Wipe Is Kept Whole Until The First Kill](progression-kept-whole.md):
+  a wipe on a boss no stored card killed at that difficulty is kept whole as
+  a kill is, until the first kill there; `history_keep_progression_whole`.
 - **Creation** — [Resolve An Encounter Through An Ordered Layer Stack](encounter-rubric-layers.md):
   the encounter rubric, brought to main as `wowdps-encounter-rubric` with
   the base alone, resolves through base, curated and user tiers: the base's

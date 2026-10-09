@@ -237,3 +237,27 @@ pool); `max` the largest maximum reported. Mana is type 0 (`power_name`:
 1 rage, 3 energy, 17 fury, 19 essence …). Only kills, keys, pinned fights
 and long wipes keep the details tier the view reads, and only once written
 by v44 or regraded.
+
+## The replay tier (R29, v45) — no view, by design
+
+`replay/<id>.bin` is binary and holds no SQL view: it is the one tier a
+reader takes whole (a replay draws every unit's posts at once), its rows are
+positions and casts keyed by numbers the file itself assigns, and nothing
+analytical joins on them — the damage, healing and deaths a question asks
+about are the rows and details tiers' already. Read it whole instead:
+
+```sh
+wowdps history replay-export <fight_id> -o /tmp/pull   # the seven files a replay reads
+wowdps history stats                                   # replay.files/bytes, cards_without_replay,
+                                                       # kept.{kills,timed_keys,progression,pins}
+```
+
+`replay-export` needs no daemon (it decodes the file through
+`proto::replay`) and writes `raid.csv` from the details tier when the fight
+keeps one — R25's raid series, which the replay tier never stores twice.
+`cards_without_replay` counts the boss pulls and runs with no file: the store
+keeps one only for the fights retention keeps whole or protects and the
+newest `history_keep_details_per_encounter` of the rest per boss and
+difficulty, so a demoted wipe counts there by design. `kept` applies the
+DEFAULT rules to the cards (a kill, a timed key, a progression wipe — a boss
+no card killed at that difficulty —, a pin; each card once).
