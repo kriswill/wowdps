@@ -187,6 +187,9 @@ struct RecapEntry {
     crit: bool,
     gain: bool,
     hp: Option<(u64, u64)>,
+    /// The victim's shields after the event, from the same health report
+    /// as `hp` (2026-10-08).
+    absorb: Option<u64>,
 }
 
 /// Recap ring capacity per player — a few seconds of raid combat. Bounded so
@@ -1978,6 +1981,7 @@ impl Segment {
                 class: None,
                 spec: None,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -2030,6 +2034,7 @@ impl Segment {
                 class: self.classes.get(guid).copied(),
                 spec: self.specs.get(guid).copied(),
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 // R13: reaction bit 0x40 — the hostile side of an arena.
@@ -2152,6 +2157,7 @@ impl Segment {
                     class,
                     spec,
                     hp: None,
+                    absorb: None,
                     gain: false,
                     spell_id,
                     enemy: false,
@@ -2387,6 +2393,7 @@ impl Segment {
                 per_sec: 0.0,
                 pct: 0.0,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -2441,6 +2448,7 @@ impl Segment {
                 per_sec: 0.0,
                 pct: 0.0,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -2520,6 +2528,7 @@ impl Segment {
         };
         if let Some(i) = slot {
             ring[i].hp = Some((h.current, h.max));
+            ring[i].absorb = Some(h.absorb);
         }
     }
 
@@ -2618,6 +2627,7 @@ impl Segment {
                 class,
                 spec,
                 hp: e.hp,
+                absorb: e.absorb,
                 gain: e.gain,
                 spell_id: 0,
                 enemy: false,
@@ -2649,6 +2659,7 @@ impl Segment {
                 class,
                 spec,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -3255,6 +3266,7 @@ impl Segment {
                 class: None,
                 spec: None,
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: id,
                 enemy: false,
@@ -3339,6 +3351,7 @@ impl Segment {
                 class: self.classes.get(owner).copied(),
                 spec: self.specs.get(owner).copied(),
                 hp: None,
+                absorb: None,
                 gain: false,
                 spell_id: 0,
                 enemy: false,
@@ -5831,11 +5844,10 @@ impl Meter {
                     && *amount > 0
                     && let Some(s) = self.segments.last_mut()
                 {
-                    let hp = line
-                        .hp_hint
-                        .as_ref()
-                        .filter(|h| h.unit_guid == dst.guid)
-                        .map(|h| (h.current, h.max));
+                    let report = line.hp_hint.as_ref().filter(|h| h.unit_guid == dst.guid);
+                    let hp = report.map(|h| (h.current, h.max));
+                    // The shields left on them, from the same report.
+                    let absorb = report.map(|h| h.absorb);
                     s.recap_push(
                         &dst.guid,
                         RecapEntry {
@@ -5850,6 +5862,7 @@ impl Meter {
                             crit: *critical,
                             gain: false,
                             hp,
+                            absorb,
                         },
                     );
                 }
@@ -5914,11 +5927,10 @@ impl Meter {
                 if dst.is_player()
                     && let Some(s) = self.segments.last_mut()
                 {
-                    let hp = line
-                        .hp_hint
-                        .as_ref()
-                        .filter(|h| h.unit_guid == dst.guid)
-                        .map(|h| (h.current, h.max));
+                    let report = line.hp_hint.as_ref().filter(|h| h.unit_guid == dst.guid);
+                    let hp = report.map(|h| (h.current, h.max));
+                    // The shields left on them, from the same report.
+                    let absorb = report.map(|h| h.absorb);
                     s.recap_push(
                         &dst.guid,
                         RecapEntry {
@@ -5930,6 +5942,7 @@ impl Meter {
                             crit: *critical,
                             gain: true,
                             hp,
+                            absorb,
                         },
                     );
                 }
@@ -6019,6 +6032,7 @@ impl Meter {
                             crit: false,
                             gain: true,
                             hp: None,
+                            absorb: None,
                         },
                     );
                 }
@@ -6318,6 +6332,8 @@ impl Meter {
                             crit: false,
                             gain: false,
                             hp: remaining.map(|(_, max)| (0, max)),
+                            // A scripted kill states no health report of its own.
+                            absorb: None,
                         },
                     );
                 }
@@ -7799,6 +7815,8 @@ mod tests {
                 current,
                 max,
                 flags: 0,
+                absorb: 0,
+                power: None,
             });
         }
         l
@@ -7964,6 +7982,8 @@ mod tests {
             current: 60_000,
             max: 150_000,
             flags: 0,
+            absorb: 0,
+            power: None,
         });
         let m = fed(vec![
             hit_player(100, p1(), "Melee", 40_000, -1, None),
@@ -7972,6 +7992,49 @@ mod tests {
         ]);
         let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
         assert_eq!(events[0].hp, Some((60_000, 150_000)));
+    }
+
+    /// v43 (R9): a recap entry carries the victim's shields from the same
+    /// report as its health — its own block's, or the back-filled one — and
+    /// none where no report came (nor on the meter rows).
+    #[test]
+    fn recap_rows_carry_the_shields_beside_the_health() {
+        let report = |ts: i64, current: u64, absorb: u64| {
+            let mut l = at(ts, Event::Other);
+            l.hp_hint = Some(HpHint {
+                unit_guid: P1.into(),
+                current,
+                max: 150_000,
+                flags: 0,
+                absorb,
+                power: None,
+            });
+            l
+        };
+        let mut own = hit_player(300, p1(), "Bolt", 20_000, -1, Some((40_000, 150_000)));
+        if let Some(h) = own.hp_hint.as_mut() {
+            h.absorb = 12_345;
+        }
+        let m = fed(vec![
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            report(100, 60_000, 25_000),
+            own,
+            hit_player(2_500, p1(), "Slam", 40_000, 0, None),
+            at(2_600, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        let absorbs: Vec<Option<u64>> = events.iter().map(|e| e.absorb).collect();
+        assert_eq!(
+            absorbs,
+            vec![None, Some(12_345), Some(25_000)],
+            "newest first: no report, its own block, the back-filled one"
+        );
+        assert!(
+            m.segments()[0]
+                .rows(View::Deaths)
+                .iter()
+                .all(|r| r.absorb.is_none())
+        );
     }
 
     /// R9: several hits landing in the same instant each get their OWN health
@@ -7990,6 +8053,8 @@ mod tests {
                 current,
                 max: 150_000,
                 flags: 0,
+                absorb: 0,
+                power: None,
             });
             l
         };
@@ -8038,6 +8103,8 @@ mod tests {
                 current,
                 max: 150_000,
                 flags: 0,
+                absorb: 0,
+                power: None,
             });
             l
         };
@@ -8143,6 +8210,8 @@ mod tests {
             current,
             max: 150_000,
             flags: 0,
+            absorb: 0,
+            power: None,
         });
         l
     }
@@ -9736,6 +9805,8 @@ mod tests {
             current,
             max,
             flags,
+            absorb: 0,
+            power: None,
         });
         l
     }

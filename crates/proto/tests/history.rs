@@ -37,6 +37,7 @@ fn row(key: &str, amount: u64) -> Row {
         school: 32,
         mine: false,
         offset_ms: None,
+        absorb: None,
     }
 }
 
@@ -249,6 +250,8 @@ fn rows() -> FightRows {
         // v35: a recap event carries its time before the death.
         events: vec![Row {
             offset_ms: Some(-1_500),
+            // v43: and the shields left on the victim.
+            absorb: Some(4_485),
             ..row("Smash", 50)
         }],
         attackers: vec![row("Boss", 50)],
@@ -549,7 +552,8 @@ fn golden_documents_pin_the_file_format() {
     assert!(r.contains(r#""recaps":[{"guid":"Player-1-A","events":[{"key":"Smash""#));
     // v35 (R9): a recap event ends in its time before the death — and only
     // a recap event: no meter row, attacker or drill row carries the key.
-    assert!(r.contains(r#""school":32,"offset_ms":-1500}],"attackers""#));
+    // v43: then its shields after the event.
+    assert!(r.contains(r#""school":32,"offset_ms":-1500,"absorb":4485}],"attackers""#));
     assert_eq!(r.matches("offset_ms").count(), 1, "{r}");
     // Step 2b: the mitigation list follows the recaps and is pinned whole.
     let row_line =

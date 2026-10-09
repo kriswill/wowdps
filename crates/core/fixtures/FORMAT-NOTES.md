@@ -74,8 +74,13 @@ damage/heal suffix by two columns.
 > armor exactly. The two "extra" fields the wiki lacks sit between `armor` and
 > `absorb`, not after `absorb`. The 19-field count and every offset from 10 on
 > were right; only the names moved. Warcraft Logs' event fields agree
-> (`absorb` is the shield total). The parser reads 0–3 (the owner and health
-> hints) and nothing past them, so no number moved with the names.
+> (`absorb` is the shield total). The parser then read 0–3 (the owner and
+> health hints) and nothing past them, so no number moved with the names; since
+> R9's v43 amendment it reads 9 (`absorb`, beside a recap's health) and 10–12
+> (the unit's power) too. On a `SPELL_CAST_SUCCESS` that spends two resources
+> fields 10–13 are `a|b` pairs (a Rogue's `3|4,191|5,250|7,25|5`: energy 191
+> of 250 costing 25, combo points 5 of 7 costing 5 — 439 such lines in a real
+> Heroic pull, every one a cast); the parser keeps the first of each.
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 

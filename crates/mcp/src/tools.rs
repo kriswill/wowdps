@@ -142,7 +142,9 @@ pub fn catalog() -> Vec<Tool> {
                           With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
                           hits they took, each with `kind` (damage = it removed health; gain = a \
-                          heal or consumed absorb restored it), remaining health after and \
+                          heal or consumed absorb restored it), remaining health after \
+                          (health_after: current, max and — v43 — absorb, the shields \
+                          still on them from the same report) and \
                           (v35) offset_secs, how long before the death it landed: \
                           seconds, rounded to 0.01 (0 = the \
                           killing blow's moment, never positive) — and a player \
@@ -3742,7 +3744,15 @@ fn ability_row(r: &Row, view: View) -> Json {
     if let Some((hp, max)) = r.hp {
         o.push((
             "health_after".to_string(),
-            obj! { "current": Json::u64(hp), "max": Json::u64(max) },
+            match r.absorb {
+                // v43 (R9): the shields left on them, from the same report.
+                Some(absorb) => obj! {
+                    "current": Json::u64(hp),
+                    "max": Json::u64(max),
+                    "absorb": Json::u64(absorb),
+                },
+                None => obj! { "current": Json::u64(hp), "max": Json::u64(max) },
+            },
         ));
     }
     // v35 (R9): a recap event's time before the death, ≤ 0, in seconds
@@ -5069,6 +5079,26 @@ mod tests {
         );
         assert!(!keys(&recap).contains(&"avg_hit"));
         assert_eq!(recap.get("kind").and_then(Json::as_str), Some("damage"));
+        // v43 (R9): the shields left on them ride beside the health, and only
+        // when the report carried them.
+        assert_eq!(
+            recap.get("health_after").and_then(|h| h.get("absorb")),
+            None
+        );
+        let shielded = ability_row(
+            &Row {
+                absorb: Some(4_485),
+                ..r.clone()
+            },
+            View::Deaths,
+        );
+        assert_eq!(
+            shielded
+                .get("health_after")
+                .and_then(|h| h.get("absorb"))
+                .and_then(Json::as_u64),
+            Some(4_485)
+        );
         let hit = ability_row(&r, View::Damage);
         assert!(!keys(&hit).contains(&"kind"));
         assert_eq!(hit.get("avg_hit").and_then(Json::as_u64), Some(250));

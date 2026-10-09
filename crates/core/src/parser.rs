@@ -64,7 +64,8 @@ pub struct OwnerHint {
     pub owner_guid: String,
 }
 
-/// "`unit_guid` is at `current`/`max` health", as reported by the advanced block.
+/// "`unit_guid` is at `current`/`max` health", as reported by the advanced
+/// block — with (2026-10-08) its shields and its power beside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HpHint {
     pub unit_guid: String,
@@ -74,6 +75,25 @@ pub struct HpHint {
     /// destination's, whichever the block's guid names (0 when neither) —
     /// so a consumer can tell a hostile NPC from a friendly guardian (R16).
     pub flags: u32,
+    /// Advanced field 9: the total of the shields on the unit, post-event
+    /// (R9's recap reads it beside the health; 0 when none or unreadable).
+    pub absorb: u64,
+    /// Advanced fields 10–12: the unit's primary power — its type, current
+    /// and max. `None` when the unit has no pool (max 0) or the fields do
+    /// not read. A cast that spends two resources lists each field as
+    /// `a|b` (a Rogue's `3|4`, energy and combo points); the FIRST entry is
+    /// kept.
+    pub power: Option<Power>,
+}
+
+/// A unit's power reading from the advanced block: `kind` is the game's
+/// power type (0 mana, 1 rage, 2 focus, 3 energy, … 17 fury), `current`
+/// and `max` in the game's own units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Power {
+    pub kind: u32,
+    pub current: u64,
+    pub max: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -593,6 +613,18 @@ fn parse_u64(s: &str) -> u64 {
 /// is empty / non-numeric.
 fn absorb_at(f: &[Cow<'_, str>], i: usize) -> Option<u64> {
     get(f, i).and_then(|s| s.parse().ok())
+}
+
+/// Advanced fields `i..i+3` (power type, current, max) → the unit's primary
+/// [`Power`]. A cast spending two resources writes each field as `a|b`;
+/// the first entry of each is kept. `None` when the type does not parse or
+/// the unit has no pool (max 0).
+fn power_at(f: &[Cow<'_, str>], i: usize) -> Option<Power> {
+    let first = |k: usize| get(f, i + k).and_then(|s| s.split('|').next());
+    let kind = first(0)?.parse().ok()?;
+    let current = first(1)?.parse().ok()?;
+    let max = first(2)?.parse().ok()?;
+    (max > 0).then_some(Power { kind, current, max })
 }
 
 fn parse_i64(s: &str) -> i64 {
@@ -1128,6 +1160,8 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             current,
             max,
             flags,
+            absorb: parse_u64(get(f, adv_start + 9).unwrap_or_default()),
+            power: power_at(f, adv_start + 10),
         })
     } else {
         None
@@ -1699,6 +1733,53 @@ mod tests {
 
     // ---- damage -----------------------------------------------------------
 
+    /// 2026-10-08: the block's field 9 is the unit's shields and 10–12 its
+    /// power — read from real lines' shapes: a healed player carrying a
+    /// shield, a boss's energy on her own swing, a cast spending two
+    /// resources (`3|4,191|5,250|7`: energy and combo points — the first
+    /// kept), and a creature with no pool.
+    #[test]
+    fn the_hint_carries_the_units_absorb_and_power() {
+        let hint = |body: String| parse_line(&line(&body)).unwrap().hp_hint.unwrap();
+        let h = hint(format!(
+            "SPELL_HEAL,{HEALER},{PLAYER},81269,\"Efflorescence\",0x8,Player-1168-0A234B,0000000000000000,786680,786680,3473,434,1069,987,0,4485,3,250,250,0,1566.92,-8.98,2610,0.3252,320,3978,3978,3978,0,nil"
+        ));
+        assert_eq!(h.absorb, 4_485, "field 9, after versatility and avoidance");
+        assert_eq!(
+            h.power,
+            Some(Power {
+                kind: 3,
+                current: 250,
+                max: 250
+            })
+        );
+        let h = hint(format!(
+            "SWING_DAMAGE,{BOSS},{PLAYER},{BOSS_GUID},0000000000000000,1436970781,1436977600,0,0,1470,0,0,0,3,86,100,0,1599.81,-1.23,2610,3.1461,93,62000,90000,-1,1,0,0,0,nil,nil,nil"
+        ));
+        assert_eq!(
+            (h.absorb, h.power.map(|p| (p.kind, p.current, p.max))),
+            (0, Some((3, 86, 100))),
+            "the boss's energy, 86 of 100"
+        );
+        let h = hint(format!(
+            "SPELL_CAST_SUCCESS,{PLAYER},{BOSS},1943,\"Rupture\",0x1,Player-1168-0A234B,0000000000000000,812780,812780,3319,435,1069,1053,0,350042,3|4,191|5,250|7,25|5,1576.42,4.09,2610,6.1121,323"
+        ));
+        assert_eq!(h.absorb, 350_042);
+        assert_eq!(
+            h.power,
+            Some(Power {
+                kind: 3,
+                current: 191,
+                max: 250
+            }),
+            "the first of each `a|b` pair"
+        );
+        let h = hint(format!(
+            "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,{BOSS_GUID},0000000000000000,125000,180000,0,0,0,0,0,0,0,0,0,0,1.0,2.0,2222,3.14,0,12345,13000,-1,4,0,0,0,nil,nil,nil,ST"
+        ));
+        assert_eq!((h.absorb, h.power), (0, None), "no pool, no power");
+    }
+
     #[test]
     fn advanced_lines_carry_an_hp_hint_even_when_the_event_is_dropped() {
         // SPELL_DAMAGE: the block describes the target, post-hit.
@@ -1714,6 +1795,13 @@ mod tests {
                 current: 125_000,
                 max: 180_000,
                 flags: 0xa48,
+                // `adv`: field 9 (absorb) 0, then power type 3 at 95 of 100.
+                absorb: 0,
+                power: Some(Power {
+                    kind: 3,
+                    current: 95,
+                    max: 100
+                }),
             })
         );
 

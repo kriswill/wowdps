@@ -1712,11 +1712,14 @@ pub fn row_from(v: &Json) -> Option<Row> {
         // v35: only a recap event carries one (`recap_events_json`); a row
         // written before v35, or any other row, reads as unknown.
         offset_ms: i64_of(v, "offset_ms"),
+        // v43: likewise a recap event's alone; absent = unknown.
+        absorb: u64_of(v, "absorb"),
     })
 }
 
 /// v35 (R9): a death window's events as the rows tier writes them — each a
-/// row ([`row_json`]) plus its `offset_ms`, the time before the death, on
+/// row ([`row_json`]) plus its `offset_ms`, the time before the death, and
+/// (v43) its `absorb`, the shields left on the victim, on
 /// EVERY event (null only where the meter had none), so the lake's recap
 /// column set is the same in every file written from v35 on. Kept off
 /// [`row_json`] itself: only a recap event has a time before a death, and
@@ -1731,6 +1734,9 @@ fn recap_events_json(rows: &[Row]) -> Json {
                         "offset_ms".to_string(),
                         r.offset_ms.map_or(Json::Null, |v| Json::num(v as f64)),
                     ));
+                    // v43: the shields left on the victim, same report as
+                    // `hp` (null where the meter had none).
+                    fields.push(("absorb".to_string(), r.absorb.map_or(Json::Null, Json::u64)));
                 }
                 o
             })

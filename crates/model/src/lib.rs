@@ -1662,6 +1662,10 @@ pub struct Row {
     /// non-increasing down the newest-first recap. `None` everywhere else
     /// and on recaps stored before v35.
     pub offset_ms: Option<i64>,
+    /// v43, death-recap rows only (R9): the victim's shields after the event
+    /// — the advanced block's absorb field, from the same health report as
+    /// `hp` (so `None` wherever `hp` is, and on recaps stored before v43).
+    pub absorb: Option<u64>,
 }
 
 impl Row {

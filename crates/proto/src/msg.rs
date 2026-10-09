@@ -951,6 +951,9 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     // resolution — then a recap entry's time before the death (R9, ≤ 0).
     wire::put_bool(buf, r.mine);
     wire::put_opt(buf, r.offset_ms.as_ref(), |b, o| wire::put_i64(b, *o));
+    // v43 (R9): a recap entry's shields after it, from the same health
+    // report as `hp`.
+    wire::put_opt(buf, r.absorb.as_ref(), |b, a| wire::put_u64(b, *a));
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -972,6 +975,7 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         school: rd.u32()?,
         mine: rd.bool()?,
         offset_ms: rd.opt(|r| r.i64())?,
+        absorb: rd.opt(|r| r.u64())?,
     })
 }
 

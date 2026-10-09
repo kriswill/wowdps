@@ -72,6 +72,7 @@ fn row(key: &str, class: Option<Class>) -> Row {
         school: 0x24,
         mine: class.is_some(),
         offset_ms: class.map(|_| -250),
+        absorb: None,
     }
 }
 
