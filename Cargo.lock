@@ -9664,6 +9664,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wowdps-encounter-rubric"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
+ "wowdps-proto",
+]
+
+[[package]]
 name = "wowdps-extract"
 version = "0.1.0"
 dependencies = [
