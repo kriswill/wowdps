@@ -7,6 +7,7 @@
 //! contract keep their existing paths.
 
 pub mod fmt;
+pub mod replay;
 pub mod series;
 
 /// A meter view: what the rows are counting.
