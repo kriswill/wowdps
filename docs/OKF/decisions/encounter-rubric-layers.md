@@ -7,7 +7,7 @@ status: stable
 generated: { by: claude-code/opus-5.5, at: 2026-10-09T12:30:00-07:00 }
 sources:
   - id: readme
-    resource: ../../../rubric/README.md
+    resource: ../../../crates/encounter-rubric/README.md
     title: The rubric's schema reference — How an encounter resolves, Three tiers
   - id: plan
     resource: ../../plan-fight-replay.md
@@ -54,7 +54,8 @@ per encounter and `with_tier` caps the rubric, whose default is now `User`,
 everything the machine has.
 
 - **A set is one block.** A curated or user set is a file tree shaped like
-  `rubric/`: its `season.toml` (`[defaults]` alone), its `instance.toml`
+  the crate's `seasons/` (paths `<season>/<instance>/<file>`): its
+  `season.toml` (`[defaults]` alone), its `instance.toml`
   (`[defaults]` and `[encounter.<id>]` drawings) and `<id>-<slug>.toml`,
   laid in that order and as a whole over everything under it. Every season
   and instance it names must be the base's; a draft is never in one.
@@ -85,7 +86,9 @@ everything the machine has.
 ## Consequences
 
 - The public repository holds the generated base and every hand-made map
-  and NPC amendment, and nothing of the curated layer; the embedded test
+  and NPC amendment, inside the crate (`crates/encounter-rubric/seasons/`,
+  a directory per season, the user's tree mirroring it), and nothing of the
+  curated layer; the embedded test
   resolves and checks every encounter at every tier, which on main is the
   base standing alone.
 - A curated set can be built and distributed on its own terms (the product
@@ -102,5 +105,5 @@ everything the machine has.
   Nothing on main reads the crate yet; the replay branch does, through
   the old name until it merges this.
 
-[^readme]: `rubric/README.md`, How an encounter resolves.
+[^readme]: `crates/encounter-rubric/README.md`, How an encounter resolves.
 [^plan]: `docs/plan-fight-replay.md` §3, the definitions per tier.

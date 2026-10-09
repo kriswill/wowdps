@@ -5,14 +5,14 @@
 //! features, what the fight leaves on it and takes back, and the events
 //! that change the room.
 //!
-//! The rubric is TOML under the repository's `rubric/` (its `README.md`
+//! The rubric is TOML under the crate's `seasons/` (the crate's `README.md`
 //! is the schema's reference), embedded at build time:
 //!
 //! ```text
-//! rubric/<season>/season.toml                    the season, its defaults
-//! rubric/<season>/<instance>/instance.toml       the raid or dungeon
-//! rubric/<season>/<instance>/<id>-<slug>.draft.toml   generated (gen-rubric)
-//! rubric/<season>/<instance>/<id>-<slug>.toml         tuned by hand
+//! seasons/<season>/season.toml                    the season, its defaults
+//! seasons/<season>/<instance>/instance.toml       the raid or dungeon
+//! seasons/<season>/<instance>/<id>-<slug>.draft.toml   generated (gen-rubric)
+//! seasons/<season>/<instance>/<id>-<slug>.toml         tuned by hand
 //! ```
 //!
 //! An encounter resolves through an ordered stack of SOURCES (`Source`),
@@ -220,7 +220,7 @@ struct Layers {
     drawing: Option<Table>,
 }
 
-/// What a file under `rubric/` is, by where it lies.
+/// What a file under `seasons/` is, by where it lies.
 enum FileRole<'a> {
     /// `<season>/season.toml`.
     Season { season: &'a str },
@@ -237,7 +237,7 @@ enum FileRole<'a> {
 }
 
 impl<'a> FileRole<'a> {
-    /// A path's role, relative to `rubric/`: `None` for a file beside an
+    /// A path's role, relative to `seasons/`: `None` for a file beside an
     /// encounter's that is no TOML.
     fn of(path: &'a str) -> Result<Option<FileRole<'a>>, String> {
         let parts: Vec<&'a str> = path.split('/').collect();
@@ -361,7 +361,7 @@ impl Rubric {
         )
     }
 
-    /// The rubric from `(path, text)` pairs, paths relative to `rubric/`.
+    /// The rubric from `(path, text)` pairs, paths relative to `seasons/`.
     /// A tuned `<id>-<slug>.toml` among them is the curated tier's first
     /// set (`Source::Curated(Origin::Embedded)`); the rest is the base.
     pub fn from_files(

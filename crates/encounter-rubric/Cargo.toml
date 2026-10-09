@@ -9,7 +9,7 @@ repository.workspace = true
 
 # The one engine-side crate that names serde/toml (signed off 2026-10-05,
 # CONTRACT.md §Dependencies): the rubric is reviewed as TOML files under
-# rubric/, embedded at build time, and read here for the daemon, the
+# this crate's seasons/, embedded at build time, and read here for the daemon, the
 # extractor and the GUI alike, none of which name serde/toml themselves.
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }

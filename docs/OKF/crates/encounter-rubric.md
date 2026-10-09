@@ -1,14 +1,14 @@
 ---
 type: Crate
 title: wowdps-encounter-rubric
-description: 'The seasonal encounter rubric: per-encounter TOML under rubric/ (the room''s map and view, NPC roles, abilities and shapes, phases and their triggers, floor features, what the fight leaves on the floor, the events that change the room and the game''s spell facts), embedded at build time and resolved here for one difficulty at one tier; main carries the generated base alone.'
+description: 'The seasonal encounter rubric: per-encounter TOML under the crate''s own seasons/ (the room''s map and view, NPC roles, abilities and shapes, phases and their triggers, floor features, what the fight leaves on the floor, the events that change the room and the game''s spell facts), embedded at build time and resolved here for one difficulty at one tier; main carries the generated base alone.'
 resource: crates/encounter-rubric
 tags: [crate, replay]
 status: stable
 generated: { by: claude-code/opus-5.5, at: 2026-10-09T11:25:00-07:00 }
 sources:
   - id: readme
-    resource: ../../../rubric/README.md
+    resource: ../../../crates/encounter-rubric/README.md
     title: The rubric's schema reference, key by key
   - id: plan
     resource: ../../plan-fight-replay.md
@@ -49,14 +49,19 @@ that is not per encounter.
 - Manifest: [`crates/encounter-rubric/Cargo.toml`](../../../crates/encounter-rubric/Cargo.toml)
 - Root: [`crates/encounter-rubric/src/lib.rs`](../../../crates/encounter-rubric/src/lib.rs)
 - Schema: [`crates/encounter-rubric/src/schema.rs`](../../../crates/encounter-rubric/src/schema.rs),
-  documented key by key in [`rubric/README.md`](../../../rubric/README.md)[^readme]
+  documented key by key in the crate's [`README.md`](../../../crates/encounter-rubric/README.md)[^readme]
+- Seasons: [`crates/encounter-rubric/seasons/`](../../../crates/encounter-rubric/seasons/),
+  a directory per season (`midnight-s1`, `midnight-s2`), each with its
+  instances' directories
 
 ## Seams
 
-- **Embedded, so a change is a rebuild.** `build.rs` walks the
-  repository's `rubric/` and writes an `include_str!` per `.toml` into
-  `OUT_DIR`. The flake's source set lists `./rubric` for the same reason
-  it lists `./addon`.
+- **Embedded, so a change is a rebuild.** `build.rs` walks the crate's
+  own `seasons/` and writes an `include_str!` per `.toml` into `OUT_DIR`,
+  paths relative to it (`<season>/<instance>/<file>`, the same paths a
+  bundle and the user's directory use). The seasons live inside the crate
+  so the flake's `./crates` source set carries them, and the crate is
+  whole in itself.
 - **Raw tables merge before anything is typed.** Sources merge as
   `toml::Table`s, key by key, in the stack's order: season defaults,
   instance defaults, draft, the instance file's `[encounter.<id>]` (the

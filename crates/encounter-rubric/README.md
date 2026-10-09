@@ -11,17 +11,17 @@ combat log and the game's tables give for free:
 - the floor's fixed features
 - the moments that change the room
 
-It is TOML, reviewed like code, and embedded in the binaries at build time
-(`crates/encounter-rubric`, `wowdps-encounter-rubric`). A change takes a
-rebuild.
+It is TOML, reviewed like code, kept in this crate
+(`crates/encounter-rubric`, `wowdps-encounter-rubric`) under `seasons/`,
+and embedded in the binaries at build time. A change takes a rebuild.
 
 ## Files
 
 ```text
-rubric/<season>/season.toml                        the season and its defaults
-rubric/<season>/<instance>/instance.toml           a raid or dungeon
-rubric/<season>/<instance>/<id>-<slug>.draft.toml  generated, never edited
-rubric/<season>/<instance>/<id>-<slug>.toml        tuned by hand (curated)
+seasons/<season>/season.toml                        the season and its defaults
+seasons/<season>/<instance>/instance.toml           a raid or dungeon
+seasons/<season>/<instance>/<id>-<slug>.draft.toml  generated, never edited
+seasons/<season>/<instance>/<id>-<slug>.toml        tuned by hand (curated)
 ```
 
 The public repository carries the BASE: the drafts and the instance and
@@ -86,13 +86,14 @@ the last:
    client's fallback chain gives them, the most general first; each
    difficulty's from every source above, in the stack's order
 
-A curated set, or the user's, is a file tree shaped like this directory,
-laid as one block: its `season.toml`, its `instance.toml`, then the
-encounter's `<id>-<slug>.toml`, each over the last, and the whole block
-over everything under it. So a user's `season.toml` with `[defaults.view]`
-sets the view of every encounter of the season, over the draft and the
-instance's drawing. Such a set's `season.toml` gives only `[defaults]`, and
-its `instance.toml` only `[defaults]` and `[encounter.<id>]` (the tables an
+A curated set, or the user's, is a file tree shaped like `seasons/`, its
+paths `<season>/<instance>/<file>` relative to it, laid as one block: its
+`season.toml`, its `instance.toml`, then the encounter's `<id>-<slug>.toml`,
+each over the last, and the whole block over everything under it. So a
+user's `season.toml` with `[defaults.view]` sets the view of every
+encounter of the season, over the draft and the instance's drawing.
+Such a set's `season.toml` gives only `[defaults]`, and its `instance.toml`
+only `[defaults]` and `[encounter.<id>]` (the tables an
 instance file gives): what a season or an instance is (its name, kind,
 order) stays the base's. Every season and instance a set names must be the
 base's, an encounter's file and drawing lie where the rubric answers the
@@ -128,17 +129,17 @@ it came through. An encounter whose only file is curated or the user's
 answers from that tier up, and not below.
 
 **The curated layer comes two ways.** A tuned `<id>-<slug>.toml` beside its
-draft in this tree reads as curated (`embedded`). The public repository
+draft in `seasons/` reads as curated (`embedded`). The public repository
 carries the base alone, so there are none there, but a tree that holds
-them works unchanged. And `Rubric::with_curated(origin, files)` lays a named bundle in
-at runtime: a file set in the same `rubric/`-relative tree, laid after any
-embedded tuned file and every bundle laid before it. A bundle is laid whole
-or refused whole: a file it cannot lay, or an encounter it would make
-unreadable, is an error naming it.
+them works unchanged. And `Rubric::with_curated(origin, files)` lays a
+named bundle in at runtime: a file set in the same `seasons/`-relative
+tree, laid after any embedded tuned file and every bundle laid before it.
+A bundle is laid whole or refused whole: a file it cannot lay, or an
+encounter it would make unreadable, is an error naming it.
 
 **The user's files** live in `$XDG_CONFIG_HOME/wowdps/rubric/` (else
-`~/.config/wowdps/rubric/`), in the same tree: `<season>/season.toml`,
-`<season>/<instance>/instance.toml` and
+`~/.config/wowdps/rubric/`), a tree that mirrors `seasons/`:
+`<season>/season.toml`, `<season>/<instance>/instance.toml` and
 `<season>/<instance>/<id>-<slug>.toml`. `Rubric::with_user_dir(None)` reads
 every `.toml` there, and `with_user(files)` lays a file set given in hand.
 A file that cannot be read, parsed or laid, or that would make an

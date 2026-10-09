@@ -2,7 +2,7 @@
 //! (`Rubric::with_curated`) and the user's own files (`Rubric::with_user`,
 //! `Rubric::with_user_dir`).
 //!
-//! A set is a tree shaped like `rubric/`, paths relative to it. Its files
+//! A set is a tree shaped like `seasons/`, paths relative to it. Its files
 //! may be a `<season>/season.toml` (`[defaults]` alone), an
 //! `<season>/<instance>/instance.toml` (`[defaults]` and the
 //! `[encounter.<id>]` drawing tables an instance file may give) and
@@ -100,7 +100,7 @@ impl Rubric {
 
     /// The rubric with the user's own files laid over everything
     /// (`Source::User`), paths relative to the user's rubric directory as
-    /// to `rubric/`. A file that cannot be laid, or that would make an
+    /// to `seasons/`. A file that cannot be laid, or that would make an
     /// encounter unreadable, is named in `user_errors` and left out; the
     /// rest are laid.
     pub fn with_user(self, files: impl IntoIterator<Item = (String, String)>) -> Rubric {

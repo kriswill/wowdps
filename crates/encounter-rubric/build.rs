@@ -1,6 +1,6 @@
-//! Embeds every file under the repository's `rubric/` directory: the
-//! seasons' TOML, so a binary carries the rubric it was built with. A file
-//! added, changed or removed there rebuilds this crate.
+//! Embeds every file under the crate's `seasons/` directory: the seasons'
+//! TOML, so a binary carries the rubric it was built with. A file added,
+//! changed or removed there rebuilds this crate.
 
 use std::path::{Path, PathBuf};
 
@@ -20,7 +20,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 
 fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default());
-    let root = manifest.join("../../rubric");
+    let root = manifest.join("seasons");
     println!("cargo::rerun-if-changed={}", root.display());
     let mut files = Vec::new();
     walk(&root, &mut files);

@@ -9,7 +9,7 @@
 //! names the `Tier` it belongs to, so a reader capped at a tier reads the
 //! sources up to it alone.
 //!
-//! A curated or user set is a file tree shaped like `rubric/`, laid in as
+//! A curated or user set is a file tree shaped like `seasons/`, laid in as
 //! one block: its `season.toml` (`[defaults]` alone), its `instance.toml`
 //! (`[defaults]` and the `[encounter.<id>]` drawing tables), then its
 //! `<id>-<slug>.toml`, each over the last, and the whole block over
