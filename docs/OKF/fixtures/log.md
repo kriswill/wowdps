@@ -15,8 +15,9 @@
 - **Update** — [tree.txt](tree.md): nine `SPELL_CAST_START` lines — one
   cancelled Chaos Bolt, four that land nowhere — gated as `cast_starts`, a new
   golden row on every fixture.
-- **Update** — [taken.txt](taken.md): six hits carry real `unmitigated`
-  amounts (one amplified, floored at 0), and every golden gains `reduced`
+- **Update** — [taken.txt](taken.md): seven hits carry real `unmitigated`
+  amounts (six rewritten, Durgan's Cinder Lash already did; one amplified,
+  floored at 0), and every golden gains `reduced`
   after `stagger_ticked` — 33 000 / 13 500 / 1 000 here, 1 000 on
   [sample.txt](sample.md)'s Hollow Rot tick, 0 elsewhere
   ([decision](../decisions/armor-is-mitigation.md)). Every fixture's gear

@@ -25,7 +25,7 @@ Celestial Brew, an Ember Bolt by Pyralis's Ice Barrier. Since
 identity above holds with them on both sides, and `mitigated_pct` reads what
 it read before ([A Hit A Shield Took Whole Is A Hit](../decisions/whole-absorb-is-a-hit.md)).
 
-Since 2026-10-08 six hits carry a real `unmitigated` amount (and their
+Since 2026-10-08 seven hits carry a real `unmitigated` amount (and their
 `_LANDED` twins, which nothing reads): an armored, partly blocked swing on
 Durgan, his partly absorbed Cinder Lash, Zenlí's staggered swing and his
 whole-absorbed Smoldering tick, the Water Elemental's hit folding onto

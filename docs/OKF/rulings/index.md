@@ -1,6 +1,6 @@
 # rulings
 
-CONTRACT.md's binding rulings R1–R26 — what counts as damage, healing, absorbs, segments, pets, visits, taken, spans, support, shields, self-harm, death spans, enemy damage taken, the raid timeline and the ability tree — one doc per ruling, scaffolded from the rulings table.
+CONTRACT.md's binding rulings R1–R27 — what counts as damage, healing, absorbs, segments, pets, visits, taken, spans, support, shields, self-harm, death spans, enemy damage taken, the raid timeline, the ability tree and resources — one doc per ruling, scaffolded from the rulings table.
 
 ## Concepts
 
