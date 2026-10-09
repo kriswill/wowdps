@@ -51,6 +51,11 @@
 //! already numbered (an aura on it, or a heal on it where the heal found
 //! it); and a made unit dying or destroyed.
 //!
+//! THE MARKERS: those standing on the pull's map at t 0 (from the seeds),
+//! then each placement there and each removal. A marker's number is one
+//! object, so placed on another map while it stands here it has left: a
+//! removal.
+//!
 //! ## Differences from the text cutter
 //!
 //! The replay spike's inputs were cut by `wowdps-extract cut-pull`, which
@@ -328,6 +333,20 @@ impl Cutter {
         cur != u.guid && ours(cur)
     }
 
+    /// A marker placed: a marker's number is one object, so placed on
+    /// `map` it is gone from any other map it stood on.
+    fn stand_marker(&mut self, map: u32, marker: u32, at: (i32, i32)) {
+        self.lift_marker(marker);
+        self.on.entry(map).or_default().insert(marker, at);
+    }
+
+    /// A marker removed: off every map.
+    fn lift_marker(&mut self, marker: u32) {
+        for markers in self.on.values_mut() {
+            markers.remove(&marker);
+        }
+    }
+
     /// A `SPELL_SUMMON`: who made the unit (never itself, never no unit).
     fn summon(&mut self, owner: &LogUnit, pet: &LogUnit) {
         if pet.guid != owner.guid && pet.guid != NOBODY && pet.guid.contains('-') {
@@ -374,22 +393,8 @@ impl Cutter {
                 marker,
                 x,
                 y,
-            } => {
-                // A marker's number is one object: placed here, it is gone
-                // from any other map it stood on.
-                for markers in self.on.values_mut() {
-                    markers.remove(marker);
-                }
-                self.on
-                    .entry(*map_id)
-                    .or_default()
-                    .insert(*marker, (*x, *y));
-            }
-            Ev::MarkerRemoved { marker } => {
-                for markers in self.on.values_mut() {
-                    markers.remove(marker);
-                }
-            }
+            } => self.stand_marker(*map_id, *marker, (*x, *y)),
+            Ev::MarkerRemoved { marker } => self.lift_marker(*marker),
             _ => {}
         }
     }
@@ -531,18 +536,39 @@ impl Cutter {
                 marker,
                 x,
                 y,
-            } if *map_id == self.head.map => self.markers.push(Marker {
-                t_ms: t,
-                kind: MarkerKind::Placed,
-                marker: u8::try_from(*marker).unwrap_or(u8::MAX),
-                at: Some((*x, *y)),
-            }),
-            Ev::MarkerRemoved { marker } => self.markers.push(Marker {
-                t_ms: t,
-                kind: MarkerKind::Removed,
-                marker: u8::try_from(*marker).unwrap_or(u8::MAX),
-                at: None,
-            }),
+            } => {
+                // Placed on the pull's map: a placement. Placed elsewhere
+                // while it stood here: it left (one object), a removal —
+                // or the replay would keep drawing it where it was.
+                let here = self.head.map;
+                let stood_here = self.on.get(&here).is_some_and(|m| m.contains_key(marker));
+                self.stand_marker(*map_id, *marker, (*x, *y));
+                let marker = u8::try_from(*marker).unwrap_or(u8::MAX);
+                if *map_id == here {
+                    self.markers.push(Marker {
+                        t_ms: t,
+                        kind: MarkerKind::Placed,
+                        marker,
+                        at: Some((*x, *y)),
+                    });
+                } else if stood_here {
+                    self.markers.push(Marker {
+                        t_ms: t,
+                        kind: MarkerKind::Removed,
+                        marker,
+                        at: None,
+                    });
+                }
+            }
+            Ev::MarkerRemoved { marker } => {
+                self.lift_marker(*marker);
+                self.markers.push(Marker {
+                    t_ms: t,
+                    kind: MarkerKind::Removed,
+                    marker: u8::try_from(*marker).unwrap_or(u8::MAX),
+                    at: None,
+                });
+            }
             Ev::CombatantInfo {
                 guid,
                 spec_id: Some(id),

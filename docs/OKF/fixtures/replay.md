@@ -21,7 +21,8 @@ check.awk as its other tables are.
 - [R29 The replay cut](../rulings/r29.md): the floor (seven votes on 2434,
   one on 2435, whose post is dropped), units in order of first sight, the
   thirteen event kinds, the four placed kinds, the markers standing at the
-  start (a marker removed and re-placed before the pull) and each change;
+  start (a marker removed and re-placed before the pull) and each change — one
+  placed on another map while it stood on the pull's is its removal;
   a swing whose amount equals the floor's id posted once, as the parser
   reads it; a name with a comma.
 - [R22 Self-harm](../rulings/r22.md): Spirit Link Totem's
