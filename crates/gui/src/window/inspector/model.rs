@@ -17,9 +17,10 @@ use wowdps_gui_logic::inspect::geometry::PLOT_H;
 use wowdps_gui_logic::inspect::list::{Kind, Room};
 use wowdps_gui_logic::inspect::matrix::matrices;
 use wowdps_gui_logic::inspect::nums::{
-    Num, Tally, mit_pieces, num, player_nums, plays, total_word,
+    Num, Tally, energize_line, mit_pieces, num, player_nums, plays, total_word,
 };
 use wowdps_gui_logic::inspect::plot::{Curve, Dead, Ink};
+use wowdps_gui_logic::inspect::power::{PowerLine, healer_mana};
 use wowdps_gui_logic::inspect::recap::{Recap, died_words};
 use wowdps_gui_logic::inspect::{Roster, lanes, stack, wide};
 use wowdps_gui_logic::labels::{rate_label, realmless, realmless_rows, shown_name};
@@ -147,6 +148,9 @@ pub struct Head {
     /// A single row's amount against the top row's (0..=1) — its meter bar's
     /// length — for a theme that sweeps it round the crest (`effects.dial`).
     pub sweep: Option<f32>,
+    /// R27 (v44): what energized the drilled player, a line under the one
+    /// above (`nums::energize_line`) — `None` when nothing did.
+    pub energy: Option<String>,
 }
 
 /// One action (`.btn`): its glyph, its words, pressed or not, what it does
@@ -183,6 +187,9 @@ pub struct Graph {
     pub range_to: RangeTo,
     /// The plot's height: taller in a widened inspector.
     pub plot_h: f32,
+    /// R28 (v44): a healer's mana as a thin line under the plot
+    /// (`power::healer_mana`) — `None` for anyone else.
+    pub power: Option<PowerLine>,
 }
 
 /// An opened ability's strip: the crumb and its numbers.
@@ -490,6 +497,7 @@ impl Insp {
                 name: Vec::new(),
                 sub: String::new(),
                 sweep: None,
+                energy: None,
             },
             nums: Vec::new(),
             acts: Vec::new(),
@@ -630,6 +638,7 @@ fn graph_of(
         word,
         range_to,
         plot_h: PLOT_H,
+        power: None,
     }
 }
 
@@ -870,6 +879,10 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         name: vec![cx.piece(shown_name(&drill.label, hide), class)],
         sub: sub.join(", "),
         sweep: row.map(|r| against_top(r, rows)),
+        // R27 (v44): the resources the drill carries, in a line of words.
+        energy: app
+            .drill_breakdown()
+            .and_then(|b| energize_line(&b.energize)),
     };
     let nums = row.map(|r| player_nums(view, rows, r)).unwrap_or_default();
 
@@ -957,6 +970,10 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     // they (or the opened one) add up to.
     let mut graph = graph;
     if let Some(g) = graph.as_mut() {
+        // R28 (v44): a healer's mana runs under their graph.
+        g.power = app
+            .drill_breakdown()
+            .and_then(|b| healer_mana(spec, &b.power));
         let rows: Vec<Row> = match &spell {
             Some(_) => spell_row.iter().cloned().collect(),
             None => app.breakdown().0,
@@ -1220,6 +1237,7 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             name: vec![cx.piece(shown_name(&drill.label, hide), class)],
             sub: sub.join(", "),
             sweep: None,
+            energy: None,
         },
         nums,
         acts,
@@ -1350,6 +1368,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             }],
             sub: "Enemy, every unit with this name folded together".to_string(),
             sweep: row.map(|r| against_top(r, rows)),
+            energy: None,
         },
         nums: row
             .map(|r| player_nums(View::EnemyTaken, rows, r))
@@ -1405,6 +1424,7 @@ fn pair(cx: &Ctx, rows: &[Row]) -> Insp {
         ],
         sub: "One scale, one time axis. Move to swap the second player, v to stop.".to_string(),
         sweep: None,
+        energy: None,
     };
     let metric = app.compare_view();
     let rate = metric.is_rate();

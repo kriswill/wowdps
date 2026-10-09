@@ -1,5 +1,22 @@
 # Log
 
+## 2026-10-09
+
+- **Update** — [tree.txt](tree.md): an Evoker, Ember, with nineteen Fire
+  Breath and Dream Breath lines (releases at stages 1, 3 and 4, two cancels,
+  one before the pull and one after the kill) gated as `empower_stage1`..`4`
+  and `empower_cancelled`; the pull's `pct` and Vexxa's `healed_received`
+  move with her.
+- **Update** — [support.txt](support.md): two of the Holy Priest's heals
+  carry a heal-absorb's part (one capped), gated as `heal_absorbed` — 11 000.
+- **Update** — every gated fixture ([sample.txt](sample.md),
+  [taken.txt](taken.md), [support.txt](support.md), [spans.txt](spans.md),
+  [shields.txt](shields.md), `stacks.txt`, [tree.txt](tree.md),
+  [relog.txt](relog.md)):
+  eight new golden rows per player — `heal_absorbed`, the five empower
+  counts and [R28](../rulings/r28.md)'s `power_seconds` / `power_sum` /
+  `power_max`, recomputed from the fixtures' own advanced blocks.
+
 ## 2026-10-08
 
 - **Update** — [support.txt](support.md): a Spellsteal by the Fire Mage —

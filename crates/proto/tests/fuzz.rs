@@ -73,6 +73,7 @@ fn row(key: &str, class: Option<Class>) -> Row {
         mine: class.is_some(),
         offset_ms: class.map(|_| -250),
         absorb: None,
+        heal_absorbed: 0,
     }
 }
 
@@ -285,6 +286,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 tree: Default::default(),
                 ability_series: Vec::new(),
                 target_series: Vec::new(),
+                energize: Vec::new(),
+                power: Vec::new(),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -442,6 +445,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     wasted: 0.25,
                     count: u32::MAX,
                 }],
+                power: Vec::new(),
             }),
         },
         // v26: the last answer tag with every row field distinct, so the

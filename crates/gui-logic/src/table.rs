@@ -572,6 +572,7 @@ mod tests {
             mine: false,
             offset_ms: None,
             absorb: None,
+            heal_absorbed: 0,
         }
     }
 

@@ -366,3 +366,34 @@ the boss — a `SPELL_STOLEN` line, which the parser keeps apart from a dispel
 **`dispels` reads 1** in the encounter (0 before), its drill row
 "Eternal Flame (Spellsteal)". The line is combat to the index scanner, inside
 the pull, so no segment moves and nothing else does.
+
+## 2026-10-09: what a heal-absorb ate (`heal_absorbed`, R2, v44)
+
+Two of the Holy Priest's (Seraphíne, `0A1B2C24`) heal lines carry an
+`absorbed` field above 0 — the part of the heal a heal-absorb took, already
+inside `amount`. R2 keeps it healing done (nothing in `heal`, `overheal`,
+`healed_received` or any identity above moves) and surfaces it, capped at
+what the line healed:
+
+| ts | spell | amount / overheal / absorbed | healed | eaten |
+|---|---|---|---|---|
+| 22:05:21 | Flash Heal → Brakkar | 28 000 / 8 000 / 6 000 | 20 000 | 6 000 |
+| 22:05:30 | Renew tick → herself | 8 000 / 3 000 / 9 000 | 5 000 | **5 000** (capped: the log's 9 000 exceeds what the line healed, as a real Shadow Priest's self-heals do) |
+
+So the encounter: **Seraphíne `heal_absorbed` 11 000** (of her healing),
+every other player 0, the trash 0. On her drill the Flash Heal row reads
+6 000 and Renew 5 000.
+
+## 2026-10-09: power (`power_seconds` / `power_sum` / `power_max`, R28)
+
+Every advanced block that describes a player with a pool writes that
+player's second of that power type (the last report of a second wins). In
+the encounter (from 22:05:00): Brakkar's rage on seven seconds (Σ 480, max
+100), Vessyra's mana at 0:02 (150 000) and 0:31 (140 000), Seraphíne's at
+0:17 (180 000, her Renew tick and its support line in one second) and 0:30
+(176 000) — Σ 290 000 and 356 000, max 250 000 each; the Mage is never the
+unit a block describes (her lines describe the boss), and the Water
+Elemental's pool is its own. The city trash: Brakkar's 60 rage once — the
+swing that OPENS it reports into nothing (the report is read before its
+line can open a segment), the boar's swing landing on him two seconds
+later reports.

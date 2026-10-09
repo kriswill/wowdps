@@ -123,7 +123,16 @@ stacking: per fight × victim × debuff seen — spell_id, label, src (the
 applier's name), max_level (≥ 2 = a stacking one), hits, and the victim's
 dropped count. stack_base: per fight × victim × damage spell ID — hits,
 sum, misses — the UNCONDITIONED baseline, so level 0 derives exactly per id
-(the recipe). Recipes: docs/history-queries.md.";
+(the recipe).
+
+v44: `players` carries heal_absorbed, the third half of the healing split
+(R2: what a heal-absorb ate of the healing — inside healing; 0 on a card
+that predates it, and the column always exists). power (R28, only once
+some details file carries it): per fight × player × power type — guid,
+power_type, max (the largest reported), bucket_ms (1000) and per_sec, a
+BIGINT list of the current power on the last line of each second, NULL
+where no line reported; a pet's pool is never its owner's. Recipes:
+docs/history-queries.md.";
 
 fn main() {
     let code = match run(std::env::args().skip(1).collect()) {

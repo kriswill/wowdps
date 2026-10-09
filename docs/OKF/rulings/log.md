@@ -1,5 +1,19 @@
 # Log
 
+## 2026-10-09
+
+- **Creation** — [R28 Power (the pool, second by second)](r28.md): each
+  player's power per type as a 1 s series — the last report of a second, the
+  largest max, gaps empty, never a pet's — passive, on the details tier and
+  the drill (v44; [decision](../decisions/a-pool-second-by-second.md)).
+- **Update** — [R27 Resources (energize)](r27.md): the live drill carries
+  `energize` too, and the window's inspector says it under the head (v44).
+- **Update** — [R26 Ability tree](r26.md): an empowered spell's row counts
+  its releases by stage and its cancels (`SpellMeta::empower`, v44).
+- **Update** — [R2 Healing](r2.md): a heal-absorb's part stays healing done
+  and is surfaced as `heal_absorbed`, capped at what the line healed (v44;
+  [decision](../decisions/a-heal-absorb-is-healing.md)).
+
 ## 2026-10-08
 
 - **Update** — [R15 Count views & labels](r15.md): the Dispels drill names what

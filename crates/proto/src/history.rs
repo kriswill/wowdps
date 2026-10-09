@@ -26,7 +26,7 @@ use wowdps_model::{
     Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
     View,
 };
-use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
+use wowdps_model::{Empower, GroupKind, PowerSeries, SpellGroup, SpellMeta, SpellPart, SpellTree};
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
 /// socket can move without the files moving. A record whose `schema` is
@@ -282,6 +282,11 @@ pub struct CardPlayer {
     /// by. 0 on a card written before it (its `mitigated` lacks it too, so
     /// its pct is the one it always had).
     pub reduced: u64,
+    /// R2 (v44): the part of `healing` a heal-absorb ate
+    /// (`Segment::heal_absorbed`) — healing done all the same, the third
+    /// half of the healing split beside `overheal` and `absorbed`. 0 on a
+    /// card written before it.
+    pub heal_absorbed: u64,
     /// v31: the player's guild as the wowdps addon last saw them — joined
     /// from `affiliations/` when a card is ANSWERED, never stored on it
     /// (`to_json` skips it, `from_json` reads `None`): the addon's file
@@ -665,6 +670,8 @@ impl CardPlayer {
             "shields_unknown": Json::num(self.shields_unknown),
             // v43 (R17 amendment), trailing so every older line's prefix stands.
             "reduced": Json::u64(self.reduced),
+            // v44 (R2): what a heal-absorb ate of the healing, trailing.
+            "heal_absorbed": Json::u64(self.heal_absorbed),
         }
     }
 
@@ -712,6 +719,8 @@ impl CardPlayer {
             shields_unknown: u32_of(v, "shields_unknown").unwrap_or(0),
             // v43: armor's share; a card written before it has none.
             reduced: u64_of(v, "reduced").unwrap_or(0),
+            // v44 (R2): a card written before it has none.
+            heal_absorbed: u64_of(v, "heal_absorbed").unwrap_or(0),
             // v31: never stored; the store joins it when it answers.
             guild: None,
         })
@@ -1419,6 +1428,10 @@ pub struct PlayerDetail {
     /// v43 (R27): the player's resources, per power type ascending
     /// (`Segment::energize`). Empty on a details file written before it.
     pub energize: Vec<EnergizeRow>,
+    /// v44 (R28): the player's pools second by second, one series per
+    /// power type ascending (`Segment::power`) — demoted with the rest of
+    /// the details. Empty on a details file written before it.
+    pub power: Vec<PowerSeries>,
 }
 
 /// v42: the views [`PlayerDetail::counts`] keeps, in order.
@@ -1487,6 +1500,9 @@ impl FightDetails {
                     "wasted": Json::num(e.wasted),
                     "count": Json::num(e.count),
                 }).collect()),
+                // v44 (R28): the power series, `null` where a second had no
+                // report.
+                "power": Json::Arr(p.power.iter().map(power_json).collect()),
             }).collect()),
         }
     }
@@ -1541,6 +1557,12 @@ impl FightDetails {
                                         })
                                         .collect()
                                 })
+                                .unwrap_or_default(),
+                            // v44: absent before, and empty then.
+                            power: p
+                                .get("power")
+                                .and_then(Json::as_arr)
+                                .map(|a| a.iter().filter_map(power_from).collect())
                                 .unwrap_or_default(),
                         })
                     })
@@ -1736,6 +1758,8 @@ pub fn row_json(r: &Row) -> Json {
         "spell_id": Json::num(r.spell_id),
         "enemy": Json::Bool(r.enemy),
         "school": Json::num(r.school),
+        // v44 (R2): a Healing row's eaten part, 0 on every other row.
+        "heal_absorbed": Json::u64(r.heal_absorbed),
     }
 }
 
@@ -1768,6 +1792,8 @@ pub fn row_from(v: &Json) -> Option<Row> {
         offset_ms: i64_of(v, "offset_ms"),
         // v43: likewise a recap event's alone; absent = unknown.
         absorb: u64_of(v, "absorb"),
+        // v44 (R2): absent on a row written before it, and 0 there.
+        heal_absorbed: u64_of(v, "heal_absorbed").unwrap_or(0),
     })
 }
 
@@ -1861,6 +1887,36 @@ pub fn timeline_json(t: &Timeline) -> Json {
 
 /// R26: a player's ability tree — `groups` and `rows`, each group's `kind`
 /// by name, each part's `periodic` a bool.
+/// R28 (v44): one power series as the details tier keeps it — its type,
+/// largest max, grid and a value or `null` per second.
+pub fn power_json(s: &PowerSeries) -> Json {
+    obj! {
+        "power_type": Json::num(s.power_type),
+        "max": Json::num(s.max),
+        "bucket_ms": Json::num(s.bucket_ms),
+        "per_sec": Json::Arr(s.per_sec.iter().map(|v| v.map_or(Json::Null, Json::num)).collect()),
+    }
+}
+
+/// R28: `None` without a `power_type`; a value that is not a number reads
+/// as no report.
+pub fn power_from(v: &Json) -> Option<PowerSeries> {
+    Some(PowerSeries {
+        power_type: u32_of(v, "power_type")?,
+        max: u32_of(v, "max").unwrap_or(0),
+        bucket_ms: u32_of(v, "bucket_ms").unwrap_or(1000),
+        per_sec: v
+            .get("per_sec")
+            .and_then(Json::as_arr)
+            .map(|a| {
+                a.iter()
+                    .map(|x| x.as_u64().and_then(|n| u32::try_from(n).ok()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
 pub fn spell_tree_json(t: &SpellTree) -> Json {
     obj! {
         "groups": Json::Arr(t.groups.iter().map(|g| obj! {
@@ -1869,24 +1925,53 @@ pub fn spell_tree_json(t: &SpellTree) -> Json {
             "spell_id": Json::num(g.spell_id),
             "kind": Json::str(g.kind.name()),
         }).collect()),
-        "rows": Json::Arr(t.rows.iter().map(|m| obj! {
-            "key": Json::str(&*m.key),
-            "group": Json::str(&*m.group),
-            "casts": Json::u64(m.casts),
-            "misses": Json::u64(m.misses),
-            "uptime_ms": Json::u64(m.uptime_ms),
-            // v43: the casts that began; absent on an older file reads 0.
-            "starts": Json::u64(m.starts),
-            "parts": Json::Arr(m.parts.iter().map(|p| obj! {
-                "spell_id": Json::num(p.spell_id),
-                "periodic": Json::Bool(p.periodic),
-                "amount": Json::u64(p.amount),
-                "extra": Json::u64(p.extra),
-                "count": Json::u64(p.count),
-                "crits": Json::u64(p.crits),
-            }).collect()),
+        "rows": Json::Arr(t.rows.iter().map(|m| {
+            let mut o = obj! {
+                "key": Json::str(&*m.key),
+                "group": Json::str(&*m.group),
+                "casts": Json::u64(m.casts),
+                "misses": Json::u64(m.misses),
+                "uptime_ms": Json::u64(m.uptime_ms),
+                // v43: the casts that began; absent on an older file reads 0.
+                "starts": Json::u64(m.starts),
+                "parts": Json::Arr(m.parts.iter().map(|p| obj! {
+                    "spell_id": Json::num(p.spell_id),
+                    "periodic": Json::Bool(p.periodic),
+                    "amount": Json::u64(p.amount),
+                    "extra": Json::u64(p.extra),
+                    "count": Json::u64(p.count),
+                    "crits": Json::u64(p.crits),
+                }).collect()),
+            };
+            // v44 (R26): an empowered spell's releases by stage and its
+            // cancels — on its row alone; absent elsewhere reads empty.
+            if let (Json::Obj(fields), false) = (&mut o, m.empower.is_empty()) {
+                fields.push((
+                    "empower".to_string(),
+                    obj! {
+                        "stages": Json::Arr(m.empower.stages.iter().map(|n| Json::u64(*n)).collect()),
+                        "cancelled": Json::u64(m.empower.cancelled),
+                    },
+                ));
+            }
+            o
         }).collect()),
     }
+}
+
+/// R26 (v44): a stored row's empower counts — four stages and the
+/// cancels; a missing or short list reads its stages as 0.
+fn empower_from(v: &Json) -> Empower {
+    let mut e = Empower {
+        cancelled: u64_of(v, "cancelled").unwrap_or(0),
+        ..Empower::default()
+    };
+    if let Some(a) = v.get("stages").and_then(Json::as_arr) {
+        for (slot, n) in e.stages.iter_mut().zip(a) {
+            *slot = n.as_u64().unwrap_or(0);
+        }
+    }
+    e
 }
 
 /// R26: a missing tree (a details file written before v36) reads as the
@@ -1919,6 +2004,8 @@ pub fn spell_tree_from(v: Option<&Json>) -> SpellTree {
                 misses: u64_of(m, "misses").unwrap_or(0),
                 uptime_ms: u64_of(m, "uptime_ms").unwrap_or(0),
                 starts: u64_of(m, "starts").unwrap_or(0),
+                // v44: absent on every row but an empowered spell's.
+                empower: m.get("empower").map(empower_from).unwrap_or_default(),
                 parts: m
                     .get("parts")
                     .and_then(Json::as_arr)

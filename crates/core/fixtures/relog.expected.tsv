@@ -53,6 +53,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	dot_uptime_ms	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	energize_gained	0.0000
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	energize_wasted	0.0000
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	heal_absorbed	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	empower_stage1	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	empower_stage2	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	empower_stage3	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	empower_stage4	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	empower_cancelled	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	power_seconds	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	power_sum	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	power_max	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	damage	5000
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	overkill	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	petdamage	5000
@@ -107,6 +116,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	dot_uptime_ms	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	energize_gained	0.0000
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	energize_wasted	0.0000
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	heal_absorbed	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	empower_stage1	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	empower_stage2	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	empower_stage3	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	empower_stage4	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	empower_cancelled	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	power_seconds	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	power_sum	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	power_max	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	damage	3000
 2	Trash	Trash		2000			Player-1168-0A1B2C01	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	petdamage	0
@@ -161,6 +179,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C01	dot_uptime_ms	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	energize_gained	0.0000
 2	Trash	Trash		2000			Player-1168-0A1B2C01	energize_wasted	0.0000
+2	Trash	Trash		2000			Player-1168-0A1B2C01	heal_absorbed	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	empower_stage1	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	empower_stage2	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	empower_stage3	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	empower_stage4	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	empower_cancelled	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	power_seconds	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	power_sum	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	power_max	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	damage	20000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	overkill	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	petdamage	0
@@ -215,6 +242,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	dot_uptime_ms	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	energize_gained	0.0000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	energize_wasted	0.0000
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	heal_absorbed	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	empower_stage1	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	empower_stage2	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	empower_stage3	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	empower_stage4	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	empower_cancelled	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	power_seconds	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	power_sum	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	power_max	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	damage	10000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	overkill	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	petdamage	10000
@@ -269,3 +305,12 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	dot_uptime_ms	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	energize_gained	0.0000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	energize_wasted	0.0000
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	heal_absorbed	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	empower_stage1	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	empower_stage2	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	empower_stage3	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	empower_stage4	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	empower_cancelled	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	power_seconds	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	power_sum	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	power_max	0

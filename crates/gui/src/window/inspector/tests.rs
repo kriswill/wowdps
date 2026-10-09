@@ -384,3 +384,117 @@ fn a_drag_on_the_graph_scopes_the_ability_list(cx: &mut TestAppContext) {
     settle(cx, &rig.session);
     assert_eq!(sum(cx), whole, "a right press gives the whole fight back");
 }
+
+/// v44 (R2, R27, R28): a healer's Healing drill reads what a heal-absorb
+/// ate of their healing beside the overheal, what energized them under the
+/// head, and their mana as a line under the graph — the support fixture's
+/// Holy Priest, whose Flash Heal and a Renew tick were partly eaten and
+/// whose own lines report her mana.
+#[gpui_kit::test]
+fn a_healer_s_drill_reads_the_eaten_part_and_their_mana(cx: &mut TestAppContext) {
+    use wowdps_model::View;
+    let rig = rig_on(cx, 1440., 900., MockLink::at("support.txt"));
+    for _ in 0..4 {
+        let name = rig.session.read_with(cx, |s, _| s.state().segment_name());
+        if name.as_deref() == Some("Support Test Boss") {
+            break;
+        }
+        rig.session.update(cx, |s, cx| {
+            s.act(|st| st.apply(Action::OlderSegment), cx);
+        });
+        settle(cx, &rig.session);
+    }
+    rig.session.update(cx, |s, cx| {
+        s.act(|st| st.apply(Action::SetView(View::Healing)), cx);
+    });
+    settle(cx, &rig.session);
+    let priest = rig.session.read_with(cx, |s, _| {
+        s.state()
+            .rows()
+            .iter()
+            .position(|r| r.label.starts_with("Seraph"))
+    });
+    let priest = priest.expect("the support fixture's Priest");
+    rig.session.update(cx, |s, cx| {
+        s.act(|st| st.select_row(priest), cx);
+    });
+    settle(cx, &rig.session);
+    let insp = rig.gui.update(cx, |g, cx| {
+        let w = crate::window::w::W::new(1.0, 1440., cx);
+        g.insp(&w, cx)
+    });
+    let eaten = insp
+        .nums
+        .iter()
+        .position(|n| n.label == "Heal absorbed")
+        .expect("the eaten part");
+    assert_eq!(insp.nums[eaten].value, "11.0k");
+    assert_eq!(
+        insp.nums[eaten - 1].label,
+        "Overheal",
+        "beside the overheal"
+    );
+    let graph = insp.graph.as_ref().expect("the healing curve");
+    let mana = graph.power.as_ref().expect("a healer's mana under it");
+    assert_eq!(mana.label, "Mana");
+    assert!(mana.fractions.iter().any(Option::is_some));
+    assert!(mana.fractions.iter().any(Option::is_none), "gaps stay gaps");
+    // Nothing energized her in this fixture: no line under the head.
+    assert_eq!(insp.head.energy, None);
+    // And the window draws the strip under the plot.
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("inspector-power").is_some(),
+            "the mana strip"
+        );
+        assert!(window.try_find("inspector-energy").is_none());
+    })
+    .unwrap();
+
+    // A dps drill on the same view draws no mana line.
+    let mage = rig.session.read_with(cx, |s, _| {
+        s.state()
+            .rows()
+            .iter()
+            .position(|r| r.label.starts_with("Ignatia"))
+    });
+    if let Some(mage) = mage {
+        rig.session.update(cx, |s, cx| {
+            s.act(|st| st.select_row(mage), cx);
+        });
+        settle(cx, &rig.session);
+        let insp = rig.gui.update(cx, |g, cx| {
+            let w = crate::window::w::W::new(1.0, 1440., cx);
+            g.insp(&w, cx)
+        });
+        assert!(insp.graph.as_ref().is_none_or(|g| g.power.is_none()));
+    }
+}
+
+/// R27 (v44): what energized the drilled player rides the live drill, and
+/// the head says it under the line about who they are — the Warlock's
+/// shard fragments, a whole one, a half and one the cap ate.
+#[gpui_kit::test]
+fn the_head_says_what_energized_them(cx: &mut TestAppContext) {
+    let rig = tree_rig(cx, 1440., 900.);
+    let insp = rig.gui.update(cx, |g, cx| {
+        let w = crate::window::w::W::new(1.0, 1440., cx);
+        g.insp(&w, cx)
+    });
+    assert_eq!(
+        insp.head.energy.as_deref(),
+        Some("Soul shards 1.5 gained, 1 wasted")
+    );
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("inspector-energy").is_some(), "the line");
+        assert!(
+            window.try_find("inspector-power").is_none(),
+            "no mana strip"
+        );
+    })
+    .unwrap();
+    // A dps has no mana line, whatever they report.
+    assert!(insp.graph.as_ref().is_none_or(|g| g.power.is_none()));
+}

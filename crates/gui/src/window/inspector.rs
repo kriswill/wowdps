@@ -4,14 +4,15 @@
 //! follows the selection through `ClientState`'s opt-in follow-selection,
 //! so every move of the meter's selection re-watches with that row as the
 //! drill. The model is `model.rs`, the frame `view.rs`, the lists
-//! `list.rs`, the recap `recap.rs`; the graph, the R21 matrices and the
-//! death chips are their own components.
+//! `list.rs`, the recap `recap.rs`; the graph, the R21 matrices, the death
+//! chips and (R28) a healer's mana strip are their own components.
 
 pub mod chips;
 pub mod list;
 pub mod matrix;
 pub mod model;
 pub mod plot;
+pub mod power;
 pub mod recap;
 pub mod view;
 

@@ -21,7 +21,9 @@ use wowdps_daemon::history::HistoryOptions;
 use wowdps_daemon::{DaemonOptions, run};
 use wowdps_history::Lake;
 use wowdps_mcp::grade::grade;
-use wowdps_model::{Mark, MarkKind, MissKind, Mitigation, Role, Row, Spec, UptimeCell, View};
+use wowdps_model::{
+    Mark, MarkKind, MissKind, Mitigation, PowerSeries, Role, Row, Spec, UptimeCell, View,
+};
 use wowdps_proto::history::{
     CardPlayer, FightCard, FightKind, FightRows, PlayerCoarse, PlayerMitigation, PlayerShields,
     PlayerSupport, PlayerUptime, TakenOther,
@@ -2001,6 +2003,74 @@ fn the_support_views_answer_the_r19_fixture() {
         "Σ effective_dps_sql × secs = {back}"
     );
 
+    // v44 (R2): the healing split's third half, what a heal-absorb ate —
+    // the Priest's Flash Heal 6 000 and the Renew tick's capped 5 000 —
+    // equal in `players` and on the daemon's card.
+    let t = lake
+        .sql("SELECT guid, heal_absorbed FROM players ORDER BY guid")
+        .unwrap();
+    let mut by_guid: Vec<(&str, u64)> = card
+        .players
+        .iter()
+        .map(|p| (p.guid.as_str(), p.heal_absorbed))
+        .collect();
+    by_guid.sort();
+    assert_eq!(
+        t.rows
+            .iter()
+            .map(|r| (cell_str(&r[0]), r[1].as_u64().unwrap()))
+            .collect::<Vec<_>>(),
+        by_guid
+            .iter()
+            .map(|(g, n)| (g.to_string(), *n))
+            .collect::<Vec<_>>()
+    );
+    assert!(by_guid.contains(&(PRIEST, 11_000)), "{by_guid:?}");
+
+    // v44 (R28): the `power` view is the details tier's series — for every
+    // player, the daemon's `stored_fight` answer (and its drill's) and SQL's
+    // agree series for series, a second with no report NULL in both.
+    assert!(lake.views().contains(&"power"), "{:?}", lake.views());
+    let mut series = 0;
+    for p in &card.players {
+        let f = fetch_fight(
+            &mut client,
+            next_req(),
+            &card.id,
+            View::Healing,
+            Some(&p.guid),
+        )
+        .expect("the kill");
+        let t = lake
+            .sql_with(
+                "SELECT power_type, max, bucket_ms, per_sec FROM power \
+                 WHERE fight_id = ? AND guid = ? ORDER BY power_type",
+                &[Json::str(&card.id), Json::str(&p.guid)],
+            )
+            .unwrap();
+        let sql: Vec<PowerSeries> = t
+            .rows
+            .iter()
+            .map(|r| PowerSeries {
+                power_type: r[0].as_u64().unwrap() as u32,
+                max: r[1].as_u64().unwrap() as u32,
+                bucket_ms: r[2].as_u64().unwrap() as u32,
+                per_sec: r[3]
+                    .as_arr()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_u64().map(|n| n as u32))
+                    .collect(),
+            })
+            .collect();
+        assert_eq!(sql, f.power, "{}", p.guid);
+        if let Some(b) = &f.breakdown {
+            assert_eq!(b.power, f.power, "{}: the drill carries it too", p.guid);
+        }
+        series += sql.len();
+    }
+    assert!(series > 0, "the fixture's players report their pools");
+
     // The `support` view is the rows tier's blocks: one per friendly player
     // with any support — the Priest's is a received heal share alone.
     let t = lake
@@ -2368,7 +2438,11 @@ fn a_pre_3b_card_ranks_exactly_as_v22_did() {
     let old_json = pre_3b_card(&new.to_json(), "old");
     let old_text = old_json.to_line();
     for key in PRE_3B_KEYS {
-        assert!(!old_text.contains(key), "{key} survived the strip");
+        // Quoted: v44's `heal_absorbed` holds `absorbed` as a substring.
+        assert!(
+            !old_text.contains(&format!("\"{key}\":")),
+            "{key} survived the strip"
+        );
     }
     // The old card, read back: zeros, so its effective IS its damage and
     // the grader (ranking the DPS role by effective) ranks it by dps —
@@ -3715,7 +3789,7 @@ fn every_documented_query_runs_over_the_fixture_lake() {
     }
     let spans_id = stored_cards(&spans_hist)[0].id.clone();
     let queries = doc_queries();
-    assert_eq!(queries.len(), 13, "{queries:?}");
+    assert_eq!(queries.len(), 15, "{queries:?}");
     for (heading, sql) in &queries {
         let param = match heading.as_str() {
             "Healer rank trend across a tier" => Json::str(SPANS_PRIEST),
@@ -3731,6 +3805,7 @@ fn every_documented_query_runs_over_the_fixture_lake() {
             "Shield ledger per spell (R20, step 5)" => Json::str(SHIELDS_PRIEST),
             "What did X hit for at N stacks of Y (R21, step 6)" => Json::str(STACKS_TANK),
             "Guild night: the roster by guild (v31, the wowdps addon)" => Json::str(&spans_id),
+            "Mana over the pull, 10 s at a time (R28, v44)" => Json::str(PRIEST),
             _ => Json::Null,
         };
         let mut params: Vec<Json> = if sql.contains("$1") {

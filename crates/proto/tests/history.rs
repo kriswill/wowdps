@@ -10,7 +10,7 @@ use wowdps_model::{
     Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
     View,
 };
-use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
+use wowdps_model::{Empower, GroupKind, PowerSeries, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_proto::history::{
     Affiliation, Annotation, COARSE_BUCKET_MS, CardPlayer, CountDetail, FightCard, FightDetails,
     FightKind, FightRows, HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation,
@@ -40,6 +40,7 @@ fn row(key: &str, amount: u64) -> Row {
         mine: false,
         offset_ms: None,
         absorb: None,
+        heal_absorbed: 0,
     }
 }
 
@@ -161,6 +162,7 @@ fn card() -> FightCard {
                 // v31: never stored, so a round trip reads `None` (proven below).
                 guild: None,
                 reduced: 0,
+                heal_absorbed: 0,
             },
             CardPlayer {
                 guid: "Player-1-B".to_string(),
@@ -195,6 +197,7 @@ fn card() -> FightCard {
                 shields_unknown: 0,
                 guild: None,
                 reduced: 0,
+                heal_absorbed: 9,
             },
         ],
         bosses: Vec::new(),
@@ -449,6 +452,13 @@ fn details() -> FightDetails {
                 wasted: 0.5,
                 count: 3,
             }],
+            // v44 (R28): a mana pool, a second with no report between.
+            power: vec![PowerSeries {
+                power_type: 0,
+                max: 250_000,
+                bucket_ms: 1_000,
+                per_sec: vec![Some(240_000), None, Some(200_000)],
+            }],
         }],
         ..Default::default()
     }
@@ -488,6 +498,11 @@ fn tree() -> SpellTree {
             misses: 2,
             uptime_ms: 12_000,
             starts: 5,
+            // v44 (R26): an empowered row writes its stages and cancels.
+            empower: Empower {
+                stages: [1, 2, 0, 0],
+                cancelled: 1,
+            },
         }],
     }
 }
@@ -505,7 +520,7 @@ fn annotation() -> Annotation {
 
 // ---- goldens --------------------------------------------------------------------
 
-const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"combat_ms":null,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"am_uptime_pct":40,"absorb_efficiency":0.75,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"am_uptime_ms":24600,"externals_given":3,"externals_given_ms":38000,"externals_received":2,"externals_received_ms":60000,"effective_dps":2000,"absorb_wasted":1000,"shields_unknown":1,"reduced":0},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"am_uptime_pct":0,"absorb_efficiency":null,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":0,"absorb_wasted":null,"shields_unknown":0,"reduced":0}],"bosses":[]}"#;
+const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"combat_ms":null,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"am_uptime_pct":40,"absorb_efficiency":0.75,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"am_uptime_ms":24600,"externals_given":3,"externals_given_ms":38000,"externals_received":2,"externals_received_ms":60000,"effective_dps":2000,"absorb_wasted":1000,"shields_unknown":1,"reduced":0,"heal_absorbed":0},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"am_uptime_pct":0,"absorb_efficiency":null,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":0,"absorb_wasted":null,"shields_unknown":0,"reduced":0,"heal_absorbed":9}],"bosses":[]}"#;
 
 /// Step 3b: one supporter's block on the rows tier, every scalar distinct;
 /// `targets` is one `Segment::support_targets` row.
@@ -532,7 +547,7 @@ const STACKS_GOLDEN: &str = r#"{"guid":"Player-1-A","dropped":1,"debuffs":[{"spe
 /// `MissKind::ALL` order.
 const MITIGATION_GOLDEN: &str = r#"{"guid":"Player-1-A","record":{"absorbed":1,"blocked":2,"absorbed_full":3,"blocked_full":4,"stagger":5,"stagger_ticked":6,"misses":{"dodge":17,"parry":18,"block":19,"miss":20,"absorb":21,"immune":22,"deflect":23,"evade":24,"reflect":25,"resist":26},"reduced":7},"taken_spells":[ROW_SMASH,ROW_MELEE],"other":{"amount":55,"extra":5,"count":9,"n":3},"taken_sources":[ROW_BOSS],"other_sources":{"amount":55,"extra":5,"count":9,"n":2}}"#;
 
-const ROW_GOLDEN: &str = r#"{"key":"Player-1-A","label":"Player-1-A-label","amount":100,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}"#;
+const ROW_GOLDEN: &str = r#"{"key":"Player-1-A","label":"Player-1-A-label","amount":100,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32,"heal_absorbed":0}"#;
 
 const LOADOUT_GOLDEN: &str = r#"{"schema":1,"hash":"HASH","spec_id":64,"talents":[{"node":1,"entry":2,"rank":3}],"gear":[{"item":9,"ilvl":10,"enchants":[],"bonus_ids":[11,12],"gems":[13]}],"stats":[14,15],"auras":[{"caster":"Player-1-B","spell":1459,"stacks":1}]}"#;
 
@@ -570,7 +585,9 @@ fn golden_documents_pin_the_file_format() {
     // v35 (R9): a recap event ends in its time before the death — and only
     // a recap event: no meter row, attacker or drill row carries the key.
     // v43: then its shields after the event.
-    assert!(r.contains(r#""school":32,"offset_ms":-1500,"absorb":4485}],"attackers""#));
+    assert!(r.contains(
+        r#""school":32,"heal_absorbed":0,"offset_ms":-1500,"absorb":4485}],"attackers""#
+    ));
     assert_eq!(r.matches("offset_ms").count(), 1, "{r}");
     // Step 2b: the mitigation list follows the recaps and is pinned whole.
     let row_line =
@@ -607,15 +624,16 @@ fn golden_documents_pin_the_file_format() {
         d.contains(r#""heal_spells":[],"heal_targets":[],"damage_timeline":{"bucket_ms":1000"#)
     );
     // R26 (v36): the trees ride last, the heal one empty.
-    assert!(d.contains(r#""damage_tree":{"groups":[{"key":"summon:Summon Water Elemental","label":"Summon Water Elemental","spell_id":31687,"kind":"summon"}],"rows":[{"key":"Waterbolt\u0000Water Elemental","group":"summon:Summon Water Elemental","casts":7,"misses":2,"uptime_ms":12000,"starts":5,"parts":[{"spell_id":31707,"periodic":false,"amount":50,"extra":1,"count":5,"crits":2},{"spell_id":31708,"periodic":true,"amount":10,"extra":0,"count":3,"crits":0}]}]}"#), "{d}");
+    assert!(d.contains(r#""damage_tree":{"groups":[{"key":"summon:Summon Water Elemental","label":"Summon Water Elemental","spell_id":31687,"kind":"summon"}],"rows":[{"key":"Waterbolt\u0000Water Elemental","group":"summon:Summon Water Elemental","casts":7,"misses":2,"uptime_ms":12000,"starts":5,"parts":[{"spell_id":31707,"periodic":false,"amount":50,"extra":1,"count":5,"crits":2},{"spell_id":31708,"periodic":true,"amount":10,"extra":0,"count":3,"crits":0}],"empower":{"stages":[1,2,0,0],"cancelled":1}}]}"#), "{d}");
     // v42: the count views' drills ride after them.
     assert!(
         d.contains(r#""heal_tree":{"groups":[],"rows":[]},"counts":[{"view":"interrupts","spells":[{"key":"Counterspell""#),
         "{d}"
     );
     assert!(
-        // v43 (R27): the resources close each player.
-        d.ends_with(r#""targets":[{"key":"Spitting Larva","label":"Spitting Larva-label","amount":2,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}]}],"energize":[{"power_type":7,"gained":1.5,"wasted":0.5,"count":3}]}]}"#),
+        // v43 (R27): the resources, then (v44, R28) the power series, close
+        // each player.
+        d.ends_with(r#""targets":[{"key":"Spitting Larva","label":"Spitting Larva-label","amount":2,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32,"heal_absorbed":0}]}],"energize":[{"power_type":7,"gained":1.5,"wasted":0.5,"count":3}],"power":[{"power_type":0,"max":250000,"bucket_ms":1000,"per_sec":[240000,null,200000]}]}]}"#),
         "{d}"
     );
 }
@@ -1084,7 +1102,7 @@ fn effective_dps_is_derived_from_the_scalars_not_stored() {
     let alone = card().players[0].to_json().to_line();
     assert!(
         alone.ends_with(
-            r#","externals_received_ms":60000,"effective_dps":null,"absorb_wasted":1000,"shields_unknown":1,"reduced":0}"#
+            r#","externals_received_ms":60000,"effective_dps":null,"absorb_wasted":1000,"shields_unknown":1,"reduced":0,"heal_absorbed":0}"#
         ),
         "{alone}"
     );
@@ -1646,7 +1664,7 @@ fn a_card_without_shields_reads_unknown_and_derives_a_null_efficiency() {
     );
     assert!(
         line.contains(
-            r#""effective_dps":2000,"absorb_wasted":null,"shields_unknown":0,"reduced":0}"#
+            r#""effective_dps":2000,"absorb_wasted":null,"shields_unknown":0,"reduced":0,"heal_absorbed":0}"#
         ),
         "{line}"
     );
@@ -1933,15 +1951,39 @@ fn reduced_round_trips_on_the_card_and_joins_the_swung_total() {
     assert!((p.mitigated_pct() - want).abs() < 1e-9);
     let line = c.to_json().to_line();
     assert!(
-        line.contains(r#""shields_unknown":1,"reduced":30000}"#),
+        line.contains(r#""shields_unknown":1,"reduced":30000,"heal_absorbed":0}"#),
         "{line}"
     );
     let back = FightCard::from_json(&json::parse(&line).unwrap()).unwrap();
     assert_eq!(back, c);
-    // The same line without the key is a pre-v43 card.
-    let old = CARD_GOLDEN.replace(r#","reduced":0"#, "");
+    // The same line without the key is a pre-v43 card (and so pre-v44:
+    // no `heal_absorbed` either).
+    let old = CARD_GOLDEN
+        .replace(r#","reduced":0"#, "")
+        .replace(r#","heal_absorbed":0"#, "")
+        .replace(r#","heal_absorbed":9"#, "");
     assert_ne!(old, CARD_GOLDEN);
     let back = FightCard::from_json(&json::parse(&old).unwrap()).unwrap();
-    assert_eq!(back, card());
+    let mut want = card();
+    want.players[1].heal_absorbed = 0;
+    assert_eq!(back, want);
     assert_eq!(back.players[0].mitigated_pct(), 25.0);
+}
+
+/// v44 (R2): the card's third healing split, `heal_absorbed`, is written
+/// last on each player and reads back; a card written before it reads 0.
+#[test]
+fn heal_absorbed_round_trips_on_the_card_and_reads_0_when_absent() {
+    let c = card();
+    assert_eq!(c.players[1].heal_absorbed, 9);
+    let line = c.to_json().to_line();
+    assert!(
+        line.contains(r#""reduced":0,"heal_absorbed":9}],"bosses""#),
+        "{line}"
+    );
+    assert_eq!(FightCard::from_json(&json::parse(&line).unwrap()), Some(c));
+    let old = CARD_GOLDEN.replace(r#","heal_absorbed":9"#, "");
+    assert_ne!(old, CARD_GOLDEN);
+    let back = FightCard::from_json(&json::parse(&old).unwrap()).unwrap();
+    assert_eq!(back.players[1].heal_absorbed, 0);
 }

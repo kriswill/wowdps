@@ -132,6 +132,8 @@ fn drilled_breakdown() -> Breakdown {
         tree: Default::default(),
         ability_series: Vec::new(),
         target_series: Vec::new(),
+        energize: Vec::new(),
+        power: Vec::new(),
     }
 }
 

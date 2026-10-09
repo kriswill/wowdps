@@ -953,6 +953,10 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
             // R21 (step 6): the unconditioned per-id baseline rides the
             // rows tier for every player who took a hit or a miss.
             stack_base: seg.stack_base(guid),
+            // v44 (R27, R28): the resources and the pools ride from the
+            // details tier, as they ride the live drill.
+            energize: seg.energize(guid),
+            power: seg.power(guid),
             ..Breakdown::default()
         }
     };
@@ -999,6 +1003,10 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
             sf.breakdown.as_ref(),
             Some(&Breakdown {
                 timeline: Some(seg.taken_timeline(guid).coarsen(10)),
+                // v44: the details tier is gone, and its resources and
+                // pools with it.
+                energize: Vec::new(),
+                power: Vec::new(),
                 ..expect(guid)
             }),
             "{guid} at tier 2"
