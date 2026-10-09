@@ -440,3 +440,29 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	power_seconds	2
 2	Trash	Trash		8000			Player-1168-0A1B2C42	power_sum	120
 2	Trash	Trash		8000			Player-1168-0A1B2C42	power_max	100
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_units	6
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_posts	41
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_floor	2287
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_hit	10
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_cast_start	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_cast_success	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_pcast_start	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_pcast_success	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_pcast_failed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_interrupt	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_debuff_applied	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_debuff_removed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_debuff_dose	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_death	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_npc_died	1
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_rez	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_cast	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_summon	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_touch	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_gone	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_markers	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	replay_posts	2
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	replay_posts	3
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	replay_posts	4
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	replay_posts	4
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	replay_posts	5

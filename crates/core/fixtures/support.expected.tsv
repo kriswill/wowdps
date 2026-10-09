@@ -440,3 +440,27 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C21	power_seconds	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	power_sum	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	power_max	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_units	5
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_posts	43
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_floor	2287
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_hit	1
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_cast_start	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_cast_success	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_pcast_start	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_pcast_success	1
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_pcast_failed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_interrupt	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_debuff_applied	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_debuff_removed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_debuff_dose	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_death	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_npc_died	2
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_rez	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_placed_cast	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_placed_summon	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_placed_touch	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_placed_gone	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_markers	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	replay_posts	2
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	replay_posts	8
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	replay_posts	3

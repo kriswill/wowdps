@@ -42,7 +42,10 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // \x12: R10 reads a door onto an open-world map (Map.db2) as zoned out — a
 // checkpoint scanned by the old rule holds a city visit opened by a hearth
 // stamped with the raid's difficulty, and the raid visit it closed.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x12";
+// \x13: (v45, R29) every WORLD_MARKER line is a seed — a checkpoint scanned
+// by the old rule holds none, and a pull cut over it would start with no
+// markers standing.
+const MAGIC: &[u8; 8] = b"WDPSIDX\x13";
 
 pub struct IndexCache {
     dir: PathBuf,
