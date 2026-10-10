@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use wowdps_core::index::{self, load_segment_text};
+use wowdps_core::model::replay as replay_kind;
 use wowdps_core::tail::TailEvent;
 use wowdps_daemon::engine::{Engine, EngineEvent};
 use wowdps_daemon::history::{Backend, ClosedFight, LogFacts, MemBackend, Retention, Store};
@@ -321,7 +322,11 @@ fn a_replay_is_kept_in_the_details_slots() {
     let bytes = store.replay_file(&ids[3]).unwrap();
     let cut = replay::decode(&bytes).unwrap();
     assert_eq!(cut.head.success, Some(true));
-    assert_eq!(cut.events.len(), 1, "the boss's one cast");
+    assert_eq!(
+        cut.events.len(),
+        3,
+        "the boss's one cast between its two boss rows"
+    );
     assert!(!store.wants_recut(&ids[3]), "a kept replay wants nothing");
     assert!(
         !store.wants_recut(&ids[0]),
@@ -523,4 +528,96 @@ fn get_replay_answers_the_tier() {
         1,
         "the one asked for, cut on the ask"
     );
+}
+
+// ---- the tier's formats ------------------------------------------------------
+
+/// A format-1 replay file — a small kill as a v45 build wrote it, before
+/// every floor (`proto::replay`'s own format-1 golden).
+const FORMAT1: &str = "57445250011d0000000801004c024c1b036713047a2c05a6011506bb010d07c8010908d1010a07125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010002010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc701ff8827b0b71200f0ea03880e0103643202d00f0000000ba8a912d7040178a09c010a00010001d00f00030002a09c01c0b80201000101d08c01cf0f03d8360500049be90606";
+
+fn unhex(s: &str) -> Vec<u8> {
+    s.as_bytes()
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
+}
+
+/// The store's files, read whole: a store opened over them is the same
+/// store (its replay may then be swapped for another build's).
+fn copied(from: &MemBackend) -> MemBackend {
+    let mut to = MemBackend::new();
+    for dir in [
+        "fights",
+        "rows",
+        "details",
+        "series",
+        "replay",
+        "loadouts",
+        "annotations",
+        "affiliations",
+    ] {
+        for name in from.list(dir) {
+            to.write(dir, &name, &from.read(dir, &name).unwrap())
+                .unwrap();
+        }
+    }
+    to
+}
+
+/// A format-1 replay still answers, and is OLDER than this build's: the
+/// rewrite queue recuts it from its log as format 2 (every floor, the boss
+/// rows), as the series tier's were at v42. A later build's format is left
+/// alone and answers nothing.
+#[test]
+fn a_format_1_replay_is_recut_as_format_2() {
+    let tmp = Temp::new("format1");
+    let (path, fights) = log_of(&tmp, &[(90, true, 15)]);
+    let facts = LogFacts::read(&path);
+    let mut first = Store::open(MemBackend::new(), Retention::default());
+    let id = first.store(&fights[0], facts).unwrap();
+    assert!(cut_into(&mut first, &path, &id));
+    assert!(first.recuts().is_empty(), "a current replay wants nothing");
+    // The same store, its replay as a format-1 build wrote it.
+    let mut old = copied(first.backend());
+    old.write("replay", &format!("{id}.bin"), &unhex(FORMAT1))
+        .unwrap();
+    let mut store = Store::open(old, Retention::default());
+    assert!(store.has_replay(&id), "format 1 still answers");
+    let bytes = store.replay_file(&id).unwrap();
+    assert_eq!(replay::format_of(&bytes), Some(1));
+    assert!(replay::decode(&bytes).is_some());
+    assert!(store.rewrites().is_empty(), "its details and series stand");
+    assert_eq!(
+        store.recuts(),
+        std::slice::from_ref(&id),
+        "older: queued for its recut"
+    );
+    assert!(cut_into(&mut store, &path, &id));
+    let bytes = store.replay_file(&id).unwrap();
+    assert_eq!(replay::format_of(&bytes), Some(replay::FORMAT));
+    let cut = replay::decode(&bytes).unwrap();
+    let boss: Vec<replay_kind::EventKind> = cut
+        .events
+        .iter()
+        .filter(|e| e.kind.is_boss())
+        .map(|e| e.kind)
+        .collect();
+    assert_eq!(
+        boss,
+        [
+            replay_kind::EventKind::BossEngaged,
+            replay_kind::EventKind::BossKilled
+        ],
+        "recut: the boss rows a format-1 file never held"
+    );
+    assert!(store.recuts().is_empty(), "and nothing more to do");
+    // A later build's format: never rewritten, never answered.
+    let mut newer = copied(store.backend());
+    newer
+        .write("replay", &format!("{id}.bin"), b"WDRP\x03\0\0\0\0")
+        .unwrap();
+    let store = Store::open(newer, Retention::default());
+    assert!(!store.has_replay(&id));
+    assert!(store.recuts().is_empty(), "a newer format is left alone");
 }

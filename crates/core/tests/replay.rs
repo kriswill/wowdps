@@ -1,8 +1,9 @@
 //! R29 (v45): the replay cut over every gated fixture, against the golden
 //! TSVs `fixtures/check.awk` computes from the log grammar alone — the
-//! floor, the posts (per player and in all), the units numbered, every
-//! event kind, every placed kind and the world markers of each closed boss
-//! pull — and the cut from a lazily loaded segment (its index seeds) equal
+//! floor, the posts (per floor, per player and in all), the units
+//! numbered, every event kind (the boss rows too), every placed kind and
+//! the world markers of each closed boss pull and each finished keystone
+//! run — and the cut from a lazily loaded segment (its index seeds) equal
 //! to the cut from every line before it (a full replay).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
@@ -10,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use wowdps_core::index::{self, load_segment_text};
+use wowdps_core::index::{self, SegmentMeta, load_segment_text};
 use wowdps_core::meter::SegmentKind;
 use wowdps_core::model::replay::{Cut, EventKind, PlacedKind, UnitKind};
 use wowdps_core::replay::{PlacedTable, cut};
@@ -33,8 +34,9 @@ impl PlacedTable for Fixtures {
     }
 }
 
-/// (segment 1-based, player or "*", metric) → value, for the `replay_` rows.
-type Golden = BTreeMap<(usize, String, String), u64>;
+/// (cut — a pull's segment number, a run's "K<n>" —, player, floor or "*",
+/// metric) → value, for the `replay_` rows.
+type Golden = BTreeMap<(String, String, String), u64>;
 
 fn golden(name: &str) -> Golden {
     let text = std::fs::read_to_string(format!("{FIXTURES}/{name}.expected.tsv")).unwrap();
@@ -47,7 +49,7 @@ fn golden(name: &str) -> Golden {
             };
             metric.starts_with("replay_").then(|| {
                 (
-                    (seg.parse().unwrap(), player.to_string(), metric.to_string()),
+                    (seg.to_string(), player.to_string(), metric.to_string()),
                     value.parse().unwrap(),
                 )
             })
@@ -56,9 +58,16 @@ fn golden(name: &str) -> Golden {
 }
 
 /// A cut as check.awk counts it.
-fn counts(seg: usize, c: &Cut, out: &mut Golden) {
+fn counts(seg: &str, c: &Cut, out: &mut Golden) {
     let mut put = |player: &str, metric: &str, v: u64| {
-        out.insert((seg, player.to_string(), format!("replay_{metric}")), v);
+        out.insert(
+            (
+                seg.to_string(),
+                player.to_string(),
+                format!("replay_{metric}"),
+            ),
+            v,
+        );
     };
     put("*", "units", c.units.len() as u64);
     put("*", "posts", c.posts() as u64);
@@ -72,6 +81,9 @@ fn counts(seg: usize, c: &Cut, out: &mut Golden) {
         put("*", &format!("placed_{}", k.word()), n as u64);
     }
     put("*", "markers", c.markers.len() as u64);
+    for m in c.maps() {
+        put(&m.map_id.to_string(), "map_posts", m.posts as u64);
+    }
     for u in c
         .units
         .iter()
@@ -79,6 +91,15 @@ fn counts(seg: usize, c: &Cut, out: &mut Golden) {
     {
         put(&u.guid, "posts", u.posts.len() as u64);
     }
+}
+
+/// The keystone runs a log holds whole, in order: what the store cuts for
+/// a key (a keyed visit's Σ, its par timers known).
+fn keys(idx: &index::Index) -> Vec<&SegmentMeta> {
+    idx.overalls
+        .iter()
+        .filter(|m| m.pars_ms.is_some() && m.end_ms.is_some())
+        .collect()
 }
 
 #[test]
@@ -95,8 +116,13 @@ fn every_fixtures_cut_matches_its_golden() {
             }
             let text = load_segment_text(Path::new(&path), meta).unwrap();
             let c = cut(text.seeds(), text.slice(), &Fixtures, None);
-            counts(i + 1, &c, &mut actual);
+            counts(&(i + 1).to_string(), &c, &mut actual);
             cut_any = true;
+        }
+        for (i, meta) in keys(&idx).into_iter().enumerate() {
+            let text = load_segment_text(Path::new(&path), meta).unwrap();
+            let c = cut(text.seeds(), text.slice(), &Fixtures, None);
+            counts(&format!("K{}", i + 1), &c, &mut actual);
         }
         assert!(cut_any, "{name}: no boss pull to cut");
         let want = golden(name);
@@ -115,7 +141,8 @@ fn every_fixtures_cut_matches_its_golden() {
 
 /// The index's seeds carry everything the cut reads from before its slice
 /// (COMBATANT_INFO, ZONE_CHANGE, CHALLENGE_MODE, WORLD_MARKER), so a pull
-/// cut lazily is the pull cut with the whole log before it.
+/// or a keystone run cut lazily is the one cut with the whole log before
+/// it.
 #[test]
 fn a_lazy_cut_is_the_full_cut() {
     for name in GATED {
@@ -123,11 +150,11 @@ fn a_lazy_cut_is_the_full_cut() {
         let bytes = std::fs::read(&path).unwrap();
         let mut file = std::fs::File::open(&path).unwrap();
         let idx = index::scan(&mut file);
-        for meta in idx
+        let pulls = idx
             .segments
             .iter()
-            .filter(|m| m.kind == SegmentKind::Encounter && !m.arena)
-        {
+            .filter(|m| m.kind == SegmentKind::Encounter && !m.arena);
+        for meta in pulls.chain(keys(&idx)) {
             let text = load_segment_text(Path::new(&path), meta).unwrap();
             let lazy = cut(text.seeds(), text.slice(), &Fixtures, Some("Player-1-A"));
             let before = String::from_utf8_lossy(&bytes[..meta.byte_range.0 as usize]).into_owned();
@@ -142,10 +169,11 @@ fn a_lazy_cut_is_the_full_cut() {
     }
 }
 
-/// The replay fixture's kill, cut: the floor the players stood on most, a
-/// feigning hunter alive, a creature going down unconscious down, the
-/// markers standing (one replaced before the pull), a warlock's class from
-/// R8, a sourceless hit naming no unit.
+/// The replay fixture's kill, cut: the floor the players stood on most and
+/// the hunter's steps onto another (his posts and the hit that found him
+/// there kept), its boss rows, a feigning hunter alive, a creature going
+/// down unconscious down, the markers standing (one replaced before the
+/// pull), a warlock's class from R8, a sourceless hit naming no unit.
 #[test]
 fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
     let path = format!("{FIXTURES}/replay.txt");
@@ -155,6 +183,29 @@ fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
     let text = load_segment_text(Path::new(&path), meta).unwrap();
     let c = cut(text.seeds(), text.slice(), &Fixtures, Some("Player-1-A"));
     assert_eq!(c.floor, 2434);
+    let hunt = c.units.iter().find(|u| u.guid == "Player-1-H").unwrap();
+    let floors: Vec<(u32, u32)> = hunt.posts.iter().map(|p| (p.t_ms, p.map_id)).collect();
+    assert_eq!(floors, [(1500, 2434), (9800, 2435), (9900, 2435)]);
+    let on_2435: Vec<Option<(i32, i32)>> = c
+        .events
+        .iter()
+        .filter(|e| e.kind == EventKind::Hit && e.t_ms == 9900)
+        .map(|e| e.at)
+        .collect();
+    assert_eq!(on_2435, [Some((1050, 2050))], "where his post there says");
+    let bosses: Vec<(u32, EventKind, Option<u32>, u32, &str)> = c
+        .events
+        .iter()
+        .filter(|e| e.kind.is_boss())
+        .map(|e| (e.t_ms, e.kind, e.unit, e.spell_id, e.spell.as_str()))
+        .collect();
+    assert_eq!(
+        bosses,
+        [
+            (0, EventKind::BossEngaged, None, 3000, "Ula'tek"),
+            (30_000, EventKind::BossKilled, None, 3000, "Ula'tek"),
+        ]
+    );
     let you: Vec<&str> = c
         .units
         .iter()
@@ -181,7 +232,7 @@ fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
         .events
         .iter()
         .filter(|e| matches!(e.kind, EventKind::Death | EventKind::NpcDied))
-        .map(|e| (e.kind, c.units[e.unit as usize].name.as_str()))
+        .map(|e| (e.kind, c.units[e.unit.unwrap() as usize].name.as_str()))
         .collect();
     assert_eq!(
         deaths,
@@ -221,5 +272,62 @@ fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
     assert_eq!(
         (c.head.success, c.head.fight_ms),
         (Some(true), Some(30_000))
+    );
+}
+
+/// The replay fixture's keystone run, cut whole: its trash on the upper
+/// floor, its boss on the lower, the boss's rows mid-run where the
+/// ENCOUNTER lines stand, the main floor the players' most posted.
+#[test]
+fn the_replay_fixtures_key_follows_the_party_down() {
+    let path = format!("{FIXTURES}/replay.txt");
+    let mut file = std::fs::File::open(&path).unwrap();
+    let idx = index::scan(&mut file);
+    let keys = keys(&idx);
+    assert_eq!(keys.len(), 1, "one run");
+    let text = load_segment_text(Path::new(&path), keys[0]).unwrap();
+    let c = cut(text.seeds(), text.slice(), &Fixtures, Some("Player-1-A"));
+    assert_eq!(c.head.encounter, None);
+    assert_eq!(
+        c.head.key.as_ref().map(|k| (k.name.as_str(), k.level)),
+        Some(("The Glass Hollow", 14))
+    );
+    assert_eq!((c.head.map, c.head.success), (2521, Some(true)));
+    let bosses: Vec<(u32, EventKind, u32, &str)> = c
+        .events
+        .iter()
+        .filter(|e| e.kind.is_boss())
+        .map(|e| (e.t_ms, e.kind, e.spell_id, e.spell.as_str()))
+        .collect();
+    assert_eq!(
+        bosses,
+        [
+            (59_000, EventKind::BossEngaged, 3010, "Frost Warden"),
+            (90_000, EventKind::BossKilled, 3010, "Frost Warden"),
+        ]
+    );
+    let maps: Vec<(u32, usize, usize)> = c
+        .maps()
+        .iter()
+        .map(|m| (m.map_id, m.posts, m.players))
+        .collect();
+    assert_eq!(maps, [(2094, 3, 2), (2095, 4, 3)]);
+    assert_eq!(c.floor, 2095);
+    let tank = c.units.iter().find(|u| u.you).unwrap();
+    let floors: Vec<u32> = tank.posts.iter().map(|p| p.map_id).collect();
+    assert_eq!(floors, [2094, 2094, 2095]);
+    let kinds: Vec<(&str, UnitKind)> = c
+        .units
+        .iter()
+        .filter(|u| u.kind != UnitKind::Player)
+        .map(|u| (u.name.as_str(), u.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("Glass Drake", UnitKind::Add),
+            ("Frost Warden", UnitKind::Boss)
+        ],
+        "the boss rule names the run's boss by its encounter"
     );
 }

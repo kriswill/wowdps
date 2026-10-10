@@ -2,6 +2,9 @@
 
 ## 2026-10-09
 
+- **Update** — [R29 The replay cut](r29.md): every post on whichever floor it
+  stands, kept with its UiMap id; the slice's ENCOUNTER lines as boss rows;
+  tier format 2, format 1 recut from its log.
 - **Update** — [R21 Stacked-debuff conditioning](r21.md): links its fixture,
   [stacks.txt](../fixtures/stacks.md).
 - **Creation** — [R29 The replay cut](r29.md): a boss pull or keystone run cut

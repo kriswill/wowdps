@@ -2,6 +2,10 @@
 
 ## 2026-10-09
 
+- **Update** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
+  format 2 keeps every floor's posts and the boss rows, so a keystone run
+  replays through its whole dungeon (three real runs lost 36 to 59 % of
+  their posts to the single floor); the rewrite queue recuts format 1.
 - **Update** — [devenv Is The Reference Shell](devenv-is-the-reference-shell.md):
   the packages' fileset leaves out the Markdown under `crates/` and
   `tools/extract/`, which no build or test reads, so an `AGENTS.md` edit

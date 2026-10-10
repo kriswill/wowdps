@@ -1542,7 +1542,9 @@ fn read_cards(dir: &Path) -> Vec<FightCard> {
 }
 
 /// v45 (R29): what `stats` says of the replay tier and the kept-whole set,
-/// from the files alone: the tier's files and bytes; `cards_without_replay`,
+/// from the files alone: the tier's files and bytes, and its files by
+/// format (each file's nine-byte head: a format-1 file waits for the
+/// daemon's rewrite queue to recut it); `cards_without_replay`,
 /// boss pulls and keystone runs with no `replay/<id>.bin` (the daemon keeps
 /// one for every fight retention keeps whole or protects and the newest of
 /// the rest per boss and difficulty, so a demoted wipe counts here by
@@ -1561,6 +1563,18 @@ pub fn replay_stats(dir: &Path) -> Json {
             Some((id, e.metadata().map(|m| m.len()).unwrap_or(0)))
         })
         .collect();
+    // Each file's format off its head alone; one with none is "none".
+    let mut formats: std::collections::BTreeMap<String, u64> = Default::default();
+    for (id, _) in &replays {
+        let mut head = [0u8; wowdps_proto::replay::HEAD_LEN];
+        let format = std::fs::File::open(dir.join("replay").join(format!("{id}.bin")))
+            .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut head))
+            .ok()
+            .and_then(|()| wowdps_proto::replay::format_of(&head));
+        *formats
+            .entry(format.map_or_else(|| "none".to_string(), |f| f.to_string()))
+            .or_default() += 1;
+    }
     let has = |id: &str| replays.iter().any(|(r, _)| r == id);
     let without = cards
         .iter()
@@ -1593,6 +1607,12 @@ pub fn replay_stats(dir: &Path) -> Json {
         "replay": obj! {
             "files": Json::u64(replays.len() as u64),
             "bytes": Json::u64(replays.iter().map(|(_, b)| b).sum()),
+            "formats": Json::Obj(
+                formats
+                    .into_iter()
+                    .map(|(f, n)| (f, Json::u64(n)))
+                    .collect()
+            ),
         },
         "cards_without_replay": Json::u64(without as u64),
         "kept": obj! {

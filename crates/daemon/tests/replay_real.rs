@@ -14,6 +14,13 @@
 //! within 3 s), cut from its seeds and slice as the store cuts it, written
 //! to the tier, read back, and written as files into `OUT/<name>/` with the
 //! tier beside them (`replay.bin`); a line per pull says the sizes.
+//!
+//! With `WOWDPS_REPLAY_KEYS` set, every keystone run each listed log holds
+//! whole is cut too, as the store cuts a key: a line per run says its
+//! floors and their posts (the posts off the main floor, which format 1
+//! dropped), and a line per boss row its time in UTC ms (the card's
+//! `bosses[].start_utc_ms`) and the fight's length to its end row; its
+//! files go into `OUT/key-<log>-<n>/`.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -23,6 +30,7 @@ use std::path::{Path, PathBuf};
 use wowdps_core::index::{self, SegmentMeta, load_segment_text};
 use wowdps_core::meter::SegmentKind;
 use wowdps_core::model::View;
+use wowdps_core::model::replay as replay_kind;
 use wowdps_core::parser::tz_offset_min;
 use wowdps_daemon::replay::cut_text;
 use wowdps_proto::replay::{self, csv};
@@ -114,22 +122,73 @@ fn real_pulls_cut_into_the_replay_tier() {
         let idx = index::scan(&mut file);
         let tz = tz_of(&path);
         // With WOWDPS_REPLAY_KEYS set, each keystone run the log holds whole
-        // (a keyed Σ, what the store cuts for a key) and its tier's size.
+        // (a keyed Σ, what the store cuts for a key): its tier's size, its
+        // floors, its boss rows, and its files.
         if env("WOWDPS_REPLAY_KEYS").is_some() {
-            for meta in idx.overalls.iter().filter(|m| m.pars_ms.is_some()) {
+            let runs = idx.overalls.iter().filter(|m| m.pars_ms.is_some());
+            for (n, meta) in runs.enumerate() {
                 let text = load_segment_text(&path, meta).expect("run text");
                 let cut = cut_text(&text, None);
                 let bytes = replay::encode(&cut);
+                assert!(
+                    replay::decode(&bytes).as_ref() == Some(&cut),
+                    "{}: the tier round-trips",
+                    meta.name
+                );
+                let maps = cut.maps();
+                let floors: Vec<String> = maps
+                    .iter()
+                    .map(|m| format!("{}:{}/{}", m.map_id, m.posts, m.players))
+                    .collect();
+                let off: usize = maps
+                    .iter()
+                    .filter(|m| m.map_id != cut.floor)
+                    .map(|m| m.posts)
+                    .sum();
                 println!(
-                    "key\t{}\t{} s\t{} units\t{} posts\t{} events\ttier {} B\tfloor {}",
+                    "key\t{}\t{} s\t{} units\t{} posts\t{} events\ttier {} B\tfloor {}\tmaps {}\toff the floor {}",
                     meta.name,
                     meta.duration_ms / 1000,
                     cut.units.len(),
                     cut.posts(),
                     cut.events.len(),
                     bytes.len(),
-                    cut.floor
+                    cut.floor,
+                    floors.join(","),
+                    off,
                 );
+                let mut engaged: Option<u32> = None;
+                for e in cut.events.iter().filter(|e| e.kind.is_boss()) {
+                    let utc = cut.head.start_utc_ms + i64::from(e.t_ms);
+                    let length = match e.kind {
+                        replay_kind::EventKind::BossEngaged => {
+                            engaged = Some(e.t_ms);
+                            String::new()
+                        }
+                        _ => engaged
+                            .take()
+                            .map_or_else(String::new, |t| format!("\t{} ms", e.t_ms - t)),
+                    };
+                    println!(
+                        "boss\t{}\t{}\t{}\t{}\t{utc}{length}",
+                        meta.name,
+                        e.kind.word(),
+                        e.spell_id,
+                        e.spell
+                    );
+                }
+                let dir = PathBuf::from(&out).join(format!("key-{log}-{n}"));
+                csv::write_dir(
+                    &dir,
+                    &cut,
+                    None,
+                    &csv::PullFacts {
+                        log,
+                        ..csv::PullFacts::default()
+                    },
+                )
+                .expect("files");
+                std::fs::write(dir.join("replay.bin"), &bytes).expect("tier");
             }
         }
         for p in pulls {
