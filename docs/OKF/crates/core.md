@@ -91,8 +91,11 @@ into a `model::replay::Cut` — one reading of the log for the meter and the
 replay alike: the parser's `HpHint.pos` and the passive replay events feed
 it, the index seeds every WORLD_MARKER line, and the module doc lists each
 deliberate difference from the extractor's old text cutter
-([why](../decisions/replay-tier-in-the-store.md)); gated by
-[replay.txt](../fixtures/replay.md) and every fixture's R29 rows.
+([why](../decisions/replay-tier-in-the-store.md)). Every post keeps its
+floor (a keystone run walks a dungeon's levels; the cut's `floor` is the
+players' most posted) and the slice's ENCOUNTER lines are boss rows; gated
+by [replay.txt](../fixtures/replay.md) (its keystone run too) and every
+fixture's R29 rows.
 
 ## Source
 

@@ -2,6 +2,11 @@
 
 ## 2026-10-09
 
+- **Update** — [replay.txt](replay.md): the hunter's posts and a hit on a
+  second floor, the boss rows, and a keystone run whose trash and boss stand
+  on two floors (`K1` rows); every gated fixture's TSV gains the boss rows
+  and `replay_map_posts`, and [relog.txt](relog.md)'s pulls count their
+  creatures' posts.
 - **Creation** — [stacks.txt](stacks.md): the doc R21's fixture lacked — the
   Tectonic Strike ladder, the controls that must not condition, the death
   rule, and the segment edges where an aura lands nowhere.

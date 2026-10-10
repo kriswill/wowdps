@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use wowdps_core::index::{self, load_segment_text};
+use wowdps_core::model::replay as replay_kind;
 use wowdps_core::tail::TailEvent;
 use wowdps_daemon::engine::{Engine, EngineEvent};
 use wowdps_daemon::history::{Backend, ClosedFight, LogFacts, MemBackend, Retention, Store};
@@ -321,7 +322,11 @@ fn a_replay_is_kept_in_the_details_slots() {
     let bytes = store.replay_file(&ids[3]).unwrap();
     let cut = replay::decode(&bytes).unwrap();
     assert_eq!(cut.head.success, Some(true));
-    assert_eq!(cut.events.len(), 1, "the boss's one cast");
+    assert_eq!(
+        cut.events.len(),
+        3,
+        "the boss's one cast between its two boss rows"
+    );
     assert!(!store.wants_recut(&ids[3]), "a kept replay wants nothing");
     assert!(
         !store.wants_recut(&ids[0]),
@@ -591,7 +596,21 @@ fn a_format_1_replay_is_recut_as_format_2() {
     assert!(cut_into(&mut store, &path, &id));
     let bytes = store.replay_file(&id).unwrap();
     assert_eq!(replay::format_of(&bytes), Some(replay::FORMAT));
-    assert!(replay::decode(&bytes).is_some());
+    let cut = replay::decode(&bytes).unwrap();
+    let boss: Vec<replay_kind::EventKind> = cut
+        .events
+        .iter()
+        .filter(|e| e.kind.is_boss())
+        .map(|e| e.kind)
+        .collect();
+    assert_eq!(
+        boss,
+        [
+            replay_kind::EventKind::BossEngaged,
+            replay_kind::EventKind::BossKilled
+        ],
+        "recut: the boss rows a format-1 file never held"
+    );
     assert!(store.recuts().is_empty(), "and nothing more to do");
     // A later build's format: never rewritten, never answered.
     let mut newer = copied(store.backend());
