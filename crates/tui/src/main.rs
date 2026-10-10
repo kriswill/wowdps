@@ -344,12 +344,18 @@ fn do_addon(install: bool) -> i32 {
             .map_or_else(|| "?".to_string(), |d| utc_date(d.as_millis() as i64));
         let records = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|t| {
-                wowdps_proto::history::Affiliation::read_saved_variables(&t, &account).ok()
-            })
+            .and_then(|t| wowdps_proto::history::addon_table(&t).ok())
             .map_or_else(
                 || "unreadable".to_string(),
-                |r| format!("{} players", r.len()),
+                |data| {
+                    let players = data.as_ref().map_or(0, |d| {
+                        wowdps_proto::history::Affiliation::from_addon_table(d, &account).len()
+                    });
+                    let creatures = data.as_ref().map_or(0, |d| {
+                        wowdps_proto::creatures::Creature::from_addon_table(d).len()
+                    });
+                    format!("{players} players, {creatures} creatures")
+                },
             );
         println!("saved:   {account}: {records}, written {seen}");
     }
