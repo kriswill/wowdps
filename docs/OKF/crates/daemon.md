@@ -37,7 +37,8 @@ The wowdps daemon: one process owns tail → index → parse → meter → snaps
   atomically, `inspect` tells Current from Stale byte for byte,
   `ensure_current` is the start-up rule — rewrite a stale copy, leave a
   missing one missing — and `saved_variables` lists every account's
-  `wowdps.lua` ([Guilds Come From An Addon](../decisions/guilds-come-from-an-addon.md)).
+  `wowdps.lua` ([Guilds Come From An Addon](../decisions/guilds-come-from-an-addon.md);
+  the creatures section: [Creature Classifications Come From The Addon](../decisions/creature-classes-come-from-the-addon.md)).
 - `history.rs` — the history store (below).
 - `mine.rs` — whose rows are the reader's (below).
 - `replay.rs` — core's `PlacedTable` over the rubric's generated table.
@@ -66,6 +67,13 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   guid, JOINED onto a card's players when it is answered and never stored on
   the card; the addon's own-character set names the owner before the
   COMBATANT_INFO intersection does.
+- **Creatures.** `creatures.tsv` at the store's root: the addon's NPC
+  classifications by creature id, merged by the same poll
+  (`Store::merge_creatures`, one rewrite per poll through `write_atomic`;
+  newest `seen` wins, a row the addon pruned stays). The store loads it on
+  open; a file `proto::creatures` refuses (a newer format) is never
+  rewritten. The replay reads it; `HistoryStatus` does not count it
+  ([Creature Classifications Come From The Addon](../decisions/creature-classes-come-from-the-addon.md)).
 - **Backends.** `Store<B: Backend>` is generic — `DirBackend` in
   production, `MemBackend` for the mock and tests; retention and the
   protected set run after every write.

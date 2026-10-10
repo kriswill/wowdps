@@ -1,5 +1,12 @@
 # Log
 
+## 2026-10-10
+
+- **Update** — [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
+  [wowdps-history](history.md): `creatures.tsv`, the addon's NPC
+  classifications — proto's `creatures` codec and `addon_table`, the
+  store's `merge_creatures` from the SavedVariables poll, `stats.creatures`.
+
 ## 2026-10-09
 
 - **Update** — [wowdps-model](model.md), [wowdps-core](core.md),

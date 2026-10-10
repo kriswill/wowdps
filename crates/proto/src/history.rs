@@ -2252,10 +2252,15 @@ impl Affiliation {
     /// account's own. A file without the global is an empty answer, not
     /// an error — the addon may be installed and never have run.
     pub fn read_saved_variables(text: &str, account: &str) -> Result<Vec<Self>, String> {
-        let globals = crate::lua::parse(text).map_err(|e| e.to_string())?;
-        let Some((_, data)) = globals.iter().find(|(n, _)| n == ADDON_GLOBAL) else {
-            return Ok(Vec::new());
-        };
+        Ok(addon_table(text)?
+            .map(|data| Self::from_addon_table(&data, account))
+            .unwrap_or_default())
+    }
+
+    /// Every record in the addon's `WOWDPS_DATA` table (`data`, from
+    /// [`addon_table`]): `players` keyed by guid, `characters` marking the
+    /// account's own.
+    pub fn from_addon_table(data: &Lua, account: &str) -> Vec<Self> {
         let mine: Vec<&str> = data
             .get("characters")
             .and_then(Lua::as_table)
@@ -2266,8 +2271,7 @@ impl Affiliation {
                     .collect()
             })
             .unwrap_or_default();
-        Ok(data
-            .get("players")
+        data.get("players")
             .and_then(Lua::as_table)
             .map(|t| {
                 t.iter()
@@ -2277,8 +2281,21 @@ impl Affiliation {
                     })
                     .collect()
             })
-            .unwrap_or_default())
+            .unwrap_or_default()
     }
+}
+
+/// The addon's `WOWDPS_DATA` table out of one account's `wowdps.lua`, read
+/// once for every section a reader takes from it (`Affiliation`,
+/// `creatures::Creature`). `None` for a file without the global — the
+/// addon may be installed and never have run; an error for a file the Lua
+/// reader cannot read whole (a torn write).
+pub fn addon_table(text: &str) -> Result<Option<Lua>, String> {
+    let globals = crate::lua::parse(text).map_err(|e| e.to_string())?;
+    Ok(globals
+        .into_iter()
+        .find(|(n, _)| n == ADDON_GLOBAL)
+        .map(|(_, data)| data))
 }
 
 fn opt_num(n: Option<u64>) -> Json {

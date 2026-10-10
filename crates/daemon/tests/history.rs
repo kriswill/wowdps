@@ -21,10 +21,11 @@ use std::time::{Duration, Instant};
 use wowdps_core::tail::{SourceSpec, TailEvent};
 use wowdps_daemon::engine::{Engine, EngineEvent};
 use wowdps_daemon::history::{
-    Backend, ClosedFight, HistoryLink, HistoryOptions, HistoryReq, LogFacts, MemBackend, Retention,
-    Store,
+    Backend, ClosedFight, DirBackend, HistoryLink, HistoryOptions, HistoryReq, LogFacts,
+    MemBackend, Retention, Store,
 };
 use wowdps_daemon::{DaemonOptions, run};
+use wowdps_proto::creatures::Creature;
 use wowdps_proto::history::{Affiliation, CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
     ClientKind, ClientMsg, DaemonClient, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery,
@@ -2826,6 +2827,189 @@ fn every_death_is_stored_as_its_own_window() {
     assert_eq!(bad.death_index, None);
     assert!(bad.by_spell.is_empty() && bad.by_target.is_empty());
     assert_eq!(bad.deaths.len(), 2);
+}
+
+// ---- creature classifications (the wowdps addon, `creatures.tsv`) ----------------
+
+fn npc(id: u32, classification: &str, lieutenant: bool, seen: i64, name: &str) -> Creature {
+    Creature {
+        id,
+        classification: classification.to_string(),
+        lieutenant,
+        seen_unix: seen,
+        name: name.to_string(),
+    }
+}
+
+fn creatures_file(store: &Store<MemBackend>) -> Option<String> {
+    store
+        .backend()
+        .read("", "creatures.tsv")
+        .map(|b| String::from_utf8(b).unwrap())
+}
+
+/// The addon's creatures land in ONE file at the store's root, rewritten
+/// whole when a row changes: newest sighting per creature id, ids
+/// ascending, and every row the addon pruned in-game kept.
+#[test]
+fn creatures_merge_into_one_file_at_the_store_root() {
+    let mut store = mem(Retention::default());
+    assert!(store.creatures().is_empty());
+    assert_eq!(
+        creatures_file(&store),
+        None,
+        "no file until a creature lands"
+    );
+    assert_eq!(store.merge_creatures(Vec::new()), 0);
+    assert_eq!(creatures_file(&store), None);
+
+    let written = store.merge_creatures(vec![
+        npc(164569, "minus", false, 1_760_000_200, "Skittering Mote"),
+        npc(
+            164568,
+            "elite",
+            true,
+            1_760_000_100,
+            "Vexmarrow the Silvered",
+        ),
+    ]);
+    assert_eq!(written, 2);
+    assert_eq!(
+        creatures_file(&store).unwrap(),
+        "# wowdps creatures 1\n\
+         164568\telite\t1\t1760000100\tVexmarrow the Silvered\n\
+         164569\tminus\t0\t1760000200\tSkittering Mote\n"
+    );
+
+    // The next logout's file: 164568 pruned in-game (absent), 164569 seen
+    // again at a new classification, one new id. Nothing older wins.
+    let written = store.merge_creatures(vec![
+        npc(164569, "normal", false, 1_760_100_000, "Skittering Mote"),
+        npc(1, "rare", false, 1_760_100_000, "Odd One"),
+        npc(164568, "normal", false, 1_700_000_000, "Stale"),
+    ]);
+    assert_eq!(written, 2);
+    assert_eq!(
+        creatures_file(&store).unwrap(),
+        "# wowdps creatures 1\n\
+         1\trare\t0\t1760100000\tOdd One\n\
+         164568\telite\t1\t1760000100\tVexmarrow the Silvered\n\
+         164569\tnormal\t0\t1760100000\tSkittering Mote\n"
+    );
+    // The same file again changes nothing.
+    assert_eq!(
+        store.merge_creatures(vec![npc(1, "rare", false, 1_760_100_000, "Odd One")]),
+        0
+    );
+    assert_eq!(store.last_error, None);
+
+    // The file is the truth: a store opened over it holds the same rows.
+    let mut backend = MemBackend::new();
+    backend
+        .write(
+            "",
+            "creatures.tsv",
+            creatures_file(&store).unwrap().as_bytes(),
+        )
+        .unwrap();
+    let reopened = Store::open(backend, Retention::default());
+    assert_eq!(reopened.creatures(), store.creatures());
+}
+
+/// A failed write keeps what is on disk as what the store holds; a file
+/// this build cannot read whole (a newer format) is never rewritten.
+#[test]
+fn a_creatures_file_is_never_clobbered() {
+    let mut backend = MemBackend::new();
+    backend.fail_writes = true;
+    let mut store = Store::open(backend, Retention::default());
+    assert_eq!(
+        store.merge_creatures(vec![npc(7, "elite", false, 100, "A")]),
+        0
+    );
+    assert!(
+        store.creatures().is_empty(),
+        "nothing held that isn't on disk"
+    );
+    assert!(
+        store
+            .last_error
+            .as_deref()
+            .unwrap()
+            .contains("write failed")
+    );
+
+    let newer = "# wowdps creatures 2\n7\telite\t0\t100\tA\tnew column\n";
+    let mut backend = MemBackend::new();
+    backend
+        .write("", "creatures.tsv", newer.as_bytes())
+        .unwrap();
+    let mut store = Store::open(backend, Retention::default());
+    assert!(store.creatures().is_empty());
+    assert!(
+        store
+            .status()
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("format 2"),
+        "{:?}",
+        store.status().error
+    );
+    assert_eq!(
+        store.merge_creatures(vec![npc(8, "rare", false, 200, "B")]),
+        0
+    );
+    assert_eq!(creatures_file(&store).unwrap(), newer, "left as it was");
+}
+
+/// On disk: `<history dir>/creatures.tsv`, written through a temporary
+/// sibling and a rename (no `.tmp` left behind), read back on open.
+#[test]
+fn the_creatures_file_is_written_atomically_at_the_history_root() {
+    let tmp = Temp::new("creatures");
+    let root = tmp.join("history");
+    let mut store = Store::open(DirBackend::new(root.clone()), Retention::default());
+    assert_eq!(
+        store.merge_creatures(vec![
+            npc(164567, "elite", false, 1_760_000_000, "Gloomwing Lurker"),
+            npc(
+                164568,
+                "elite",
+                true,
+                1_760_000_100,
+                "Vexmarrow the Silvered"
+            ),
+        ]),
+        2
+    );
+    let path = root.join("creatures.tsv");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# wowdps creatures 1\n\
+         164567\telite\t0\t1760000000\tGloomwing Lurker\n\
+         164568\telite\t1\t1760000100\tVexmarrow the Silvered\n"
+    );
+    store.merge_creatures(vec![npc(
+        164567,
+        "rareelite",
+        false,
+        1_760_000_500,
+        "Gloomwing Lurker",
+    )]);
+    let leftovers: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        leftovers,
+        ["creatures.tsv"],
+        "no temporary file left behind"
+    );
+    let reopened = Store::open(DirBackend::new(root), Retention::default());
+    assert_eq!(reopened.creatures(), store.creatures());
+    assert_eq!(reopened.creatures()[&164567].classification, "rareelite");
 }
 
 // ---- v31: guild affiliations (spec §9a, the wowdps addon) ------------------------

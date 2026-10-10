@@ -73,7 +73,9 @@ A player who leaves their guild is known only once the addon sees them
 again in a raid. Reading SavedVariables needed a Lua-table reader in
 `proto` — a reader of the game's serializer output, never an interpreter.
 The daemon writes into the game install, but only to a folder the user
-created by asking, and only with the bytes it embeds.
+created by asking, and only with the bytes it embeds. The same addon later
+took on the NPC classifications the replay colors by
+([Creature Classifications Come From The Addon](creature-classes-come-from-the-addon.md)).
 
 [^contract]: `CONTRACT.md`, wire history row v31 and the history-store paragraph.
 [^spec]: `docs/spec-history-store.md` §9a.

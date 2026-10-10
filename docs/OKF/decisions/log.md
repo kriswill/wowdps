@@ -1,5 +1,15 @@
 # Log
 
+## 2026-10-10
+
+- **Creation** — [Creature Classifications Come From The Addon, Kept As One TSV](creature-classes-come-from-the-addon.md):
+  the addon records `UnitClassification` and `UnitIsLieutenant` by creature
+  id from nameplates (the log and `Creature.db2` lack them); the daemon
+  merges them into `creatures.tsv` at the store's root, a contracted file
+  the replay reads; it lags a logout.
+- **Update** — [Guilds Come From An Addon, Joined At Read](guilds-come-from-an-addon.md):
+  links the creatures section the same addon took on.
+
 ## 2026-10-09
 
 - **Update** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
