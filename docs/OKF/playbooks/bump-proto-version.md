@@ -43,9 +43,12 @@ keeps the version, however much it changes the numbers[^contract].
 
 1. **Ask first.** The user may be mid-pull; a restart drops the live meter
    and any coach's monitoring.
-2. **Build release in the dev shell.** The `wowdps-dev` unit's path watch
-   restarts the daemon and its overlay when the active profile's binaries
-   change; otherwise `systemctl --user restart wowdps-dev`[^tracing].
+2. **Build the unit's active profile in the dev shell.** The `wowdps-dev`
+   unit runs and watches one profile (`tools/dev-unit.sh status` names it):
+   build that one, or switch it first (`tools/dev-unit.sh profile release`).
+   Its path watch restarts the daemon and its overlay when that profile's
+   binaries change; restart by hand (`systemctl --user restart wowdps-dev`)
+   only when it did not[^tracing].
 3. **The new binary cannot stop the old daemon**: its stop goes to the new
    socket name. Let the unit's restart replace the old process, then remove
    the stale `$XDG_RUNTIME_DIR/wowdps/wowdps-v<old>.sock` and `.lock`.
