@@ -2,6 +2,9 @@
 
 ## 2026-10-09
 
+- **Creation** — [stacks.txt](stacks.md): the doc R21's fixture lacked — the
+  Tectonic Strike ladder, the controls that must not condition, the death
+  rule, and the segment edges where an aura lands nowhere.
 - **Creation** — [replay.txt](replay.md): R29's fixture; check.awk's R29 block
   writes `replay_*` rows into every gated fixture's TSV.
 - **Update** — [sample.txt](sample.md): Mírelle's mana once in the Verkath
