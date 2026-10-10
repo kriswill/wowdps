@@ -71,6 +71,15 @@ tier: `docs/OKF/crates/daemon.md`. Operations: `docs/tracing.md`.
 - It writes raid members' guilds (which the combat log never carries) into
   its SavedVariables on logout; they lag a logout. The daemon reads them on
   start and on a 30 s idle poll.
+- It also records each NPC's classification and lieutenant flag by creature
+  id (`WOWDPS_DATA.creatures`). The poll merges them into
+  `<history dir>/creatures.tsv`, a format the replay reads (CONTRACT.md,
+  the addon paragraph; codec `proto::creatures`). The newest `seen` per id
+  wins and a row the addon pruned stays. Never rewrite a file the codec
+  refuses, and never write a player's name into it.
+- Any change under `addon/` makes every installed copy stale (the check is
+  byte for byte), so the daemon rewrites it on its next start. Bump the
+  Lua's `SCHEMA` when the table's shape changes.
 - The TOC's interface number comes from the install's `.build.info`; never
   hardcode it.
 

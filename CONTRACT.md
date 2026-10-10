@@ -888,6 +888,29 @@ start, REWRITES a copy that is not byte-for-byte what it would write (older vers
 interface number, hand edit) and LEAVES a missing one missing — installing is the user's
 call, once. `wowdps addon` reports both, plus each account's SavedVariables.
 
+**Creature classifications** (record, not wire; `WOWDPS_DATA` schema 2): the log never says
+whether an NPC is elite, rare or a lieutenant, so the addon also records, keyed by creature id
+(the sixth dash field of a `Creature-` or `Vehicle-` GUID, as the log writes it), every NPC
+whose nameplate or target it sees inside a dungeon, raid or scenario, and a world boss
+anywhere: `classification` (`UnitClassification`: `normal` | `elite` | `rareelite` | `rare` |
+`worldboss` | `minus`), `lieutenant` (`UnitIsLieutenant`, 12.x, guarded; `0` or `1`), `seen`
+(`GetServerTime()`), `name`, `build` (`GetBuildInfo()`'s version and build), `difficulty`,
+`type` and `power` into `WOWDPS_DATA.creatures`, the newest sighting per id; never a player,
+pet, guardian or other player-controlled unit, never an NPC wearing a group member's name (a
+mirror clone), never a secret value, and ids unseen for 60 days
+are pruned on load. The history thread reads them with the players (on start, on the 30 s
+poll) and keeps **`<history dir>/creatures.tsv`** (`proto::creatures`), rewritten whole
+through `write_atomic` when a row changes: UTF-8, first line `# wowdps creatures 1`, then one
+row per creature id, ascending, `creature_id<TAB>classification<TAB>lieutenant<TAB>seen_unix<TAB>name`
+— `classification` one of the six above (nothing else is written), `lieutenant` `0` or `1`,
+`seen_unix` whole seconds UTC, `name` the NPC's (never a player's) with any control character
+written as a space, `\n` line ends. Merge: the newest `seen` per creature id wins (a tie keeps
+the stored row), and a row the SavedVariables no longer hold stays — pruned in-game, not
+refuted. The file lags a logout, as the guilds do. Readers (the replay, `wowdps history
+stats`) treat it as optional, refuse a header naming another or a newer format, skip later
+`#` lines and any row they cannot read, and ignore columns past the fifth; the daemon never
+rewrites a file it cannot read whole.
+
 ## CLI (owner: tui)
 
 Git-style subcommands: `wowdps [--file|--logs]` (TUI client; source conflict with
@@ -895,7 +918,7 @@ a running daemon is a hard error naming both), `wowdps gui [--file|--logs]`,
 `wowdps daemon [--linger] [--file|--logs]`, `wowdps status`, `wowdps stop`,
 `wowdps addon [status | install]` (v31: the wowdps addon in the game's AddOns folder —
 `status` needs no daemon and reports install / interface / state / each account's
-SavedVariables; `install` writes it),
+SavedVariables, its players and creatures counted; `install` writes it),
 `wowdps help`. Any other first word dispatches externally: `wowdps <cmd> [args…]`
 execs `wowdps-<cmd>` with the tail verbatim, preferring a sibling of the running
 binary (same build) over `$PATH` — `wowdps extract …` runs `wowdps-extract`,

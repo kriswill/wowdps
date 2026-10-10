@@ -38,8 +38,14 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
   `FightRows`, `FightDetails`, `StoredLoadout`, `Annotation`, `Affiliation`
   as one-line JSON documents, `HISTORY_SCHEMA`, the fight, log and content
   ids and the loadout hash. The daemon writes them and every reader parses
-  them here; `Affiliation::read_saved_variables` turns the wowdps addon's
-  `WOWDPS_DATA` into records.
+  them here; `addon_table` reads the wowdps addon's `WOWDPS_DATA` once and
+  `Affiliation::from_addon_table` turns its players into records.
+- `creatures.rs` — the codec of `creatures.tsv`, the addon's NPC
+  classifications at the store's root: `Creature`, `parse` (refuses another
+  or a newer header, skips a row it cannot read), `render` (the golden
+  bytes the replay reads), `merge` (newest `seen` per creature id; absent
+  rows stay) and `Creature::from_addon_table` over the SavedVariables
+  section ([Creature Classifications Come From The Addon](../decisions/creature-classes-come-from-the-addon.md)).
 - `lua.rs` — a stdlib reader of the Lua the game writes to
   `SavedVariables/*.lua`: `NAME = value` globals, tables with bracketed,
   bare and positional keys, every escape the serializer emits, `1/0`-style

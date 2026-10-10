@@ -9,15 +9,24 @@
 -- log uses (Player-<realm id>-<hex>), so the join never depends on how a
 -- realm name is spelled.
 --
+-- It also records how the game classifies each NPC whose nameplate you see
+-- inside an instance (normal, elite, rare, rareelite, worldboss, minus, and
+-- a lieutenant), keyed by the creature id the combat log's GUIDs carry, so
+-- the replay can mark them the way nameplates do. The log has none of it.
+--
 -- Installed and kept current by `wowdps addon install`; the daemon rewrites
 -- it on start when the copy in the game's AddOns folder is out of date.
 
 local ADDON = ...
-local SCHEMA = 1
+-- 2: `creatures` joined `players` and `characters`.
+local SCHEMA = 2
 
 -- Records older than this are dropped on load: the table is a memory of
 -- rosters, not an archive, and a season's worth is plenty.
 local KEEP_SECS = 365 * 24 * 60 * 60
+-- Creatures unseen this long are dropped on load. The daemon keeps its own
+-- copy of every creature it has read, so this only bounds the file.
+local CREATURE_KEEP_SECS = 60 * 24 * 60 * 60
 
 -- Looking-for-raid difficulties: never a guild night.
 local LFR = { [7] = true, [17] = true }
@@ -39,6 +48,7 @@ local function data()
   d.version = version()
   d.players = d.players or {}
   d.characters = d.characters or {}
+  d.creatures = d.creatures or {}
   d.config = d.config or { dungeons = false }
   return d
 end
@@ -50,6 +60,12 @@ local function prune()
     if type(rec) ~= "table" or (rec.seen or 0) < cutoff then
       d.players[guid] = nil
       d.characters[guid] = nil
+    end
+  end
+  cutoff = GetServerTime() - CREATURE_KEEP_SECS
+  for id, rec in pairs(d.creatures) do
+    if type(rec) ~= "table" or (rec.seen or 0) < cutoff then
+      d.creatures[id] = nil
     end
   end
 end
@@ -149,19 +165,145 @@ local function schedule()
   end)
 end
 
+-- ---- creatures ---------------------------------------------------------------
+
+-- The client's build as `.build.info` spells it (12.0.5.63906): a creature's
+-- classification belongs to the game version that showed it.
+local BUILD = (function()
+  local v, b = GetBuildInfo()
+  return (v and b) and (v .. "." .. b) or v
+end)()
+
+-- WOWDPS_DATA is the saved table only from ADDON_LOADED on; a write before
+-- it would land in the placeholder and be lost.
+local loaded = false
+
+-- A 12.x secret value (combat-restricted data) must never be compared or
+-- stored: either errors.
+local function secret(v)
+  return issecretvalue ~= nil and issecretvalue(v) or false
+end
+
+-- Where a creature is worth recording: inside a dungeon, a raid or a
+-- scenario (a delve), where the pulls a replay keeps happen; outdoors only
+-- a world boss. Questing would fill the table with mobs no replay shows.
+local function creatureWanted(classification)
+  local inInstance, instanceType = IsInInstance()
+  if inInstance and (instanceType == "party" or instanceType == "raid"
+      or instanceType == "scenario") then
+    return true
+  end
+  return classification == "worldboss"
+end
+
+-- The group's names, rebuilt after a roster change. Some encounters spawn
+-- NPCs that wear a group member's name (a mirror clone); the table holds
+-- NPC names only, so a creature named like someone in the group is skipped.
+local rosterNames, rosterDirty = {}, true
+local function groupNamed(name)
+  if rosterDirty then
+    rosterDirty = false
+    rosterNames = {}
+    local units = { "player" }
+    local prefix = IsInRaid() and "raid" or "party"
+    for i = 1, GetNumGroupMembers() do
+      units[#units + 1] = prefix .. i
+    end
+    for _, u in ipairs(units) do
+      local member = UnitName(u)
+      if member and not secret(member) then
+        rosterNames[member] = true
+      end
+    end
+  end
+  return rosterNames[name] == true
+end
+
+-- Record one unit's classification under its creature id, or nothing: a
+-- player, a pet, a guardian or anything else a player controls, a unit the
+-- client cannot name yet, one named like a group member, a value the game
+-- keeps secret.
+local function recordCreature(unit)
+  if not loaded or not unit or not UnitExists(unit) then
+    return
+  end
+  local guid = UnitGUID(unit)
+  if secret(guid) or not guid then
+    return
+  end
+  -- Creature-0-<server>-<instance>-<zone uid>-<creature id>-<spawn uid>,
+  -- the layout the combat log writes; a vehicle NPC shares it.
+  local kind, id = guid:match("^(%a+)%-%d+%-%d+%-%d+%-%d+%-(%d+)%-")
+  if kind ~= "Creature" and kind ~= "Vehicle" then
+    return
+  end
+  local controlled = UnitPlayerControlled(unit)
+  if secret(controlled) or controlled then
+    return
+  end
+  local classification = UnitClassification(unit)
+  if secret(classification) or not classification or not creatureWanted(classification) then
+    return
+  end
+  local name = UnitName(unit)
+  if secret(name) or not name or name == UNKNOWNOBJECT or groupNamed(name) then
+    return
+  end
+  local lieutenant = 0
+  if UnitIsLieutenant then -- new in 12.x; older clients have none
+    local yes = UnitIsLieutenant(unit)
+    if not secret(yes) and yes then
+      lieutenant = 1
+    end
+  end
+  local _, _, difficulty = GetInstanceInfo()
+  local creatureType = UnitCreatureType(unit)
+  local _, power = UnitPowerType(unit)
+  local creatures = WOWDPS_DATA.creatures
+  id = tonumber(id)
+  local rec = creatures[id]
+  if not rec then
+    rec = {}
+    creatures[id] = rec
+  end
+  -- The newest sighting wins whole: a creature id's classification can
+  -- differ by difficulty, and the difficulty it was seen at rides along.
+  rec.name = name
+  rec.classification = classification
+  rec.lieutenant = lieutenant
+  rec.seen = GetServerTime()
+  rec.build = BUILD
+  rec.difficulty = difficulty
+  rec.type = not secret(creatureType) and creatureType or nil
+  rec.power = not secret(power) and power or nil
+end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_GUILD_UPDATE")
 frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+frame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
+frame:RegisterEvent("UNIT_CLASSIFICATION_CHANGED")
+frame:RegisterEvent("PLAYER_TARGET_CHANGED")
 frame:SetScript("OnEvent", function(_, event, arg)
   if event == "ADDON_LOADED" then
     if arg == ADDON then
       prune()
+      loaded = true
     end
     return
+  elseif event == "NAME_PLATE_UNIT_ADDED" or event == "UNIT_CLASSIFICATION_CHANGED" then
+    -- Mid-pull, on every nameplate: an API this client answers oddly must
+    -- never put an error on the player's screen.
+    pcall(recordCreature, arg)
+    return
+  elseif event == "PLAYER_TARGET_CHANGED" then
+    pcall(recordCreature, "target")
+    return
   end
+  rosterDirty = true
   schedule()
 end)
 
@@ -174,6 +316,17 @@ local function count()
     end
   end
   return n, guilded
+end
+
+local function countCreatures()
+  local n, lieutenants = 0, 0
+  for _, rec in pairs(data().creatures) do
+    n = n + 1
+    if rec.lieutenant == 1 then
+      lieutenants = lieutenants + 1
+    end
+  end
+  return n, lieutenants
 end
 
 SLASH_WOWDPS1 = "/wowdps"
@@ -189,9 +342,11 @@ SlashCmdList.WOWDPS = function(msg)
     print(("wowdps: captured; %d players known, %d guilded"):format(n, g))
   else
     local n, g = count()
+    local c, lt = countCreatures()
     print(("wowdps %s: %d players known, %d guilded; recording %s; keystone rosters %s"):format(
       d.version or "?", n, g, wanted() and "here" or "not here",
       d.config.dungeons and "on" or "off"))
+    print(("  %d creatures classified, %d lieutenants"):format(c, lt))
     print("  /wowdps dungeons — toggle keystone rosters; /wowdps capture — record now")
   end
 end
