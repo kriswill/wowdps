@@ -16,13 +16,14 @@ sources:
 
 This bundle follows OKF v0.2[^okf-spec] with the profile choices below, and
 is maintained with the okf CLI[^okflight] configured by the repository's
-`okflight.toml`. okf's built-in validation defaults reproduce these rules
-exactly, so the `[profile]` section there sets nothing.
+`okflight.toml`. okf's built-in validation defaults reproduce these rules,
+so the `[profile]` section there sets one thing: `AGENTS.md` joins the
+reserved files.
 
 ## What this bundle is for
 
-`CONTRACT.md` is the binding interface spec and `CLAUDE.md` the working
-instructions; `docs/` holds the specs and plans that produced each roadmap
+`CONTRACT.md` is the binding interface spec and the `AGENTS.md` files
+(the root's, and one per area) the working instructions; `docs/` holds the specs and plans that produced each roadmap
 step. This bundle is the **graph over all of that**: one node per crate,
 per binding ruling, per game-data generator and per fixture, plus the
 decisions, patterns and playbooks that explain why the code is shaped the
@@ -71,6 +72,8 @@ ruling or generator needs no edit to the passes.
 - **Body headings are H2**; the frontmatter `title` is the H1.
 - **`index.md` files are generated** by `okf index`; only the blurb
   above the first heading is hand-maintained.
+- **`AGENTS.md` is reserved:** the bundle's own agent instructions (rules
+  for editing it), with no frontmatter, never a concept and never indexed.
 - **`log.md` is bundle-scoped**: an entry lives in the `log.md` of the
   directory owning its subject (`decisions/log.md`, `crates/log.md`, …;
   created on first entry), newest first under `## YYYY-MM-DD`, leading

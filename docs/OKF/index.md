@@ -9,7 +9,7 @@ seams, the binding rulings of `CONTRACT.md`, the fixtures that gate them, the
 game-data generators, and the decisions, patterns and playbooks behind them,
 structured as an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
 v0.2 bundle. Conventions and tooling: the [OKF Profile](okf-profile.md). This
-is the authored-rationale layer; it complements `CLAUDE.md` (working
+is the authored-rationale layer; it complements the `AGENTS.md` files (working
 instructions), `CONTRACT.md` (the binding spec) and `docs/*.md` (specs and
 plans per roadmap step).
 
