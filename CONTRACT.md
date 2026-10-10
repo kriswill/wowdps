@@ -906,7 +906,10 @@ row per creature id, ascending, `creature_id<TAB>classification<TAB>lieutenant<T
 `seen_unix` whole seconds UTC, `name` the NPC's (never a player's) with any control character
 written as a space, `\n` line ends. Merge: the newest `seen` per creature id wins (a tie keeps
 the stored row), and a row the SavedVariables no longer hold stays — pruned in-game, not
-refuted. The file lags a logout, as the guilds do. Readers (the replay, `wowdps history
+refuted. Before each merge the daemon folds the file on disk back into its table by the same
+rule, so a row an outside writer put there (a seed tool's at `seen_unix` 0, a hand edit,
+another machine's sync) survives unless the addon saw that creature strictly later. The file
+lags a logout, as the guilds do. Readers (the replay, `wowdps history
 stats`) treat it as optional, refuse a header naming another or a newer format, skip later
 `#` lines and any row they cannot read, and ignore columns past the fifth; the daemon never
 rewrites a file it cannot read whole.

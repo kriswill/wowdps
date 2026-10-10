@@ -1866,10 +1866,12 @@ pub struct Store<B: Backend> {
     affiliations: HashMap<String, Affiliation>,
     /// `creatures.tsv` at the store's root, by creature id: the NPC
     /// classifications the wowdps addon saw (`proto::creatures`), read at
-    /// open and rewritten whole when a merge changes a row.
+    /// open, the file folded back in before each merge, and rewritten
+    /// whole when a merge changes a row.
     creatures: BTreeMap<u32, Creature>,
-    /// Why the `creatures.tsv` on disk is one this build must not rewrite
-    /// (a newer format, a file not ours); `None` when it can.
+    /// Why the `creatures.tsv` on disk, as last read (at open or before a
+    /// merge), is one this build must not rewrite (a newer format, a file
+    /// not ours); `None` when it can.
     creatures_refused: Option<String>,
     /// v39: the fights whose `series/<id>.bin` is on disk, listed once at
     /// open and kept with every write and removal — so retention never
@@ -1959,15 +1961,9 @@ impl<B: Backend> Store<B> {
             .collect();
         // The addon's NPC classifications, one file at the root. A file
         // this build cannot read whole is left as it is, never rewritten.
-        let (creatures, creatures_refused) = match backend.read("", creatures::FILE) {
-            None => (BTreeMap::new(), None),
-            Some(bytes) => match String::from_utf8(bytes)
-                .map_err(|_| format!("{}: not UTF-8", creatures::FILE))
-                .and_then(|text| creatures::parse(&text))
-            {
-                Ok(rows) => (rows, None),
-                Err(e) => (BTreeMap::new(), Some(e)),
-            },
+        let (creatures, creatures_refused) = match Self::read_creatures(&backend) {
+            Ok(rows) => (rows, None),
+            Err(e) => (BTreeMap::new(), Some(e)),
         };
         let last_error = last_error.or_else(|| creatures_refused.clone());
         // v39: which fights keep the series tier, by file name; v42: and in
@@ -2305,14 +2301,55 @@ impl<B: Backend> Store<B> {
 
     // ---- creature classifications (the wowdps addon) ----------------------------
 
+    /// `creatures.tsv` at the store's root as it is on disk now: its rows
+    /// (none when there is no file), or why this build must not rewrite it
+    /// (a file that exists but cannot be read, not UTF-8, another or a
+    /// newer format, a file not ours). A backend's read answers `None` for
+    /// any failure, so a `None` over a file that still exists (permission
+    /// denied, a transient error) is refused rather than taken as empty:
+    /// at open the store then starts refused, and a merge leaves the file
+    /// alone. Read first, then check: a file removed between the two
+    /// reads as absent.
+    fn read_creatures(backend: &B) -> Result<BTreeMap<u32, Creature>, String> {
+        match backend.read("", creatures::FILE) {
+            None if backend.exists("", creatures::FILE) => {
+                Err(format!("{}: could not be read", creatures::FILE))
+            }
+            None => Ok(BTreeMap::new()),
+            Some(bytes) => String::from_utf8(bytes)
+                .map_err(|_| format!("{}: not UTF-8", creatures::FILE))
+                .and_then(|text| creatures::parse(&text)),
+        }
+    }
+
     /// Take the addon's NPC classifications in (`creatures::merge`: the
     /// newest sighting per creature id wins, and a row the addon pruned
     /// in-game stays) and, when a row changed, rewrite `creatures.tsv`
-    /// whole through `write_atomic`, ids ascending. The number of rows
-    /// changed; 0 when nothing did, when the write failed (the rows in
-    /// hand stay what is on disk), or when the file on disk is one this
-    /// build must not rewrite.
+    /// whole through `write_atomic`, ids ascending. The file on disk is
+    /// folded into the table first by the same rule, so a row something
+    /// else wrote there since open survives the rewrite. The number of
+    /// rows the addon changed; 0 when nothing did, when the write failed
+    /// (the rows in hand stay what is on disk), or when the file on disk
+    /// is one this build must not rewrite.
     pub fn merge_creatures(&mut self, recs: Vec<Creature>) -> usize {
+        // Fold the file back in before the addon's rows: a seed tool, a
+        // hand edit or a second machine's sync may have written it since
+        // open, and a rewrite from the table alone would drop their rows.
+        // The file meets the table by the addon's own newer-wins rule, so
+        // an outside row (a seed at `seen_unix` 0 too) stays unless the
+        // table saw that creature strictly later. A file this build now
+        // refuses keeps the table and is never rewritten; a file it reads
+        // again lifts the refusal. A write landing between this read and
+        // the rewrite below is still lost: a window of milliseconds, at most
+        // once a poll, accepted rather than locking a file outside writers
+        // never lock.
+        match Self::read_creatures(&self.backend) {
+            Ok(on_disk) => {
+                creatures::merge(&mut self.creatures, on_disk.into_values().collect());
+                self.creatures_refused = None;
+            }
+            Err(why) => self.creatures_refused = Some(why),
+        }
         if let Some(why) = &self.creatures_refused {
             self.last_error = Some(format!("{why}; the addon's creatures were not merged"));
             return 0;

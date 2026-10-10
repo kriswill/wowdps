@@ -71,8 +71,12 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   classifications by creature id, merged by the same poll
   (`Store::merge_creatures`, one rewrite per poll through `write_atomic`;
   newest `seen` wins, a row the addon pruned stays). The store loads it on
-  open; a file `proto::creatures` refuses (a newer format) is never
-  rewritten. The replay reads it; `HistoryStatus` does not count it
+  open and folds it back into the table before each merge by the same
+  rule, so a row an outside writer put there since open (a seed tool, a
+  hand edit, another machine's sync) survives the rewrite; a file
+  `proto::creatures` refuses (a newer format) or one that exists but cannot
+  be read, at open or at that re-read, is never rewritten. The replay reads
+  it; `HistoryStatus` does not count it
   ([Creature Classifications Come From The Addon](../decisions/creature-classes-come-from-the-addon.md)).
 - **Backends.** `Store<B: Backend>` is generic — `DirBackend` in
   production, `MemBackend` for the mock and tests; retention and the

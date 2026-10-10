@@ -81,5 +81,20 @@ difficulty it was seen at. Changing the addon makes every installed copy
 stale, so the daemon rewrites it on its next start, and the in-game table's
 `SCHEMA` moved to 2.
 
+## Amended 2026-10-10: outside writers
+
+The daemon is not the file's only writer: a dev-time seed tool, a hand edit
+or another machine's sync may write `creatures.tsv` while the daemon runs.
+The store read the file once at open and rewrote it from its table, so the
+next merge wiped those rows. `Store::merge_creatures` now re-reads the file
+before taking the addon's rows in and folds it into the table by the same
+newer-wins rule, so an outside row (a seed's at `seen_unix` 0 included)
+survives unless that creature was seen strictly later[^contract]; a file the codec
+refuses at that re-read is left alone as at open, and so is a file that
+exists but cannot be read (permission denied, a transient error), refused
+rather than taken as empty and rewritten. A write landing between
+the re-read and the rewrite is still lost, a window of milliseconds at most
+once a poll, accepted.
+
 [^contract]: CONTRACT.md — the addon paragraph, "Creature classifications"
 [^spec]: History store spec §9b

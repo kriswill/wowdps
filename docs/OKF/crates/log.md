@@ -2,6 +2,13 @@
 
 ## 2026-10-10
 
+- **Update** — [wowdps-daemon](daemon.md): a `creatures.tsv` that exists
+  but cannot be read is refused, at open and before a merge, rather than
+  read as empty and rewritten.
+- **Update** — [wowdps-daemon](daemon.md): `Store::merge_creatures` folds
+  `creatures.tsv` back into its table before each merge, so an outside
+  writer's rows survive the rewrite; a file refused at that re-read is
+  never rewritten.
 - **Update** — [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
   [wowdps-history](history.md): `creatures.tsv`, the addon's NPC
   classifications — proto's `creatures` codec and `addon_table`, the

@@ -3012,6 +3012,263 @@ fn the_creatures_file_is_written_atomically_at_the_history_root() {
     assert_eq!(reopened.creatures()[&164567].classification, "rareelite");
 }
 
+/// Something other than the daemon may write `creatures.tsv` while the
+/// store is open (a seed tool, a hand edit, a second machine's sync): the
+/// next merge folds the file back in, so a row it added survives a merge
+/// of unrelated addon rows.
+#[test]
+fn a_row_written_to_the_file_after_open_survives_a_merge() {
+    let tmp = Temp::new("creatures-outside");
+    let root = tmp.join("history");
+    let mut store = Store::open(DirBackend::new(root.clone()), Retention::default());
+    assert_eq!(
+        store.merge_creatures(vec![npc(
+            164567,
+            "elite",
+            false,
+            1_760_000_000,
+            "Gloomwing Lurker"
+        )]),
+        1
+    );
+    let path = root.join("creatures.tsv");
+    // A hand edit adds a creature the daemon never saw.
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str("200001\trare\t0\t1760000050\tOdd One\n");
+    std::fs::write(&path, &text).unwrap();
+
+    assert_eq!(
+        store.merge_creatures(vec![npc(
+            164568,
+            "elite",
+            true,
+            1_760_000_100,
+            "Vexmarrow the Silvered"
+        )]),
+        1,
+        "only the addon's row counts as changed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# wowdps creatures 1\n\
+         164567\telite\t0\t1760000000\tGloomwing Lurker\n\
+         164568\telite\t1\t1760000100\tVexmarrow the Silvered\n\
+         200001\trare\t0\t1760000050\tOdd One\n"
+    );
+    assert_eq!(store.creatures().len(), 3);
+    assert_eq!(store.last_error, None);
+}
+
+/// An outside row meets the addon's by the same rule as any other: it is
+/// replaced by a strictly newer sighting of the same creature, never by an
+/// older one or a tie, and a newer outside row (a second machine's sync)
+/// replaces the store's own older one.
+#[test]
+fn an_outside_row_yields_only_to_a_strictly_newer_sighting() {
+    let tmp = Temp::new("creatures-newer");
+    let root = tmp.join("history");
+    let mut store = Store::open(DirBackend::new(root.clone()), Retention::default());
+    store.merge_creatures(vec![npc(
+        164567,
+        "normal",
+        false,
+        1_760_000_100,
+        "Gloomwing Lurker",
+    )]);
+    let path = root.join("creatures.tsv");
+    let synced = "# wowdps creatures 1\n\
+                  164567\telite\t0\t1760000500\tGloomwing Lurker\n";
+    std::fs::write(&path, synced).unwrap();
+
+    // Older and tied sightings change nothing, and the file stays.
+    assert_eq!(
+        store.merge_creatures(vec![npc(
+            164567,
+            "minus",
+            false,
+            1_760_000_400,
+            "Gloomwing Lurker"
+        )]),
+        0
+    );
+    assert_eq!(
+        store.merge_creatures(vec![npc(
+            164567,
+            "rare",
+            false,
+            1_760_000_500,
+            "Gloomwing Lurker"
+        )]),
+        0
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), synced);
+    assert_eq!(store.creatures()[&164567].classification, "elite");
+    assert_eq!(store.creatures()[&164567].seen_unix, 1_760_000_500);
+
+    // A strictly newer sighting replaces it.
+    assert_eq!(
+        store.merge_creatures(vec![npc(
+            164567,
+            "rareelite",
+            false,
+            1_760_000_600,
+            "Gloomwing Lurker"
+        )]),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# wowdps creatures 1\n\
+         164567\trareelite\t0\t1760000600\tGloomwing Lurker\n"
+    );
+}
+
+/// A seed tool writes rows at `seen_unix` 0. They survive the daemon's
+/// merges: one for a creature the store never saw stays until the addon
+/// sees it, and one for a creature the store saw later loses to that
+/// sighting alone.
+#[test]
+fn a_seed_row_at_seen_zero_survives_the_merge() {
+    let tmp = Temp::new("creatures-seed");
+    let root = tmp.join("history");
+    let mut store = Store::open(DirBackend::new(root.clone()), Retention::default());
+    store.merge_creatures(vec![npc(
+        164567,
+        "elite",
+        false,
+        1_760_000_000,
+        "Gloomwing Lurker",
+    )]);
+    let path = root.join("creatures.tsv");
+    std::fs::write(
+        &path,
+        "# wowdps creatures 1\n\
+         164567\tnormal\t0\t0\tGloomwing Lurker\n\
+         300001\tminus\t0\t0\tSeeded Mote\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        store.merge_creatures(vec![npc(
+            164569,
+            "minus",
+            false,
+            1_760_000_300,
+            "Skittering Mote"
+        )]),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# wowdps creatures 1\n\
+         164567\telite\t0\t1760000000\tGloomwing Lurker\n\
+         164569\tminus\t0\t1760000300\tSkittering Mote\n\
+         300001\tminus\t0\t0\tSeeded Mote\n"
+    );
+
+    // The addon's first sighting of the seeded creature replaces it.
+    assert_eq!(
+        store.merge_creatures(vec![npc(300001, "normal", false, 1, "Seeded Mote")]),
+        1
+    );
+    assert_eq!(store.creatures()[&300001].classification, "normal");
+    assert_eq!(store.creatures()[&300001].seen_unix, 1);
+}
+
+/// The refusal follows the file as last read: a file swapped for one this
+/// build refuses mid-run is left as it is (the table kept), and a file it
+/// reads again is merged into once more.
+#[test]
+fn a_creatures_file_refused_mid_run_is_never_clobbered() {
+    let tmp = Temp::new("creatures-refused");
+    let root = tmp.join("history");
+    let mut store = Store::open(DirBackend::new(root.clone()), Retention::default());
+    store.merge_creatures(vec![npc(7, "elite", false, 100, "A")]);
+    let path = root.join("creatures.tsv");
+    let newer = "# wowdps creatures 2\n7\telite\t0\t100\tA\tnew column\n";
+    std::fs::write(&path, newer).unwrap();
+
+    assert_eq!(
+        store.merge_creatures(vec![npc(8, "rare", false, 200, "B")]),
+        0
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        newer,
+        "left as it was"
+    );
+    assert!(
+        store.last_error.as_deref().unwrap().contains("format 2"),
+        "{:?}",
+        store.last_error
+    );
+    assert_eq!(store.creatures().len(), 1, "the table is kept");
+
+    std::fs::write(&path, "# wowdps creatures 1\n9\tminus\t0\t50\tC\n").unwrap();
+    assert_eq!(
+        store.merge_creatures(vec![npc(8, "rare", false, 200, "B")]),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# wowdps creatures 1\n\
+         7\telite\t0\t100\tA\n\
+         8\trare\t0\t200\tB\n\
+         9\tminus\t0\t50\tC\n"
+    );
+}
+
+/// A file that exists but cannot be read (permission denied, a transient
+/// error) is refused, not taken as empty: the merge leaves it alone, and a
+/// store opened over it starts refused.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_creatures_file_is_refused_not_rewritten() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Temp::new("creatures-unreadable");
+    let root = tmp.join("history");
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("creatures.tsv");
+    let text = "# wowdps creatures 1\n7\telite\t0\t100\tA\n";
+    std::fs::write(&path, text).unwrap();
+    let mut store = Store::open(DirBackend::new(root.clone()), Retention::default());
+    assert_eq!(store.creatures().len(), 1);
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&path).is_ok() {
+        // Root (CAP_DAC_OVERRIDE) reads it anyway.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        eprintln!("running with CAP_DAC_OVERRIDE: skipping");
+        return;
+    }
+    let merged = store.merge_creatures(vec![npc(8, "rare", false, 200, "B")]);
+    let error = store.last_error.clone();
+    let reopened = Store::open(DirBackend::new(root.clone()), Retention::default());
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert_eq!(merged, 0);
+    assert!(
+        error.as_deref().unwrap().contains("could not be read"),
+        "{error:?}"
+    );
+    assert_eq!(store.creatures().len(), 1, "the table is kept");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        text,
+        "left as it was"
+    );
+    assert!(reopened.creatures().is_empty());
+    assert!(
+        reopened
+            .last_error
+            .as_deref()
+            .unwrap()
+            .contains("could not be read"),
+        "{:?}",
+        reopened.last_error
+    );
+}
+
 // ---- v31: guild affiliations (spec §9a, the wowdps addon) ------------------------
 
 fn affiliation(guid: &str, guild: &str, mine: bool, seen_utc_ms: i64) -> Affiliation {
