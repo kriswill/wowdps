@@ -6,10 +6,10 @@
 dir = "docs/OKF" # OKF bundle root, workspace-relative
 out = "viz.html" # viz output file, relative to the bundle dir (gitignored)
 
-# [profile]                      # validation policy — okf's defaults are this
+[profile]                        # validation policy — okf's defaults are this
 # required-fields = ["type"]     # bundle's profile (docs/OKF/okf-profile.md),
-# recommended-fields = ["title", "description", "generated"]   # so nothing is set
-# reserved-files = ["index.md", "log.md"]
+# recommended-fields = ["title", "description", "generated"]   # so only this is set:
+reserved-files = ["index.md", "log.md", "AGENTS.md"] # + the bundle's agent rules
 # rooted-links = "error"
 # repo-links = "check"
 
