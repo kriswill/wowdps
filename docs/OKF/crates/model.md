@@ -14,7 +14,10 @@ The wowdps domain vocabulary: what a meter shows, said without reference to how 
 
 `replay` (v45, [R29](../rulings/r29.md)): `Cut` and its rows — `Unit`,
 `Post`, `Event`, `Placed`, `Marker`, `Head` — named as the columns of the
-files a replay reads, the raid's damage per second left to R25.
+files a replay reads, the raid's damage per second left to R25. A `Post`
+carries its floor (`map_id`) and `Cut::maps` counts each floor's posts; a
+boss row (`boss_engaged`, `boss_killed`, `boss_wiped`) is the one `Event`
+whose `unit` is `None`.
 
 ## Source
 

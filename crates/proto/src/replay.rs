@@ -1,8 +1,8 @@
 //! v45 (R29): the history store's REPLAY tier — `replay/<fight id>.bin`, a
 //! fight as the replay draws it (the model's [`Cut`]: its units and where
-//! each stood, its events, what players placed, the world markers), written
-//! for every boss pull and keystone run, wipes included. [`csv`] writes it
-//! back out as the seven files a replay reads.
+//! each stood, on every floor, its events, what players placed, the world
+//! markers), written for every boss pull and keystone run, wipes included.
+//! [`csv`] writes it back out as the seven files a replay reads.
 //!
 //! Binary like the series tier, and for the same reason: it is sized by the
 //! log's own lines. A 10-minute, 26-player raid pull posts its units some
@@ -32,20 +32,42 @@
 //! events 5 := varint n | (zz dt | u8 kind | varint unit | varint spell
 //!            | u8 has | [zz x | zz y] | [varint src] | [varint stacks]
 //!            | [varint base] | [varint target])*
-//!            (has: bits 0 at, 1 src, 2 stacks, 3 base, 4 target)
+//!            (has: bits 0 at, 1 src, 2 stacks, 3 base, 4 target, 5 NO
+//!            unit — a boss row's, its unit written 0)
 //! placed 6 := varint n | (zz dt | u8 kind | u8 has | [varint unit]
 //!            | varint spell | [zz x | zz y] | [varint src] | [varint target])*
 //!            (has: bits 0 unit, 1 at, 2 src, 3 target)
 //! marks 7 := varint n | (zz dt | u8 kind | u8 marker | [zz x | zz y])*
 //! spells  := an index into `spells` 8: varint n | (varint id | varint name)*
+//! maps  9 := varint n | varint map*               (every floor a post
+//!            stands on, ascending: the table a change names)
+//!            | varint m | (varint dunit | varint k | (varint dat | varint ix)*)*
+//!            (the m units whose track leaves the head's floor, in unit
+//!            order, each number against the last listed (the first
+//!            against 0); a unit's k changes of floor, each at a post index
+//!            against the last change's (the first against 0), to the
+//!            table's ix-th floor; its posts before the first change stand
+//!            on the head's floor)
 //! str     := varint len | utf-8
 //! opt(x)  := u8 0 | u8 1 x;  zz := zigzag varint;  name := index into strs
 //! ```
 //!
 //! Times count from the cut's start; an event's, a placed row's and a
-//! marker's against the one before it. Decoding never panics and never
-//! allocates more than the bytes in hand can fill: a lying count, an index
-//! past its table, a unit number past the units, all are `None`.
+//! marker's against the one before it. A pull on one floor costs its maps
+//! section four bytes — a one-floor table, no unit leaving it — and its
+//! index entry as many again. Decoding never
+//! panics and never allocates more than the bytes in hand can fill: a lying
+//! count, an index past its table, a unit number past the units, all are
+//! `None`.
+//!
+//! ## Formats
+//!
+//! - 1 (v45): kept the head's floor alone — a post on any other was never
+//!   written — and no boss rows. It still reads: every post on the head's
+//!   floor; the store's rewrite queue recuts it from its log as format 2.
+//! - 2: every floor's posts (`maps`, tag 9), and the boss rows
+//!   (`boss_engaged`, `boss_killed`, `boss_wiped`, kinds 13 to 15) with
+//!   `has` bit 5 for a row that names no unit.
 
 use std::collections::HashMap;
 
@@ -61,7 +83,7 @@ pub mod csv;
 /// The file's first four bytes.
 pub const MAGIC: &[u8; 4] = b"WDRP";
 /// The layout above, as this build writes it.
-pub const FORMAT: u8 = 1;
+pub const FORMAT: u8 = 2;
 /// The oldest layout a reader takes.
 pub const OLDEST: u8 = 1;
 /// The fixed head: magic, format, the index's length.
@@ -75,7 +97,15 @@ const EVENTS: u8 = 5;
 const PLACED: u8 = 6;
 const MARKS: u8 = 7;
 const SPELLS: u8 = 8;
-const SECTIONS: [u8; 8] = [STRS, HEAD, UNITS, POSTS, EVENTS, PLACED, MARKS, SPELLS];
+const MAPS: u8 = 9;
+const SECTIONS: [u8; 9] = [
+    STRS, HEAD, UNITS, POSTS, EVENTS, PLACED, MARKS, SPELLS, MAPS,
+];
+/// The event kinds format 1 knew (`EventKind::ALL`'s first thirteen): the
+/// boss rows came with format 2.
+const FORMAT1_KINDS: usize = 13;
+/// `has` bit 5 on an event: it names no unit (a boss row; format 2 on).
+const NO_UNIT: u8 = 1 << 5;
 
 /// The classes in the order the file numbers them (1-based; 0 is none).
 const CLASSES: [Class; 13] = [
@@ -112,6 +142,7 @@ pub fn encode(cut: &Cut) -> Vec<u8> {
     let events = w.events(cut);
     let placed = w.placed(cut);
     let marks = w.marks(cut);
+    let maps = maps(cut);
     let spells = w.spell_table();
     let strs = w.str_table();
     let mut index = Vec::new();
@@ -126,6 +157,7 @@ pub fn encode(cut: &Cut) -> Vec<u8> {
         (PLACED, placed),
         (MARKS, marks),
         (SPELLS, spells),
+        (MAPS, maps),
     ] {
         index.push(tag);
         put_varint(&mut index, body.len() as u64);
@@ -168,9 +200,14 @@ pub fn decode(bytes: &[u8]) -> Option<Cut> {
     let spells = read_spells(&mut section(SPELLS)?, &strs)?;
     let (head, floor) = read_head(&mut section(HEAD)?, &strs)?;
     let (mut units, counts) = read_units(&mut section(UNITS)?, &strs)?;
-    read_posts(&mut section(POSTS)?, &mut units, &counts)?;
+    // Every post on the head's floor — format 1 kept no other — until the
+    // maps section moves a track's stretches to theirs.
+    read_posts(&mut section(POSTS)?, &mut units, &counts, floor)?;
+    if format >= 2 {
+        read_maps(&mut section(MAPS)?, &mut units)?;
+    }
     let n_units = units.len();
-    let events = read_events(&mut section(EVENTS)?, &spells, n_units)?;
+    let events = read_events(&mut section(EVENTS)?, &spells, n_units, format)?;
     let placed = read_placed(&mut section(PLACED)?, &spells, n_units)?;
     let markers = read_marks(&mut section(MARKS)?)?;
     Some(Cut {
@@ -305,14 +342,8 @@ impl Writer {
     fn posts(&mut self, cut: &Cut) -> Vec<u8> {
         let mut out = Vec::new();
         for u in &cut.units {
-            let mut last = Post {
-                t_ms: 0,
-                x: 0,
-                y: 0,
-                facing: 0,
-                hp: 0,
-                power: None,
-            };
+            // The floor is the maps section's: a post here is its place.
+            let mut last = zero_post(0);
             for p in &u.posts {
                 put_post(&mut out, &last, p);
                 last = *p;
@@ -329,14 +360,16 @@ impl Writer {
             put_zz(&mut out, i64::from(e.t_ms) - t);
             t = i64::from(e.t_ms);
             out.push(event_code(e.kind));
-            put_varint(&mut out, u64::from(e.unit));
+            // A row naming no unit (a boss row) writes 0 and says so in `has`.
+            put_varint(&mut out, u64::from(e.unit.unwrap_or(0)));
             let spell = self.spell(e.spell_id, &e.spell);
             put_varint(&mut out, spell);
             let has = u8::from(e.at.is_some())
                 | u8::from(e.src.is_some()) << 1
                 | u8::from(e.stacks.is_some()) << 2
                 | u8::from(e.base.is_some()) << 3
-                | u8::from(e.target.is_some()) << 4;
+                | u8::from(e.target.is_some()) << 4
+                | if e.unit.is_none() { NO_UNIT } else { 0 };
             out.push(has);
             if let Some((x, y)) = e.at {
                 put_zz(&mut out, i64::from(x));
@@ -411,6 +444,67 @@ impl Writer {
         }
         out
     }
+}
+
+/// The post a track's first is coded against: all zeros, on `map_id`.
+fn zero_post(map_id: u32) -> Post {
+    Post {
+        t_ms: 0,
+        x: 0,
+        y: 0,
+        facing: 0,
+        hp: 0,
+        power: None,
+        map_id,
+    }
+}
+
+/// The maps section: the floors the posts stand on, and each track's
+/// changes of floor off the head's.
+fn maps(cut: &Cut) -> Vec<u8> {
+    let mut table: Vec<u32> = cut
+        .units
+        .iter()
+        .flat_map(|u| u.posts.iter().map(|p| p.map_id))
+        .collect();
+    table.sort_unstable();
+    table.dedup();
+    let mut out = Vec::new();
+    put_varint(&mut out, table.len() as u64);
+    for &map in &table {
+        put_varint(&mut out, u64::from(map));
+    }
+    // Each track's changes: (post index, table index), from the head's floor.
+    let mut moved: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
+    for (u, unit) in cut.units.iter().enumerate() {
+        let mut on = cut.floor;
+        let mut changes = Vec::new();
+        for (i, p) in unit.posts.iter().enumerate() {
+            if p.map_id != on {
+                // Every post's floor is in the table, built from them.
+                let ix = table.binary_search(&p.map_id).unwrap_or_default();
+                changes.push((i, ix));
+                on = p.map_id;
+            }
+        }
+        if !changes.is_empty() {
+            moved.push((u, changes));
+        }
+    }
+    put_varint(&mut out, moved.len() as u64);
+    let mut last_unit = 0;
+    for (u, changes) in &moved {
+        put_varint(&mut out, (u - last_unit) as u64);
+        last_unit = *u;
+        put_varint(&mut out, changes.len() as u64);
+        let mut last_at = 0;
+        for &(at, ix) in changes {
+            put_varint(&mut out, (at - last_at) as u64);
+            last_at = at;
+            put_varint(&mut out, ix as u64);
+        }
+    }
+    out
 }
 
 /// One post against the unit's last.
@@ -589,21 +683,16 @@ fn read_units(c: &mut Cur, strs: &[String]) -> Option<(Vec<Unit>, Vec<usize>)> {
     c.done().then_some((units, counts))
 }
 
-fn read_posts(c: &mut Cur, units: &mut [Unit], counts: &[usize]) -> Option<()> {
+/// Every unit's posts, each on `floor` (the maps section, from format 2,
+/// moves a track's stretches to their own).
+fn read_posts(c: &mut Cur, units: &mut [Unit], counts: &[usize], floor: u32) -> Option<()> {
     for (u, &n) in units.iter_mut().zip(counts) {
         // A post is a byte at least: more than the bytes left is a lie.
         if n > c.left() {
             return None;
         }
         u.posts.reserve_exact(n);
-        let mut last = Post {
-            t_ms: 0,
-            x: 0,
-            y: 0,
-            facing: 0,
-            hp: 0,
-            power: None,
-        };
+        let mut last = zero_post(floor);
         for _ in 0..n {
             let p = read_post(c, &last)?;
             u.posts.push(p);
@@ -664,23 +753,105 @@ fn read_post(c: &mut Cur, last: &Post) -> Option<Post> {
         facing,
         hp,
         power,
+        map_id: last.map_id,
     })
 }
 
-fn read_events(c: &mut Cur, spells: &[(u32, String)], units: usize) -> Option<Vec<Event>> {
+/// Format 2's maps section: each listed track's stretches moved to their
+/// floors. A table out of order, a unit listed twice or past the units, a
+/// change at no post or not after the last: `None`. Each post is written
+/// once, however the changes lie.
+fn read_maps(c: &mut Cur, units: &mut [Unit]) -> Option<()> {
+    let n = c.count(1)?;
+    let mut table: Vec<u32> = Vec::with_capacity(n);
+    for _ in 0..n {
+        let map = c.u32()?;
+        if table.last().is_some_and(|&last| last >= map) {
+            return None;
+        }
+        table.push(map);
+    }
+    // A unit, its count and one change of two: four bytes at least.
+    let m = c.count(4)?;
+    let mut unit = 0usize;
+    for listed in 0..m {
+        let d = c.usize()?;
+        if listed > 0 && d == 0 {
+            return None;
+        }
+        unit = unit.checked_add(d)?;
+        let posts = &mut units.get_mut(unit)?.posts;
+        let k = c.count(2)?;
+        if k == 0 {
+            return None;
+        }
+        let mut at = 0usize;
+        // The stretch being read: where it starts and its floor.
+        let mut open: Option<(usize, u32)> = None;
+        for change in 0..k {
+            let d = c.usize()?;
+            if change > 0 && d == 0 {
+                return None;
+            }
+            at = at.checked_add(d)?;
+            if at >= posts.len() {
+                return None;
+            }
+            let map = *table.get(c.usize()?)?;
+            if let Some((from, on)) = open {
+                for p in posts.get_mut(from..at)? {
+                    p.map_id = on;
+                }
+            }
+            open = Some((at, map));
+        }
+        if let Some((from, on)) = open {
+            for p in posts.get_mut(from..)? {
+                p.map_id = on;
+            }
+        }
+    }
+    c.done().then_some(())
+}
+
+fn read_events(
+    c: &mut Cur,
+    spells: &[(u32, String)],
+    units: usize,
+    format: u8,
+) -> Option<Vec<Event>> {
     // A time, a kind, a unit, a spell and a flags byte: five bytes.
     let n = c.count(5)?;
     let mut out = Vec::with_capacity(n);
     let mut t = 0i64;
+    // Format 1 knew neither the boss rows nor a row naming no unit.
+    let (kinds, flags) = if format >= 2 {
+        (EventKind::ALL.len(), 6)
+    } else {
+        (FORMAT1_KINDS, 5)
+    };
     for _ in 0..n {
         t = t.checked_add(c.zz()?)?;
-        let kind = *EventKind::ALL.get(usize::from(c.u8()?))?;
-        let unit = c.unit(units)?;
-        let (spell_id, spell) = spells.get(c.usize()?)?.clone();
-        let has = c.u8()?;
-        if has >> 5 != 0 {
+        let code = usize::from(c.u8()?);
+        if code >= kinds {
             return None;
         }
+        let kind = *EventKind::ALL.get(code)?;
+        let raw_unit = c.u32()?;
+        let (spell_id, spell) = spells.get(c.usize()?)?.clone();
+        let has = c.u8()?;
+        if has >> flags != 0 {
+            return None;
+        }
+        let unit = if has & NO_UNIT != 0 {
+            // Written 0: anything else is no file this build wrote.
+            if raw_unit != 0 {
+                return None;
+            }
+            None
+        } else {
+            Some(((raw_unit as usize) < units).then_some(raw_unit)?)
+        };
         let at = if has & 1 != 0 {
             Some((c.i32()?, c.i32()?))
         } else {
