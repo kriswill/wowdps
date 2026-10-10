@@ -30,7 +30,9 @@ Each encounter's draft is generated from the client's tables on the replay
 branch, where the generator, the replay spike and the floor renderer live,
 and committed here with its instance's and season's files. Main carries the
 BASE alone: the hand-tuned files are the curated layer and stay out of this
-repository by design. Nothing on main reads the crate yet.
+repository by design. On main the daemon reads only the generated `placed`
+table (its replay cut, [R29](../rulings/r29.md)); nothing reads the rubric
+itself yet.
 
 It is the one engine-side crate that names serde/toml (CONTRACT.md
 §Dependencies), and it takes [`wowdps-proto`](proto.md) for `proto::dirs`,
@@ -75,7 +77,8 @@ that is not per encounter.
   `Curated(Origin)` for each curated set in the order laid (a tuned file
   embedded beside its draft is `Curated(Embedded)`, a runtime
   `with_curated` bundle `Curated(Bundle(name))`), then `User`
-  (`with_user`, `with_user_dir` over `$XDG_CONFIG_HOME/wowdps/rubric/`). A
+  (`with_user`, `with_user_dir` over `$XDG_CONFIG_HOME/wowdps/rubric/`, a
+  tree that mirrors `seasons/`). A
   set is one block (its `season.toml`, its `instance.toml`, the encounter's
   file) laid over everything under it; a draft is never in one. A bundle is
   laid whole or refused; a bad user file goes to `user_errors` and is left

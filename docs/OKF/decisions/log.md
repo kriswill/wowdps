@@ -2,6 +2,10 @@
 
 ## 2026-10-09
 
+- **Update** — [devenv Is The Reference Shell](devenv-is-the-reference-shell.md):
+  the rest of the environment — the nightly toolchain, the GUI's need for a
+  shell, the `nix/dev/` parcels and the wrappers, the flake's packages and
+  modules — moved here from the agent instructions.
 - **Creation** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
   R29 cuts every boss pull and keystone run from its parsed lines into a
   binary replay tier (`replay/<id>.bin`), kept on the details caps and all
