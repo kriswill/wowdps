@@ -96,6 +96,12 @@
           # the whole checkout, so a README or docs edit would rebuild the
           # binary from scratch; this set changes only when the Rust
           # sources, the fixtures, or the one doc a test parses do.
+          # Markdown under the crates (AGENTS.md, READMEs, SHOTS.md,
+          # FORMAT-NOTES.md, the fixtures' and generated tables'
+          # .expected.md) is for people: no build script, include_str! or
+          # test reads it, so it stays out. A test that starts reading one
+          # names it here, as history-queries.md is named below.
+          withoutMarkdown = dir: lib.fileset.difference dir (lib.fileset.fileFilter (f: f.hasExt "md") dir);
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
@@ -103,8 +109,8 @@
               ./Cargo.lock
               ./rust-toolchain.toml
               ./clippy.toml
-              ./crates
-              ./tools/extract
+              (withoutMarkdown ./crates)
+              (withoutMarkdown ./tools/extract)
               # crates/daemon embeds the addon with include_str!.
               ./addon
               # crates/history/tests/parity.rs executes every recipe in it.
