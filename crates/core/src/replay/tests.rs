@@ -158,6 +158,7 @@ fn posts_are_the_floors_with_health_and_power() {
         facing,
         hp,
         power: power.map(|(kind, current, max)| Power { kind, current, max }),
+        map_id: 2434,
     };
     assert_eq!(
         c.units[0].posts,
@@ -182,7 +183,7 @@ fn events_are_the_rows_a_replay_draws() {
     let rows: Vec<EventRow> = c
         .events
         .iter()
-        .map(|e| (e.t_ms, e.kind, e.unit, e.spell_id, e.src, e.target))
+        .map(|e| (e.t_ms, e.kind, e.unit.unwrap(), e.spell_id, e.src, e.target))
         .collect();
     use EventKind::*;
     assert_eq!(
@@ -459,7 +460,7 @@ fn a_slice_opening_on_a_hit_keeps_its_row_and_post() {
         (first.t_ms, first.kind, first.spell.as_str()),
         (0, EventKind::Hit, "Venom")
     );
-    let tank = &c.units[first.unit as usize];
+    let tank = &c.units[first.unit.unwrap() as usize];
     assert_eq!(tank.name, "Tank-Realm-US");
     assert_eq!(tank.posts.first().map(|p| p.t_ms), Some(0));
 }

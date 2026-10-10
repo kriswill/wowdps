@@ -892,6 +892,7 @@ impl Cutter {
                         facing: pos.facing,
                         hp,
                         power,
+                        map_id: pos.map,
                     });
                     let best = max_hp.entry(g).or_insert(0);
                     *best = (*best).max(m);
@@ -902,7 +903,7 @@ impl Cutter {
                     if e.kind == EventKind::Hit && e.at.is_some_and(|p| p.map != floor) {
                         continue;
                     }
-                    let unit = units.of(e.unit);
+                    let unit = Some(units.of(e.unit));
                     let src = e.src.map(|g| units.of(g));
                     let target = e.target.map(|g| units.of(g));
                     events.push(Event {

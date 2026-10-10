@@ -12,6 +12,12 @@
 //! markers by time as the log had them — but for `tracks.csv`, which lists
 //! every post by time and, within a millisecond, by unit: the cut keeps
 //! each unit's track whole, and a reader sorts each unit's track anyway.
+//!
+//! Beyond the extractor's columns, two additions a reader by column takes
+//! or leaves: (format 2) `tracks.csv`'s trailing `map_id`, the floor each
+//! post stands on, and `events.csv`'s boss rows (`boss_engaged`,
+//! `boss_killed`, `boss_wiped`: the encounter's id and name in `spell_id`
+//! and `spell`, `unit` empty).
 
 use std::fmt::Write as _;
 use std::io;
@@ -21,7 +27,7 @@ use wowdps_model::replay::{Cut, MarkerKind, PlacedKind, UnitKind};
 
 /// Each file's heading line.
 pub const UNITS_HEAD: &str = "unit\tkind\tname\tclass\tspec\tspec_name\trole\tyou\tnpc\n";
-pub const TRACKS_HEAD: &str = "unit,t_ms,x,y,facing,hp,power_type,power,power_max\n";
+pub const TRACKS_HEAD: &str = "unit,t_ms,x,y,facing,hp,power_type,power,power_max,map_id\n";
 pub const EVENTS_HEAD: &str = "t_ms,kind,unit,spell_id,spell,x,y,src,stacks,base,target\n";
 pub const PLACED_HEAD: &str = "t_ms,kind,unit,spell_id,spell,x,y,src,target\n";
 pub const RAID_HEAD: &str = "t_ms,damage\n";
@@ -107,7 +113,8 @@ pub fn units_tsv(cut: &Cut) -> String {
 }
 
 /// `tracks.csv`: every post — by time, then unit — with its facing (three
-/// decimals), its health share (one) and its power (empty where none).
+/// decimals), its health share (one), its power (empty where none) and
+/// the floor it stands on.
 pub fn tracks_csv(cut: &Cut) -> String {
     let mut rows: Vec<(u32, usize, usize)> = cut
         .units
@@ -133,13 +140,14 @@ pub fn tracks_csv(cut: &Cut) -> String {
         );
         let _ = writeln!(
             out,
-            "{u},{},{},{},{:.3},{}.{},{power}",
+            "{u},{},{},{},{:.3},{}.{},{power},{}",
             p.t_ms,
             yd(p.x),
             yd(p.y),
             f64::from(p.facing) / 10_000.0,
             p.hp / 10,
             p.hp % 10,
+            p.map_id,
         );
     }
     out
@@ -160,7 +168,7 @@ pub fn events_csv(cut: &Cut) -> String {
         let columns = [
             e.t_ms.to_string(),
             e.kind.word().to_string(),
-            e.unit.to_string(),
+            opt(e.unit),
             spell_id,
             spell,
             x,

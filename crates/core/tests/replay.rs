@@ -63,7 +63,8 @@ fn counts(seg: usize, c: &Cut, out: &mut Golden) {
     put("*", "units", c.units.len() as u64);
     put("*", "posts", c.posts() as u64);
     put("*", "floor", u64::from(c.floor));
-    for k in EventKind::ALL {
+    // The boss rows (format 2) are no kind the cut writes yet.
+    for k in EventKind::ALL.into_iter().filter(|k| !k.is_boss()) {
         let n = c.events.iter().filter(|e| e.kind == k).count();
         put("*", k.word(), n as u64);
     }
@@ -181,7 +182,7 @@ fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
         .events
         .iter()
         .filter(|e| matches!(e.kind, EventKind::Death | EventKind::NpcDied))
-        .map(|e| (e.kind, c.units[e.unit as usize].name.as_str()))
+        .map(|e| (e.kind, c.units[e.unit.unwrap() as usize].name.as_str()))
         .collect();
     assert_eq!(
         deaths,
