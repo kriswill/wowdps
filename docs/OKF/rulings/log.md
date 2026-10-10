@@ -2,6 +2,8 @@
 
 ## 2026-10-09
 
+- **Update** — [R21 Stacked-debuff conditioning](r21.md): links its fixture,
+  [stacks.txt](../fixtures/stacks.md).
 - **Creation** — [R29 The replay cut](r29.md): a boss pull or keystone run cut
   from its parsed lines — units by first sight, posts on the floor, the
   events a replay draws, what players placed, the world markers — into the
