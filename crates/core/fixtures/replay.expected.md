@@ -18,10 +18,17 @@ Regenerate / check:
 
 Every closed boss pull (an ENCOUNTER_START's segment closed by its END, a
 version seam or the next START) of every gated fixture ends the TSV with
-twenty-one `*` rows — `replay_units`, `replay_posts`, `replay_floor`, the
-thirteen event kinds (`replay_hit` … `replay_rez`), the four placed kinds
-(`replay_placed_cast` … `replay_placed_gone`) and `replay_markers` — then a
-`replay_posts` row per player posted on the floor, guid order. The placed
+twenty-four `*` rows — `replay_units`, `replay_posts` (on every floor),
+`replay_floor`, the sixteen event kinds (`replay_hit` … `replay_rez`, then
+the boss rows `replay_boss_engaged`, `replay_boss_killed`,
+`replay_boss_wiped`), the four placed kinds (`replay_placed_cast` …
+`replay_placed_gone`) and `replay_markers` — then a `replay_map_posts` row
+per floor posted on (its UiMap id in the player column, ascending), then a
+`replay_posts` row per player posted, guid order. A finished keystone run
+(a CHALLENGE_MODE_START to its END, both its own lines) writes the same rows
+after every segment's, `K<n>` in the segment column, kind `Key`, its name and
+level, `timed` or `over` as its END says, its START to its END, no encounter
+or difficulty. The placed
 spells are the fixtures' own, hard-coded beside check.awk's other tables
 (`PLACE`: Demonic Gateway 111771, Wind Rush Totem 192077, Demonic Circle
 48018; `TELL`: the gateway's trip 113942, Wind Rush 192082, Anti-Magic Zone
@@ -44,6 +51,8 @@ spells are the fixtures' own, hard-coded beside check.awk's other tables
 | Spirit Link Totem | `Creature-…-53006-SL` | the Shaman's summon; its damage line reads a neutral `0xa28` |
 | Demonic Circle | `GameObject-…-191083-DC` | created, never posted |
 | Twin Venoms | `Creature-…-600-DD` | the second pull's boss |
+| Glass Drake | `Creature-…-800-EE` | the keystone run's trash, hostile: an add |
+| Frost Warden | `Creature-…-900-FF` | the run's boss (encounter 3010) |
 
 ## Before the pull: the markers
 
@@ -63,19 +72,22 @@ the pull: no row.
 
 **The floor.** Player blocks: Tank 20:01:00.5 and 01.0 (2434), Hunt 01.5
 (2434), Healer 08.5 and 09.5 (2434 — the second a `DAMAGE_SPLIT`, its block at
-off12 behind its spell prefix), Hunt 09.8 (**2435**, a heal finding him on
-another floor), Lock 12.0 and 14.5 (2434), Tank 14.2 and Healer 14.25 (2434,
-Spirit Link's two halves): 2434 nine votes, 2435 one — **floor 2434**.
+off12 behind its spell prefix), Hunt 09.8 and 09.9 (**2435**, a heal and a
+hit finding him on another floor), Lock 12.0 and 14.5 (2434), Tank 14.2 and
+Healer 14.25 (2434, Spirit Link's two halves): 2434 nine votes, 2435 two —
+**floor 2434**.
 
-**Posts (13).** Tank 3, Hunt 1 (his 2435 post is not kept), Healer 3, Lock
-2; Ula'tek 2 (its Spit landing at 02.5, the Incinerate finding it at 16.0),
-Egg 1, Coil 1 (a swing — its block at off9 describes the SOURCE — whose
-amount, 2434, is the floor's id: no line is read twice for it).
+**Posts (15), every floor's.** Tank 3, Hunt 3 (01.5 on 2434; 09.8 and 09.9 on
+2435, kept with their floor), Healer 3, Lock 2; Ula'tek 2 (its Spit landing
+at 02.5, the Incinerate finding it at 16.0), Egg 1, Coil 1 (a swing — its
+block at off9 describes the SOURCE — whose amount, 2434, is the floor's id:
+no line is read twice for it). Per floor: 2434 13, 2435 2.
 
 **Events.**
 
 | t | line | row |
 |---|---|---|
+| 00.0 | ENCOUNTER_START 3000 | `boss_engaged` (Ula'tek, no unit) |
 | 00.5 | Tank's Death Strike at Ula'tek | `pcast_success`, target Ula'tek |
 | 01.0 | Ula'tek's Venom on Tank, his block on 2434 | `hit` (base 120) |
 | 01.5 | Ula'tek's `RANGE_DAMAGE` Shoot on Hunt | `hit` (any spell-borne damage) |
@@ -94,6 +106,8 @@ amount, 2434, is the floor's id: no line is read twice for it).
 | 08.5 | Falling Rocks on Healer from the nil unit | `hit` — its source names no unit |
 | 09.0 | Tank's Mind Freeze on Spit | `interrupt` |
 | 09.5 | `DAMAGE_SPLIT` on Healer | — (a post, no row) |
+| 09.8 | Healer's Rejuvenation on Hunt, his block on 2435 | — (a post on 2435, no row) |
+| 09.9 | Ula'tek's Venom on Hunt, his block on 2435 | `hit` where his post there says |
 | 10.0 | Egg dies | `npc_died` |
 | 10.5 | Hunt's UNIT_DIED with `unconsciousOnDeath` 1 | — (Feign Death is no death) |
 | 10.8 | Coil's UNIT_DIED with `unconsciousOnDeath` 1 | `npc_died` (a creature down) |
@@ -103,10 +117,12 @@ amount, 2434, is the floor's id: no line is read twice for it).
 | 14.1 | Shaman summons Spirit Link Totem | — (no placing spell) |
 | 14.2 | Spirit Link on Tank from the totem, `0xa28` | — (one of ours by its summon: no hit) |
 | 14.25 | Spirit Link's heal on Healer | — (a post, no row) |
+| 30.0 | ENCOUNTER_END 3000, success | `boss_killed` |
 
-`hit` 4, `cast_start` 1, `cast_success` 2, `pcast_start` 1, `pcast_success`
+`hit` 5, `cast_start` 1, `cast_success` 2, `pcast_start` 1, `pcast_success`
 2, `pcast_failed` 1, `interrupt` 1, `debuff_applied` 2, `debuff_removed` 1,
-`debuff_dose` 1, `death` 1, `npc_died` 2, `rez` 1.
+`debuff_dose` 1, `death` 1, `npc_died` 2, `rez` 1, `boss_engaged` 1,
+`boss_killed` 1.
 
 **Placed (7 rows).** 12.0 the gateway cast (Lock, where he stood); 12.5 the
 trip aura on Hunt (a unit numbered: a `touch`); 13.0 Healer's Wind Rush Totem
@@ -129,7 +145,55 @@ unit.
 
 ## Segment 2 — Twin Venoms (encounter 3001, Mythic, wipe, 20 s)
 
-Floor 2434 (Tank's one block). Posts 2 (Twin Venoms, Tank). `cast_success`
-2 (Twin Venoms' Bite; Egg's Hatch — the Egg's own flags mark it hostile on
-the line, a cut's hostility being its own), `hit` 1. Markers 2: 1 and 7
-standing (4 came off in the first pull). Units 3.
+Floor 2434 (Tank's one block). Posts 2 (Twin Venoms, Tank), both on 2434.
+`cast_success` 2 (Twin Venoms' Bite; Egg's Hatch — the Egg's own flags mark
+it hostile on the line, a cut's hostility being its own), `hit` 1,
+`boss_engaged` 1 (t 0) and `boss_wiped` 1 (its END, 20 s). Markers 2: 1 and
+7 standing (4 came off in the first pull). Units 3.
+
+## The keystone run — The Glass Hollow +14 (format 2)
+
+A ZONE_CHANGE onto 2521 at difficulty 8 (a seed), then CHALLENGE_MODE_START
+(challenge 399, whose par timers are known: the store would cut this run)
+at 20:10:01.0 — t 0 of the run's cut — to CHALLENGE_MODE_END at 20:12:00.0
+(timed, 119 000 ms).
+
+### Segment 3 — Trash (2 s)
+
+The Glass Drake's Shard on Tank (20:10:05.0) and Tank's Death Strike on it
+(06.0), Healer's Healing Rain on Tank (07.0), all on 2094; the drake dies at
+08.0. Its meter rows are check.awk's; it is no boss pull, so no replay rows.
+
+### Segment 4 — Frost Warden (encounter 3010, Mythic+, kill, 31 s)
+
+Player blocks: Tank 01.0, Healer 02.0 and 04.0 — all 2095: **floor 2095**.
+Posts 4 (Tank 1, Healer 2, the Warden 1 — its block on Tank's Death Strike
+at 03.0), all on 2095. Events: `boss_engaged` at t 0, the Warden's Frost on
+Tank (`hit`), Healer's two Rejuvenations (`pcast_success` 2), the Warden
+dies (`npc_died`), `boss_killed` at its END (31 s). Units 3: Tank, the
+Warden (the hit's source), Healer. No marker stands on 2521.
+
+### K1 — the run, cut whole
+
+**The floors.** Player blocks: Tank 05.0 and 07.0 (2094 — the second the
+heal's, which describes its target), then Tank 01.0 and Healer 02.0 and 04.0
+of the boss (2095): 2094 two votes, 2095 three — **floor 2095**.
+
+**Posts (7).** On 2094: Tank 2, the drake 1 (its block on Tank's Death
+Strike); on 2095: Tank 1, Healer 2, the Warden 1. Per floor 2094 3, 2095 4
+(format 1 would have dropped the three above). Per player: Tank 3, Healer 2.
+
+**Events (8).** The drake's Shard on Tank (`hit`, where his post on 2094
+says — off the main floor, kept), the drake dies (`npc_died`),
+`boss_engaged` 3010 "Frost Warden" at 59 000 ms (20:11:00.0 − 20:10:01.0),
+the Warden's Frost (`hit`), Healer's two Rejuvenations (`pcast_success` 2),
+the Warden dies (`npc_died`), `boss_killed` at 90 000 ms. The run's own
+START and END make no row.
+
+**Placed (1).** Healing Rain on Tank on 2094 — a `touch` with its place,
+off the main floor, kept.
+
+**Units (4).** Tank, the drake (the first hit's source), the Warden, Healer
+(posted at 02.0 of the boss: the heal at 07.0 named him only as its source,
+which a placed row never numbers). The Warden is the `boss` (the run's
+encounter names it), the drake an `add`. Markers 0: none stands on 2521.

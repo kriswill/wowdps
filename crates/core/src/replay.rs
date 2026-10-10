@@ -1,8 +1,9 @@
 //! v45 (R29): the replay cut — one segment's parsed lines read into a
 //! [`Cut`]: its units numbered in order of first sight, where each stood
-//! whenever the advanced block said (on the floor the players were posted
-//! on most), the events a replay draws, what players placed in the room and
-//! the raid's world markers. The history store keeps it as its REPLAY tier
+//! whenever the advanced block said (on whichever floor it said), the
+//! events a replay draws, where each boss fight began and ended, what
+//! players placed in the room and the raid's world markers. The history
+//! store keeps it as its REPLAY tier
 //! (`proto::replay`), and the files a replay reads are written from it.
 //!
 //! [`cut`] takes the segment's SEED lines and its slice, as
@@ -18,12 +19,16 @@
 //!   start (t 0: ENCOUNTER_START for a pull, the run's first line for a
 //!   keystone run), then read as every other line is.
 //!
-//! THE FLOOR: the UiMap id the advanced block reports players at most often
-//! (a tie to the lower id). Only posts on it are kept — a pull is drawn on
-//! one floor — and a hit's position is its victim's post there.
+//! THE FLOORS: every post keeps the UiMap id its block reports (a
+//! dungeon's level, a raid's room), so a keystone run follows the party
+//! from floor to floor and a pull keeps a unit that stepped onto another
+//! one. The cut's FLOOR is the one the block reports players at most often
+//! (a tie to the lower id): what a boss pull is drawn on. A hit's position
+//! is its victim's post at that moment, and a placed thing's its caster's
+//! or its target's, on whatever floor that is.
 //!
 //! THE UNITS: numbered where first seen — a post (a player, creature or
-//! vehicle the block puts on the floor), or an event row naming them —
+//! vehicle the block puts on any floor), or an event row naming them —
 //! line by line, the post before the line's event; the units only
 //! `placed.csv` names come after all of them. A player is `player` (class
 //! and spec from COMBATANT_INFO, else R8's inference from their casts); a
@@ -43,7 +48,11 @@
 //! player or a pet, or a unit one of ours summoned (R22's fold, so Spirit
 //! Link Totem's redistribution is no hit, while a neutral NPC's spell and
 //! one from no unit still are); an aura from a hostile unit
-//! or from no one going on a player, coming off, or its stacks changing.
+//! or from no one going on a player, coming off, or its stacks changing;
+//! and every ENCOUNTER_START (`boss_engaged`) and ENCOUNTER_END
+//! (`boss_killed` or `boss_wiped`) the slice holds, the encounter's id and
+//! name as the row's spell and no unit — a keystone run's bosses where they
+//! begin and end, and a boss pull's own two (t 0 and its end).
 //!
 //! THE PLACED THINGS ([`PlacedTable`] says which spells): a player's landed
 //! cast of a placing spell (where they stood) and its aim; their summon or
@@ -93,6 +102,14 @@
 //! - A world marker's number is one object: placed on one map it leaves any
 //!   other (the text cutter kept a placement per map and marker, so a marker
 //!   moved away and back could stand at its old place when a pull began).
+//! - Every floor's posts are kept, each with its map (`tracks.csv`'s
+//!   trailing `map_id`): the text cutter kept the floor's alone, dropping a
+//!   unit's steps onto another floor, the hits that found it there and a
+//!   placed thing's place there — and numbering a unit first seen off the
+//!   floor where it was next seen instead.
+//! - The slice's ENCOUNTER_START and ENCOUNTER_END lines are rows
+//!   (`boss_engaged`, `boss_killed`, `boss_wiped`); the text cutter wrote
+//!   none.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -191,8 +208,8 @@ pub fn cut_and_meter<'a>(
 /// interned once.
 type Gix = u32;
 
-/// What a line said, before the floor is known: a post, then the event it
-/// may make a row of. Resolved in order once every line is read.
+/// What a line said: a post, then the event it may make a row of. Resolved
+/// in order once every line is read, the units numbered as they come.
 enum Draft {
     Post {
         t: u32,
@@ -210,10 +227,11 @@ enum Draft {
 struct DraftEvent {
     t: u32,
     kind: EventKind,
-    unit: Gix,
+    /// None on a boss row alone.
+    unit: Option<Gix>,
     spell_id: u32,
     spell: String,
-    /// A hit's victim, where the block placed it (kept only on the floor).
+    /// A hit's victim, where the block placed it (on whatever floor).
     at: Option<Position>,
     src: Option<Gix>,
     stacks: Option<u16>,
@@ -228,7 +246,7 @@ enum DraftPlaced {
         src: Gix,
         spell_id: u32,
         spell: String,
-        /// The caster's own block (only kept on the floor).
+        /// The caster's own block (on whatever floor).
         at: Option<Position>,
         target: Option<Gix>,
     },
@@ -292,6 +310,7 @@ struct Cutter {
     head: Head,
     /// Every encounter title the slice names (the boss rule's names).
     titles: Vec<String>,
+    /// Players' posts per floor: the cut's main floor is the most voted.
     floor_votes: HashMap<u32, u64>,
     drafts: Vec<Draft>,
     placed: Vec<DraftPlaced>,
@@ -472,8 +491,8 @@ impl Cutter {
         }
         self.state(t, ev);
         self.infer(ev);
-        // The post: the block's unit on whatever floor; the floor is chosen
-        // once every line is in.
+        // The post: the block's unit on whatever floor, kept with it; the
+        // main floor is chosen once every line is in.
         if let Some(h) = &line.hp_hint
             && let Some(pos) = h.pos
             && is_posted(&h.unit_guid)
@@ -628,10 +647,10 @@ impl Cutter {
     /// The `events.csv` row a line makes, if any.
     fn event(&mut self, t: u32, line: &LogLine) -> Option<DraftEvent> {
         let ev = &line.event;
-        let row = |kind, unit, spell_id, spell: &str| DraftEvent {
+        let row = |kind, unit: Gix, spell_id, spell: &str| DraftEvent {
             t,
             kind,
-            unit,
+            unit: Some(unit),
             spell_id,
             spell: spell.to_string(),
             at: None,
@@ -652,7 +671,31 @@ impl Cutter {
         // that finds a player is still the room's — so a totem or guardian
         // of ours (Spirit Link Totem's redistribution) is never one.
         let foe = |c: &Cutter, u: &LogUnit| !c.ours_now(u);
+        // A boss fight's start or end: the encounter as its spell, no unit.
+        let boss = |kind, id: u32, name: &str| DraftEvent {
+            t,
+            kind,
+            unit: None,
+            spell_id: id,
+            spell: name.to_string(),
+            at: None,
+            src: None,
+            stacks: None,
+            base: None,
+            target: None,
+        };
         Some(match ev {
+            Ev::EncounterStart { id, name, .. } => boss(EventKind::BossEngaged, *id, name),
+            Ev::EncounterEnd {
+                id, name, success, ..
+            } => {
+                let kind = if *success {
+                    EventKind::BossKilled
+                } else {
+                    EventKind::BossWiped
+                };
+                boss(kind, *id, name)
+            }
             Ev::Death { unit } if is_player(unit) => {
                 row(EventKind::Death, self.gix(&unit.guid), 0, "")
             }
@@ -712,8 +755,8 @@ impl Cutter {
                 unmitigated,
                 ..
             } if is_player(dst) && foe(self, src) && spell.id != 0 => {
-                // The victim's own block: only a hit placed on the floor
-                // makes a row (checked once the floor is known).
+                // The victim's own block: only a hit it placed makes a row,
+                // on whatever floor it placed them.
                 let at = line
                     .hp_hint
                     .as_ref()
@@ -856,9 +899,9 @@ impl Cutter {
         (guid != NOBODY && !guid.is_empty()).then(|| self.gix(guid))
     }
 
-    /// Choose the floor, number the units and write the cut.
+    /// Choose the main floor, number the units and write the cut.
     fn finish(mut self, owner: Option<&str>) -> Cut {
-        // The most posts; a tie to the lower id.
+        // The most players' posts; a tie to the lower id.
         let floor = self
             .floor_votes
             .iter()
@@ -877,7 +920,7 @@ impl Cutter {
                     hp,
                     max_hp: m,
                     power,
-                } if pos.map == floor => {
+                } => {
                     let u = units.of(g) as usize;
                     if posts.len() <= u {
                         posts.resize_with(u + 1, Vec::new);
@@ -897,13 +940,8 @@ impl Cutter {
                     let best = max_hp.entry(g).or_insert(0);
                     *best = (*best).max(m);
                 }
-                Draft::Post { .. } => {}
                 Draft::Event(e) => {
-                    // A hit makes a row only where its victim stood on the floor.
-                    if e.kind == EventKind::Hit && e.at.is_some_and(|p| p.map != floor) {
-                        continue;
-                    }
-                    let unit = Some(units.of(e.unit));
+                    let unit = e.unit.map(|g| units.of(g));
                     let src = e.src.map(|g| units.of(g));
                     let target = e.target.map(|g| units.of(g));
                     events.push(Event {
@@ -926,7 +964,7 @@ impl Cutter {
         let mut placed_rows = Vec::new();
         let mut summoned: HashSet<Gix> = HashSet::new();
         for p in std::mem::take(&mut self.placed) {
-            let on_floor = |at: Option<Position>| at.filter(|p| p.map == floor).map(|p| (p.x, p.y));
+            let xy = |at: Option<Position>| at.map(|p| (p.x, p.y));
             let row = match p {
                 DraftPlaced::Cast {
                     t,
@@ -941,7 +979,7 @@ impl Cutter {
                     unit: Some(units.of(src)),
                     spell_id,
                     spell,
-                    at: on_floor(at),
+                    at: xy(at),
                     src: None,
                     target: target.and_then(|g| units.get(g)),
                 },
@@ -994,21 +1032,16 @@ impl Cutter {
                     spell,
                     src,
                     at,
-                } => {
-                    let Some(at) = on_floor(Some(at)) else {
-                        continue;
-                    };
-                    Placed {
-                        t_ms: t,
-                        kind: PlacedKind::Touch,
-                        unit: units.get(unit),
-                        spell_id,
-                        spell,
-                        at: Some(at),
-                        src: src.and_then(|g| units.get(g)),
-                        target: None,
-                    }
-                }
+                } => Placed {
+                    t_ms: t,
+                    kind: PlacedKind::Touch,
+                    unit: units.get(unit),
+                    spell_id,
+                    spell,
+                    at: Some((at.x, at.y)),
+                    src: src.and_then(|g| units.get(g)),
+                    target: None,
+                },
                 DraftPlaced::Gone { t, unit } if summoned.contains(&unit) => Placed {
                     t_ms: t,
                     kind: PlacedKind::Gone,

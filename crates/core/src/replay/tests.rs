@@ -1,7 +1,14 @@
 use super::*;
 
 /// An event as the tests compare it: time, kind, unit, spell, src, target.
-type EventRow = (u32, EventKind, UnitId, u32, Option<UnitId>, Option<UnitId>);
+type EventRow = (
+    u32,
+    EventKind,
+    Option<UnitId>,
+    u32,
+    Option<UnitId>,
+    Option<UnitId>,
+);
 /// A placed row: time, kind, unit, spell, where, src, target.
 type PlacedRow = (
     u32,
@@ -53,8 +60,8 @@ const LOG: &str = concat!(
     "10/7/2026 20:01:03.000-7  SPELL_CAST_SUCCESS,Creature-0-1-2-3-501-BB,\"Egg\",0xa48,0x80000000,0000000000000000,nil,0x80000000,0x80000000,7002,\"Hatch\",0x8,Creature-0-1-2-3-501-BB,0000000000000000,1000,1000,0,0,0,0,0,0,1,0,0,0,1520.00,5.00,2434,0.0000,90\r\n",
     // A totem's own cast (friendly).
     "10/7/2026 20:01:04.000-7  SPELL_CAST_SUCCESS,Creature-0-1-2-3-5394-CC,\"Healing Stream Totem\",0x2111,0x80000000,0000000000000000,nil,0x80000000,0x80000000,5394,\"Healing Stream\",0x8,Creature-0-1-2-3-5394-CC,Player-1-A,10,10,0,0,0,0,0,0,0,0,0,0,1499.00,-2.00,2434,0.5000,90\r\n",
-    // The same player on another floor once: not posted, and a hit there
-    // is no row.
+    // The same player on another floor once: posted there, and the hit
+    // that found them there a row.
     "10/7/2026 20:01:04.500-7  SPELL_DAMAGE,Creature-0-1-2-3-500-AA,\"Ula'tek\",0xa48,0x80000000,Player-1-A,\"Tank-Realm-US\",0x511,0x80000000,7000,\"Venom\",0x8,Player-1-A,0000000000000000,700,1000,1,2,3,4,5,6,0,100,100,0,10.00,20.00,2435,0.0000,90,100,120,-1,8,0,0,0,nil,nil,nil\r\n",
     // A debuff from the boss, its stacks and its removal.
     "10/7/2026 20:01:05.000-7  SPELL_AURA_APPLIED,Creature-0-1-2-3-500-AA,\"Ula'tek\",0xa48,0x80000000,Player-1-A,\"Tank-Realm-US\",0x511,0x80000000,7003,\"Rot\",0x8,DEBUFF\r\n",
@@ -149,32 +156,43 @@ fn units_are_numbered_where_first_seen() {
 }
 
 #[test]
-fn posts_are_the_floors_with_health_and_power() {
+fn posts_keep_every_floor_with_health_and_power() {
     let c = second();
-    let p = |t_ms, x, y, facing, hp, power: Option<(u32, u64, u64)>| Post {
+    let p = |t_ms, x, y, facing, hp, power: Option<(u32, u64, u64)>, map_id| Post {
         t_ms,
         x,
         y,
         facing,
         hp,
         power: power.map(|(kind, current, max)| Power { kind, current, max }),
-        map_id: 2434,
+        map_id,
     };
     assert_eq!(
         c.units[0].posts,
         [
-            p(500, 150_025, -350, 15_000, 900, Some((0, 100, 100))),
-            p(1000, 150_100, -300, 16_000, 800, Some((0, 100, 100))),
+            p(500, 150_025, -350, 15_000, 900, Some((0, 100, 100)), 2434),
+            p(1000, 150_100, -300, 16_000, 800, Some((0, 100, 100)), 2434),
+            p(4500, 1000, 2000, 0, 700, Some((0, 100, 100)), 2435),
         ],
-        "the post on floor 2435 is not kept"
+        "the post on floor 2435 is kept, with its floor"
     );
     assert_eq!(
         c.units[1].posts,
-        [p(2500, 151_000, 0, 31_416, 900, Some((3, 25, 100)))]
+        [p(2500, 151_000, 0, 31_416, 900, Some((3, 25, 100)), 2434)]
     );
     // No pool, no power (the text cutter wrote `1,0,0`).
-    assert_eq!(c.units[2].posts, [p(3000, 152_000, 500, 0, 1000, None)]);
-    assert_eq!(c.posts(), 5);
+    assert_eq!(
+        c.units[2].posts,
+        [p(3000, 152_000, 500, 0, 1000, None, 2434)]
+    );
+    assert_eq!(c.posts(), 6);
+    let maps: Vec<(u32, usize, usize)> = c
+        .maps()
+        .iter()
+        .map(|m| (m.map_id, m.posts, m.players))
+        .collect();
+    assert_eq!(maps, [(2434, 5, 2), (2435, 1, 1)]);
+    assert_eq!(c.floor, 2434, "the players' most posted");
 }
 
 #[test]
@@ -183,36 +201,45 @@ fn events_are_the_rows_a_replay_draws() {
     let rows: Vec<EventRow> = c
         .events
         .iter()
-        .map(|e| (e.t_ms, e.kind, e.unit.unwrap(), e.spell_id, e.src, e.target))
+        .map(|e| (e.t_ms, e.kind, e.unit, e.spell_id, e.src, e.target))
         .collect();
     use EventKind::*;
     assert_eq!(
         rows,
         [
-            (500, PcastSuccess, 0, 49_998, None, Some(1)),
-            (1000, Hit, 0, 7000, Some(1), None),
-            (2000, CastStart, 1, 7001, None, None),
-            (2500, CastSuccess, 1, 7001, None, Some(0)),
-            (3000, CastSuccess, 2, 7002, None, None),
-            (5000, DebuffApplied, 0, 7003, Some(1), None),
-            (5500, DebuffDose, 0, 7003, Some(1), None),
-            (6500, PcastFailed, 0, 49_998, None, None),
-            (7000, DebuffRemoved, 0, 7003, Some(1), None),
-            (8000, Hit, 0, 7000, Some(1), None),
-            (9000, Interrupt, 1, 7001, Some(0), None),
-            (10_000, NpcDied, 2, 0, None, None),
-            (11_000, Death, 0, 0, None, None),
-            (11_500, Rez, 0, 20_484, Some(4), None),
+            (0, BossEngaged, None, 3000, None, None),
+            (500, PcastSuccess, Some(0), 49_998, None, Some(1)),
+            (1000, Hit, Some(0), 7000, Some(1), None),
+            (2000, CastStart, Some(1), 7001, None, None),
+            (2500, CastSuccess, Some(1), 7001, None, Some(0)),
+            (3000, CastSuccess, Some(2), 7002, None, None),
+            (4500, Hit, Some(0), 7000, Some(1), None),
+            (5000, DebuffApplied, Some(0), 7003, Some(1), None),
+            (5500, DebuffDose, Some(0), 7003, Some(1), None),
+            (6500, PcastFailed, Some(0), 49_998, None, None),
+            (7000, DebuffRemoved, Some(0), 7003, Some(1), None),
+            (8000, Hit, Some(0), 7000, Some(1), None),
+            (9000, Interrupt, Some(1), 7001, Some(0), None),
+            (10_000, NpcDied, Some(2), 0, None, None),
+            (11_000, Death, Some(0), 0, None, None),
+            (11_500, Rez, Some(0), 20_484, Some(4), None),
+            (12_000, BossKilled, None, 3000, None, None),
         ]
     );
-    let hit = &c.events[1];
+    assert_eq!(
+        c.events[0].spell, "Ula'tek",
+        "a boss row names its encounter"
+    );
+    let hit = &c.events[2];
     assert_eq!(
         (hit.at, hit.base, hit.spell.as_str()),
         (Some((150_100, -300)), Some(120), "Venom")
     );
-    let miss = &c.events[9];
+    // The hit that found the tank on floor 2435: where his post there says.
+    assert_eq!(c.events[6].at, Some((1000, 2000)));
+    let miss = &c.events[11];
     assert_eq!((miss.at, miss.base), (None, None));
-    assert_eq!(c.events[6].stacks, Some(2));
+    assert_eq!(c.events[8].stacks, Some(2));
 }
 
 #[test]
@@ -431,7 +458,14 @@ fn unconscious_npcs_go_down_feigning_players_do_not() {
     );
     let c = cut(std::iter::empty(), log.split("\r\n"), &NoPlaced, None);
     let kinds: Vec<EventKind> = c.events.iter().map(|e| e.kind).collect();
-    assert_eq!(kinds, [EventKind::NpcDied]);
+    assert_eq!(
+        kinds,
+        [
+            EventKind::BossEngaged,
+            EventKind::NpcDied,
+            EventKind::BossWiped
+        ]
+    );
     assert_eq!(c.head.success, Some(false));
 }
 
@@ -463,4 +497,72 @@ fn a_slice_opening_on_a_hit_keeps_its_row_and_post() {
     let tank = &c.units[first.unit.unwrap() as usize];
     assert_eq!(tank.name, "Tank-Realm-US");
     assert_eq!(tank.posts.first().map(|p| p.t_ms), Some(0));
+}
+
+/// A keystone run's slice, from its CHALLENGE_MODE_START: trash on the
+/// dungeon's first floor, a boss on its second (the party steps down, and a
+/// heal finds a player there), the run's end — every floor's posts kept
+/// with their floors, the boss's start and end as rows mid-run, and the
+/// main floor the players' most posted.
+#[test]
+fn a_keys_run_keeps_every_floor_and_its_bosses() {
+    let log = concat!(
+        "10/8/2026 19:00:00.000-7  ZONE_CHANGE,2521,\"Ruby Dungeon\",8\r\n",
+        "10/8/2026 19:00:01.000-7  CHALLENGE_MODE_START,\"Ruby Dungeon\",2521,399,14,[10,9]\r\n",
+        "10/8/2026 19:00:05.000-7  SPELL_DAMAGE,Creature-0-1-2-3-800-AA,\"Drake\",0xa48,0x80000000,Player-1-A,\"Tank-Realm-US\",0x511,0x80000000,8000,\"Flame\",0x4,Player-1-A,0000000000000000,900,1000,0,0,0,0,0,0,0,100,100,0,10.00,20.00,2094,1.0000,90,100,120,-1,4,0,0,0,nil,nil,nil\r\n",
+        "10/8/2026 19:00:06.000-7  SPELL_CAST_SUCCESS,Player-1-B,\"Healer-Realm-US\",0x512,0x80000000,0000000000000000,nil,0x80000000,0x80000000,774,\"Rejuvenation\",0x8,Player-1-B,0000000000000000,1000,1000,0,0,0,0,0,0,0,100,100,0,11.00,21.00,2094,1.0000,90\r\n",
+        "10/8/2026 19:00:07.000-7  SPELL_HEAL,Player-1-B,\"Healer-Realm-US\",0x512,0x80000000,Player-1-A,\"Tank-Realm-US\",0x511,0x80000000,73921,\"Healing Rain\",0x8,Player-1-A,0000000000000000,950,1000,0,0,0,0,0,0,0,100,100,0,12.00,22.00,2094,1.0000,90,50,50,0,0,nil\r\n",
+        "10/8/2026 19:01:00.000-7  ENCOUNTER_START,2609,\"Frost Warden\",8,5,2521\r\n",
+        "10/8/2026 19:01:01.000-7  SPELL_DAMAGE,Creature-0-1-2-3-900-BB,\"Frost Warden\",0xa48,0x80000000,Player-1-A,\"Tank-Realm-US\",0x511,0x80000000,9000,\"Frost\",0x10,Player-1-A,0000000000000000,800,1000,0,0,0,0,0,0,0,100,100,0,50.00,60.00,2095,2.0000,90,100,120,-1,16,0,0,0,nil,nil,nil\r\n",
+        "10/8/2026 19:01:02.000-7  SPELL_CAST_SUCCESS,Player-1-B,\"Healer-Realm-US\",0x512,0x80000000,0000000000000000,nil,0x80000000,0x80000000,774,\"Rejuvenation\",0x8,Player-1-B,0000000000000000,1000,1000,0,0,0,0,0,0,0,100,100,0,52.00,61.00,2095,1.0000,90\r\n",
+        "10/8/2026 19:01:03.000-7  SPELL_CAST_SUCCESS,Player-1-B,\"Healer-Realm-US\",0x512,0x80000000,0000000000000000,nil,0x80000000,0x80000000,774,\"Rejuvenation\",0x8,Player-1-B,0000000000000000,1000,1000,0,0,0,0,0,0,0,100,100,0,52.00,62.00,2095,1.0000,90\r\n",
+        "10/8/2026 19:01:04.000-7  SPELL_CAST_SUCCESS,Player-1-B,\"Healer-Realm-US\",0x512,0x80000000,0000000000000000,nil,0x80000000,0x80000000,774,\"Rejuvenation\",0x8,Player-1-B,0000000000000000,1000,1000,0,0,0,0,0,0,0,100,100,0,52.00,63.00,2095,1.0000,90\r\n",
+        "10/8/2026 19:02:00.000-7  ENCOUNTER_END,2609,\"Frost Warden\",8,5,1,60000\r\n",
+        "10/8/2026 19:03:00.000-7  CHALLENGE_MODE_END,2521,1,14,179000,250.0,1000.0\r\n",
+    );
+    let lines: Vec<&str> = log.split("\r\n").collect();
+    let c = cut(lines[..1].to_vec(), lines[1..].to_vec(), &Table, None);
+    assert_eq!(c.head.encounter, None);
+    assert_eq!(
+        c.head.key,
+        Some(KeyHead {
+            name: "Ruby Dungeon".into(),
+            level: 14
+        })
+    );
+    let bosses: Vec<(u32, EventKind, Option<UnitId>, u32, &str)> = c
+        .events
+        .iter()
+        .filter(|e| e.kind.is_boss())
+        .map(|e| (e.t_ms, e.kind, e.unit, e.spell_id, e.spell.as_str()))
+        .collect();
+    assert_eq!(
+        bosses,
+        [
+            (59_000, EventKind::BossEngaged, None, 2609, "Frost Warden"),
+            (119_000, EventKind::BossKilled, None, 2609, "Frost Warden"),
+        ]
+    );
+    let maps: Vec<(u32, usize, usize)> = c
+        .maps()
+        .iter()
+        .map(|m| (m.map_id, m.posts, m.players))
+        .collect();
+    assert_eq!(maps, [(2094, 3, 3), (2095, 4, 4)]);
+    assert_eq!(c.floor, 2095, "the floor the players were posted on most");
+    let tank = c.units.iter().find(|u| u.name == "Tank-Realm-US").unwrap();
+    let floors: Vec<u32> = tank.posts.iter().map(|p| p.map_id).collect();
+    assert_eq!(floors, [2094, 2094, 2095], "the tank steps down a floor");
+    // Both hits are rows, each where its victim stood on its own floor —
+    // the first off the main one — and the heal on the upper floor tells
+    // where Healing Rain fell there.
+    let hits: Vec<Option<(i32, i32)>> = c
+        .events
+        .iter()
+        .filter(|e| e.kind == EventKind::Hit)
+        .map(|e| e.at)
+        .collect();
+    assert_eq!(hits, [Some((1000, 2000)), Some((5000, 6000))]);
+    let rain: Vec<Option<(i32, i32)>> = c.placed.iter().map(|p| p.at).collect();
+    assert_eq!(rain, [Some((1200, 2200))]);
 }

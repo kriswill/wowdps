@@ -201,14 +201,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	cc	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	dispels	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	deaths	0
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	taken	50
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	taken	100
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	absorbed	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	blocked	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	prevented	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	misses	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stagger	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	stagger_ticked	0
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	reduced	10
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	reduced	20
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	self_harm	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	friendly_fire	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	support_given	0
@@ -225,7 +225,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	externals_received_ms	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	support_uptime_ms	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	spans	0
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	taken10_0	50
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	taken10_0	100
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	absorb_applied	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	absorb_wasted	
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	shields_unknown	0
@@ -377,10 +377,199 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	power_seconds	1
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	power_sum	50
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	power_max	100
+3	Trash	Trash		2000			Player-1-A	damage	5000
+3	Trash	Trash		2000			Player-1-A	overkill	0
+3	Trash	Trash		2000			Player-1-A	petdamage	0
+3	Trash	Trash		2000			Player-1-A	dps	5000.00
+3	Trash	Trash		2000			Player-1-A	combat_ms	1000
+3	Trash	Trash		2000			Player-1-A	pct	100.00
+3	Trash	Trash		2000			Player-1-A	heal	0
+3	Trash	Trash		2000			Player-1-A	overheal	0
+3	Trash	Trash		2000			Player-1-A	absorbheal	0
+3	Trash	Trash		2000			Player-1-A	interrupts	0
+3	Trash	Trash		2000			Player-1-A	cc	0
+3	Trash	Trash		2000			Player-1-A	dispels	0
+3	Trash	Trash		2000			Player-1-A	deaths	0
+3	Trash	Trash		2000			Player-1-A	taken	100
+3	Trash	Trash		2000			Player-1-A	absorbed	0
+3	Trash	Trash		2000			Player-1-A	blocked	0
+3	Trash	Trash		2000			Player-1-A	prevented	0
+3	Trash	Trash		2000			Player-1-A	misses	0
+3	Trash	Trash		2000			Player-1-A	stagger	0
+3	Trash	Trash		2000			Player-1-A	stagger_ticked	0
+3	Trash	Trash		2000			Player-1-A	reduced	20
+3	Trash	Trash		2000			Player-1-A	self_harm	0
+3	Trash	Trash		2000			Player-1-A	friendly_fire	0
+3	Trash	Trash		2000			Player-1-A	support_given	0
+3	Trash	Trash		2000			Player-1-A	support_received	0
+3	Trash	Trash		2000			Player-1-A	support_given_heal	0
+3	Trash	Trash		2000			Player-1-A	support_received_heal	0
+3	Trash	Trash		2000			Player-1-A	healed_received	50
+3	Trash	Trash		2000			Player-1-A	self_healed	0
+3	Trash	Trash		2000			Player-1-A	effective	5000
+3	Trash	Trash		2000			Player-1-A	am_uptime_ms	0
+3	Trash	Trash		2000			Player-1-A	externals_given	0
+3	Trash	Trash		2000			Player-1-A	externals_given_ms	0
+3	Trash	Trash		2000			Player-1-A	externals_received	0
+3	Trash	Trash		2000			Player-1-A	externals_received_ms	0
+3	Trash	Trash		2000			Player-1-A	support_uptime_ms	0
+3	Trash	Trash		2000			Player-1-A	spans	0
+3	Trash	Trash		2000			Player-1-A	taken10_0	100
+3	Trash	Trash		2000			Player-1-A	absorb_applied	0
+3	Trash	Trash		2000			Player-1-A	absorb_wasted	
+3	Trash	Trash		2000			Player-1-A	shields_unknown	0
+3	Trash	Trash		2000			Player-1-A	stack_hits	0
+3	Trash	Trash		2000			Player-1-A	stack_sum	0
+3	Trash	Trash		2000			Player-1-A	stack_max	0
+3	Trash	Trash		2000			Player-1-A	stack_cells	0
+3	Trash	Trash		2000			Player-1-A	stack_auras	0
+3	Trash	Trash		2000			Player-1-A	casts	0
+3	Trash	Trash		2000			Player-1-A	cast_starts	0
+3	Trash	Trash		2000			Player-1-A	damage_periodic	0
+3	Trash	Trash		2000			Player-1-A	heal_periodic	0
+3	Trash	Trash		2000			Player-1-A	misses_dealt	0
+3	Trash	Trash		2000			Player-1-A	dot_uptime_ms	0
+3	Trash	Trash		2000			Player-1-A	energize_gained	0.0000
+3	Trash	Trash		2000			Player-1-A	energize_wasted	0.0000
+3	Trash	Trash		2000			Player-1-A	heal_absorbed	0
+3	Trash	Trash		2000			Player-1-A	empower_stage1	0
+3	Trash	Trash		2000			Player-1-A	empower_stage2	0
+3	Trash	Trash		2000			Player-1-A	empower_stage3	0
+3	Trash	Trash		2000			Player-1-A	empower_stage4	0
+3	Trash	Trash		2000			Player-1-A	empower_cancelled	0
+3	Trash	Trash		2000			Player-1-A	power_seconds	1
+3	Trash	Trash		2000			Player-1-A	power_sum	100
+3	Trash	Trash		2000			Player-1-A	power_max	100
+3	Trash	Trash		2000			Player-1-B	damage	0
+3	Trash	Trash		2000			Player-1-B	overkill	0
+3	Trash	Trash		2000			Player-1-B	petdamage	0
+3	Trash	Trash		2000			Player-1-B	dps	0.00
+3	Trash	Trash		2000			Player-1-B	combat_ms	1000
+3	Trash	Trash		2000			Player-1-B	pct	0.00
+3	Trash	Trash		2000			Player-1-B	heal	50
+3	Trash	Trash		2000			Player-1-B	overheal	0
+3	Trash	Trash		2000			Player-1-B	absorbheal	0
+3	Trash	Trash		2000			Player-1-B	interrupts	0
+3	Trash	Trash		2000			Player-1-B	cc	0
+3	Trash	Trash		2000			Player-1-B	dispels	0
+3	Trash	Trash		2000			Player-1-B	deaths	0
+3	Trash	Trash		2000			Player-1-B	taken	0
+3	Trash	Trash		2000			Player-1-B	absorbed	0
+3	Trash	Trash		2000			Player-1-B	blocked	0
+3	Trash	Trash		2000			Player-1-B	prevented	0
+3	Trash	Trash		2000			Player-1-B	misses	0
+3	Trash	Trash		2000			Player-1-B	stagger	0
+3	Trash	Trash		2000			Player-1-B	stagger_ticked	0
+3	Trash	Trash		2000			Player-1-B	reduced	0
+3	Trash	Trash		2000			Player-1-B	self_harm	0
+3	Trash	Trash		2000			Player-1-B	friendly_fire	0
+3	Trash	Trash		2000			Player-1-B	support_given	0
+3	Trash	Trash		2000			Player-1-B	support_received	0
+3	Trash	Trash		2000			Player-1-B	support_given_heal	0
+3	Trash	Trash		2000			Player-1-B	support_received_heal	0
+3	Trash	Trash		2000			Player-1-B	healed_received	0
+3	Trash	Trash		2000			Player-1-B	self_healed	0
+3	Trash	Trash		2000			Player-1-B	effective	0
+3	Trash	Trash		2000			Player-1-B	am_uptime_ms	0
+3	Trash	Trash		2000			Player-1-B	externals_given	0
+3	Trash	Trash		2000			Player-1-B	externals_given_ms	0
+3	Trash	Trash		2000			Player-1-B	externals_received	0
+3	Trash	Trash		2000			Player-1-B	externals_received_ms	0
+3	Trash	Trash		2000			Player-1-B	support_uptime_ms	0
+3	Trash	Trash		2000			Player-1-B	spans	0
+3	Trash	Trash		2000			Player-1-B	taken10_0	0
+3	Trash	Trash		2000			Player-1-B	absorb_applied	0
+3	Trash	Trash		2000			Player-1-B	absorb_wasted	
+3	Trash	Trash		2000			Player-1-B	shields_unknown	0
+3	Trash	Trash		2000			Player-1-B	stack_hits	0
+3	Trash	Trash		2000			Player-1-B	stack_sum	0
+3	Trash	Trash		2000			Player-1-B	stack_max	0
+3	Trash	Trash		2000			Player-1-B	stack_cells	0
+3	Trash	Trash		2000			Player-1-B	stack_auras	0
+3	Trash	Trash		2000			Player-1-B	casts	0
+3	Trash	Trash		2000			Player-1-B	cast_starts	0
+3	Trash	Trash		2000			Player-1-B	damage_periodic	0
+3	Trash	Trash		2000			Player-1-B	heal_periodic	0
+3	Trash	Trash		2000			Player-1-B	misses_dealt	0
+3	Trash	Trash		2000			Player-1-B	dot_uptime_ms	0
+3	Trash	Trash		2000			Player-1-B	energize_gained	0.0000
+3	Trash	Trash		2000			Player-1-B	energize_wasted	0.0000
+3	Trash	Trash		2000			Player-1-B	heal_absorbed	0
+3	Trash	Trash		2000			Player-1-B	empower_stage1	0
+3	Trash	Trash		2000			Player-1-B	empower_stage2	0
+3	Trash	Trash		2000			Player-1-B	empower_stage3	0
+3	Trash	Trash		2000			Player-1-B	empower_stage4	0
+3	Trash	Trash		2000			Player-1-B	empower_cancelled	0
+3	Trash	Trash		2000			Player-1-B	power_seconds	0
+3	Trash	Trash		2000			Player-1-B	power_sum	0
+3	Trash	Trash		2000			Player-1-B	power_max	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	damage	10000
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	overkill	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	petdamage	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	dps	322.58
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	combat_ms	31000
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	pct	100.00
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	heal	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	overheal	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	absorbheal	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	interrupts	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	cc	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	dispels	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	deaths	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	taken	200
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	absorbed	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	blocked	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	prevented	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	misses	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	stagger	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	stagger_ticked	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	reduced	40
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	self_harm	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	friendly_fire	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	support_given	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	support_received	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	support_given_heal	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	support_received_heal	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	healed_received	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	self_healed	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	effective	10000
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	am_uptime_ms	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	externals_given	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	externals_given_ms	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	externals_received	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	externals_received_ms	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	support_uptime_ms	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	spans	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	taken10_0	200
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	absorb_applied	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	absorb_wasted	
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	shields_unknown	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	stack_hits	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	stack_sum	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	stack_max	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	stack_cells	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	stack_auras	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	casts	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	cast_starts	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	damage_periodic	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	heal_periodic	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	misses_dealt	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	dot_uptime_ms	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	energize_gained	0.0000
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	energize_wasted	0.0000
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	heal_absorbed	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	empower_stage1	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	empower_stage2	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	empower_stage3	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	empower_stage4	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	empower_cancelled	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	power_seconds	1
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	power_sum	100
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	power_max	100
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_units	9
-1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_posts	13
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_posts	15
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_floor	2434
-1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_hit	4
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_hit	5
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_cast_start	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_cast_success	2
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pcast_start	1
@@ -393,14 +582,19 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_death	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_npc_died	2
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_rez	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_boss_engaged	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_boss_killed	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_boss_wiped	0
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_cast	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_summon	2
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_touch	3
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_gone	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_markers	6
+1	Encounter	Ula'tek	kill	30000	3000	16	2434	replay_map_posts	13
+1	Encounter	Ula'tek	kill	30000	3000	16	2435	replay_map_posts	2
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	replay_posts	3
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	replay_posts	3
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	replay_posts	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	replay_posts	3
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	replay_posts	2
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_units	3
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_posts	2
@@ -418,9 +612,68 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_death	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_npc_died	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_rez	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_boss_engaged	1
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_boss_killed	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_boss_wiped	1
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_cast	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_summon	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_touch	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_gone	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_markers	2
+2	Encounter	Twin Venoms	wipe	20000	3001	16	2434	replay_map_posts	2
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	replay_posts	1
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_units	3
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_posts	4
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_floor	2095
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_hit	1
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_cast_start	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_cast_success	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_pcast_start	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_pcast_success	2
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_pcast_failed	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_interrupt	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_debuff_applied	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_debuff_removed	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_debuff_dose	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_death	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_npc_died	1
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_rez	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_boss_engaged	1
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_boss_killed	1
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_boss_wiped	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_placed_cast	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_placed_summon	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_placed_touch	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_placed_gone	0
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_markers	0
+4	Encounter	Frost Warden	kill	31000	3010	8	2095	replay_map_posts	4
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	replay_posts	1
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-B	replay_posts	2
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_units	4
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_posts	7
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_floor	2095
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_hit	2
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_cast_start	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_cast_success	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_pcast_start	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_pcast_success	2
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_pcast_failed	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_interrupt	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_debuff_applied	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_debuff_removed	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_debuff_dose	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_death	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_npc_died	2
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_rez	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_boss_engaged	1
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_boss_killed	1
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_boss_wiped	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_placed_cast	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_placed_summon	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_placed_touch	1
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_placed_gone	0
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_markers	0
+K1	Key	The Glass Hollow +14	timed	119000			2094	replay_map_posts	3
+K1	Key	The Glass Hollow +14	timed	119000			2095	replay_map_posts	4
+K1	Key	The Glass Hollow +14	timed	119000			Player-1-A	replay_posts	3
+K1	Key	The Glass Hollow +14	timed	119000			Player-1-B	replay_posts	2

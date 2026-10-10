@@ -97,6 +97,14 @@ Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 > describes the unit the split landed on; read at off9, it was never found (452
 > posts over 48 real pulls, 2026-10-09). The game writes `-0.00` for a coordinate
 > or a facing a hair below zero; the integer reading has no negative zero.
+>
+> `ui_map_id` is the floor the unit stands on, line by line, not the zone's: a
+> dungeon's levels are separate UiMaps, and a unit's id changes as it takes the
+> stairs (2026-10-09, three +14 keystone runs: Ruby Life Pools on 2094 and
+> 2095, and 1978 for two posts; Altar of Fangs on 2588, 2589 and 2590 — 36 to
+> 59 % of a run's posts off its most-posted floor). A boss room was one UiMap
+> in each of 48 real pulls. The replay keeps every post with its own (tier
+> format 2, `tracks.csv`'s `map_id`).
 
 ### Which unit the advanced block describes  ← attribution-critical
 
