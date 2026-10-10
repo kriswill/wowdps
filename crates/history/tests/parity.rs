@@ -99,15 +99,27 @@ fn fake_product(tmp: &Temp) -> PathBuf {
              [\"guild\"] = \"{guild}\", [\"seen\"] = 1757000000, }},\n"
         )
     };
+    // And the NPCs it classified from their nameplates: an elite, a
+    // lieutenant, a minor add.
+    let npc = |id: u32, name: &str, class: &str, lieutenant: u8, seen: u64| {
+        format!(
+            "[{id}] = {{ [\"name\"] = \"{name}\", [\"classification\"] = \"{class}\", \
+             [\"lieutenant\"] = {lieutenant}, [\"seen\"] = {seen}, \
+             [\"build\"] = \"12.0.5.63906\", [\"difficulty\"] = 8, }},\n"
+        )
+    };
     std::fs::write(
         sv.join("wowdps.lua"),
         format!(
-            "WOWDPS_DATA = {{\n[\"schema\"] = 1,\n[\"characters\"] = {{ [\"{SPANS_PRIEST}\"] = true, }},\n\
-             [\"players\"] = {{\n{}{}{}{}}},\n}}\n",
+            "WOWDPS_DATA = {{\n[\"schema\"] = 2,\n[\"characters\"] = {{ [\"{SPANS_PRIEST}\"] = true, }},\n\
+             [\"players\"] = {{\n{}{}{}{}}},\n[\"creatures\"] = {{\n{}{}{}}},\n}}\n",
             rec(SPANS_WARRIOR, "Bastión", "Ðark Moon Templars"),
             rec(SPANS_PRIEST, "Lumenia", "Ðark Moon Templars"),
             rec(SPANS_EVOKER, "Sandwyrm", "Ðark Moon Templars"),
             rec(SPANS_MAGE, "Emberlyn", ""),
+            npc(164569, "Skittering Mote", "minus", 0, 1_760_000_200),
+            npc(164567, "Gloomwing Lurker", "elite", 0, 1_760_000_000),
+            npc(164568, "Vexmarrow the Silvered", "elite", 1, 1_760_000_100),
         ),
     )
     .unwrap();
@@ -5511,4 +5523,52 @@ fn the_replay_tier_exports_offline_and_stats_count_it() {
         "{pull}"
     );
     assert!(wowdps_history::replay_export(&hist, "nope", &out).is_err());
+}
+
+/// The addon's creatures, end to end: a real daemon inside a fake install
+/// reads the account's SavedVariables on start and writes
+/// `<history dir>/creatures.tsv` (newest sighting per creature id, ids
+/// ascending), and `stats` reports the file; a lake without it counts
+/// nothing, and one this build cannot read says why.
+#[test]
+fn the_addons_creatures_land_beside_the_lake_and_stats_counts_them() {
+    let tmp = Temp::new("creatures");
+    let product = fake_product(&tmp);
+    let hist = daemon_lake_with(&tmp, SPANS_FIXTURE, 1, Some(product));
+    assert_eq!(
+        std::fs::read_to_string(hist.join("creatures.tsv")).unwrap(),
+        "# wowdps creatures 1\n\
+         164567\telite\t0\t1760000000\tGloomwing Lurker\n\
+         164568\telite\t1\t1760000100\tVexmarrow the Silvered\n\
+         164569\tminus\t0\t1760000200\tSkittering Mote\n"
+    );
+    let stats = Lake::open(&hist).unwrap().stats();
+    let creatures = stats.get("creatures").unwrap();
+    assert_eq!(creatures.get("rows").and_then(Json::as_u64), Some(3));
+    assert_eq!(creatures.get("lieutenants").and_then(Json::as_u64), Some(1));
+    assert_eq!(
+        creatures.get("newest_seen_unix").and_then(Json::as_u64),
+        Some(1_760_000_200)
+    );
+    let by = creatures.get("classifications").unwrap();
+    assert_eq!(by.get("elite").and_then(Json::as_u64), Some(2));
+    assert_eq!(by.get("minus").and_then(Json::as_u64), Some(1));
+    assert_eq!(creatures.get("error"), Some(&Json::Null));
+
+    let empty = Temp::new("creatures-none");
+    let none = wowdps_history::creature_stats(&empty.0);
+    let c = none.get("creatures").unwrap();
+    assert_eq!(c.get("rows").and_then(Json::as_u64), Some(0));
+    assert_eq!(c.get("newest_seen_unix"), Some(&Json::Null));
+    assert_eq!(c.get("error"), Some(&Json::Null));
+    std::fs::write(empty.0.join("creatures.tsv"), "# wowdps creatures 9\n").unwrap();
+    let newer = wowdps_history::creature_stats(&empty.0);
+    let c = newer.get("creatures").unwrap();
+    assert_eq!(c.get("rows").and_then(Json::as_u64), Some(0));
+    assert!(
+        c.get("error")
+            .and_then(Json::as_str)
+            .is_some_and(|e| e.contains("format 9")),
+        "{c:?}"
+    );
 }

@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use duckdb::types::Value;
 use duckdb::{Config, Connection};
 use wowdps_model::{Role, RoleNightRow, Spec};
+use wowdps_proto::creatures;
 use wowdps_proto::history::{FightCard, FightDetails, FightKind};
 use wowdps_proto::json::Json;
 use wowdps_proto::obj;
@@ -1071,6 +1072,10 @@ impl Lake {
         if let (Json::Obj(fields), Json::Obj(more)) = (&mut out, replay_stats(&self.dir)) {
             fields.extend(more);
         }
+        // The wowdps addon's NPC classifications ([`creature_stats`]).
+        if let (Json::Obj(fields), Json::Obj(more)) = (&mut out, creature_stats(&self.dir)) {
+            fields.extend(more);
+        }
         out
     }
 
@@ -1620,6 +1625,48 @@ pub fn replay_stats(dir: &Path) -> Json {
             "timed_keys": Json::u64(keys),
             "progression": Json::u64(progression),
             "pins": Json::u64(pins),
+        },
+    }
+}
+
+// ---- the wowdps addon's NPC classifications -----------------------------------------
+
+/// What `stats` says of `creatures.tsv`, the NPC classifications the
+/// daemon merges from the wowdps addon (`proto::creatures`): its rows, how
+/// many are lieutenants, the newest sighting (whole seconds UTC) and the
+/// rows by classification. A lake without the file counts nothing — it
+/// fills after a logout with the addon installed; a file this build cannot
+/// read says why in `error`.
+pub fn creature_stats(dir: &Path) -> Json {
+    let read = match std::fs::read_to_string(dir.join(creatures::FILE)) {
+        Ok(text) => creatures::parse(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+        Err(e) => Err(format!("{}: {e}", creatures::FILE)),
+    };
+    let (rows, error) = match read {
+        Ok(rows) => (rows, None),
+        Err(e) => (Default::default(), Some(e)),
+    };
+    let mut by_class: std::collections::BTreeMap<String, u64> = Default::default();
+    for c in rows.values() {
+        *by_class.entry(c.classification.clone()).or_default() += 1;
+    }
+    obj! {
+        "creatures": obj! {
+            "rows": Json::u64(rows.len() as u64),
+            "lieutenants": Json::u64(rows.values().filter(|c| c.lieutenant).count() as u64),
+            "newest_seen_unix": rows
+                .values()
+                .map(|c| c.seen_unix)
+                .max()
+                .map_or(Json::Null, |s| Json::num(s as f64)),
+            "classifications": Json::Obj(
+                by_class
+                    .into_iter()
+                    .map(|(c, n)| (c, Json::u64(n)))
+                    .collect()
+            ),
+            "error": error.map_or(Json::Null, Json::str),
         },
     }
 }

@@ -31,8 +31,10 @@ Usage:
                                                  one fight's replay tier as the seven files a
                                                  replay reads (units.tsv, tracks.csv, events.csv,
                                                  placed.csv, markers.csv, raid.csv, pull.txt)
-  wowdps history stats
-  wowdps history views                            which views this lake defines
+  wowdps history stats                           the lake's files and gaps, plus creatures.tsv
+                                                 (the addon's NPC classifications: rows,
+                                                 lieutenants, newest seen)
+  wowdps history views                           which views this lake defines
 
 Options:
   --dir <path>   the lake (config `history_dir`, else $XDG_DATA_HOME/wowdps/history/v1)
