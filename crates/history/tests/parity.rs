@@ -5470,6 +5470,12 @@ fn the_replay_tier_exports_offline_and_stats_count_it() {
             .and_then(Json::as_u64)
     };
     assert_eq!(num(&["replay", "files"]), Some(2));
+    let current = wowdps_proto::replay::FORMAT.to_string();
+    assert_eq!(
+        num(&["replay", "formats", current.as_str()]),
+        Some(2),
+        "both in this build's format"
+    );
     assert_eq!(num(&["cards_without_replay"]), Some(0));
     assert_eq!(num(&["kept", "kills"]), Some(1));
     assert_eq!(

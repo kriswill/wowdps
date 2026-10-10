@@ -2,6 +2,11 @@
 
 ## 2026-10-09
 
+- **Update** — [wowdps-model](model.md), [wowdps-core](core.md),
+  [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
+  [wowdps-history](history.md): R29's replay tier format 2 — every floor's
+  posts (`Post::map_id`, `Cut::maps`), the boss rows, the `maps` section;
+  the rewrite queue recuts format 1; `stats` counts the files by format.
 - **Update** — [wowdps-gui](gui.md), [wowdps-core](core.md),
   [wowdps-proto](proto.md), [wowdps-daemon](daemon.md), [wowdps-mcp](mcp.md),
   [wowdps-history](history.md): the architecture prose the agent instructions
