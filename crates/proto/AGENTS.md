@@ -30,7 +30,9 @@ codecs and binary tiers, and the shared client extras (`json`, `talents`,
 - **One codec per stored format.** `history.rs` is the history store's
   record codec (one-line JSON documents): the daemon writes them, every
   reader parses them here. A new field must read as absent from every older
-  file.
+  file. `creatures.rs` is the codec of `creatures.tsv` (the addon's NPC
+  classifications, read by the replay): its header names `FORMAT` 1, and
+  `tests/creatures.rs` pins its bytes.
 - **Binary tiers keep their formats.** `series.rs` (`FORMAT` 2) and
   `replay.rs` (`FORMAT` 2) each carry a format number read by `format_of`;
   a reader takes older formats and refuses newer ones, and a format bump
