@@ -33,12 +33,13 @@ use wowdps_core::model::{
 };
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
+use wowdps_proto::creatures::{self, Creature};
 use wowdps_proto::history::{
     Affiliation, COARSE_BUCKET_MS, COUNT_VIEWS, CardPlayer, CountDetail, FightCard, FightDetails,
     FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail,
     PlayerMitigation, PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime, Recap,
-    StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id, loadout_hash, log_id,
-    sigma_id,
+    StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, addon_table, content_id, fight_id, loadout_hash,
+    log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::{DeathWindow, HistoryStatus};
@@ -638,12 +639,16 @@ impl<B: Backend> Worker<B> {
     }
 
     /// Read every account's SavedVariables that changed since last time
-    /// into the store. `true` when anything was merged.
+    /// into the store: the players into `affiliations/`, the NPC
+    /// classifications into `creatures.tsv` (one rewrite for every account
+    /// read). `true` when an affiliation was merged — the creatures move
+    /// nothing `Status` reports.
     fn poll_saved_variables(&mut self) -> bool {
         let Some(product) = self.product.clone() else {
             return false;
         };
         let mut merged = 0usize;
+        let mut seen: Vec<Creature> = Vec::new();
         for (account, path) in addon::saved_variables(&product) {
             let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) else {
                 continue;
@@ -661,12 +666,21 @@ impl<B: Backend> Worker<B> {
                     continue;
                 }
             };
-            match Affiliation::read_saved_variables(&text, &account) {
-                Ok(recs) => merged += self.store.merge_affiliations(recs),
+            match addon_table(&text) {
+                Ok(Some(data)) => {
+                    merged += self
+                        .store
+                        .merge_affiliations(Affiliation::from_addon_table(&data, &account));
+                    seen.extend(Creature::from_addon_table(&data));
+                }
+                Ok(None) => {}
                 Err(e) => {
                     self.store.last_error = Some(format!("{}: {e}", path.display()));
                 }
             }
+        }
+        if !seen.is_empty() {
+            self.store.merge_creatures(seen);
         }
         merged > 0
     }
@@ -1850,6 +1864,13 @@ pub struct Store<B: Backend> {
     /// `affiliations/<guid>.json`, by guid: what the wowdps addon last saw
     /// of each player (spec §9a). Joined onto cards when they are answered.
     affiliations: HashMap<String, Affiliation>,
+    /// `creatures.tsv` at the store's root, by creature id: the NPC
+    /// classifications the wowdps addon saw (`proto::creatures`), read at
+    /// open and rewritten whole when a merge changes a row.
+    creatures: BTreeMap<u32, Creature>,
+    /// Why the `creatures.tsv` on disk is one this build must not rewrite
+    /// (a newer format, a file not ours); `None` when it can.
+    creatures_refused: Option<String>,
     /// v39: the fights whose `series/<id>.bin` is on disk, listed once at
     /// open and kept with every write and removal — so retention never
     /// stats a file per card to know — with (v42) the format its head names
@@ -1936,6 +1957,19 @@ impl<B: Backend> Store<B> {
             })
             .map(|a| (a.guid.clone(), a))
             .collect();
+        // The addon's NPC classifications, one file at the root. A file
+        // this build cannot read whole is left as it is, never rewritten.
+        let (creatures, creatures_refused) = match backend.read("", creatures::FILE) {
+            None => (BTreeMap::new(), None),
+            Some(bytes) => match String::from_utf8(bytes)
+                .map_err(|_| format!("{}: not UTF-8", creatures::FILE))
+                .and_then(|text| creatures::parse(&text))
+            {
+                Ok(rows) => (rows, None),
+                Err(e) => (BTreeMap::new(), Some(e)),
+            },
+        };
+        let last_error = last_error.or_else(|| creatures_refused.clone());
         // v39: which fights keep the series tier, by file name; v42: and in
         // what format, off each file's nine-byte head.
         let series = backend
@@ -1969,6 +2003,8 @@ impl<B: Backend> Store<B> {
             last_error,
             corrupt,
             affiliations,
+            creatures,
+            creatures_refused,
             series,
             replays,
             killed: HashSet::new(),
@@ -2265,6 +2301,46 @@ impl<B: Backend> Store<B> {
         let mut all: Vec<&Affiliation> = self.affiliations.values().collect();
         all.sort_by(|a, b| a.guid.cmp(&b.guid));
         all
+    }
+
+    // ---- creature classifications (the wowdps addon) ----------------------------
+
+    /// Take the addon's NPC classifications in (`creatures::merge`: the
+    /// newest sighting per creature id wins, and a row the addon pruned
+    /// in-game stays) and, when a row changed, rewrite `creatures.tsv`
+    /// whole through `write_atomic`, ids ascending. The number of rows
+    /// changed; 0 when nothing did, when the write failed (the rows in
+    /// hand stay what is on disk), or when the file on disk is one this
+    /// build must not rewrite.
+    pub fn merge_creatures(&mut self, recs: Vec<Creature>) -> usize {
+        if let Some(why) = &self.creatures_refused {
+            self.last_error = Some(format!("{why}; the addon's creatures were not merged"));
+            return 0;
+        }
+        let mut next = self.creatures.clone();
+        let changed = creatures::merge(&mut next, recs);
+        if changed == 0 {
+            return 0;
+        }
+        match self.backend.write(
+            "",
+            creatures::FILE,
+            creatures::render(next.values()).as_bytes(),
+        ) {
+            Ok(()) => {
+                self.creatures = next;
+                changed
+            }
+            Err(e) => {
+                self.last_error = Some(format!("history write failed: {e}"));
+                0
+            }
+        }
+    }
+
+    /// `creatures.tsv` as the store holds it, by creature id.
+    pub fn creatures(&self) -> &BTreeMap<u32, Creature> {
+        &self.creatures
     }
 
     /// Stamp each player's `guild` from the affiliations — the read-time

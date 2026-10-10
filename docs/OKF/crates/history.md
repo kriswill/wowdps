@@ -59,6 +59,15 @@ kept-whole set by why ([R29](../rulings/r29.md),
 [progression](../decisions/progression-kept-whole.md)). No SQL view: the
 tier is binary and read whole.
 
+## Creatures
+
+`stats.creatures` reports `creatures.tsv`, the addon's NPC classifications
+the daemon keeps at the lake's root, read through `proto::creatures`
+(`creature_stats`): rows, lieutenants, the newest sighting, rows by
+classification, and `error` for a file this build refuses. No SQL view: the
+file sits outside the fenced data directories, and its reader is the
+replay ([Creature Classifications Come From The Addon](../decisions/creature-classes-come-from-the-addon.md)).
+
 ## Source
 
 - Manifest: [`crates/history/Cargo.toml`](../../../crates/history/Cargo.toml)

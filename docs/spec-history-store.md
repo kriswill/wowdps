@@ -280,8 +280,11 @@ $XDG_DATA_HOME/wowdps/history/v1/
   rows/<fight_id>.json
   details/<fight_id>.json
   series/<fight_id>.bin
+  replay/<fight_id>.bin       (v45, R29)
   loadouts/<hash>.json
   annotations/<fight_id>.ndjson
+  affiliations/<guid>.json    (§9a)
+  creatures.tsv               (§9b, the one TSV file)
 ```
 
 - Every file is one JSON document written to a uniquely named `.tmp` sibling
@@ -510,6 +513,37 @@ installed stays missing. `Status` reports the installed version (`addon`,
 null when missing), how many players have a record and when the newest
 was seen; `wowdps addon` reports the same without a daemon, plus each
 account's file.
+
+### 9b. Creature classifications, from the same addon
+
+A nameplate shows whether an NPC is elite, rare, a world boss, a minor
+`minus` mob or (since 12.x) a lieutenant. The combat log says none of it,
+and the client's `Creature.db2` ships only a thin slice: none of a
+season's dungeon trash. The game API answers it for any unit the client
+can see, so the addon records it: on `NAME_PLATE_UNIT_ADDED`,
+`UNIT_CLASSIFICATION_CHANGED` and a target change, for a unit whose GUID is
+a `Creature-` or `Vehicle-` one, that no player controls and that does not
+wear a group member's name (a mirror clone), inside a dungeon, raid or
+scenario (and a world boss anywhere), it writes
+`WOWDPS_DATA.creatures[<creature id>]`: classification, lieutenant (0/1),
+`seen`, name, client build, difficulty id, creature type and power type.
+The newest sighting per id is kept, and ids unseen for 60 days are pruned
+on load, which keeps the file a few hundred rows for a season of keys and
+raids.
+
+The history thread reads the section with the players and merges it into
+`creatures.tsv` at the store's root (`proto::creatures`, CONTRACT.md's
+addon paragraph): a header line, `# wowdps creatures 1`, then
+`creature_id, classification, lieutenant, seen_unix, name`, tab-separated,
+ids ascending, rewritten whole through `write_atomic`. The newest `seen`
+wins per id and a row the SavedVariables no longer hold stays: the addon
+pruned it, which refutes nothing. A TSV rather than one JSON document per
+creature because its reader is the replay, which wants one small file read
+whole at load and never a directory scan. It lags a logout like everything
+the addon writes, so a new NPC's color appears in the replay after the
+next logout and the daemon's next poll; the replay treats the file as
+optional. `wowdps history stats` counts its rows, lieutenants and newest
+sighting.
 
 ## 10. Readers
 

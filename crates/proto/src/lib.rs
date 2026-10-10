@@ -12,10 +12,13 @@
 //! second, what a stored pull's zoom window reads.
 //! `lua` reads the game's `SavedVariables/*.lua` — what the wowdps addon
 //! leaves behind (guild affiliations), the one thing the log never says.
+//! `creatures` is the store's `creatures.tsv`: the addon's NPC
+//! classifications (elite, rare, lieutenant), as the replay reads them.
 //! `dirs` resolves the XDG base directories the caches, the store and the
 //! config live under.
 
 pub mod client;
+pub mod creatures;
 pub mod dirs;
 pub mod history;
 pub mod json;
