@@ -75,7 +75,7 @@ paths, the linker and the sysroot, so it hits only at the same paths with
 the same toolchain: in CI, whose runner builds at one path every run, and
 in a checkout that cargo rebuilds without rustc's inputs changing (a `cargo
 clean`, a branch switched away and back). A second worktree misses;
-`SCCACHE_BASEDIRS` did not normalise Rust compiles (tested 2026-10-04).
+`SCCACHE_BASEDIRS` did not normalize Rust compiles (tested 2026-10-04).
 
 **The contract checks the mirror.** `wowdps-dev-contract` asserts the
 pinned `PKG_CONFIG_PATH`, `CC=clang` and `CXX=clang++`, the linker's exact
@@ -163,7 +163,7 @@ or Vulkan libraries.
 toolchain and the CLIs it reaches through its own inputs — `okf`, and
 `coderabbit` (alias `cr`, prebuilt and unfree, from numtide's
 `llm-agents.nix`, which keeps its own nixpkgs because following ours its
-package set does not evaluate). `nix/dev/` is parcelled by concern:
+package set does not evaluate). `nix/dev/` is parceled by concern:
 `wrappers.nix` (the `wowdps-gen-*` generators and the four workspace-binary
 wrappers, resolved against the live checkout), `env.nix`, `contract.nix`
 (built as the runnable `wowdps-dev-contract` from the same command list that

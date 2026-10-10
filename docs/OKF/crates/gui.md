@@ -38,7 +38,7 @@ overlay supervisor spawns it by config `gui_binary`, default `wowdps-gui`
 - Manifest: [`crates/gui/Cargo.toml`](../../../crates/gui/Cargo.toml)
 - Root: [`crates/gui/src/main.rs`](../../../crates/gui/src/main.rs)
 - Binaries: `wowdps-gui` (`wowdps gui` through the dispatcher)
-- Design record: [`docs/design/window-redesign.html`](../../design/window-redesign.html) — the prototype whose Tokens, sizes and behaviour the window implements
+- Design record: [`docs/design/window-redesign.html`](../../design/window-redesign.html) — the prototype whose Tokens, sizes and behavior the window implements
 - Review loop: [`crates/gui/SHOTS.md`](../../../crates/gui/SHOTS.md) — the shot tests and the overlay render guard
 
 ## Seams
@@ -63,10 +63,10 @@ on `Filter > Input` or `Palette > Input`.
 **One theme definition at a time.** gui-logic's `theme::Def` (`navy`, `onyx`,
 `frost`, or a config's own — [themes as config data](../decisions/themes-as-config-data.md))
 feeds Kit's `Theme` slot by slot and the app's `Look`, so no surface draws a
-literal colour, face, corner or effect — [the Look decision](../decisions/gold-chrome-and-a-look-per-surface.md)
-generalised; the ⚙ card switches it and the overlay follows the config; class chrome is an accent over any theme
+literal color, face, corner or effect — [the Look decision](../decisions/gold-chrome-and-a-look-per-surface.md)
+generalized; the ⚙ card switches it and the overlay follows the config; class chrome is an accent over any theme
 ([one accent](../decisions/one-accent-from-the-class-color.md)). Kit's
-styled `Input` decides its own placeholder colour and text size, so the
+styled `Input` decides its own placeholder color and text size, so the
 palette and the row filter use `window/field.rs`, Kit's unstyled input
 dressed in the window's tokens.
 
@@ -160,8 +160,8 @@ The design record is `docs/design/window-redesign.html`: an interactive
 prototype built from a real Heroic Coiled Altar kill (25 players, six
 deaths, one Heroism), the critique that drove it (ten findings ranked by
 what each costs after a pull), the six-step build plan (Look, Header,
-Inspector, Rail, Wire, Home) and the Tokens section every window colour and
-size comes from. Its CSS values and JS behaviour are the spec — window code
+Inspector, Rail, Wire, Home) and the Tokens section every window color and
+size comes from. Its CSS values and JS behavior are the spec — window code
 cites its selectors (`.fhead`, `.rail`, `.insp`, `.pal` …) — and each
 step's rationale is a decision in this bundle
 ([window-redesign](../decisions/window-redesign.md) links them all).
@@ -262,7 +262,7 @@ clock and the picker its icon. The picker is a spec icon + the
 class-colored name of the character picked — config `character`, Home's
 scope — else of the character played last (`Gui::picked`; whose window it is
 stays `Gui::played`), opening the character menu (`window/cards/menu.rs`) at
-the window root (hover per row, `hide_realms` honoured): a character row
+the window root (hover per row, `hide_realms` honored): a character row
 picks them and scopes Home, and while one is picked a "Follow the character
 I'm playing" item over the rows lets the pick go (Home, when up, on every
 character; iced's picker named only the character played, which read as
@@ -273,7 +273,7 @@ the footer carries only the daemon's status line, and the `?` sheet
 `Gui::surface`): it lists every binding that works on this surface in the
 prototype's four groups — Move, Views, Inspector, Go to — and dims the keys
 the pull on the stage cannot answer (`Gui::inert_keys`). Its keycaps are the
-window's own `kbd`, not Kit's `Kbd`, which capitalises a single letter (`j`
+window's own `kbd`, not Kit's `Kbd`, which capitalizes a single letter (`j`
 and `J` would read alike).
 
 ## Pull rail and stored pulls
@@ -376,7 +376,7 @@ gui-logic's `ribbon`) draws the raid timeline (R25): the view's raid rate in
 10 s steps (finer in a short pull) as an ink area under a Catmull-Rom line,
 "Raid dps, peak 10.7M", minute ticks, the lust as a faint wash (its name in
 the tooltip while the pointer is in it — a word on the ribbon hid the crest
-or was struck out by the curve), a skull per death in the class colour on a
+or was struck out by the curve), a skull per death in the class color on a
 hairline (`death_line`; "you" over the owner's; an arena enemy's in
 outline), labels set on plates where they fit, an accent crosshair that
 glows, with a dot where it meets the curve, and a tooltip on hover; the
@@ -484,7 +484,7 @@ listeners from paint, so a drag scrubs past the canvas, held to the plot: a drag
 window's words while in flight), a right press resets it, and a zoom glides
 to its new window (220 ms). The LANES under it (rows 19.6 px apart:
 cooldowns, items, externals, defensives) draw each span in its CASTER's class
-colour via gui-logic's `inspect::Roster`, which also names a drill's target
+color via gui-logic's `inspect::Roster`, which also names a drill's target
 rows — they wear the drilled player's class on the wire; the lanes take every
 mark, NOT `view_draws_mark`'s per-view set, since a lane is its own row and
 never washes the curve. The lists (`inspector/list.rs`, behind two tabs — Tab
@@ -506,7 +506,7 @@ fold or climb to the line that holds it while the keys are in the list
 Casts, Avg cast, Miss and Uptime. Over it the graph STACKS (gui-logic's
 `inspect::stack`): a band per series in six hues validated for the surface by
 the data-viz checks (no ochre, no red), stacked in slot order with a neutral
-"Other" on top, a colour seated once per key (`InspState::stack_slots`) so a
+"Other" on top, a color seated once per key (`InspState::stack_slots`) so a
 live re-sort repaints nobody, the list's bars wearing the hues (the list is
 the legend) and the tooltip a swatch per band; the switch beside Per second
 ("By ability" / "By target", "Total" pressed) is `InspState::stack_graph`.
@@ -530,7 +530,7 @@ drill/view; `drill_breakdown` / `deaths` / `drill_stacks` are the
 accessors), and the attacker list words its amounts as damage; the Enemies
 view's is its numbers straight onto the attackers. `v` pins the selection and
 the next move makes the pair: the inspector overlays both curves on one plot
-and one scale (the second dashed when one colour would draw both — a shared
+and one scale (the second dashed when one color would draw both — a shared
 class — as the prototype's `graphBlock`), both players' lanes (each lane
 split, the first's spans over the second's), their numbers, a legend and the
 two ability lists (side by side in a wide window, stacked in a tile or a
@@ -599,8 +599,8 @@ pull's percentile in the role. Under it a grid of panels (the prototype's
 width less the docked rail): keys against their timers (par bars with ticks
 at +3, +2 and par, "+2" or "over"), one panel per raid and difficulty (per
 boss "Killed in 7:02" or "Best 2%" — never an unobserved 0 % — and a dot per
-pull, filled on a kill, ringed in the character's colour on a wipe) and
-effective dps on keys (a dot per run in its character's colour, each
+pull, filled on a kill, ringed in the character's color on a wipe) and
+effective dps on keys (a dot per run in its character's color, each
 character's best of the week ringed in legendary orange) — always those
 three, in that order, each in its own words when its week is empty, so the
 dashboard keeps its shape; never more columns than panels, a grid row's
@@ -645,7 +645,7 @@ sheet hangs over an occluding scrim a press anywhere on closes, the character
 menu over a clear one, and the ⚙ card closes when the pointer leaves it; it
 writes each choice alone through `Config::store`. A card enters with a fade
 and a 6 px rise (160 ms). The toast (`cards/toast.rs`, its words gui-logic's
-`toast`) is the window's own, not Kit's `Notification`: centred at the
+`toast`) is the window's own, not Kit's `Notification`: centered at the
 stage's foot, brief, taking no pointer. Esc walks one level up: the palette,
 the talent viewer and the menus answer their own Esc first, then the rail's
 drawer, then on the stage the filter's text, the inspector's ability or keys
@@ -682,7 +682,7 @@ window's `WindowTokens`, the overlay's `OverlayTokens`, the talent viewer's
 lettered squares, the foe, the timeline marks), the `Faces`, the type scale
 (`Sizes`), the row pitches (`Pitches`), the corners (`Shape`: every radius
 times `scale`, a pill capped at `chip`, read through `w.r` / `w.pill`,
-`ov.r`, `p.r`, `pen.r`), the `Bars` (how much class colour a bar shows), the
+`ov.r`, `p.r`, `pen.r`), the `Bars` (how much class color a bar shows), the
 `Effects` and the `Shadows`. Every token group
 is written by `theme::tokens!`, so each field is a config key by the same
 name: `[themes.<name>.window|overlay|talents|data|faces|size|pitch|shape|bars|
@@ -697,7 +697,7 @@ mistake (`did you mean "accent"?`) for stderr and the ⚙ card. The window
 switches theme from the ⚙ card (`Gui::set_theme`, one key through
 `Config::store`, the chrome kept); the overlay polls the config's mtime once
 a second and follows (`Overlay::take_theme`). **Onyx** is a black-dial
-chronograph: true black, lume ink, a grey ramp, white chrome (its chrome
+chronograph: true black, lume ink, a gray ramp, white chrome (its chrome
 chip says "White"), Saira Tabular (Saira at width 80, the measure of
 Barlow Semi Condensed) and Michroma, corners at
 0.3 and squared chips, and the four `Effects` `navy` leaves off — `glass`
@@ -707,12 +707,12 @@ specular rim: `W::float` / `.floating`, `paint::paint_float` on canvases,
 `Ov::glass`, `Paint::tip_face`), `brackets` (reticle corners round the
 ribbon and the inspector's graph), `dial` (`window/instruments.rs`: the
 inspector's crest in a 60-tick bezel, the player's meter bar wrapped round
-it in their class colour, to a hand) and `fine_ticks` (the ribbon's 10 s chapter ring). Two more
+it in their class color, to a hand) and `fine_ticks` (the ribbon's 10 s chapter ring). Two more
 switches restyle what navy fills: `quiet_press` (a pressed action — "Stop
 comparing" — is a raised key with an accent hairline and a lit bar along its
 foot, not a block of the accent) and the data token `stack_other_edge` (the
 stack's rest, `Ink::StackRest`, drawn as graphite under a steel line: the
-player's whole curve). No colour of navy's is baked anywhere else: a class
+player's whole curve). No color of navy's is baked anywhere else: a class
 chrome that knows no class yet wears the theme's own accent (the old
 `NEUTRAL` blue is gone), and the graph samples take a theme's hues
 (`samples::all_in`).
@@ -721,31 +721,31 @@ slot (the chrome goes to `primary` and `ring`, the prototype's raise to
 `accent` — Kit's slot names are shadcn's), and the `Look` global every
 bespoke surface reads, so `apply` with another definition repaints
 everything (a test samples a Kit component and a bespoke surface across a
-switch). No surface draws a literal colour: a new colour is a token on every
+switch). No surface draws a literal color: a new color is a token on every
 `Def`. `navy` wears the prototype's Tokens — ground, surface, raise,
 line, edge, three inks, accent / label ink / accent ink (its gold, gold-dim and
 gold-ink), good, bad, legendary (a
 personal best, and nothing else), hover, name-lit, the tick on a checked box
-— under one rule: gold is the interface, class colours are people, green and
-red are outcomes, and no colour is semantic yellow (a live pull is a red dot
+— under one rule: gold is the interface, class colors are people, green and
+red are outcomes, and no color is semantic yellow (a live pull is a red dot
 and its word; crit is ink). The chrome is `theme::Chrome`, config `chrome =
 "theme"` (the default, the theme's own accent; the old `"gold"` reads
 as it) or `"class"`, a plain string like `density` so a typo reads the
 theme's. A class chrome wears the OWNER's class, learned once from the
 owner's row and held (`Gui::learn_class`) — rows resort on every snapshot, so
-tinting from the selection would re-colour the whole window on its own — and
+tinting from the selection would recolor the whole window on its own — and
 is right on the first frame because the window writes that class whenever it
 learns it (`character_class`, one key through `Config::store_character_class`)
 and `main.rs` reads it before the first frame. The accent is drawn only as an
 underline under the active tab or place, a pressed chip's edge and a
-selection's edge — never a fill; `theme::chrome_base` may move a class colour
+selection's edge — never a fill; `theme::chrome_base` may move a class color
 along its own hue until ink on it clears WCAG AA (Shaman blue is the one that
 moves), and `Accent`'s light/dark ink split is WCAG's crossover luminance so
-all thirteen class colours stay legible. A class colour as TEXT is lifted
+all thirteen class colors stay legible. A class color as TEXT is lifted
 toward white until it clears AA on the surface (`theme::class_text_on`); a
 BAR keeps `Class::rgb` exactly, because the bar is data. Every bar in every
 list is a narrow bar UNDER the row's text, the text on the panel in its own
-ink, so no name or number ever sits on its class colour: the meter's 3 px
+ink, so no name or number ever sits on its class color: the meter's 3 px
 (`window/table.rs`), the inspector's 2 px (`inspector/list.rs`), the
 overlay's 3z (`overlay/rows.rs`). The window's TYPE is bundled: Barlow Semi
 Condensed 400/500/600 with its tabular figures baked into the default digits
@@ -766,13 +766,13 @@ overlay code names either. The window speaks the prototype's words (gui-logic's
 `labels`): sentence case everywhere (`labels::sentence` turns the source's
 "KILL" into "Kill"), the views in the prototype's order and names
 (`labels::WINDOW_VIEWS`, `window_view_name`; `View::ALL` and
-`fmt::view_name` stay the TUI's and the overlay's), `hide_realms` honoured in
+`fmt::view_name` stay the TUI's and the overlay's), `hide_realms` honored in
 every pane (`labels::realmless` strips only what reads as a player's
 "Name-Realm-Region", since creatures' names hold hyphens). The line icons are
 strokes, not SVG assets: `window/paint.rs` strokes gui-logic's `glyph` table
 (GPUI exports no round caps, so each segment is its own sub-path with a disc
 of the stroke's width at every end), and `glyph_ink` paints in its parent's
-text colour so an icon brightens with its control's hover. A label ends in
+text color so an icon brightens with its control's hover. A label ends in
 "…" through GPUI's own `text_ellipsis` / `truncate`. Two GPUI traps shape the
 window's pixels: GPUI draws a border OUTSIDE the padding (iced drew it
 inside), so a card or a button pads by the design value less its edge
@@ -850,7 +850,7 @@ found by recomputing GPUI's UUIDv5 of the output name
 (`gui_logic::output::output_uuid`), never by bounds, which are wrong at
 fractional scale and under rotation. **The edge strip**: gpui-pre sets a
 layer surface's margin only when it is created, so the surface spans its
-edge's whole LENGTH (anchored to the edge and both neighbours), its
+edge's whole LENGTH (anchored to the edge and both neighbors), its
 THICKNESS follows the state (`Window::resize`, sized in `render`, only a
 change sent), the content sits at the configured offset inside it, and the
 input region is exactly the content (`Window::set_input_region`), the rest of
@@ -908,7 +908,7 @@ demand). The readers are generic over the image handle a GUI makes of a tile
 a tile's first use and cloned ever after (`crates/gui/src/images.rs`), so GPUI
 uploads each texture once. A player's disc (`window/chrome.rs`'s and the
 overlay's `rows.rs`'s `class_icon`) prefers the spec icon, falls back to the
-class crest, then to a disc in the class colour wearing its two-letter tag;
+class crest, then to a disc in the class color wearing its two-letter tag;
 ability icons on by-spell rows simply vanish without their cache. The `image`
 crate is named only to build those `RenderImage` frames; no image file is
 decoded at runtime.
