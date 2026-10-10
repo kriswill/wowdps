@@ -1,6 +1,6 @@
 ## Interface: {interface}
 ## Title: wowdps
-## Notes: Records your raid's guild affiliations for the wowdps damage meter. Installed and kept current by `wowdps addon install`.
+## Notes: Records your raid's guild affiliations and the classification of the NPCs you meet in instances for the wowdps damage meter. Installed and kept current by `wowdps addon install`.
 ## Version: {version}
 ## SavedVariables: WOWDPS_DATA
 ## X-Website: https://github.com/kriswill/wowdps
