@@ -3,6 +3,10 @@
 ## 2026-10-09
 
 - **Update** — [devenv Is The Reference Shell](devenv-is-the-reference-shell.md):
+  the packages' fileset leaves out the Markdown under `crates/` and
+  `tools/extract/`, which no build or test reads, so an `AGENTS.md` edit
+  moves no package hash.
+- **Update** — [devenv Is The Reference Shell](devenv-is-the-reference-shell.md):
   the rest of the environment — the nightly toolchain, the GUI's need for a
   shell, the `nix/dev/` parcels and the wrappers, the flake's packages and
   modules — moved here from the agent instructions.

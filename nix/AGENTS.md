@@ -29,6 +29,8 @@ and the home-manager and NixOS modules. Why and how:
 - **Packages build from a filtered source** (crane, a dependency layer
   keyed on `Cargo.lock`). Add a path to the `lib.fileset` only when a build
   or a test reads it, so a docs edit outside it rebuilds nothing.
+  Markdown under `crates/` and `tools/extract/` stays out (`withoutMarkdown`):
+  no test reads it, so an `AGENTS.md` edit moves no package hash.
 - **Old shells keep old values.** Restart a shell entered before an
   environment change.
 - **Caches:** sccache never hits across worktrees. After a toolchain
