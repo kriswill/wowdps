@@ -2303,9 +2303,18 @@ impl<B: Backend> Store<B> {
 
     /// `creatures.tsv` at the store's root as it is on disk now: its rows
     /// (none when there is no file), or why this build must not rewrite it
-    /// (not UTF-8, another or a newer format, a file not ours).
+    /// (a file that exists but cannot be read, not UTF-8, another or a
+    /// newer format, a file not ours). A backend's read answers `None` for
+    /// any failure, so a `None` over a file that still exists (permission
+    /// denied, a transient error) is refused rather than taken as empty:
+    /// at open the store then starts refused, and a merge leaves the file
+    /// alone. Read first, then check: a file removed between the two
+    /// reads as absent.
     fn read_creatures(backend: &B) -> Result<BTreeMap<u32, Creature>, String> {
         match backend.read("", creatures::FILE) {
+            None if backend.exists("", creatures::FILE) => {
+                Err(format!("{}: could not be read", creatures::FILE))
+            }
             None => Ok(BTreeMap::new()),
             Some(bytes) => String::from_utf8(bytes)
                 .map_err(|_| format!("{}: not UTF-8", creatures::FILE))

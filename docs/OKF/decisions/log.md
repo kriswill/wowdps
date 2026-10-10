@@ -3,6 +3,9 @@
 ## 2026-10-10
 
 - **Update** — [Creature Classifications Come From The Addon, Kept As One TSV](creature-classes-come-from-the-addon.md):
+  the amendment adds that a file that exists but cannot be read is refused,
+  not rewritten.
+- **Update** — [Creature Classifications Come From The Addon, Kept As One TSV](creature-classes-come-from-the-addon.md):
   amended for outside writers — a seed tool, a hand edit or another
   machine's sync may write `creatures.tsv`, and the daemon re-reads it and
   folds it in by the newer-wins rule before each merge, so their rows

@@ -3218,6 +3218,57 @@ fn a_creatures_file_refused_mid_run_is_never_clobbered() {
     );
 }
 
+/// A file that exists but cannot be read (permission denied, a transient
+/// error) is refused, not taken as empty: the merge leaves it alone, and a
+/// store opened over it starts refused.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_creatures_file_is_refused_not_rewritten() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Temp::new("creatures-unreadable");
+    let root = tmp.join("history");
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("creatures.tsv");
+    let text = "# wowdps creatures 1\n7\telite\t0\t100\tA\n";
+    std::fs::write(&path, text).unwrap();
+    let mut store = Store::open(DirBackend::new(root.clone()), Retention::default());
+    assert_eq!(store.creatures().len(), 1);
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&path).is_ok() {
+        // Root (CAP_DAC_OVERRIDE) reads it anyway.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        eprintln!("running with CAP_DAC_OVERRIDE: skipping");
+        return;
+    }
+    let merged = store.merge_creatures(vec![npc(8, "rare", false, 200, "B")]);
+    let error = store.last_error.clone();
+    let reopened = Store::open(DirBackend::new(root.clone()), Retention::default());
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert_eq!(merged, 0);
+    assert!(
+        error.as_deref().unwrap().contains("could not be read"),
+        "{error:?}"
+    );
+    assert_eq!(store.creatures().len(), 1, "the table is kept");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        text,
+        "left as it was"
+    );
+    assert!(reopened.creatures().is_empty());
+    assert!(
+        reopened
+            .last_error
+            .as_deref()
+            .unwrap()
+            .contains("could not be read"),
+        "{:?}",
+        reopened.last_error
+    );
+}
+
 // ---- v31: guild affiliations (spec §9a, the wowdps addon) ------------------------
 
 fn affiliation(guid: &str, guild: &str, mine: bool, seen_utc_ms: i64) -> Affiliation {

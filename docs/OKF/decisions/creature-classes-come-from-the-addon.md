@@ -90,7 +90,9 @@ next merge wiped those rows. `Store::merge_creatures` now re-reads the file
 before taking the addon's rows in and folds it into the table by the same
 newer-wins rule, so an outside row (a seed's at `seen_unix` 0 included)
 survives unless that creature was seen strictly later[^contract]; a file the codec
-refuses at that re-read is left alone as at open. A write landing between
+refuses at that re-read is left alone as at open, and so is a file that
+exists but cannot be read (permission denied, a transient error), refused
+rather than taken as empty and rewritten. A write landing between
 the re-read and the rewrite is still lost, a window of milliseconds at most
 once a poll, accepted.
 
