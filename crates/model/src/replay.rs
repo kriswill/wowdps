@@ -6,10 +6,12 @@
 //! type here is one of those files' rows, its fields named as the file's
 //! columns are and documented against them.
 //!
-//! What the replay needs and nothing more: where every unit stood, which
-//! way it faced and how much health and power it had whenever the log said
-//! (a [`Post`]); the deaths, the hostile casts, the hits on players and
-//! the debuffs on them ([`Event`]); what players placed in the room
+//! What the replay needs and nothing more: where every unit stood — on
+//! whichever floor (UiMap) the log put it, so a keystone run follows the
+//! party from level to level — which way it faced and how much health and
+//! power it had whenever the log said (a [`Post`]); the deaths, the hostile
+//! casts, the hits on players, the debuffs on them and where each boss
+//! fight began and ended ([`Event`]); what players placed in the room
 //! ([`Placed`]); the raid's world markers ([`Marker`]). The group's damage
 //! each second (`raid.csv`) is NOT kept here: R25's raid timeline already
 //! answers it from the details tier (`stored_fight`'s `raid`), so the
@@ -85,8 +87,8 @@ pub struct Unit {
 }
 
 /// One row of `tracks.csv` (`unit, t_ms, x, y, facing, hp, power_type,
-/// power, power_max`): where the advanced block put the unit at a time,
-/// in the log's own units and precision, kept exact.
+/// power, power_max, map_id`): where the advanced block put the unit at a
+/// time, in the log's own units and precision, kept exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Post {
     /// `t_ms`: milliseconds from the cut's start.
@@ -104,6 +106,12 @@ pub struct Post {
     /// `power_type`, `power`, `power_max`: its primary power (the first of
     /// a cast's two); `None` where the unit has no pool.
     pub power: Option<Power>,
+    /// `map_id`: the UiMap id the block put the unit on — the floor (a
+    /// dungeon's level, a raid's room) `x` and `y` are on. Every post keeps
+    /// its own, so a unit that changes floors does so in its track. A
+    /// format-1 file kept the cut's [`Cut::floor`] alone, and reads with
+    /// that on every post.
+    pub map_id: u32,
 }
 
 /// A unit's power reading: the game's power type (0 mana, 1 rage, 2
@@ -140,10 +148,17 @@ pub enum EventKind {
     NpcDied,
     /// A player raised.
     Rez,
+    /// A boss fight begun (ENCOUNTER_START), and ended killed or wiped
+    /// (ENCOUNTER_END): the encounter's id and name as the row's spell, no
+    /// unit. A boss pull holds its own two, at t 0 and its end; a keystone
+    /// run one pair per boss.
+    BossEngaged,
+    BossKilled,
+    BossWiped,
 }
 
 impl EventKind {
-    pub const ALL: [EventKind; 13] = [
+    pub const ALL: [EventKind; 16] = [
         EventKind::Hit,
         EventKind::CastStart,
         EventKind::CastSuccess,
@@ -157,6 +172,9 @@ impl EventKind {
         EventKind::Death,
         EventKind::NpcDied,
         EventKind::Rez,
+        EventKind::BossEngaged,
+        EventKind::BossKilled,
+        EventKind::BossWiped,
     ];
 
     /// The file's word for it.
@@ -175,7 +193,18 @@ impl EventKind {
             EventKind::Death => "death",
             EventKind::NpcDied => "npc_died",
             EventKind::Rez => "rez",
+            EventKind::BossEngaged => "boss_engaged",
+            EventKind::BossKilled => "boss_killed",
+            EventKind::BossWiped => "boss_wiped",
         }
+    }
+
+    /// A boss fight's beginning or end: a row that names no unit.
+    pub fn is_boss(self) -> bool {
+        matches!(
+            self,
+            EventKind::BossEngaged | EventKind::BossKilled | EventKind::BossWiped
+        )
     }
 
     pub fn from_word(word: &str) -> Option<Self> {
@@ -185,7 +214,8 @@ impl EventKind {
     /// How many of `events.csv`'s eleven columns a line of this kind
     /// writes: up to its last field and no further, as the file always
     /// had it (a cast 11, through `target`; a hit 10, through `base`; a
-    /// dose 9, through `stacks`; the rest 8, through `src`).
+    /// dose 9, through `stacks`; the rest 8, through `src` — a boss row's
+    /// `unit` and `src` empty).
     pub fn columns(self) -> usize {
         match self {
             EventKind::CastStart
@@ -212,14 +242,17 @@ pub struct Event {
     pub t_ms: u32,
     pub kind: EventKind,
     /// `unit`: whom it is about — the victim of a hit, a debuff or a death,
-    /// the caster of a cast, the unit whose cast was interrupted.
-    pub unit: UnitId,
+    /// the caster of a cast, the unit whose cast was interrupted; `None`
+    /// on a boss row alone (an encounter is no unit).
+    pub unit: Option<UnitId>,
     /// `spell_id`, `spell`: the ability (an interrupt's: the cast it cut
-    /// short); 0 and empty on a death.
+    /// short); 0 and empty on a death; a boss row's encounter id and name.
     pub spell_id: u32,
     pub spell: String,
     /// `x`, `y`: where a hit found its victim (hundredths of a yard, the
-    /// victim's own advanced block); `None` for a miss and every other kind.
+    /// victim's own advanced block, on whatever floor it put them: the
+    /// victim's post at that moment carries the floor); `None` for a miss
+    /// and every other kind.
     pub at: Option<(i32, i32)>,
     /// `src`: who did it — a hit's attacker, a debuff's source, an
     /// interrupter, a rezzer; `None` for no one.
@@ -368,14 +401,24 @@ pub struct Head {
     pub date: (u16, u8, u8),
 }
 
-/// A fight as the replay draws it: its head, the floor its tracks are on,
-/// and every row of the files.
+/// One floor the cut's posts stand on ([`Cut::maps`]): its UiMap id, how
+/// many posts stand there and how many of those are players'.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapPosts {
+    pub map_id: u32,
+    pub posts: usize,
+    pub players: usize,
+}
+
+/// A fight as the replay draws it: its head, its main floor, and every row
+/// of the files.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Cut {
     pub head: Head,
-    /// The floor (a UiMap id) the tracks are on: where the players were
-    /// posted most. 0 when no player was posted (a log written without the
-    /// advanced block).
+    /// The main floor (a UiMap id): where the players were posted most, a
+    /// tie to the lower id — what a boss pull is drawn on. Every post keeps
+    /// its own [`Post::map_id`] besides ([`Cut::maps`] lists them). 0 when
+    /// no player was posted (a log written without the advanced block).
     pub floor: u32,
     pub units: Vec<Unit>,
     /// In time order (the log's).
@@ -398,6 +441,37 @@ impl Cut {
     pub fn posts(&self) -> usize {
         self.units.iter().map(|u| u.posts.len()).sum()
     }
+
+    /// Every floor the posts stand on, by id, with its posts and its
+    /// players' posts: the [`Cut::floor`] is the one with the most players'
+    /// (a tie to the lower id).
+    pub fn maps(&self) -> Vec<MapPosts> {
+        let mut maps: Vec<MapPosts> = Vec::new();
+        for u in &self.units {
+            let player = u.kind == UnitKind::Player;
+            for p in &u.posts {
+                let at = match maps.binary_search_by_key(&p.map_id, |m| m.map_id) {
+                    Ok(at) => at,
+                    Err(at) => {
+                        maps.insert(
+                            at,
+                            MapPosts {
+                                map_id: p.map_id,
+                                posts: 0,
+                                players: 0,
+                            },
+                        );
+                        at
+                    }
+                };
+                if let Some(m) = maps.get_mut(at) {
+                    m.posts += 1;
+                    m.players += usize::from(player);
+                }
+            }
+        }
+        maps
+    }
 }
 
 #[cfg(test)]
@@ -419,6 +493,51 @@ mod tests {
             assert_eq!(MarkerKind::from_word(k.word()), Some(k));
         }
         assert_eq!(EventKind::from_word("nope"), None);
+        let boss: Vec<&str> = EventKind::ALL
+            .iter()
+            .filter(|k| k.is_boss())
+            .map(|k| k.word())
+            .collect();
+        assert_eq!(boss, ["boss_engaged", "boss_killed", "boss_wiped"]);
+    }
+
+    #[test]
+    fn the_maps_count_every_floors_posts() {
+        let post = |map_id| Post {
+            t_ms: 0,
+            x: 0,
+            y: 0,
+            facing: 0,
+            hp: 0,
+            power: None,
+            map_id,
+        };
+        let unit = |kind, posts| Unit {
+            kind,
+            name: "n".into(),
+            guid: String::new(),
+            class: None,
+            spec: None,
+            you: false,
+            npc: 0,
+            posts,
+        };
+        let cut = Cut {
+            floor: 2094,
+            units: vec![
+                unit(UnitKind::Player, vec![post(2094), post(2095), post(2094)]),
+                unit(UnitKind::Boss, vec![post(2095), post(2095)]),
+                unit(UnitKind::Player, vec![post(2094)]),
+            ],
+            ..Cut::default()
+        };
+        let maps: Vec<(u32, usize, usize)> = cut
+            .maps()
+            .iter()
+            .map(|m| (m.map_id, m.posts, m.players))
+            .collect();
+        assert_eq!(maps, [(2094, 3, 3), (2095, 3, 1)]);
+        assert!(Cut::default().maps().is_empty());
     }
 
     #[test]

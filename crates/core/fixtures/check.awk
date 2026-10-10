@@ -464,16 +464,20 @@ function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
 }
 
 # ---- R29 (v45) the replay cut. Per closed boss pull (an ENCOUNTER_START's
-# segment closed by its END, a version seam or the next START): the FLOOR —
-# the UiMap id the advanced block reports players on most (pass 1; a tie to
-# the lower id) —, every post on it (a Player / Creature / Vehicle block
-# whose health reads, max above 0, with x, y, facing and a map above 0), the
-# event rows by kind, the placed rows by kind, the world markers (those
-# standing on the pull's instance map at its start, then each placement there
-# and each removal) and the units the rows number. Written from the ruling's
-# words, never the Rust: the advanced block starts at off12 on a spell-shaped
-# line (SPELL_, RANGE_, DAMAGE_SHIELD, DAMAGE_SPLIT, every _SUPPORT), else at
-# off9; hostility is learned from the lines the parser models alone.
+# segment closed by its END, a version seam or the next START) and per
+# finished keystone run (CHALLENGE_MODE_START to its END, both lines its
+# own): the FLOOR — the UiMap id the advanced block reports players on most
+# (pass 1; a tie to the lower id) —, every post on EVERY floor (a Player /
+# Creature / Vehicle block whose health reads, max above 0, with x, y,
+# facing and a map above 0) and the posts per floor, the event rows by kind
+# (the boss rows: each ENCOUNTER_START and ENCOUNTER_END the cut holds), the
+# placed rows by kind, the world markers (those standing on the cut's
+# instance map at its start, then each placement there and each removal)
+# and the units the rows number. Written from the ruling's words, never the
+# Rust: the advanced block starts at off12 on a spell-shaped line (SPELL_,
+# RANGE_, DAMAGE_SHIELD, DAMAGE_SPLIT, every _SUPPORT), else at off9;
+# hostility is learned from the lines the parser models alone. A cut is a
+# context `s`: a pull's segment number, a run's "K<n>".
 function r_pk() { return (ev ~ /^(SPELL_|RANGE_|DAMAGE_SHIELD|DAMAGE_SPLIT)/ || ev ~ /_SUPPORT$/) ? 13 : 10 }
 function r_num(s) { return s ~ /^-?[0-9]+(\.[0-9]+)?$/ }
 function r_block(pk) {
@@ -503,6 +507,101 @@ function r_target(s, g) { if (g != "0000000000000000" && g ~ /-/) r_unit(s, g) }
 function r_hostile(s, g) { return !r_ours(g) && ((s SUBSEP g) in rH) }
 function r_count(s, kind) { rv[s SUBSEP "replay_" kind]++ }
 function r_place(s, item) { rP[s SUBSEP (++rPn[s])] = item }
+# The most-voted floor of `votes` (pass 1's, keyed (n, map)) for cut n.
+function r_floor(votes, n,   k, kk, best, fl) {
+    best = 0; fl = 0
+    for (k in votes) {
+        split(k, kk, SUBSEP)
+        if (kk[1] != n) continue
+        if (votes[k] > best || (votes[k] == best && kk[2] + 0 < fl)) { best = votes[k]; fl = kk[2] + 0 }
+    }
+    return fl
+}
+# One line of an open cut `s`: the hostility it teaches, its post (on any
+# floor), its event row, and a placed candidate (resolved when the cut
+# closes, once every other row has numbered its units).
+function r_line(s) {
+    if (ev ~ RBOTH) { r_side(s, $2, $4); r_side(s, $6, $8) }
+    else if (ev ~ /^SPELL_EMPOWER_/) r_side(s, $2, $4)
+    else if (ev == "UNIT_DIED" || ev == "UNIT_DESTROYED") r_side(s, $6, $8)
+    if (r_block(r_pk()) && rguid ~ /^(Player|Creature|Vehicle)-/) {
+        rPosts[s SUBSEP rguid]++; rMapP[s SUBSEP rmap]++; r_count(s, "posts"); r_unit(s, rguid)
+    }
+    if (ev == "UNIT_DIED") {
+        if ($6 ~ /^Player-/) { if ($10 != "1") { r_count(s, "death"); r_unit(s, $6) } }
+        else if ($6 ~ /^(Creature|Vehicle)-/) { r_count(s, "npc_died"); r_unit(s, $6) }
+    } else if (ev == "SPELL_RESURRECT") {
+        if ($6 ~ /^Player-/) { r_count(s, "rez"); r_unit(s, $6); r_src(s, $2) }
+    } else if ((ev == "SPELL_CAST_START" || ev == "SPELL_CAST_SUCCESS") && r_hostile(s, $2)) {
+        r_count(s, ev == "SPELL_CAST_START" ? "cast_start" : "cast_success"); r_unit(s, $2); r_target(s, $6)
+    } else if (ev == "SPELL_INTERRUPT" && !r_ours($6) && r_ours($2)) {
+        r_count(s, "interrupt"); r_unit(s, $6); r_unit(s, $2)
+    } else if (ev ~ /^SPELL_CAST_(START|SUCCESS|FAILED)$/ && $2 ~ /^Player-/) {
+        r_count(s, ev == "SPELL_CAST_START" ? "pcast_start" : (ev == "SPELL_CAST_SUCCESS" ? "pcast_success" : "pcast_failed"))
+        r_unit(s, $2); r_target(s, $6)
+    } else if (ev ~ /^(SPELL_DAMAGE|SPELL_PERIODIC_DAMAGE|RANGE_DAMAGE|SPELL_BUILDING_DAMAGE|DAMAGE_SHIELD)$/) {
+        # A hit makes a row only where its victim's own block put them — on
+        # whatever floor.
+        if ($6 ~ /^Player-/ && !r_friend($2) && $10 + 0 != 0 && r_block(13) && rguid == $6) {
+            r_count(s, "hit"); r_unit(s, $6); r_src(s, $2)
+        }
+    } else if (ev ~ /^(SPELL_MISSED|SPELL_PERIODIC_MISSED|RANGE_MISSED|DAMAGE_SHIELD_MISSED)$/) {
+        if ($6 ~ /^Player-/ && !r_friend($2)) { r_count(s, "hit"); r_unit(s, $6); r_src(s, $2) }
+    } else if (ev == "SPELL_AURA_APPLIED" || ev == "SPELL_AURA_REMOVED") {
+        if ($6 ~ /^Player-/ && ($2 == "0000000000000000" || r_hostile(s, $2))) {
+            r_count(s, ev == "SPELL_AURA_APPLIED" ? "debuff_applied" : "debuff_removed"); r_unit(s, $6); r_src(s, $2)
+        }
+    } else if (ev == "SPELL_AURA_APPLIED_DOSE" || ev == "SPELL_AURA_REMOVED_DOSE") {
+        if ($6 ~ /^Player-/ && $14 ~ /^[0-9]+$/ && ($2 == "0000000000000000" || r_hostile(s, $2))) {
+            r_count(s, "debuff_dose"); r_unit(s, $6); r_src(s, $2)
+        }
+    }
+    if (ev == "SPELL_CAST_SUCCESS" && $2 ~ /^Player-/ && (($10 + 0) in PLACE)) r_place(s, "cast" SUBSEP $2)
+    else if ((ev == "SPELL_SUMMON" || ev == "SPELL_CREATE") && $2 ~ /^Player-/ && (($10 + 0) in PLACE))
+        r_place(s, "summon" SUBSEP $2 SUBSEP (($6 ~ /-/ && $6 != "0000000000000000") ? $6 : ""))
+    else if (ev == "SPELL_AURA_APPLIED" && (($10 + 0) in TELL)) r_place(s, "aura" SUBSEP $6)
+    else if ((ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL") && (($10 + 0) in TELL)) {
+        if (r_block(13) && rguid == $6) r_place(s, "heal" SUBSEP $6)
+    } else if (ev == "UNIT_DIED" || ev == "UNIT_DESTROYED") r_place(s, "gone" SUBSEP $6)
+}
+# A world marker line, for an open cut `s` on instance map `map`: a
+# placement there, a placement elsewhere of a marker standing there (it
+# left: a removal row), any removal.
+function r_marker(s, map) {
+    if (ev == "WORLD_MARKER_REMOVED") r_count(s, "markers")
+    else if ($2 + 0 == map || ((map SUBSEP ($3 + 0)) in mOn)) r_count(s, "markers")
+}
+# A closed cut's rows: its placed candidates resolved in line order (a unit
+# only they name is numbered last: a summon's unit, a gone one; a touch by
+# aura counts only a unit numbered already, a heal's wherever its target
+# stood), then the counts, its posts per floor (by id) and each player's.
+function r_emit(s, head,   i, it, n2, k, kk, rpl, rmp) {
+    for (i = 1; i <= rPn[s]; i++) {
+        split(rP[s SUBSEP i], it, SUBSEP)
+        if (it[1] == "cast") { r_unit(s, it[2]); r_count(s, "placed_cast") }
+        else if (it[1] == "summon") {
+            r_unit(s, it[2])
+            if (it[3] != "") { rSum[s SUBSEP it[3]] = 1; r_unit(s, it[3]) }
+            r_count(s, "placed_summon")
+        }
+        else if (it[1] == "aura") { if ((s SUBSEP it[2]) in rU) r_count(s, "placed_touch") }
+        else if (it[1] == "heal") r_count(s, "placed_touch")
+        else if (it[1] == "gone") { if ((s SUBSEP it[2]) in rSum) { r_unit(s, it[2]); r_count(s, "placed_gone") } }
+    }
+    rv[s SUBSEP "replay_floor"] = rFl[s]
+    for (i = 1; i in rnames; i++)
+        printf "%s\t*\treplay_%s\t%d\n", head, rnames[i], rv[s SUBSEP "replay_" rnames[i]] + 0
+    n2 = 0
+    for (k in rMapP) { split(k, kk, SUBSEP); if (kk[1] == s) rmp[++n2] = kk[2] + 0 }
+    asort(rmp)
+    for (i = 1; i <= n2; i++)
+        printf "%s\t%d\treplay_map_posts\t%d\n", head, rmp[i], rMapP[s SUBSEP rmp[i]]
+    n2 = 0
+    for (k in rPosts) { split(k, kk, SUBSEP); if (kk[1] == s && kk[2] ~ /^Player-/) rpl[++n2] = kk[2] }
+    asort(rpl)
+    for (i = 1; i <= n2; i++)
+        printf "%s\t%s\treplay_posts\t%d\n", head, rpl[i], rPosts[s SUBSEP rpl[i]]
+}
 
 BEGIN {
     FPAT = "([^,]*)|(\"[^\"]*\")"
@@ -573,10 +672,13 @@ BEGIN {
 
 # ---------------------------------------------------------------- pass 1: owners
 FNR == NR {
-    # R29: the floor votes, per boss pull in file order.
+    # R29: the floor votes, per boss pull and per keystone run in file order.
     if (ev == "ENCOUNTER_START") { rk1++; rin1 = 1 }
     else if (ev == "ENCOUNTER_END" || ev == "COMBAT_LOG_VERSION") rin1 = 0
     else if (rin1 && r_block(r_pk()) && rguid ~ /^Player-/) rvote[rk1 SUBSEP rmap]++
+    if (ev == "CHALLENGE_MODE_START") { kk1++; kin1 = 1 }
+    else if (ev == "CHALLENGE_MODE_END" || ev == "COMBAT_LOG_VERSION") kin1 = 0
+    else if (kin1 && r_block(r_pk()) && rguid ~ /^Player-/) kvote[kk1 SUBSEP rmap]++
     # R6: a COMBAT_LOG_VERSION after the first line is a hard boundary.
     if (ev == "COMBAT_LOG_VERSION") { if (seenVersion) epoch++; seenVersion = 1; next }
     if (ev == "SPELL_SUMMON") owner[$6 SUBSEP epoch] = $2
@@ -646,86 +748,60 @@ ev == "COMBAT_LOG_VERSION" {
 
 # ---- R29 the world markers: the standing set over the whole log (a marker
 # number is one object: a placement moves it to its map, off any other; a
-# removal takes it off every map), counted while a boss pull is open — a
-# placement on its instance map, a placement elsewhere of a marker standing
-# there (it left: a removal row), any removal.
+# removal takes it off every map), counted while a boss pull or a keystone
+# run is open (`r_marker`).
 ev == "WORLD_MARKER_PLACED" {
-    if (cur && (cur in rEnc) && ($2 + 0 == rMap[cur] || ((rMap[cur] SUBSEP ($3 + 0)) in mOn))) r_count(cur, "markers")
+    if (cur && (cur in rEnc)) r_marker(cur, rMap[cur])
+    if (kc != "") r_marker(kc, rMap[kc])
     for (k in mOn) { split(k, kk, SUBSEP); if (kk[2] + 0 == $3 + 0) delete mOn[k] }
     mOn[($2 + 0) SUBSEP ($3 + 0)] = 1
     next
 }
 ev == "WORLD_MARKER_REMOVED" {
-    if (cur && (cur in rEnc)) r_count(cur, "markers")
+    if (cur && (cur in rEnc)) r_marker(cur, rMap[cur])
+    if (kc != "") r_marker(kc, rMap[kc])
     for (k in mOn) { split(k, kk, SUBSEP); if (kk[2] + 0 == $2 + 0) delete mOn[k] }
     next
 }
 
-# ---- R29 one line of an open boss pull: the hostility it teaches, its post,
-# its event row, and a placed candidate (resolved at END, once every other
-# row has numbered its units).
-cur && (cur in rEnc) && ev != "ENCOUNTER_START" && ev != "ENCOUNTER_END" {
-    s = cur
-    if (ev ~ RBOTH) { r_side(s, $2, $4); r_side(s, $6, $8) }
-    else if (ev ~ /^SPELL_EMPOWER_/) r_side(s, $2, $4)
-    else if (ev == "UNIT_DIED" || ev == "UNIT_DESTROYED") r_side(s, $6, $8)
-    if (r_block(r_pk()) && rguid ~ /^(Player|Creature|Vehicle)-/ && rmap == rFl[s]) {
-        rPosts[s SUBSEP rguid]++; r_count(s, "posts"); r_unit(s, rguid)
-    }
-    if (ev == "UNIT_DIED") {
-        if ($6 ~ /^Player-/) { if ($10 != "1") { r_count(s, "death"); r_unit(s, $6) } }
-        else if ($6 ~ /^(Creature|Vehicle)-/) { r_count(s, "npc_died"); r_unit(s, $6) }
-    } else if (ev == "SPELL_RESURRECT") {
-        if ($6 ~ /^Player-/) { r_count(s, "rez"); r_unit(s, $6); r_src(s, $2) }
-    } else if ((ev == "SPELL_CAST_START" || ev == "SPELL_CAST_SUCCESS") && r_hostile(s, $2)) {
-        r_count(s, ev == "SPELL_CAST_START" ? "cast_start" : "cast_success"); r_unit(s, $2); r_target(s, $6)
-    } else if (ev == "SPELL_INTERRUPT" && !r_ours($6) && r_ours($2)) {
-        r_count(s, "interrupt"); r_unit(s, $6); r_unit(s, $2)
-    } else if (ev ~ /^SPELL_CAST_(START|SUCCESS|FAILED)$/ && $2 ~ /^Player-/) {
-        r_count(s, ev == "SPELL_CAST_START" ? "pcast_start" : (ev == "SPELL_CAST_SUCCESS" ? "pcast_success" : "pcast_failed"))
-        r_unit(s, $2); r_target(s, $6)
-    } else if (ev ~ /^(SPELL_DAMAGE|SPELL_PERIODIC_DAMAGE|RANGE_DAMAGE|SPELL_BUILDING_DAMAGE|DAMAGE_SHIELD)$/) {
-        # A hit makes a row only where its victim's own block put them on the floor.
-        if ($6 ~ /^Player-/ && !r_friend($2) && $10 + 0 != 0 && r_block(13) && rguid == $6 && rmap == rFl[s]) {
-            r_count(s, "hit"); r_unit(s, $6); r_src(s, $2)
-        }
-    } else if (ev ~ /^(SPELL_MISSED|SPELL_PERIODIC_MISSED|RANGE_MISSED|DAMAGE_SHIELD_MISSED)$/) {
-        if ($6 ~ /^Player-/ && !r_friend($2)) { r_count(s, "hit"); r_unit(s, $6); r_src(s, $2) }
-    } else if (ev == "SPELL_AURA_APPLIED" || ev == "SPELL_AURA_REMOVED") {
-        if ($6 ~ /^Player-/ && ($2 == "0000000000000000" || r_hostile(s, $2))) {
-            r_count(s, ev == "SPELL_AURA_APPLIED" ? "debuff_applied" : "debuff_removed"); r_unit(s, $6); r_src(s, $2)
-        }
-    } else if (ev == "SPELL_AURA_APPLIED_DOSE" || ev == "SPELL_AURA_REMOVED_DOSE") {
-        if ($6 ~ /^Player-/ && $14 ~ /^[0-9]+$/ && ($2 == "0000000000000000" || r_hostile(s, $2))) {
-            r_count(s, "debuff_dose"); r_unit(s, $6); r_src(s, $2)
-        }
-    }
-    if (ev == "SPELL_CAST_SUCCESS" && $2 ~ /^Player-/ && (($10 + 0) in PLACE)) r_place(s, "cast" SUBSEP $2)
-    else if ((ev == "SPELL_SUMMON" || ev == "SPELL_CREATE") && $2 ~ /^Player-/ && (($10 + 0) in PLACE))
-        r_place(s, "summon" SUBSEP $2 SUBSEP (($6 ~ /-/ && $6 != "0000000000000000") ? $6 : ""))
-    else if (ev == "SPELL_AURA_APPLIED" && (($10 + 0) in TELL)) r_place(s, "aura" SUBSEP $6)
-    else if ((ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL") && (($10 + 0) in TELL)) {
-        if (r_block(13) && rguid == $6) r_place(s, "heal" SUBSEP $6 SUBSEP rmap)
-    } else if (ev == "UNIT_DIED" || ev == "UNIT_DESTROYED") r_place(s, "gone" SUBSEP $6)
+# ---- R29 one line of an open boss pull, and of an open keystone run (its
+# START and END are its own first and last lines, read as no post or row).
+cur && (cur in rEnc) && ev != "ENCOUNTER_START" && ev != "ENCOUNTER_END" { r_line(cur) }
+kc != "" && ev !~ /^(ENCOUNTER|CHALLENGE_MODE)_(START|END)$/ { r_line(kc) }
+
+# ---- R29 a keystone run opens its replay cut at its CHALLENGE_MODE_START —
+# its floor (pass 1's votes), its instance map (the START's), the markers
+# standing there — and closes it at its END (timed or not, as the END says).
+ev == "CHALLENGE_MODE_START" {
+    nk++; kc = "K" nk
+    kName[kc] = strip($2) " +" ($5 + 0); kStart[kc] = now
+    rMap[kc] = $3 + 0; rFl[kc] = r_floor(kvote, nk)
+    for (k in mOn) { split(k, kk, SUBSEP); if (kk[1] + 0 == rMap[kc]) r_count(kc, "markers") }
+    next
+}
+ev == "CHALLENGE_MODE_END" {
+    if (kc != "") { kEnd[kc] = now; kOk[kc] = ($3 + 0 == 1) ? "timed" : "over"; kc = "" }
+    next
 }
 
 ev == "ENCOUNTER_START" {
     if (cur && segEnd[cur] == "") segEnd[cur] = now
     newSeg("Encounter", strip($3), now, $2 + 0, $4 + 0)
     # R29: the pull opens its replay cut — its floor (pass 1's votes), its
-    # instance map, the markers standing there.
-    rk2++; rEnc[cur] = 1; rMap[cur] = $6 + 0; rFl[cur] = 0; rbest = 0
-    for (k in rvote) {
-        split(k, kk, SUBSEP)
-        if (kk[1] + 0 != rk2) continue
-        if (rvote[k] > rbest || (rvote[k] == rbest && kk[2] + 0 < rFl[cur])) { rbest = rvote[k]; rFl[cur] = kk[2] + 0 }
-    }
+    # instance map, the markers standing there — with its boss row, as an
+    # open keystone run takes one.
+    rk2++; rEnc[cur] = 1; rMap[cur] = $6 + 0; rFl[cur] = r_floor(rvote, rk2)
     for (k in mOn) { split(k, kk, SUBSEP); if (kk[1] + 0 == rMap[cur]) r_count(cur, "markers") }
+    r_count(cur, "boss_engaged")
+    if (kc != "") r_count(kc, "boss_engaged")
     encStart = now
     next
 }
 
 ev == "ENCOUNTER_END" {
+    # R29: the boss row a pull ends with, and an open keystone run's.
+    if (cur && (cur in rEnc) && segEnd[cur] == "") r_count(cur, ($6 + 0 == 1) ? "boss_killed" : "boss_wiped")
+    if (kc != "") r_count(kc, ($6 + 0 == 1) ? "boss_killed" : "boss_wiped")
     if (cur) { segEnd[cur] = now; segOk[cur] = ($6 + 0 == 1) ? "kill" : "wipe" }
     cur = 0
     next
@@ -1170,35 +1246,19 @@ END {
         }
         delete plist
     }
-    # R29: each closed boss pull's replay cut — its placed candidates resolved
-    # in line order (a unit only they name is numbered last: a summon's unit,
-    # a gone one; a touch counts only a unit numbered already, a heal's only
-    # where its target stood on the floor), then the counts and each player's
-    # posts.
-    split("units posts floor hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez placed_cast placed_summon placed_touch placed_gone markers", rnames, " ")
+    # R29: each closed boss pull's replay cut, then each finished keystone
+    # run's ("K<n>", kind Key, its name and level, timed or over, its START to
+    # its END) — `r_emit`'s rows.
+    split("units posts floor hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped placed_cast placed_summon placed_touch placed_gone markers", rnames, " ")
     for (s = 1; s <= nseg; s++) {
         if (!(s in rEnc) || segEnd[s] == "") continue
-        for (i = 1; i <= rPn[s]; i++) {
-            split(rP[s SUBSEP i], it, SUBSEP)
-            if (it[1] == "cast") { r_unit(s, it[2]); r_count(s, "placed_cast") }
-            else if (it[1] == "summon") {
-                r_unit(s, it[2])
-                if (it[3] != "") { rSum[s SUBSEP it[3]] = 1; r_unit(s, it[3]) }
-                r_count(s, "placed_summon")
-            }
-            else if (it[1] == "aura") { if ((s SUBSEP it[2]) in rU) r_count(s, "placed_touch") }
-            else if (it[1] == "heal") { if (it[3] + 0 == rFl[s]) r_count(s, "placed_touch") }
-            else if (it[1] == "gone") { if ((s SUBSEP it[2]) in rSum) { r_unit(s, it[2]); r_count(s, "placed_gone") } }
-        }
-        rv[s SUBSEP "replay_floor"] = rFl[s]
         dur = segEnd[s] - segStart[s]
-        for (i = 1; i in rnames; i++)
-            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t*\treplay_%s\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], rnames[i], rv[s SUBSEP "replay_" rnames[i]] + 0
-        n2 = 0; delete rpl
-        for (k in rPosts) { split(k, kk, SUBSEP); if (kk[1] + 0 == s && kk[2] ~ /^Player-/) rpl[++n2] = kk[2] }
-        asort(rpl)
-        for (i = 1; i <= n2; i++)
-            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\treplay_posts\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], rpl[i], rPosts[s SUBSEP rpl[i]]
+        r_emit(s, s "\t" segKind[s] "\t" segName[s] "\t" segOk[s] "\t" dur "\t" segEnc[s] "\t" segDiff[s])
+    }
+    for (n = 1; n <= nk; n++) {
+        s = "K" n
+        if (kEnd[s] == "") continue
+        r_emit(s, s "\tKey\t" kName[s] "\t" kOk[s] "\t" (kEnd[s] - kStart[s]) "\t\t")
     }
     if (shieldBad) exit 1
 }

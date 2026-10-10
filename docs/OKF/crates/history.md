@@ -53,7 +53,8 @@ that holds the daemon's fixed answers equal to SQL's over the same files.
 
 `replay-export` (v45) writes a stored fight's replay tier as the seven files
 a replay reads, offline through `proto::replay::csv`, `raid.csv` from the
-details tier; `stats` counts the tier, `cards_without_replay` and the
+details tier; `stats` counts the tier (its files by format too, off each
+head), `cards_without_replay` and the
 kept-whole set by why ([R29](../rulings/r29.md),
 [progression](../decisions/progression-kept-whole.md)). No SQL view: the
 tier is binary and read whole.

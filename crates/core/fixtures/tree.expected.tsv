@@ -330,11 +330,15 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_death	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_npc_died	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_rez	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_boss_engaged	1
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_boss_killed	1
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_boss_wiped	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_placed_cast	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_placed_summon	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_placed_touch	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_placed_gone	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_markers	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	2287	replay_map_posts	40
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	replay_posts	12
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	replay_posts	4
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	replay_posts	3
