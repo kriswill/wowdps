@@ -1,4 +1,4 @@
-//! CLAUDE.md/CONTRACT.md: "GUI keybinds mirror the TUI's". The GUIs' keymap
+//! CONTRACT.md, crates/tui/AGENTS.md: the GUIs mirror the TUI's keys. Their keymap
 //! is gui-logic's chord table (`wowdps_gui_logic::keys::ACTIONS`), compiled
 //! in here as a dev-dependency; the TUI's lives in this binary-only crate,
 //! where a test cannot call it, so — like `no_engine.rs` — this test reads

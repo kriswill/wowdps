@@ -635,7 +635,7 @@ any production code is written.
   the view that asks.
 - **But the root view re-renders every frame.** Its element is laid out
   and prepainted each draw. The window is one root view today
-  (`CLAUDE.md`: one endless pulse idled the window at 5.7% of a core). So
+  (`crates/gui/AGENTS.md`: one endless pulse idled the window at 5.7% of a core). So
   the replay needs the window's heavy parts — rail, header, ribbon, side
   panel — as cached entities, and a cheap root.
 - **Primitives that fit:**
