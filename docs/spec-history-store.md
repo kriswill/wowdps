@@ -537,7 +537,9 @@ addon paragraph): a header line, `# wowdps creatures 1`, then
 `creature_id, classification, lieutenant, seen_unix, name`, tab-separated,
 ids ascending, rewritten whole through `write_atomic`. The newest `seen`
 wins per id and a row the SavedVariables no longer hold stays: the addon
-pruned it, which refutes nothing. A TSV rather than one JSON document per
+pruned it, which refutes nothing. Before each merge the file on disk is
+folded back in by the same rule, so a row an outside writer put there
+since the store opened survives the rewrite. A TSV rather than one JSON document per
 creature because its reader is the replay, which wants one small file read
 whole at load and never a directory scan. It lags a logout like everything
 the addon writes, so a new NPC's color appears in the replay after the
