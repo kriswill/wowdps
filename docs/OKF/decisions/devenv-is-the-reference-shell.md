@@ -177,19 +177,22 @@ outside this checkout. `devenv.yaml`'s nixpkgs, rust-overlay, okf and
 llm-agents pins match `flake.lock` (`update-locks.yml` keeps them so
 weekly).
 
-**The packages.** The flake builds the daemon/TUI binary (`.#wowdps`, pure
-Rust) with crane, as a dependency layer `.#wowdps-deps` keyed on
+**The packages.** The flake builds the daemon/TUI binary (`.#wowdps`,
+pure Rust) with crane, as a dependency layer `.#wowdps-deps` keyed on
 `Cargo.lock` plus the workspace crates over a `lib.fileset`-filtered
-source, so CI downloads the dependency compile from FlakeHub Cache and a
-docs edit rebuilds nothing; the GUI the same way (`.#wowdps-gui` over
-`.#wowdps-gui-deps`, wrapped so the dlopened libraries are on its
-`LD_LIBRARY_PATH`; its check phase runs the real-text tests on Mesa's
-lavapipe, the sandbox having no GPU). It exports `homeManagerModules.default`
-and `nixosModules.default` (`nix/home-manager.nix`, `nix/nixos.nix`), each
-installing the same systemd user unit — `wowdps daemon --linger`, gated hard
-on `graphical-session.target`, with `guiPackage` (the flake's
-`.#wowdps-gui` by default) on the service's PATH for the overlay
-supervisor — so the two stay in lockstep.
+source, so CI downloads the dependency compile from FlakeHub Cache and
+a docs edit rebuilds nothing (the set leaves out the Markdown under
+`crates/` and `tools/extract/`, which no build or test reads, so an
+`AGENTS.md` or a README there is a docs edit too); the GUI the same
+way (`.#wowdps-gui` over `.#wowdps-gui-deps`, wrapped so the dlopened
+libraries are on its `LD_LIBRARY_PATH`; its check phase runs the
+real-text tests on Mesa's lavapipe, the sandbox having no GPU). It
+exports `homeManagerModules.default` and `nixosModules.default`
+(`nix/home-manager.nix`, `nix/nixos.nix`), each installing the
+same systemd user unit — `wowdps daemon --linger`, gated hard on
+`graphical-session.target`, with `guiPackage` (the flake's `.#wowdps-gui`
+by default) on the service's PATH for the overlay supervisor — so the two
+stay in lockstep.
 
 [^env]: `nix/dev/env.nix`: `pinned`, `rustLinker` (the mirror), `flakeShellHook`, `flakePackages`, `rustcWrapper`.
 [^contract]: `nix/dev/contract.nix`: the shared-values block and the Linux linker/compiler checks.
