@@ -527,3 +527,43 @@ fn every_mark_kind_roundtrips_with_its_caster() {
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
     assert_eq!(DaemonMsg::decode(tag, &body), Err(DecodeError::BadTag(10)));
 }
+
+/// v46: a card's origin is 0 Local or 1 Imported then its source; both
+/// round-trip, and a byte of 2 or more is a `BadTag`.
+#[test]
+fn a_cards_origin_is_local_or_imported_and_nothing_else() {
+    use wowdps_proto::history::{FightCard, Origin};
+    let answer = |origin| DaemonMsg::History {
+        req_id: 1,
+        answer: HistoryAnswer::Fights {
+            cards: vec![FightCard {
+                origin,
+                ..FightCard::default()
+            }],
+            total: 1,
+        },
+    };
+    for origin in [
+        Origin::Local,
+        Origin::Imported {
+            source: "import:test-1".to_string(),
+        },
+    ] {
+        let msg = answer(origin);
+        assert_eq!(roundtrip_daemon(&msg), msg);
+    }
+    // …| bosses 00000000 | ORIGIN | total 01000000: a local card's origin
+    // byte is 5 from the end.
+    let mut frame = answer(Origin::Local).encode();
+    let at = frame.len() - 5;
+    assert_eq!(frame[at], 0);
+    for bad in [2u8, 0xff] {
+        frame[at] = bad;
+        let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+        assert_eq!(
+            DaemonMsg::decode(tag, &body),
+            Err(wire::DecodeError::BadTag(bad)),
+            "origin {bad}"
+        );
+    }
+}

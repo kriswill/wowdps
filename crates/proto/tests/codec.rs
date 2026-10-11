@@ -1708,6 +1708,68 @@ fn golden_bytes_pin_the_encoding() {
         },
     };
     assert_eq!(hex(&refused.encode()), "0c0000008b0200000008020000006e6f");
+    // v46: the import's card with every option present — the encounter's
+    // three u32, a negative local start, the offset's u16 bits (−240 is
+    // 0xff10), a verdict, a best pct and an owner — no players, no replay.
+    let import_some = ClientMsg::ImportReplay {
+        req_id: 3,
+        card: Box::new(ImportedCard {
+            name: "B".to_string(),
+            encounter: Some(Encounter {
+                id: 3130,
+                difficulty: 16,
+                group_size: 20,
+            }),
+            kind: FightKind::Encounter,
+            start_utc_ms: 1,
+            start_local_ms: Some(-1),
+            tz_min: Some(-240),
+            duration_ms: 2,
+            success: Some(true),
+            best_pct: Some(37),
+            players: Vec::new(),
+            owner: Some("O".to_string()),
+            source: "s".to_string(),
+            build: (0, 0, 0),
+            log_version: 0,
+        }),
+        replay: Vec::new(),
+    };
+    assert_eq!(
+        hex(&import_some.encode()),
+        concat!(
+            "56000000",
+            "0e",
+            "03000000",
+            // name "B" | encounter 01 3130 16 20 | kind 00 | start_utc 1
+            "0100000042",
+            "01",
+            "3a0c0000",
+            "10000000",
+            "14000000",
+            "00",
+            "0100000000000000",
+            // start_local 01 −1 | tz 01 0xff10 | duration 2 | success 01 01 |
+            // best_pct 01 37
+            "01",
+            "ffffffffffffffff",
+            "01",
+            "10ff",
+            "0200000000000000",
+            "0101",
+            "01",
+            "2500",
+            // no players | owner 01 "O" | source "s" | build 0.0.0 |
+            // log_version 0 | an empty replay
+            "00000000",
+            "01",
+            "010000004f",
+            "0100000073",
+            "000000000000",
+            "00000000",
+            "00000000",
+        )
+    );
     // v46: a card's origin trails its bosses — `00` for a local card, `01`
     // and the source for an imported one: the frame grows by exactly that.
     let fights_of = |origin| {
