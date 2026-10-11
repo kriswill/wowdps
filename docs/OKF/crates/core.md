@@ -99,7 +99,11 @@ players' most posted) and the slice's ENCOUNTER lines are boss rows. Format
 first alone), a player's every debuff on an NPC, and the buff rows that
 matter to the fight: [R18](../rulings/r18.md)'s curated `role_spells` (its
 support buffs aside) or any buff whose source is not ours, a removal or
-dose only once the slice saw it applied. Gated by
+dose only once the slice saw it applied. Format 4 counts an aura up before
+the slice R18's way: a buff R18 names, or a player's debuff on an NPC,
+first seen by a refresh, a dose or a removal opens with an applied row at
+t 0, once per key, and the events are sorted by time; the parser reads no
+power type at or above 64. Gated by
 [replay.txt](../fixtures/replay.md) (its keystone run too) and every
 fixture's R29 rows.
 

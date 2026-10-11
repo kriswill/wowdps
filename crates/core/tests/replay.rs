@@ -278,6 +278,44 @@ fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
         Some((9500, -1200)),
         "the marker replaced before the pull"
     );
+    // The Bone Shield up before the pull opens at 0 s (format 4, R18's
+    // segment-start rule), as the meter's span does: the AM interval from
+    // the pull's start to 3 s, then again from 6 s to the kill.
+    let bone: Vec<(u32, EventKind, Option<u16>)> = c
+        .events
+        .iter()
+        .filter(|e| e.spell_id == 195_181)
+        .map(|e| (e.t_ms, e.kind, e.stacks))
+        .collect();
+    assert_eq!(
+        bone,
+        [
+            (0, EventKind::BuffApplied, None),
+            (2200, EventKind::BuffDose, Some(4)),
+            (3000, EventKind::BuffRemoved, None),
+            (6000, EventKind::BuffApplied, None),
+            (6600, EventKind::BuffDose, Some(2)),
+        ]
+    );
+    // Ember Mark, up on the boss before the pull: open at 0 s, closed at
+    // its first removal; the second removal finds nothing up.
+    let ember: Vec<(u32, EventKind)> = c
+        .events
+        .iter()
+        .filter(|e| e.spell_id == 7204)
+        .map(|e| (e.t_ms, e.kind))
+        .collect();
+    assert_eq!(
+        ember,
+        [
+            (0, EventKind::DebuffApplied),
+            (8200, EventKind::DebuffRemoved)
+        ]
+    );
+    assert!(
+        c.events.windows(2).all(|w| w[0].t_ms <= w[1].t_ms),
+        "the rows in time order"
+    );
     assert_eq!(c.head.zone, "The Venomous Abyss");
     assert_eq!(
         (c.head.success, c.head.fight_ms),

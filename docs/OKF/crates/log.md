@@ -3,6 +3,11 @@
 ## 2026-10-10
 
 - **Update** — [wowdps-model](model.md), [wowdps-core](core.md),
+  [wowdps-proto](proto.md), [wowdps-daemon](daemon.md): replay format 4 —
+  `POOL_KINDS`, `MAX_POOLS`, `next_pools`, `fill_pools`; the cut's
+  start-of-pull rows and time-sorted events; the decoder's pool bounds and
+  tidy encoding; the rewrite queue recuts formats 1 to 3.
+- **Update** — [wowdps-model](model.md), [wowdps-core](core.md),
   [wowdps-proto](proto.md), [wowdps-daemon](daemon.md): R29's replay tier
   format 3 — `Post::absorb` and `Post::pools` (`set_pool`), the parser's
   `HpHint.more_power`, the buff rows and players' debuffs on NPCs, the

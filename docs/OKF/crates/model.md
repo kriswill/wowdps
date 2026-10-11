@@ -22,7 +22,10 @@ whose `unit` is `None`. Format 3: a `Post` also carries the block's shields
 named (`pools`, grown by `set_pool`, the one rule the cut and the tier
 share), so `Post` is `Clone`, no longer `Copy`; the buff rows (`buff_applied`,
 `buff_removed`, `buff_dose`) join the debuff rows, which now also hold a
-player's debuffs on NPCs.
+player's debuffs on NPCs. Format 4 bounds the pools (`POOL_KINDS` 64, no
+power type at or above it; `MAX_POOLS` 8 kinds a post) and tidies a
+hand-built track: `next_pools` (what the tier writes for any post) and
+`fill_pools` (a track whose posts fill `power` alone).
 
 ## Source
 

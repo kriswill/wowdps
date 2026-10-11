@@ -776,23 +776,41 @@ fn small_auras() -> Cut {
     cut
 }
 
-/// `small_auras()` as this build writes it.
+/// `small_auras()` as a format-3 build wrote it (#104's rules, the same
+/// codec as format 4's).
 const FORMAT3: &str = "57445250032a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
 
-/// Format 3's golden bytes: a diff here is a format change, never a
+/// `small_auras()` as this build writes it: format 3's bytes but the head's
+/// number.
+const FORMAT4: &str = "57445250042a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
+
+/// A format-3 file still reads, the codec being format 4's.
+#[test]
+fn a_format_3_file_reads_as_format_4() {
+    let bytes = unhex(FORMAT3);
+    assert_eq!(format_of(&bytes), Some(3));
+    assert_eq!(decode(&bytes), Some(small_auras()));
+}
+
+/// Format 4's golden bytes: a diff here is a format change, never a
 /// fixture to refresh.
 #[test]
-fn format_3_reads_and_writes_its_golden_bytes() {
+fn format_4_reads_and_writes_its_golden_bytes() {
     let cut = small_auras();
     let bytes = encode(&cut);
-    assert_eq!(hex(&bytes), FORMAT3);
-    assert_eq!(format_of(&bytes), Some(3));
-    assert_eq!(decode(&unhex(FORMAT3)), Some(cut));
+    assert_eq!(hex(&bytes), FORMAT4);
+    assert_eq!(format_of(&bytes), Some(4));
+    assert_eq!(decode(&unhex(FORMAT4)), Some(cut));
+    assert_eq!(
+        &bytes[5..],
+        &unhex(FORMAT3)[5..],
+        "format 3's codec, byte for byte"
+    );
 }
 
 /// Shields against their track's last (0 before the first), any amount
 /// up to u64::MAX and back; pools the posts' own do not make — a second
-/// pool, none at all, one dropped — written whole and read back.
+/// pool, two dropped, the last kind there is — written whole and read back.
 #[test]
 fn shields_and_pools_round_trip_through_every_change() {
     let mut cut = ulatek();
@@ -809,11 +827,11 @@ fn shields_and_pools_round_trip_through_every_change() {
     }
     let w = |kind, current, max| Power { kind, current, max };
     // A second pool at post 2; post 3 grows from it, as the cut keeps it;
-    // none at post 4; one past any kind at post 5.
+    // two dropped at post 4; the last kind there is at post 5.
     posts[2].pools = vec![w(0, 100, 100), w(4, 1, 5), w(7, 3, 5)];
     posts[3].pools = vec![w(0, 90, 100), w(4, 1, 5), w(7, 3, 5)];
-    posts[4].pools = Vec::new();
-    posts[5].pools = vec![w(u32::MAX, u64::MAX, u64::MAX)];
+    posts[4].pools = vec![w(0, 80, 100)];
+    posts[5].pools = vec![w(POOL_KINDS - 1, u64::MAX, u64::MAX)];
     cut.units[0].posts = posts;
     let bytes = encode(&cut);
     assert_eq!(decode(&bytes), Some(cut.clone()));
@@ -1078,4 +1096,94 @@ fn the_files_carry_every_floor_and_the_boss_rows() {
          11000,death,0,,,,,\n\
          30000,boss_killed,,3000,Ula'tek,,,\n"
     );
+}
+
+// ---- format 4: what encode writes always decodes; a file cannot grow the pools ----
+
+/// A track built by hand (an import fills `power` alone, or lists pools
+/// out of order, twice, past any kind, past MAX_POOLS) is written tidied, as
+/// `fill_pools` tidies it — and what is written decodes.
+#[test]
+fn encode_writes_a_hand_built_track_tidied() {
+    let w = |kind, current, max| Power { kind, current, max };
+    let mut cut = ulatek();
+    let mut posts = vec![
+        post(0, 0, 0, 0, 0, Some((0, 100, 100))),
+        post(10, 0, 0, 0, 0, Some((7, 3, 5))),
+        post(20, 0, 0, 0, 0, Some((99, 1, 1))),
+        post(30, 0, 0, 0, 0, Some((0, 90, 100))),
+    ];
+    // Out of order and twice; then ten kinds and one past any.
+    posts[1].pools = vec![w(7, 3, 5), w(0, 100, 100), w(7, 3, 5)];
+    posts[3].pools = (0..10).map(|k| w(k, 1, 1)).chain([w(70, 1, 1)]).collect();
+    cut.units[0].posts = posts;
+    let back = decode(&encode(&cut)).expect("what encode writes decodes");
+    let got: Vec<(Option<u32>, Vec<u32>)> = back.units[0]
+        .posts
+        .iter()
+        .map(|p| {
+            (
+                p.power.map(|w| w.kind),
+                p.pools.iter().map(|w| w.kind).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (Some(0), vec![0]),
+            (Some(7), vec![0, 7]),
+            // A power type no reader takes is written as none.
+            (None, vec![0, 7]),
+            (Some(0), (0..8).collect()),
+        ]
+    );
+    // The model's own tidying says the same.
+    let mut tidied = cut.units[0].posts.clone();
+    for p in &mut tidied {
+        p.power = p.power.filter(|w| w.kind < POOL_KINDS);
+    }
+    wowdps_model::replay::fill_pools(&mut tidied);
+    assert_eq!(back.units[0].posts, tidied);
+}
+
+/// A file cannot make a post's pools grow past MAX_POOLS, nor name a power
+/// type no reader takes: one post naming kind 64 is refused, one listed post
+/// with 100 000 pools is refused before anything is allocated for them, and
+/// ten thousand posts naming a new kind each read with eight pools at most.
+#[test]
+fn a_crafted_file_cannot_grow_the_pools() {
+    let mut cut = Cut {
+        units: vec![unit(
+            UnitKind::Boss,
+            "Ula'tek",
+            500,
+            vec![post(0, 0, 0, 0, 0, Some((POOL_KINDS - 1, 0, 1)))],
+        )],
+        ..Cut::default()
+    };
+    let good = encode(&cut);
+    let (from, len) = section_at(&good, POSTS);
+    // The one post: a pool (bit 6), present, kind 63, max 1.
+    assert_eq!(&good[from..from + len], &[0x40, 1, 0x3f, 1]);
+    assert_eq!(decode(&good), Some(cut.clone()));
+    let kind_64 = with_section(&good, POSTS, &[0x40, 1, 0x40, 1]);
+    assert_eq!(decode(&kind_64), None, "power type 64");
+    let mut huge = vec![1, 0, 1, 0];
+    put_varint(&mut huge, 100_000);
+    for k in 0..100_000u32 {
+        put_varint(&mut huge, u64::from(k));
+        huge.extend_from_slice(&[0, 1]);
+    }
+    assert_eq!(
+        decode(&with_section(&good, POOLS, &huge)),
+        None,
+        "100 000 pools"
+    );
+    cut.units[0].posts = (0..10_000u32)
+        .map(|i| post(i, 0, 0, 0, 0, Some((i % POOL_KINDS, 1, 2))))
+        .collect();
+    let back = decode(&encode(&cut)).unwrap();
+    let most = back.units[0].posts.iter().map(|p| p.pools.len()).max();
+    assert_eq!(most, Some(MAX_POOLS));
 }

@@ -59,8 +59,9 @@
 //!            (a post's pools are its last's with its own pool set in by
 //!            kind — the track's first against none — save at the posts
 //!            listed here, as in maps, each with its n pools whole, by kind
-//!            ascending: a cast's `a|b` lists name a second pool the post's
-//!            own does not carry)
+//!            ascending, n at most `MAX_POOLS`, each kind below
+//!            `POOL_KINDS`: where an entry of a cast's `a|b` lists after
+//!            the first set a reading the post's own pool does not)
 //! str     := varint len | utf-8
 //! opt(x)  := u8 0 | u8 1 x;  zz := zigzag varint;  name := index into strs
 //! ```
@@ -68,10 +69,15 @@
 //! Times count from the cut's start; an event's, a placed row's and a
 //! marker's against the one before it. A pull on one floor costs its maps
 //! section four bytes — a one-floor table, no unit leaving it — and its
-//! index entry as many again. Decoding never
-//! panics and never allocates more than the bytes in hand can fill: a lying
-//! count, an index past its table, a unit number past the units, all are
-//! `None`.
+//! index entry as many again. Decoding never panics, and allocates in
+//! proportion to the bytes in hand: a lying count, an index past its table,
+//! a unit number past the units, a power type at or above `POOL_KINDS`, a
+//! pools list longer than `MAX_POOLS`, all are `None` before anything is
+//! allocated for them; a post's pools, grown by `set_pool`, never hold more
+//! than `MAX_POOLS` readings, so each post — a byte at least — costs a
+//! bounded few. `encode` writes what decodes: each post's pools tidied by
+//! `next_pools` (sorted, one per kind, bounded; none listed, grown from
+//! its own pool).
 //!
 //! ## Formats
 //!
@@ -81,21 +87,27 @@
 //! - 2: every floor's posts (`maps`, tag 9), and the boss rows
 //!   (`boss_engaged`, `boss_killed`, `boss_wiped`, kinds 13 to 15) with
 //!   `has` bit 5 for a row that names no unit. It still reads, as format 3
-//!   with every absorb 0; the rewrite queue recuts it as format 3.
+//!   with every absorb 0; the rewrite queue recuts it.
 //! - 3: each post's shields (`absorb`, tag 10) and its last reading of
 //!   every pool kind (`pools`, tag 11: only where the posts' own pools do
 //!   not make them), and the buff rows (`buff_applied`, `buff_removed`,
 //!   `buff_dose`, kinds 16 to 18). Its posts section is format 2's, byte
 //!   for byte. Every format reads [`Post::pools`] the same way: each post's
 //!   pool set into its last's, so an older file's pools are what its posts
-//!   named.
+//!   named. It still reads, the codec being format 4's; the rewrite queue
+//!   recuts it, since it was cut by the old aura rules.
+//! - 4: format 3's codec, byte for byte but this head byte; the number moved
+//!   with the cut's rules (an aura up before the cut opens at t 0, R18's
+//!   segment-start rule) so the rewrite queue recuts every file the old
+//!   rules cut. A format moves with what the cut writes, not the codec
+//!   alone: the queue knows a file by its number only.
 
 use std::collections::HashMap;
 
 use crate::varint::{Cur, put_opt, put_varint, put_zz};
 use wowdps_model::replay::{
-    Cut, EncounterHead, Event, EventKind, Head, KeyHead, Marker, MarkerKind, Placed, PlacedKind,
-    Post, Power, Unit, UnitKind, set_pool,
+    Cut, EncounterHead, Event, EventKind, Head, KeyHead, MAX_POOLS, Marker, MarkerKind, POOL_KINDS,
+    Placed, PlacedKind, Post, Power, Unit, UnitKind, next_pools, set_pool,
 };
 use wowdps_model::{Class, Spec};
 
@@ -104,7 +116,7 @@ pub mod csv;
 /// The file's first four bytes.
 pub const MAGIC: &[u8; 4] = b"WDRP";
 /// The layout above, as this build writes it.
-pub const FORMAT: u8 = 3;
+pub const FORMAT: u8 = 4;
 /// The oldest layout a reader takes.
 pub const OLDEST: u8 = 1;
 /// The fixed head: magic, format, the index's length.
@@ -237,7 +249,8 @@ pub fn decode(bytes: &[u8]) -> Option<Cut> {
         read_maps(&mut section(MAPS)?, &mut units)?;
     }
     // Each post's pools from its own and its last's, every format alike;
-    // format 3's shields, and the posts whose pools a cast's lists made.
+    // format 3's (and 4's, the same codec) shields, and the posts whose
+    // pools a cast's lists made.
     let mut lists = HashMap::new();
     if format >= 3 {
         read_absorb(&mut section(ABSORB)?, &mut units)?;
@@ -545,6 +558,12 @@ fn absorb(cut: &Cut) -> Vec<u8> {
     out
 }
 
+/// A post's own pool as the tier keeps it: none for a power type at or
+/// above [`POOL_KINDS`], which no reader takes.
+fn power_of(p: &Post) -> Option<Power> {
+    p.power.filter(|w| w.kind < POOL_KINDS)
+}
+
 /// What a post's pools are unless the pools section says otherwise: its
 /// last's with its own pool set in.
 fn pools_after(last: &[Power], power: Option<Power>) -> Vec<Power> {
@@ -555,19 +574,22 @@ fn pools_after(last: &[Power], power: Option<Power>) -> Vec<Power> {
     pools
 }
 
-/// The pools section: the posts whose pools are not [`pools_after`] their
-/// last's — a cast's `a|b` lists named a pool the post's own does not
-/// carry — each with its pools whole.
+/// The pools section: the posts whose pools, tidied (`next_pools`: sorted,
+/// one per kind, bounded, grown from the post's own pool when it lists
+/// none), are not [`pools_after`] their last's — an entry of a cast's `a|b`
+/// lists set a reading the post's own pool does not — each with its pools
+/// whole. Whatever a post holds, what is written decodes.
 fn pools(cut: &Cut) -> Vec<u8> {
-    let mut lists: Changes<&[Power]> = Vec::new();
+    let mut lists: Changes<Vec<Power>> = Vec::new();
     for (u, unit) in cut.units.iter().enumerate() {
-        let mut last: &[Power] = &[];
+        let mut last: Vec<Power> = Vec::new();
         let mut changes = Vec::new();
         for (i, p) in unit.posts.iter().enumerate() {
-            if pools_after(last, p.power) != p.pools {
-                changes.push((i, p.pools.as_slice()));
+            let pools = next_pools(&last, p);
+            if pools_after(&last, power_of(p)) != pools {
+                changes.push((i, pools.clone()));
             }
-            last = &p.pools;
+            last = pools;
         }
         if !changes.is_empty() {
             lists.push((u, changes));
@@ -576,7 +598,7 @@ fn pools(cut: &Cut) -> Vec<u8> {
     let mut out = Vec::new();
     put_changes(&mut out, &lists, |out, pools| {
         put_varint(out, pools.len() as u64);
-        for w in *pools {
+        for w in pools {
             put_varint(out, u64::from(w.kind));
             put_varint(out, w.current);
             put_varint(out, w.max);
@@ -635,16 +657,18 @@ fn maps(cut: &Cut) -> Vec<u8> {
 
 /// One post against the unit's last.
 fn put_post(out: &mut Vec<u8>, last: &Post, p: &Post) {
+    // A power type no reader takes is written as none.
+    let (power, last_power) = (power_of(p), power_of(last));
     let dt = i64::from(p.t_ms) - i64::from(last.t_ms);
     let moved = (p.x, p.y) != (last.x, last.y);
     let turned = p.facing != last.facing;
     let hurt = p.hp != last.hp;
-    let pool = match (p.power, last.power) {
+    let pool = match (power, last_power) {
         (Some(a), Some(b)) => a.kind != b.kind || a.max != b.max,
         (a, b) => a.is_some() != b.is_some(),
     };
-    let last_current = last.power.map_or(0, |w| w.current);
-    let spent = p.power.is_some_and(|w| w.current != last_current);
+    let last_current = last_power.map_or(0, |w| w.current);
+    let spent = power.is_some_and(|w| w.current != last_current);
     let small = (0..7).contains(&dt);
     let head = (if small { dt as u8 } else { 7 })
         | u8::from(moved) << 3
@@ -667,7 +691,7 @@ fn put_post(out: &mut Vec<u8>, last: &Post, p: &Post) {
         put_zz(out, i64::from(p.hp) - i64::from(last.hp));
     }
     if pool {
-        match p.power {
+        match power {
             Some(w) => {
                 out.push(1);
                 put_varint(out, u64::from(w.kind));
@@ -676,7 +700,7 @@ fn put_post(out: &mut Vec<u8>, last: &Post, p: &Post) {
             None => out.push(0),
         }
     }
-    if spent && let Some(w) = p.power {
+    if spent && let Some(w) = power {
         put_zz(out, w.current as i64 - last_current as i64);
     }
 }
@@ -855,7 +879,9 @@ fn read_post(c: &mut Cur, last: &Post) -> Option<Post> {
         power = match c.u8()? {
             0 => None,
             1 => {
-                let kind = c.u32()?;
+                // No power type at or above POOL_KINDS: no file this build
+                // wrote, and a pool no reading may hold.
+                let kind = c.u32().filter(|k| *k < POOL_KINDS)?;
                 let max = c.varint()?;
                 let current = last.power.map_or(0, |w| w.current);
                 Some(Power { kind, current, max })
@@ -954,17 +980,20 @@ fn read_absorb(c: &mut Cur, units: &mut [Unit]) -> Option<()> {
     Some(())
 }
 
-/// Format 3's pools section: the posts whose pools are written whole, by
-/// unit and post index. Pools out of kind order or a kind twice: `None`.
+/// The pools section (format 3 on): the posts whose pools are written whole,
+/// by unit and post index. More than `MAX_POOLS` pools, one out of kind
+/// order, a kind twice or one at or above `POOL_KINDS`: `None`, before a
+/// list is allocated past `MAX_POOLS`.
 fn read_pool_lists(c: &mut Cur, units: &[Unit]) -> Option<HashMap<(usize, usize), Vec<Power>>> {
     let mut lists = HashMap::new();
     read_changes(c, units, 2, |c, unit, at| {
-        // A pool is three varints: three bytes at least.
-        let n = c.count(3)?;
+        // A pool is three varints: three bytes at least; a post holds no
+        // more than MAX_POOLS.
+        let n = c.count(3).filter(|n| *n <= MAX_POOLS)?;
         let mut pools: Vec<Power> = Vec::with_capacity(n);
         for _ in 0..n {
             let w = Power {
-                kind: c.u32()?,
+                kind: c.u32().filter(|k| *k < POOL_KINDS)?,
                 current: c.varint()?,
                 max: c.varint()?,
             };
@@ -979,8 +1008,9 @@ fn read_pool_lists(c: &mut Cur, units: &[Unit]) -> Option<HashMap<(usize, usize)
     Some(lists)
 }
 
-/// Every post's pools: its last's with its own pool set in, save where the
-/// pools section wrote them whole.
+/// Every post's pools: its last's with its own pool set in (`set_pool`,
+/// bounded), save where the pools section wrote them whole — so a post
+/// holds at most `MAX_POOLS` readings whatever the file says.
 fn fill_pools(units: &mut [Unit], lists: &HashMap<(usize, usize), Vec<Power>>) {
     for (u, unit) in units.iter_mut().enumerate() {
         let mut pools: Vec<Power> = Vec::new();

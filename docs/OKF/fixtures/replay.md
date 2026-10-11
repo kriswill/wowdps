@@ -1,7 +1,7 @@
 ---
 type: Fixture
 title: replay.txt
-description: 'The replay cut''s fixture (R29, v45) — two boss pulls with world markers placed and replaced before the first, a player''s posts on a second floor and a hit that found him there, every event kind a replay draws (a ranged hit, a miss, a hit from no source, a friendly totem''s tick that is none, a failed cast, a Feign Death, a creature down unconscious, a rez, the boss rows), a warlock known by R8, what players place (a gateway, a totem''s summon, touches, a create, a totem destroyed), a keystone run whose trash and boss stand on two floors, and (format 3) the buffs that matter beside one up before the pull, a healer''s debuff on the boss, two shields and a warlock''s second pool.'
+description: 'The replay cut''s fixture (R29, v45) — two boss pulls with world markers placed and replaced before the first, a player''s posts on a second floor and a hit that found him there, every event kind a replay draws (a ranged hit, a miss, a hit from no source, a friendly totem''s tick that is none, a failed cast, a Feign Death, a creature down unconscious, a rez, the boss rows), a warlock known by R8, what players place (a gateway, a totem''s summon, touches, a create, a totem destroyed), a keystone run whose trash and boss stand on two floors, and (format 3) the buffs that matter beside one up before the pull, a healer''s debuff on the boss, two shields and a warlock''s second pool, and (format 4) a buff and a debuff up before the pull opened at its start.'
 resource: crates/core/fixtures/replay.txt
 tags: [fixture]
 status: stable
@@ -28,7 +28,8 @@ check.awk as its other tables are.
 - [R29 The replay cut](../rulings/r29.md): the floor (nine votes on 2434,
   two on 2435, where the hunter's posts and the hit that found him are kept
   with their floor), units in order of first sight, the nineteen event kinds
-  (the boss rows at t 0 and the END; format 3's buff rows), the four placed kinds, the markers
+  (the boss rows at t 0 and the END; format 3's buff rows, format 4's
+  opened at t 0), the four placed kinds, the markers
   standing at the start (a marker removed and re-placed before the pull) and
   each change — one placed on another map while it stood on the pull's is its
   removal; a swing whose amount equals the floor's id posted once, as the
@@ -38,9 +39,12 @@ check.awk as its other tables are.
   and its boss, an ENCOUNTER_START/END pair mid-run, on 2095: three posts
   above, four below, the main floor 2095, a hit and a Healing Rain touch off
   it, its boss rows at 59 s and 90 s. Format 3, in the first pull: Tank's Bone
-  Shield, up before it, loses a stack and comes off (no rows: the cut never
-  saw it applied), then goes up again and stacks (`buff_applied`,
-  `buff_dose`); Healer's Pain Suppression on him (`src` the giver), Ula'tek's
+  Shield, up before it, loses a stack and comes off — format 4 opens it at
+  0 s (`buff_applied`, then the dose and the removal), as R18's span does —
+  then goes up again, is refreshed (no row) and stacks (`buff_applied`,
+  `buff_dose`); Healer's Ember Mark on the boss, up before the pull, opens
+  at 0 s by its refresh and closes by its removal, a second removal no row;
+  a Power Infusion seen only by its refresh opens at 0 s; Healer's Pain Suppression on him (`src` the giver), Ula'tek's
   buff on Hunt and the encounter's on Healer are buff rows, Healer's
   Fortitude none (a long buff); Healer's Thorn Rake on the boss is three
   debuff rows (unit the boss), the pet's beside it none; two posts carry a
@@ -59,8 +63,9 @@ check.awk as its other tables are.
   the healer's mana; Lock's second post reports his soul shards, a second
   power series beside his mana.
 - [R18 Aura spans](../rulings/r18.md): the pre-pull Bone Shield's removal
-  opens a span at the pull's start (the segment-start rule) where the replay
-  drops it, its second application runs to the kill, and Pain Suppression is
+  opens a span at the pull's start (the segment-start rule), and since
+  format 4 the replay opens it there too; Power Infusion, seen only by its
+  refresh, an external of the whole pull in both; its second application runs to the kill, and Pain Suppression is
   an external given and received; [R26](../rulings/r26.md)'s DoT uptime
   takes Thorn Rake.
 - [R10 Visits](../rulings/r10.md): the run's CHALLENGE_MODE_START opens its

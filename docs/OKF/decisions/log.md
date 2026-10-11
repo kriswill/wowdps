@@ -3,6 +3,11 @@
 ## 2026-10-10
 
 - **Update** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
+  format 4 — an aura up before the pull counts R18's way, opened at t 0 (the
+  user's call); bounded pools (power type below 64, eight kinds a post);
+  `encode` writes tidied pools; the format number moves so the queue recuts
+  format 3 too. A pet's debuffs on NPCs are a known gap.
+- **Update** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
   format 3 adds each post's shields and every pool kind, the buffs that
   matter to the fight (R18's curated kinds or an NPC's, never one up before
   the pull) and every debuff a player puts on an NPC — the rows a followed

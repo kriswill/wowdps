@@ -96,6 +96,9 @@ damage/heal suffix by two columns.
 > +15 keystone runs (2026-10-10, 291 490 posts), 21 885 and 37 972 posts —
 > every one a player's, 52 and 57 % of theirs — carried two kinds or more, and
 > two of the 538 900 lines then in the log were `a|b` (a paladin's holy power and mana).
+> Format 4 bounds them: a power type at or above 64 is no pool (the game's
+> run below 32), in `HpHint.power` too, and a post keeps at most eight kinds;
+> no real post carried more than three.
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The Replay Tier Lives In The History Store, Cut By The Parser
-description: 'v45 (R29): every boss pull and keystone run is cut from its parsed lines into a binary replay tier beside the series tier, kept on the details tier''s caps and all season for what retention keeps whole — and the replay spike''s offline text cutter is rewritten onto the parser''s events, so the log is read one way and the spike''s files come from either path through one writer; tier format 2 keeps every floor''s posts and the boss rows, so a keystone run replays through its whole dungeon; format 3 adds the shields, every pool kind, the buffs that matter to the fight and the players'' debuffs on NPCs, the rows a followed unit''s HUD reads.'
+description: 'v45 (R29): every boss pull and keystone run is cut from its parsed lines into a binary replay tier beside the series tier, kept on the details tier''s caps and all season for what retention keeps whole — and the replay spike''s offline text cutter is rewritten onto the parser''s events, so the log is read one way and the spike''s files come from either path through one writer; tier format 2 keeps every floor''s posts and the boss rows, so a keystone run replays through its whole dungeon; format 3 adds the shields, every pool kind, the buffs that matter to the fight and the players'' debuffs on NPCs, the rows a followed unit''s HUD reads; format 4 counts an aura up before the pull R18''s way, from its start.'
 tags: [replay, history, wire, design]
 status: stable
 generated: { by: claude-code/opus-5.5, at: 2026-10-09T22:00:00-07:00 }
@@ -145,10 +145,11 @@ paladin's posts in a real +15 run named mana 10 727 times and holy power
   `role_spells` table names as anything but a support buff — a defensive, a
   tank's mitigation, an external (its giver in `src`), a major or a healing
   cooldown — or whose source is not ours (an NPC's empowerment or mark, the
-  encounter's from no one). A removal or dose whose application the cut never
-  saw is dropped: that buff was up before the pull, and a long buff (stamina,
-  a flask) is in neither set, so it makes no row at all. A buff from a
-  hostile unit, a debuff row in format 2, is a buff row now.
+  encounter's from no one). As format 3 shipped, a removal or dose whose
+  application the cut never saw was dropped as up before the pull; format 4
+  (below) counts such a buff R18's way instead, from the pull's start. A long
+  buff (stamina, a flask) is in neither set, so it makes no row at all. A
+  buff from a hostile unit, a debuff row in format 2, is a buff row now.
 - **A player's debuffs on NPCs, every one** (the debuff kinds, `unit` the
   NPC, `src` the player): the evidence of what a player pressed, a triggered
   effect whose cast the log never writes included (a guardian druid's Feral
@@ -188,6 +189,70 @@ rows can number a unit earlier than format 2 did — the format bump covers
 it. The HUD's reader takes the new kinds and the trailing columns by
 position; the pull directories the spike cuts itself gain them through the
 one writer.
+
+## Format 4: an aura up before the pull counts, R18's way
+
+**Context.** An independent review of format 3 found its cut dropped a
+defensive that was up when the pull began, though [R18](../rulings/r18.md)
+counts that one from the pull's start, so the HUD's buff row and the
+meter's cooldown windows would disagree on every pre-pull Bone Shield or
+Ironfur. The user's call (2026-10-10): count it R18's way. The review also
+found that decoding and cutting could allocate quadratically from a small
+file, since every post copies its unit's growing pool set and a kind was any
+u32; that `encode` wrote a hand-built post's untidy pools into a file decode
+refuses; and that a cut-rule change alone recuts nothing.[^contract]
+
+**Decision.**
+
+- **R18's segment-start rule in the cut.** A buff R18's table names, or a
+  player's debuff on an NPC, keyed (unit, spell, caster), whose first line
+  in the slice is a refresh, a dose or a removal was up when the slice
+  began: an applied row at t 0 opens it (once per key, that line's caster
+  as `src`), and the dose or removal is kept; a later dose or removal with
+  nothing up is dropped, and a refresh is never a row of its own. An NPC's
+  buff R18 does not name keeps format 3's rule (only after an application),
+  and a debuff on a player keeps every row. The opened row is found at its
+  line, numbering its units there, and the events are sorted by time, so it
+  stands at t 0 after the first lines' rows. Two deliberate differences
+  from R18: a dose is a first sight too (R18 reads no dose), and a key's
+  first sight is the only one that can open it (R18 would open again after
+  a stray second removal).
+- **Pools are bounded.** A power type at or above 64 (`replay::POOL_KINDS`;
+  the game's run below 32) is no pool, in the parser's `power` and
+  `more_power` alike, so R28 reads none either; `set_pool` keeps at most
+  eight kinds (`MAX_POOLS`, a druid's every form names six). The decoder
+  refuses such a type and a pools list longer than eight before allocating
+  it, so a post's pools are a few readings whatever a file says, and
+  decoding allocates in proportion to the bytes in hand again.
+- **`encode` writes what decodes.** Each post's pools go through
+  `model::replay::next_pools` (sorted, one per kind, bounded; a post that
+  lists none grown from its own pool), and a power type no reader takes is
+  written as none; `model::replay::fill_pools` tidies a hand-built track the
+  same way, for an importer that fills `power` alone.
+- **The recut is a format number.** The rewrite queue knows a file by its
+  head's number alone and no other marker records the rules a file was cut
+  by, so FORMAT is 4 on format 3's codec, byte for byte but the head: every
+  format-1, 2 and 3 file is recut from its log while idle. Format 3 had
+  shipped on main (#104) but was never deployed; the number still moved,
+  since the dev unit builds from a branch that already carries it.
+
+**Consequences.** Recut from the night's log, the two +15 runs opened 1 and
+2 buffs at t 0 (a guardian druid's Incarnation up when each key began, and
+a Void Metamorphosis), the boss pull inside the second 1 (that Void
+Metamorphosis); no player's debuff on an NPC needed it and no orphan row was
+dropped. The files grew 11, 25 and 12 B; the pool bound and the tidying
+changed no byte (no post carried more than three kinds). Against the stored
+R18 spans, the boss pull's 45 spans, every player's, matched to the
+millisecond, its t 0 Void Metamorphosis included; over the second run, 132
+of one player's 145 marks matched to the millisecond and the other 13 are
+the meter's own seams — five spans crossing a segment boundary (two marks
+each, one span here), the run's start (R18 opens at the first segment's
+first combat line, 1 673 ms after the run's) and its end (two buffs still up
+when the last segment closed; the cut keeps them to the run's end).
+
+A known gap: a pet's, a guardian's or a totem's debuff on an NPC is never a
+row (never credited to its owner), so the HUD's own-aura row misses a
+hunter's pet's bleeds or a warlock's demon's debuffs.
 
 [^contract]: CONTRACT.md — ruling R29 and the v45 row of the version table
 [^plan]: Fight replay — research plan (the capture once, interpreted per tier)

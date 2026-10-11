@@ -2,6 +2,12 @@
 
 ## 2026-10-10
 
+- **Update** — [replay.txt](replay.md): format 4's cases — the pre-pull Bone
+  Shield opened at 0 s by its dose, a refresh of an up buff that is no row, a
+  healer's debuff on the boss up before the pull (opened by its refresh, a
+  second removal no row) and a Power Infusion seen only by its refresh;
+  [spans.txt](spans.md)'s Shield Block, first seen by its refresh, opens at
+  0 s and keeps its removal (one more applied and one more removed row).
 - **Update** — [replay.txt](replay.md): format 3's cases in the first pull —
   a pre-pull Bone Shield whose dose and removal are no rows, the buffs that
   matter, a healer's debuff on the boss and a pet's that is none, two
