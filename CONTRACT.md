@@ -902,7 +902,8 @@ never takes (the store off, its queue full) is answered `Refused` too, saying wh
 refusal is no write lost (`HistoryStatus::dropped` does not tick). The id is
 `imported_id(source, start_utc_ms)`; the same source again replaces the card and replay (the
 same id, or the old id retired when the start moved, its annotations carried to the new id —
-an old id whose annotations cannot be carried is kept whole), the pin carried, and says so
+an old import whose annotations cannot be carried or whose card file cannot be removed is kept
+whole beside the new one, the index holding what the files do), the pin carried, and says so
 (`replaced`); a failed write leaves the store as it was — a re-import's old replay put back
 under its old card (one it cannot read refuses the re-import first), and the size cap trims
 for an import only once its card is in. Imported fights are PROTECTED like pins —

@@ -2407,15 +2407,21 @@ impl<B: Backend> Store<B> {
     }
 
     /// An import replaced under a new id (its start moved): its
-    /// annotations carried to the id that replaced it first — when they
-    /// cannot be, the old import stays whole, reachable with them, and
-    /// `last_error` says so — then out of the index, its replay and card
-    /// files removed. A card file that cannot be removed is said in
-    /// `last_error` (it would come back as a second import of the source
-    /// after a restart).
+    /// annotations carried to the id that replaced it, then its card file
+    /// removed, and only then its replay and its place in the index. When
+    /// a step fails the old import stays whole — the index keeps what the
+    /// files hold, so a restart brings back nothing it does not show, and
+    /// the next import of the source retires it again — and `last_error`
+    /// says why.
     fn retire_import(&mut self, old: &str, new: &str) {
+        let keep = |store: &mut Self, why: String| {
+            store.last_error = Some(format!("{why} ({old} is kept beside {new})"));
+        };
         let notes = format!("{old}.ndjson");
-        if let Some(text) = self.backend.read("annotations", &notes) {
+        if self.backend.exists("annotations", &notes) {
+            let Some(text) = self.backend.read("annotations", &notes) else {
+                return keep(self, "history read failed: its annotations".to_string());
+            };
             let name = format!("{new}.ndjson");
             let mut merged = self.backend.read("annotations", &name).unwrap_or_default();
             if !merged.is_empty() && !merged.ends_with(b"\n") {
@@ -2423,20 +2429,15 @@ impl<B: Backend> Store<B> {
             }
             merged.extend_from_slice(&text);
             if let Err(e) = self.backend.write("annotations", &name, &merged) {
-                self.last_error = Some(format!(
-                    "history write failed: {e} ({old} is kept, with its annotations, beside {new})"
-                ));
-                return;
+                return keep(self, format!("history write failed: {e}"));
             }
             let _ = self.backend.remove("annotations", &notes);
         }
+        if let Err(e) = self.backend.remove("fights", &format!("{old}.json")) {
+            return keep(self, format!("history remove failed: {e}"));
+        }
         self.cards.retain(|c| c.id != old);
         self.drop_replay(old);
-        if let Err(e) = self.backend.remove("fights", &format!("{old}.json")) {
-            self.last_error = Some(format!(
-                "history remove failed: {e} ({old}, replaced by {new}, returns on a restart)"
-            ));
-        }
     }
 
     /// A card into the index, which is sorted by start.

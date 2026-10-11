@@ -888,8 +888,9 @@ fn a_moved_import_carries_its_annotations() {
     assert!(store.card(&old).is_none());
 }
 
-/// A moved import's old card that cannot be removed is out of the index
-/// all the same, and the store says why it would come back.
+/// A moved import's old card that cannot be removed stays whole — card
+/// and replay, in the index as on disk, so a restart shows nothing it did
+/// not — and the store says why; the next import of the source retires it.
 #[test]
 fn a_moved_import_whose_old_card_stays_says_so() {
     let bytes = replay_bytes();
@@ -901,11 +902,62 @@ fn a_moved_import_whose_old_card_stays_says_so() {
     let (new, _) = store
         .import_replay(&imported(1_005_000, false, 15), &bytes)
         .unwrap();
-    assert!(store.card(&old).is_none() && store.card(&new).is_some());
-    assert_eq!(store.cards().len(), 1);
+    assert!(store.card(&old).is_some() && store.card(&new).is_some());
+    assert!(store.has_replay(&old), "kept whole, its replay too");
     let said = store.last_error.clone().unwrap_or_default();
     assert!(
-        said.contains(&old) && said.contains("returns on a restart"),
+        said.contains(&old) && said.contains("kept beside"),
+        "{said}"
+    );
+    let reopened = Store::open(copied(&store.backend().inner), Retention::default());
+    assert_eq!(
+        reopened.cards().len(),
+        2,
+        "the files hold what the index did"
+    );
+    // The next import of the source retires both earlier ones.
+    store.backend().fail_removes_in.set(None);
+    let (last, _) = store
+        .import_replay(&imported(1_010_000, false, 15), &bytes)
+        .unwrap();
+    assert_eq!(
+        store
+            .cards()
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect::<Vec<_>>(),
+        [last.as_str()]
+    );
+}
+
+/// A moved import whose annotation file is there but cannot be read is
+/// kept whole: its annotations stay reachable under it.
+#[test]
+fn a_moved_import_whose_annotations_cannot_be_read_keeps_its_card() {
+    let bytes = replay_bytes();
+    let mut first = mem(Retention::default());
+    let (old, _) = first
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let mut backend = copied(first.backend());
+    backend
+        .write("annotations", &format!("{old}.ndjson"), b"{\"note\":1}\n")
+        .unwrap();
+    let mut store = Store::open(Flaky::over(backend), Retention::default());
+    store.backend().fail_reads_in.set(Some("annotations"));
+    let (new, _) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert!(store.card(&old).is_some() && store.card(&new).is_some());
+    assert!(
+        store
+            .backend()
+            .inner
+            .exists("annotations", &format!("{old}.ndjson"))
+    );
+    let said = store.last_error.clone().unwrap_or_default();
+    assert!(
+        said.contains("annotations") && said.contains(&old),
         "{said}"
     );
 }
