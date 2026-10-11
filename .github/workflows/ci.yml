@@ -51,7 +51,7 @@ jobs:
         with:
           determinate: true
           summarize: false
-      - uses: DeterminateSystems/flakehub-cache-action@88740a21e786360ba66bdd8fecabcbf852db3a5a # v3.23.0
+      - uses: DeterminateSystems/flakehub-cache-action@0975873945367f5239ebb5f49c133bf3543a08f6 # v3.23.1
 
       # The devenv CLI from the flake's own pinned nixpkgs: the version that
       # wrote devenv.lock (update-locks.yml runs `devenv update` with it).
@@ -185,7 +185,7 @@ jobs:
         with:
           determinate: true
           summarize: false
-      - uses: DeterminateSystems/flakehub-cache-action@88740a21e786360ba66bdd8fecabcbf852db3a5a # v3.23.0
+      - uses: DeterminateSystems/flakehub-cache-action@0975873945367f5239ebb5f49c133bf3543a08f6 # v3.23.1
       # This job builds only the daemon/TUI package; the GUI (`.#wowdps-gui`,
       # its own dependency layer) builds and tests in the dev shell the ci
       # job runs in. Two derivations (crane):
