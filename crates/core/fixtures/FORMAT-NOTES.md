@@ -128,7 +128,13 @@ damage/heal suffix by two columns.
 > reads `17,10,120`). Replay format 5 advances the pool the block does not
 > name: over two +15 runs, 526 of a warlock's 533 shard spenders read his last
 > spender's leftover plus the gains between exactly, and 394 of a paladin's 395
-> holy power spenders theirs.
+> holy power spenders theirs. The suffix's max tells a counted resource from a
+> continuous pool: below 100 in the block's units for shards (50), holy power
+> (5), combo points (5–7), chi (5–6), arcane charges (4), essence (5–6) and
+> runes (6), 100 or more for energy, focus, fury, maelstrom, rage, astral
+> power, runic power, insanity and mana; format 5 lets an energize start only
+> a counted pool, so a Restoration shaman's Mana Spring (`0,250000` in the
+> suffix) on an elemental shaman, whose blocks name maelstrom, opens none.
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 

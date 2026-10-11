@@ -91,7 +91,12 @@
 //! there and nowhere else. The gain counts in the block's units (a shard
 //! energize's `1.0000` is 10 of the block's 50: `display_mod`), at most
 //! the pool's max, and a gain that lost any of itself to the cap leaves the
-//! pool full. Nothing between two lines is inferred.
+//! pool full. An energize STARTS a pool no block has named only when it is
+//! a counted class resource (its max below 100 in the block's units:
+//! shards, holy power, combo points, chi, arcane charges, essence, runes);
+//! a continuous one (mana, energy, rage, focus …) it only advances once a
+//! block has named it, so a shaman's Mana Spring on an elemental shaman
+//! opens no mana pool. Nothing between two lines is inferred.
 //!
 //! THE PLACED THINGS ([`PlacedTable`] says which spells): a player's landed
 //! cast of a placing spell (where they stood) and its aim; their summon or
@@ -1482,20 +1487,39 @@ fn display_mod(kind: u32) -> f64 {
     }
 }
 
+/// The most an energize's pool may hold, in the block's units, and still be
+/// STARTED by the energize (format 5): a counted class resource. A counted
+/// pool — soul shards (50 tenths), holy power (5), combo points (5–7), chi
+/// (5–6), arcane charges (4), essence (5–6), runes (6) — is named by its
+/// unit's block only on a spender's line, so its gains arrive before any
+/// reading and must open it; it empties out of combat, so starting it from
+/// 0 is near the truth, and the next spender re-anchors it. A continuous
+/// pool — energy (100 at the least, so exactly 100 is out), focus, fury
+/// (120), maelstrom (150), rage (1000), astral power (1000), runic power
+/// (1250), insanity (10 000), mana (250 000) — regenerates and is spent on
+/// lines that never name it to a unit whose block names another (a
+/// Restoration shaman's Mana Spring on an elemental shaman, whose blocks
+/// name maelstrom): started by its energizes it would only ever climb, and a
+/// replay's frame that shows the pool which moved most would pick it. So an
+/// energize advances a continuous pool only once a block has named it.
+const COUNTED_POOL_MAX: u64 = 100;
+
 /// An energize's gain on the pool it fills, the line's block naming
 /// another (format 5): the unit's last reading of that kind plus the gain
 /// in the block's units, at most the pool's max — the suffix's, else the
-/// last reading's; a gain with no reading before it starts from 0. A gain
-/// that lost any of itself to the cap (`over` above 0) left the pool full.
-/// No max known, no reading. Only what the line says: nothing between two
-/// lines (a regenerating pool) is ever inferred.
+/// last reading's. With no reading before it, only a counted resource (its
+/// max below [`COUNTED_POOL_MAX`]) starts, from 0; a continuous pool no
+/// block named is left alone. A gain that lost any of itself to the cap
+/// (`over` above 0) left the pool full. No max known, no reading. Only what
+/// the line says: nothing between two lines (a regenerating pool) is ever
+/// inferred.
 fn energize(pools: &mut Vec<Power>, kind: u32, amount: f64, over: f64, max_power: u32) {
     let last = pools.iter().find(|p| p.kind == kind).copied();
     let max = match u64::from(max_power) {
         0 => last.map_or(0, |p| p.max),
         max => max,
     };
-    if max == 0 {
+    if max == 0 || (last.is_none() && max >= COUNTED_POOL_MAX) {
         return;
     }
     let current = if over > 0.0 {

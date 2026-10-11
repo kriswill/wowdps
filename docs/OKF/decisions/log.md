@@ -6,7 +6,9 @@
   format 5 — a pool reads as the game's bar: the parser takes a cast's cost
   off (R28's series moves too) and the cut advances a pool by the energizes
   its target's block never shows; measured on a +15 night's warlock and
-  paladin. A pool no block names that an energize starts is a known gap.
+  paladin. An energize starts only a counted pool (max below 100: shards,
+  holy power, combo points …), never a continuous one no block named (a
+  Mana Spring on an elemental shaman), the coordinator's review call.
 
 ## 2026-10-10
 

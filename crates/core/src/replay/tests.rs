@@ -967,6 +967,89 @@ fn a_pool_reads_after_its_cost_and_rises_with_its_gains() {
     );
 }
 
+/// Format 5: an energize STARTS a pool no block named only when it is a
+/// counted class resource (its max below `COUNTED_POOL_MAX`): a paladin's
+/// holy power before his first spender opens; a Mana Spring on an elemental
+/// shaman, whose blocks name maelstrom, opens no mana pool, capped or not,
+/// nor does an energy gain of max 100 on a druid in caster form; a druid's
+/// mana a block has named still advances while his cat form's blocks name
+/// energy.
+#[test]
+fn an_energize_starts_only_a_counted_pool() {
+    let pal = "Player-1-P,\"Pal-Realm-US\",0x512,0x80000000";
+    let sham = "Player-1-S,\"Sham-Realm-US\",0x512,0x80000000";
+    let druid = "Player-1-D,\"Druid-Realm-US\",0x512,0x80000000";
+    let line = |t: &str, ev: &str, who: &str, pool: &str, suffix: &str| {
+        let guid = who.split(',').next().unwrap_or_default();
+        at(
+            t,
+            &format!(
+                "{ev},{who},{who},5394,\"Mana Spring\",0x8,{guid},0000000000000000,900,1000,0,0,0,0,0,0,{pool},1.00,2.00,2434,0.0000,600{suffix}"
+            ),
+        )
+    };
+    let e = "SPELL_ENERGIZE";
+    let slice = [
+        at("10.000", "ENCOUNTER_START,3000,\"Ula'tek\",16,20,3004"),
+        line("11.000", e, pal, "0,250000,250000,0", ",1.0000,0.0000,9,5"),
+        line(
+            "12.000",
+            e,
+            sham,
+            "11,50,150,0",
+            ",450.0000,0.0000,0,250000",
+        ),
+        line(
+            "13.000",
+            e,
+            sham,
+            "11,60,150,0",
+            ",0.0000,675.0000,0,250000",
+        ),
+        line(
+            "14.000",
+            e,
+            druid,
+            "0,200000,250000,0",
+            ",20.0000,0.0000,3,100",
+        ),
+        line("15.000", "SPELL_CAST_SUCCESS", druid, "3,100,100,0", ""),
+        line(
+            "16.000",
+            e,
+            druid,
+            "3,90,100,0",
+            ",450.0000,0.0000,0,250000",
+        ),
+        at("30.000", "ENCOUNTER_END,3000,\"Ula'tek\",16,20,1,20000"),
+    ];
+    let c = cut([], slice.iter().map(String::as_str), &Table, None);
+    let w = |kind, current, max| Power { kind, current, max };
+    let pools = |name: &str| {
+        let u = c.units.iter().find(|u| u.name == name).unwrap();
+        u.posts.iter().map(|p| p.pools.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        pools("Pal-Realm-US"),
+        [vec![w(0, 250_000, 250_000), w(9, 1, 5)]],
+        "holy power, max 5, opens from its first gain"
+    );
+    assert_eq!(
+        pools("Sham-Realm-US"),
+        [vec![w(11, 50, 150)], vec![w(11, 60, 150)]],
+        "mana no block named: no pool, capped or not"
+    );
+    assert_eq!(
+        pools("Druid-Realm-US"),
+        [
+            vec![w(0, 200_000, 250_000)],
+            vec![w(0, 200_000, 250_000), w(3, 100, 100)],
+            vec![w(0, 200_450, 250_000), w(3, 90, 100)],
+        ],
+        "energy at max 100 is continuous: no pool from a gain; the mana a block named advances"
+    );
+}
+
 /// R18's segment-start rule in the cut: a buff R18 names, or a player's
 /// debuff on an NPC, first seen by a refresh, a dose or a removal was up
 /// before the slice — an applied row at t 0 opens it, once per key, sorted

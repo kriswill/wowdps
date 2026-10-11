@@ -110,7 +110,9 @@ moves [R28](../rulings/r28.md)'s power series too — and the cut raises a
 pool an energize fills that the target's block does not name (a warlock's
 shards, a paladin's holy power) by the gain in the block's units
 (`display_mod`: tenths for rage, runic power, shards, astral power;
-hundredths for insanity). Gated by
+hundredths for insanity); an energize starts only a counted pool (its
+max below 100, `COUNTED_POOL_MAX`: shards, holy power, combo points), never
+a continuous one no block named. Gated by
 [replay.txt](../fixtures/replay.md) (its keystone run too) and every
 fixture's R29 rows.
 

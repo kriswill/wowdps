@@ -292,6 +292,18 @@ power, a rogue's combo points and a monk's chi read the same way.
   rage reads 250, Tentacle Slam's 6 insanity 600, a shard's 1.0 against a
   max of 50). Nothing between two lines is inferred: a regenerating mana or
   focus bar moves only when a line says so.
+- **An energize starts only a counted pool.** With no reading of its kind
+  yet, an energize opens the pool (from 0) only when its max is below 100
+  in the block's units (`COUNTED_POOL_MAX`): soul shards, holy power, combo
+  points, chi, arcane charges, essence, runes — the resources a block names
+  only on a spender's line, which empty out of combat. A continuous pool
+  (energy at 100 or more, focus, fury, maelstrom, rage, astral power, runic
+  power, insanity, mana) it advances only once a block has named it: a
+  Restoration shaman's Mana Spring on an elemental shaman, whose blocks name
+  maelstrom, would otherwise open a mana pool that is spent on lines that
+  never name it and so only climbs — and the replay frame's power line,
+  which shows the pool that moved most, could pick it (the coordinator's
+  call in review, 2026-10-11).
 - **The format number moves** (FORMAT 5 on format 4's codec), since every
   stored file's `power` and `pools` change and the rewrite queue knows a
   file by its number alone.
@@ -302,12 +314,9 @@ block equal to the last spender's leftover plus the gains between; over two
 +15 runs 526 of his 533 shard spenders closed exactly (the rest a gain the
 log does not write as an energize), and 394 of a paladin's 395 holy power
 spenders. The store's 595 files took about three minutes to recut as
-format 4, and format 5's recut costs as much once deployed. A known gap:
-an energize of a pool no line of the unit's block ever
-names (a Restoration shaman's Mana Spring on an elemental shaman, whose
-blocks name maelstrom) starts that pool from the gain and never sees it
-spent, so it climbs toward its max; and a pool's first gain in a cut starts
-from 0, though a warlock walks in with shards.
+format 4, and format 5's recut costs as much once deployed. A known gap: a
+counted pool's first gain in a cut starts from 0, though a warlock walks in
+with shards, until his first spender re-anchors it.
 
 [^contract]: CONTRACT.md — ruling R29 and the v45 row of the version table
 [^plan]: Fight replay — research plan (the capture once, interpreted per tier)

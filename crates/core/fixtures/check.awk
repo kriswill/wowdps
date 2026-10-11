@@ -533,6 +533,10 @@ function r_floor(votes, n,   k, kk, best, fl) {
 # any of it went over; else the last reading (0 with none) plus the amount in
 # the block's units (×10 rage 1, runic power 6, soul shards 7, astral power
 # 8; ×100 insanity 13; ×1 every other), at most that max; no max, nothing.
+# A pool no reading named yet starts so only when it is a COUNTED resource,
+# its max below 100 (shards 50, holy power 5, combo points, chi, arcane
+# charges, essence, runes); a continuous one (energy 100, mana, rage …) an
+# energize never starts.
 function r_scale(t) { return (t == 1 || t == 6 || t == 7 || t == 8) ? 10 : (t == 13 ? 100 : 1) }
 function r_post_pools(s, pk,   u, nk, nc, nm, kk, cc, mm, co, i, n, k, sum, cur0, named, et, emax, ev0) {
     if ($(pk + 9) ~ /^[0-9]+$/) rv[s SUBSEP "replay_absorb"] += $(pk + 9)
@@ -552,7 +556,7 @@ function r_post_pools(s, pk,   u, nk, nc, nm, kk, cc, mm, co, i, n, k, sum, cur0
     if ((ev == "SPELL_ENERGIZE" || ev == "SPELL_PERIODIC_ENERGIZE") && $6 == rguid && !(($(NF - 1) + 0) in named)) {
         et = $(NF - 1) + 0
         emax = ($NF + 0 > 0) ? $NF + 0 : (((u SUBSEP et) in rPool) ? rPoolMax[u SUBSEP et] : 0)
-        if (emax > 0) {
+        if (emax > 0 && (((u SUBSEP et) in rPool) || emax < 100)) {
             if ($(NF - 2) + 0 > 0) ev0 = emax
             else {
                 ev0 = (((u SUBSEP et) in rPool) ? rPool[u SUBSEP et] : 0) + int($(NF - 3) * r_scale(et) + 0.5)
