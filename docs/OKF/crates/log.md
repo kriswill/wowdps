@@ -2,6 +2,11 @@
 
 ## 2026-10-11
 
+- **Update** — [wowdps-daemon](daemon.md): an import trims the replay cap
+  only once its card is in (`write_replay`), refuses a re-import over a
+  replay it cannot read, and keeps a moved import whose annotations it
+  cannot carry.
+
 - **Update** — [wowdps-daemon](daemon.md), [wowdps-history](history.md):
   the review's fixes — `restore_replay`, `retire_import`, an ownerless
   import never stamped "me", a busy `ImportReplay` refusal counted as a

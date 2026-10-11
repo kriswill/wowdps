@@ -2231,7 +2231,19 @@ impl<B: Backend> Store<B> {
     /// protected set serves the slot test and the trim, never a whole
     /// retention pass (an import's `store` has just run one). `false` when
     /// the card is unknown, earns none, or the write fails.
-    pub fn store_replay(&mut self, id: &str, mut cut: Cut) -> bool {
+    pub fn store_replay(&mut self, id: &str, cut: Cut) -> bool {
+        let protected = self.protected();
+        if !self.write_replay(id, cut, &protected) {
+            return false;
+        }
+        self.trim_replays(&protected);
+        true
+    }
+
+    /// [`Store::store_replay`]'s write without its trim: the import trims
+    /// only once its card is in (v46), so a failed import takes no other
+    /// fight's replay with it.
+    fn write_replay(&mut self, id: &str, mut cut: Cut, protected: &HashSet<String>) -> bool {
         let Some(card) = self.card(id) else {
             return false;
         };
@@ -2239,8 +2251,7 @@ impl<B: Backend> Store<B> {
             return false;
         }
         let owner = card.owner.clone();
-        let protected = self.protected();
-        if !self.slots_from(&protected).contains(id) {
+        if !self.slots_from(protected).contains(id) {
             return false;
         }
         cut.set_owner(owner.as_deref());
@@ -2253,7 +2264,6 @@ impl<B: Backend> Store<B> {
             id.to_string(),
             (Some(replay_tier::FORMAT), bytes.len() as u64),
         );
-        self.trim_replays(&protected);
         true
     }
 
@@ -2323,12 +2333,20 @@ impl<B: Backend> Store<B> {
             let bytes = self.backend.read("replay", &replay_name)?;
             Some((bytes, self.replays.get(&id).copied()?))
         });
+        // A replay that is there but cannot be read could not be put back:
+        // refused before anything is written.
+        if previous.is_some() && self.replays.contains_key(&id) && old_replay.is_none() {
+            return Err(format!(
+                "the replay {id} would replace cannot be read; the import is refused"
+            ));
+        }
         // In the index first (the replay's slot is the card's), the replay,
         // then the card's file last: its presence is what makes the fight
-        // exist.
+        // exist. The size cap trims only once it is in.
         self.cards.retain(|c| c.id != id);
         self.insert_card(card.clone());
-        let kept = self.store_replay(&id, cut);
+        let protected = self.protected();
+        let kept = self.write_replay(&id, cut, &protected);
         let written = if !kept {
             Err(self
                 .last_error
@@ -2365,6 +2383,7 @@ impl<B: Backend> Store<B> {
         for old in &moved {
             self.retire_import(old, &id);
         }
+        self.trim_replays(&protected);
         Ok((id, replaced))
     }
 
@@ -2387,14 +2406,14 @@ impl<B: Backend> Store<B> {
         }
     }
 
-    /// An import replaced under a new id (its start moved): out of the
-    /// index whatever happens, its replay and card files removed, and its
-    /// annotations carried to the id that replaced it. A card file that
-    /// cannot be removed is said in `last_error` (it would come back as a
-    /// second import of the source after a restart).
+    /// An import replaced under a new id (its start moved): its
+    /// annotations carried to the id that replaced it first — when they
+    /// cannot be, the old import stays whole, reachable with them, and
+    /// `last_error` says so — then out of the index, its replay and card
+    /// files removed. A card file that cannot be removed is said in
+    /// `last_error` (it would come back as a second import of the source
+    /// after a restart).
     fn retire_import(&mut self, old: &str, new: &str) {
-        self.cards.retain(|c| c.id != old);
-        self.drop_replay(old);
         let notes = format!("{old}.ndjson");
         if let Some(text) = self.backend.read("annotations", &notes) {
             let name = format!("{new}.ndjson");
@@ -2403,17 +2422,16 @@ impl<B: Backend> Store<B> {
                 merged.push(b'\n');
             }
             merged.extend_from_slice(&text);
-            match self.backend.write("annotations", &name, &merged) {
-                Ok(()) => {
-                    let _ = self.backend.remove("annotations", &notes);
-                }
-                Err(e) => {
-                    self.last_error = Some(format!(
-                        "history write failed: {e} (the annotations of {old} stay under its id)"
-                    ));
-                }
+            if let Err(e) = self.backend.write("annotations", &name, &merged) {
+                self.last_error = Some(format!(
+                    "history write failed: {e} ({old} is kept, with its annotations, beside {new})"
+                ));
+                return;
             }
+            let _ = self.backend.remove("annotations", &notes);
         }
+        self.cards.retain(|c| c.id != old);
+        self.drop_replay(old);
         if let Err(e) = self.backend.remove("fights", &format!("{old}.json")) {
             self.last_error = Some(format!(
                 "history remove failed: {e} ({old}, replaced by {new}, returns on a restart)"

@@ -125,9 +125,12 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   (`Origin::Imported`, `imported_id`, log 0) and keeps the replay through
   `store_replay`, nothing else, so a stored fight answers the card alone
   (tier 1). The same source replaces it, pin carried; a moved id is retired
-  (`retire_import`: its annotations carried over, a card it cannot remove
-  said in `last_error`). A failed write leaves the store as it was: a
-  re-import's old replay goes back under its old card (`restore_replay`).
+  (`retire_import`: its annotations carried over first — kept whole when
+  they cannot be — and a card it cannot remove said in `last_error`). A
+  failed write leaves the store as it was: a re-import's old replay goes
+  back under its old card (`restore_replay`; an unreadable one refuses the
+  re-import first), and the size cap trims only once the card is in
+  (`write_replay` is `store_replay` without its trim).
   A queue too full for it answers `Refused` (busy) and counts it as a
   refused read, never in `dropped`. Imports are in the protected set and
   race for no fastest kill or best; the owner inference, `mine`, the

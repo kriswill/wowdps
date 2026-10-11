@@ -901,9 +901,11 @@ id a local card holds; it keeps the replay, its "you" the import's owner. A requ
 never takes (the store off, its queue full) is answered `Refused` too, saying why, and a busy
 refusal is no write lost (`HistoryStatus::dropped` does not tick). The id is
 `imported_id(source, start_utc_ms)`; the same source again replaces the card and replay (the
-same id, or the old id retired when the start moved, its annotations carried to the new id),
-the pin carried, and says so (`replaced`); a failed write leaves the store as it was, a
-re-import's old replay put back under its old card. Imported fights are PROTECTED like pins —
+same id, or the old id retired when the start moved, its annotations carried to the new id —
+an old id whose annotations cannot be carried is kept whole), the pin carried, and says so
+(`replaced`); a failed write leaves the store as it was — a re-import's old replay put back
+under its old card (one it cannot read refuses the re-import first), and the size cap trims
+for an import only once its card is in. Imported fights are PROTECTED like pins —
 never evicted, demoted or trimmed by the caps or `history_replay_mb`, counted apart as
 `kept_imports`, before every other reason (`HistoryStatus::fights` counts every card, imports
 included; `kept_imports` is the imported subset) — and are never this machine's history:

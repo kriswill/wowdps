@@ -728,30 +728,35 @@ fn a_failed_write_leaves_the_store_as_it_was() {
     assert!(store.has_replay(&id));
 }
 
-/// A backend over memory whose card writes, or card removals, can be made
-/// to fail on their own — the paths where a replay or an annotation has
-/// already moved when the card's file does not.
-struct FlakyCards {
+/// A backend over memory whose writes, reads or removals in one directory
+/// can be made to fail on their own — the paths where a replay or an
+/// annotation has already moved when the card's file does not.
+struct Flaky {
     inner: MemBackend,
-    fail_card_writes: std::cell::Cell<bool>,
-    fail_card_removes: std::cell::Cell<bool>,
+    fail_writes_in: std::cell::Cell<Option<&'static str>>,
+    fail_reads_in: std::cell::Cell<Option<&'static str>>,
+    fail_removes_in: std::cell::Cell<Option<&'static str>>,
 }
 
-impl FlakyCards {
+impl Flaky {
     fn over(inner: MemBackend) -> Self {
         Self {
             inner,
-            fail_card_writes: std::cell::Cell::new(false),
-            fail_card_removes: std::cell::Cell::new(false),
+            fail_writes_in: std::cell::Cell::new(None),
+            fail_reads_in: std::cell::Cell::new(None),
+            fail_removes_in: std::cell::Cell::new(None),
         }
     }
 }
 
-impl Backend for FlakyCards {
+impl Backend for Flaky {
     fn list(&self, dir: &str) -> Vec<String> {
         self.inner.list(dir)
     }
     fn read(&self, dir: &str, name: &str) -> Option<Vec<u8>> {
+        if self.fail_reads_in.get() == Some(dir) {
+            return None;
+        }
         self.inner.read(dir, name)
     }
     fn read_range(&self, dir: &str, name: &str, offset: u64, len: usize) -> Option<Vec<u8>> {
@@ -764,14 +769,14 @@ impl Backend for FlakyCards {
         self.inner.exists(dir, name)
     }
     fn write(&mut self, dir: &str, name: &str, bytes: &[u8]) -> std::io::Result<()> {
-        if dir == "fights" && self.fail_card_writes.get() {
-            return Err(std::io::Error::other("card writes fail"));
+        if self.fail_writes_in.get() == Some(dir) {
+            return Err(std::io::Error::other(format!("{dir} writes fail")));
         }
         self.inner.write(dir, name, bytes)
     }
     fn remove(&mut self, dir: &str, name: &str) -> std::io::Result<()> {
-        if dir == "fights" && self.fail_card_removes.get() {
-            return Err(std::io::Error::other("card removals fail"));
+        if self.fail_removes_in.get() == Some(dir) {
+            return Err(std::io::Error::other(format!("{dir} removals fail")));
         }
         self.inner.remove(dir, name)
     }
@@ -783,7 +788,7 @@ impl Backend for FlakyCards {
 #[test]
 fn a_failed_card_write_on_a_reimport_puts_the_old_replay_back() {
     let bytes = replay_bytes();
-    let mut store = Store::open(FlakyCards::over(MemBackend::new()), Retention::default());
+    let mut store = Store::open(Flaky::over(MemBackend::new()), Retention::default());
     let (id, _) = store
         .import_replay(&imported(1_000_000, false, 15), &bytes)
         .unwrap();
@@ -796,11 +801,11 @@ fn a_failed_card_write_on_a_reimport_puts_the_old_replay_back() {
     cut.events.pop();
     let other = replay::encode(&cut);
 
-    store.backend().fail_card_writes.set(true);
+    store.backend().fail_writes_in.set(Some("fights"));
     let err = store
         .import_replay(&imported(1_000_000, true, 15), &other)
         .unwrap_err();
-    assert!(err.contains("card writes fail"), "{err}");
+    assert!(err.contains("fights writes fail"), "{err}");
     assert_eq!(store.card(&id), Some(&card_before), "the old card stands");
     assert_eq!(
         store.replay_file(&id).as_deref(),
@@ -812,7 +817,7 @@ fn a_failed_card_write_on_a_reimport_puts_the_old_replay_back() {
     assert_eq!(store.replay_total(), total_before);
 
     // And a store opened over the files agrees.
-    store.backend().fail_card_writes.set(false);
+    store.backend().fail_writes_in.set(None);
     let reopened = Store::open(copied(&store.backend().inner), Retention::default());
     assert_eq!(reopened.card(&id), Some(&card_before));
     assert_eq!(
@@ -888,11 +893,11 @@ fn a_moved_import_carries_its_annotations() {
 #[test]
 fn a_moved_import_whose_old_card_stays_says_so() {
     let bytes = replay_bytes();
-    let mut store = Store::open(FlakyCards::over(MemBackend::new()), Retention::default());
+    let mut store = Store::open(Flaky::over(MemBackend::new()), Retention::default());
     let (old, _) = store
         .import_replay(&imported(1_000_000, false, 15), &bytes)
         .unwrap();
-    store.backend().fail_card_removes.set(true);
+    store.backend().fail_removes_in.set(Some("fights"));
     let (new, _) = store
         .import_replay(&imported(1_005_000, false, 15), &bytes)
         .unwrap();
@@ -903,4 +908,105 @@ fn a_moved_import_whose_old_card_stays_says_so() {
         said.contains(&old) && said.contains("returns on a restart"),
         "{said}"
     );
+}
+
+/// A re-import whose old replay is there but cannot be read could not put
+/// it back if the card's write failed: refused before anything moves.
+#[test]
+fn a_reimport_over_an_unreadable_replay_is_refused() {
+    let bytes = replay_bytes();
+    let mut store = Store::open(Flaky::over(MemBackend::new()), Retention::default());
+    let (id, _) = store
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let card = store.card(&id).unwrap().clone();
+    let file = store
+        .backend()
+        .inner
+        .read("replay", &format!("{id}.bin"))
+        .unwrap();
+    store.backend().fail_reads_in.set(Some("replay"));
+    let err = store
+        .import_replay(&imported(1_000_000, true, 15), &bytes)
+        .unwrap_err();
+    assert!(err.contains("cannot be read"), "{err}");
+    assert_eq!(store.card(&id), Some(&card));
+    assert_eq!(
+        store.backend().inner.read("replay", &format!("{id}.bin")),
+        Some(file)
+    );
+}
+
+/// An import's replay takes the size cap's room only once its card is in:
+/// a failed card write leaves this machine's unprotected replay that the
+/// trim would have taken.
+#[test]
+fn a_failed_import_trims_no_other_replay() {
+    let tmp = Temp::new("trim-later");
+    let path = log_of(&tmp, &[(30, false, 15)]);
+    let facts = LogFacts::read(&path);
+    let mut file = std::fs::File::open(&path).unwrap();
+    let idx = index::scan(&mut file);
+    let text = load_segment_text(&path, &idx.segments[0]).unwrap();
+    let local_cut = cut_text(&text, None);
+    // A cap that holds the local wipe's replay and nothing more.
+    let cfg = Retention {
+        keep_progression: false,
+        replay_bytes: replay::encode(&local_cut).len() as u64,
+        ..Retention::default()
+    };
+    let mut store = Store::open(Flaky::over(MemBackend::new()), cfg);
+    let local = store.store(&closed_fights(&path)[0], facts).unwrap();
+    assert!(store.store_replay(&local, local_cut));
+    assert!(store.has_replay(&local), "the cap holds it");
+
+    store.backend().fail_writes_in.set(Some("fights"));
+    assert!(
+        store
+            .import_replay(&imported(1_000_000, false, 15), &replay_bytes())
+            .is_err()
+    );
+    assert!(
+        store.has_replay(&local),
+        "nothing trimmed for an import that failed"
+    );
+    assert_eq!(store.status().replays, 1);
+
+    // The same import landing does take the room: the import is protected,
+    // the local wipe is not.
+    store.backend().fail_writes_in.set(None);
+    let (id, _) = store
+        .import_replay(&imported(1_000_000, false, 15), &replay_bytes())
+        .unwrap();
+    assert!(store.has_replay(&id) && !store.has_replay(&local));
+}
+
+/// A moved import whose annotations cannot be carried is kept whole beside
+/// the new one, reachable with them, and the store says so.
+#[test]
+fn a_moved_import_whose_annotations_stay_keeps_its_card() {
+    let bytes = replay_bytes();
+    let mut first = mem(Retention::default());
+    let (old, _) = first
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let mut backend = copied(first.backend());
+    backend
+        .write("annotations", &format!("{old}.ndjson"), b"{\"note\":1}\n")
+        .unwrap();
+    let mut store = Store::open(Flaky::over(backend), Retention::default());
+    store.backend().fail_writes_in.set(Some("annotations"));
+    let (new, _) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert!(store.card(&old).is_some() && store.card(&new).is_some());
+    assert!(store.has_replay(&old) && store.has_replay(&new));
+    assert!(
+        store
+            .backend()
+            .inner
+            .exists("annotations", &format!("{old}.ndjson"))
+    );
+    let said = store.last_error.clone().unwrap_or_default();
+    assert!(said.contains(&old) && said.contains("kept"), "{said}");
 }
