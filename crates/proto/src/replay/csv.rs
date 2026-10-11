@@ -21,7 +21,13 @@
 //! (the unit's shields) and `pools` (its last reading of every pool kind,
 //! `kind:current:max` each, `|` between, by kind; empty for none), and
 //! `events.csv`'s buff rows (`buff_applied`, `buff_removed` in eight
-//! columns, `buff_dose` in nine, as the debuff rows are).
+//! columns, `buff_dose` in nine, as the debuff rows are). From format 5,
+//! `power` and `pools` read as the game's own bars: a cast's success after
+//! its cost (the extractor wrote the block's reading from before the cast
+//! paid), and a pool an energize filled — a warlock's soul shards, a
+//! paladin's holy power, a rogue's combo points — raised by its gain in the
+//! block's units (a shard's `1.0000` is 10 of `power_max` 50), at most its
+//! max.
 
 use std::fmt::Write as _;
 use std::io;

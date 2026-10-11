@@ -82,28 +82,47 @@ segment-start rule), as R18's own span opens at the pull's start.
 **The floor.** Player blocks: Tank 20:01:00.5 and 01.0 (2434), Hunt 01.5
 (2434), Healer 08.5 and 09.5 (2434 — the second a `DAMAGE_SPLIT`, its block at
 off12 behind its spell prefix), Hunt 09.8 and 09.9 (**2435**, a heal and a
-hit finding him on another floor), Lock 12.0 and 14.5 (2434), Tank 14.2 and
-Healer 14.25 (2434, Spirit Link's two halves): 2434 nine votes, 2435 two —
-**floor 2434**.
+hit finding him on another floor), Lock 12.0, 14.5, 17.0, 18.0, 19.0 and
+20.0 (2434), Tank 14.2 and Healer 14.25 (2434, Spirit Link's two halves):
+2434 thirteen votes, 2435 two — **floor 2434**.
 
-**Posts (15), every floor's.** Tank 3, Hunt 3 (01.5 on 2434; 09.8 and 09.9 on
-2435, kept with their floor), Healer 3, Lock 2; Ula'tek 2 (its Spit landing
-at 02.5, the Incinerate finding it at 16.0), Egg 1, Coil 1 (a swing — its
-block at off9 describes the SOURCE — whose amount, 2434, is the floor's id:
-no line is read twice for it). Per floor: 2434 13, 2435 2.
+**Posts (19), every floor's.** Tank 3, Hunt 3 (01.5 on 2434; 09.8 and 09.9 on
+2435, kept with their floor), Healer 3, Lock 6 (his gateway cast, the
+Healing Rain on him, his Chaos Bolt, and three energizes, whose blocks
+describe their target); Ula'tek 2 (its Spit landing at 02.5, the
+Incinerate finding it at 16.0), Egg 1, Coil 1 (a swing — its block at off9
+describes the SOURCE — whose amount, 2434, is the floor's id: no line is
+read twice for it). Per floor: 2434 17, 2435 2.
 
-**Shields and pools (format 3).** Two blocks carry a shield in field 9:
-Tank's at 01.0 (300, after the Venom) and Ula'tek's at 16.0 (1 200, as the
-Incinerate finds it): `replay_absorb` 1 500. Each post carries its unit's
-last reading of every pool kind its posts have named, each with its max
-above 0: Tank's three runic power 100 (300); Hunt's three focus 80, 90, 90
-(260); Healer's three mana 50 000, 49 000, 49 000 (148 000); Lock's mana
-100 at 12.0, then at 14.5 the Healing Rain's block names his soul shards
-(3 of 5) and his mana stays beside them (100 + 103); Ula'tek's Spit names
-two pools (`3|4,25|1,100|5`: energy 25, combo points 1), and at 16.0 its
-energy reads 30 with the combo point kept (26 + 31); Egg and Coil name none
-(`1,0,0`, max 0). `replay_pools` 16 (Tank 3, Hunt 3, Healer 3, Lock 1 + 2,
-Ula'tek 2 + 2), `replay_pool_sum` 148 820.
+**Shields and pools (format 3; format 5's readings).** Two blocks carry a
+shield in field 9: Tank's at 01.0 (300, after the Venom) and Ula'tek's at
+16.0 (1 200, as the Incinerate finds it): `replay_absorb` 1 500. Each post
+carries its unit's last reading of every pool kind its posts have named,
+each with its max above 0, a cast's after its cost (block offset 13): Tank's
+three runic power 100 (300); Hunt's three focus 80, 90, 90 (260); Healer's
+three mana 50 000, 49 000, 49 000 (148 000); Ula'tek's Spit names two pools
+with a cost each (`3|4,25|1,100|5,5|1`: energy 25 − 5 = 20, combo points
+1 − 1 = 0), and at 16.0 its energy reads 30 with the combo points kept
+(20 + 30); Egg and Coil name none (`1,0,0`, max 0). Lock, his soul shards
+in tenths as the game writes them (max 50):
+
+| t | line | mana | shards | Σ |
+|---|---|---|---|---|
+| 12.0 | Demonic Gateway, cost 0 | 100 | — | 100 |
+| 14.5 | Healing Rain on him, his block naming shards | 100 | 30 | 130 |
+| 17.0 | Chaos Bolt, `7,30,50,20`: 30 − 20 | 100 | 10 | 110 |
+| 18.0 | Incinerate energize, block mana 95, suffix `0.2000,0.0000,7,50`: + 0.2 × 10 | 95 | 12 | 107 |
+| 19.0 | Immolate's periodic energize, mana 96, + 0.1 × 10 | 96 | 13 | 109 |
+| 20.0 | Soul Fire energize, mana 97, `3.7000,0.3000,7,50`: 0.3 over the cap — full | 97 | 50 | 147 |
+
+`replay_pools` 24 (Tank 3, Hunt 3, Healer 3, Lock 1 + 2 × 5, Ula'tek 2 + 2),
+`replay_pool_sum` 149 313 (300 + 260 + 148 000 + 703 + 50).
+
+**Power (R28).** Lock's seconds: 12 mana 100, 14 shards 30, 17 shards 10
+(the Chaos Bolt's report after its cost), 18, 19 and 20 mana 95, 96, 97 —
+`power_seconds` 6, `power_sum` 428, `power_max` 150 (mana 100 + shards 50).
+The energizes add 0.2 + 0.1 + 3.7 = 4.0 to his `energize_gained` and 0.3
+to `energize_wasted` (R27), and the Chaos Bolt a second cast (R26).
 
 **Events.**
 
@@ -157,10 +176,12 @@ Ula'tek 2 + 2), `replay_pool_sum` 148 820.
 | 14.2 | Spirit Link on Tank from the totem, `0xa28` | — (one of ours by its summon: no hit) |
 | 14.25 | Spirit Link's heal on Healer | — (a post, no row) |
 | 16.5 | Thorn Rake off Ula'tek | `debuff_removed` |
+| 17.0 | Lock's Chaos Bolt at Ula'tek | `pcast_success`, target Ula'tek |
+| 18.0–20.0 | three energizes on Lock | — (posts, no row) |
 | 30.0 | ENCOUNTER_END 3000, success | `boss_killed` |
 
 `hit` 5, `cast_start` 1, `cast_success` 2, `pcast_start` 1, `pcast_success`
-2, `pcast_failed` 1, `interrupt` 1, `debuff_applied` 4, `debuff_removed` 3,
+3, `pcast_failed` 1, `interrupt` 1, `debuff_applied` 4, `debuff_removed` 3,
 `debuff_dose` 2, `death` 1, `npc_died` 2, `rez` 1, `boss_engaged` 1,
 `boss_killed` 1, `buff_applied` 6, `buff_removed` 3, `buff_dose` 2. The
 three rows opened at 0 (Ember Mark, Bone Shield, Power Infusion) stand at
@@ -217,7 +238,7 @@ The Glass Drake's Shard on Tank (20:10:05.0) and Tank's Death Strike on it
 Player blocks: Tank 01.0, Healer 02.0 and 04.0 — all 2095: **floor 2095**.
 Posts 4 (Tank 1, Healer 2, the Warden 1 — its block on Tank's Death Strike
 at 03.0), all on 2095; pools 3 (Tank's runic power 100, Healer's mana
-49 000 then 48 000; the Warden's `1,0,0` none), Σ 97 100. Events: `boss_engaged` at t 0, the Warden's Frost on
+49 000, then 46 800 — the second Rejuvenation's block reads 48 000 at a cost of 1 200 (format 5); the Warden's `1,0,0` none), Σ 95 900. Events: `boss_engaged` at t 0, the Warden's Frost on
 Tank (`hit`), Healer's two Rejuvenations (`pcast_success` 2), the Warden
 dies (`npc_died`), `boss_killed` at its END (31 s). Units 3: Tank, the
 Warden (the hit's source), Healer. No marker stands on 2521.
@@ -232,7 +253,7 @@ of the boss (2095): 2094 two votes, 2095 three — **floor 2095**.
 Strike); on 2095: Tank 1, Healer 2, the Warden 1. Per floor 2094 3, 2095 4
 (format 1 would have dropped the three above). Per player: Tank 3, Healer 2.
 Pools 5 (Tank's runic power 100 on each of his three, Healer's mana 49 000
-and 48 000), Σ 97 300; no shield anywhere in the run.
+and 46 800, after the second cast's cost), Σ 96 100; no shield anywhere in the run.
 
 **Events (8).** The drake's Shard on Tank (`hit`, where his post on 2094
 says — off the main floor, kept), the drake dies (`npc_died`),

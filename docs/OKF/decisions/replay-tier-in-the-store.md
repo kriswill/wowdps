@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The Replay Tier Lives In The History Store, Cut By The Parser
-description: 'v45 (R29): every boss pull and keystone run is cut from its parsed lines into a binary replay tier beside the series tier, kept on the details tier''s caps and all season for what retention keeps whole — and the replay spike''s offline text cutter is rewritten onto the parser''s events, so the log is read one way and the spike''s files come from either path through one writer; tier format 2 keeps every floor''s posts and the boss rows, so a keystone run replays through its whole dungeon; format 3 adds the shields, every pool kind, the buffs that matter to the fight and the players'' debuffs on NPCs, the rows a followed unit''s HUD reads; format 4 counts an aura up before the pull R18''s way, from its start.'
+description: 'v45 (R29): every boss pull and keystone run is cut from its parsed lines into a binary replay tier beside the series tier, kept on the details tier''s caps and all season for what retention keeps whole — and the replay spike''s offline text cutter is rewritten onto the parser''s events, so the log is read one way and the spike''s files come from either path through one writer; tier format 2 keeps every floor''s posts and the boss rows, so a keystone run replays through its whole dungeon; format 3 adds the shields, every pool kind, the buffs that matter to the fight and the players'' debuffs on NPCs, the rows a followed unit''s HUD reads; format 4 counts an aura up before the pull R18''s way, from its start; format 5 reads each pool as the game''s bar, a cast''s after its cost and an energize''s gain on the pool it fills.'
 tags: [replay, history, wire, design]
 status: stable
 generated: { by: claude-code/opus-5.5, at: 2026-10-09T22:00:00-07:00 }
@@ -253,6 +253,61 @@ when the last segment closed; the cut keeps them to the run's end).
 A known gap: a pet's, a guardian's or a totem's debuff on an NPC is never a
 row (never credited to its owner), so the HUD's own-aura row misses a
 hunter's pet's bleeds or a warlock's demon's debuffs.
+
+## Format 5: a pool reads as the game's bar
+
+**Context.** The HUD's resource row showed a Demonology warlock at 5 soul
+shards through half a minute in which he cast Hand of Gul'dan five times.
+Two readings were wrong, both from the log's shape.[^format] A
+`SPELL_CAST_SUCCESS` reports its caster BEFORE the cast pays: Hand of
+Gul'dan's block reads `7,50,50,30` (50 tenths of a shard, the cost of 30
+in field 13, which the parser dropped), so the cut stored 50 where the bar
+showed 20. And the warlock's shards rise only through `SPELL_ENERGIZE`
+lines whose block, the target's, names his mana: the gain is in the suffix
+(`2.0000,0.0000,7,50`), which the cut never read, so the pool stood at the
+last spender's pre-cost value until the next spender. A paladin's holy
+power, a rogue's combo points and a monk's chi read the same way.
+
+**Decision.**
+
+- **The parser reads the cost.** `parser::Power` gains `cost` (block field
+  13, each `a|b` entry its own; nonzero only on a cast's success) and its
+  `current` is the block's less that cost, never below 0, so every reader
+  sees the pool after the line. That reader includes
+  [R28](../rulings/r28.md)'s power series: no fixture line carried a cost
+  and no ruling pinned the pre-cost value, and the one consumer that draws
+  it (a healer's mana under the inspector, its "low" point) reads truer
+  after the cost, as the game's own bar shows it. A regrade moves the
+  stored series.
+- **The cut applies energizes.** On an energize line whose block posts its
+  destination and names no reading of the power type the suffix fills, the
+  cut sets that kind to its last reading (0 with none) plus the gain, at
+  most the max (the suffix's, else the last reading's); a gain that lost
+  any of itself to the cap fills the pool; with no max, nothing. A block
+  that names the type already reads after the gain (a demon hunter's fury,
+  a druid's rage) and stands as it is. The gain is in the game's displayed
+  units and the block in its own: tenths for rage, runic power, soul shards
+  and astral power, hundredths for insanity (`display_mod`, measured on
+  real lines where a block names the pool just energized: Bear Form's 25
+  rage reads 250, Tentacle Slam's 6 insanity 600, a shard's 1.0 against a
+  max of 50). Nothing between two lines is inferred: a regenerating mana or
+  focus bar moves only when a line says so.
+- **The format number moves** (FORMAT 5 on format 4's codec), since every
+  stored file's `power` and `pools` change and the rewrite queue knows a
+  file by its number alone.
+
+**Consequences.** Recut from the night's log, the warlock's shards read
+50→20→40→10→20→30→50→20→30→0→10→30 across the half minute, each spender's
+block equal to the last spender's leftover plus the gains between; over two
++15 runs 526 of his 533 shard spenders closed exactly (the rest a gain the
+log does not write as an energize), and 394 of a paladin's 395 holy power
+spenders. The store's 595 files took about three minutes to recut as
+format 4, and format 5's recut costs as much once deployed. A known gap:
+an energize of a pool no line of the unit's block ever
+names (a Restoration shaman's Mana Spring on an elemental shaman, whose
+blocks name maelstrom) starts that pool from the gain and never sees it
+spent, so it climbs toward its max; and a pool's first gain in a cut starts
+from 0, though a warlock walks in with shards.
 
 [^contract]: CONTRACT.md — ruling R29 and the v45 row of the version table
 [^plan]: Fight replay — research plan (the capture once, interpreted per tier)

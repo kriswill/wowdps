@@ -73,11 +73,16 @@ replay reads; `GetReplay` / `Replay` carry it
 through one crate-private `varint` module (varints, zigzag, strings, the
 bounds-checked cursor), so the two decoders share their refusals.
 
-The file is `WDRP` | format 4 | a section index | strings, head, units,
+The file is `WDRP` | format 5 | a section index | strings, head, units,
 posts, events, placed, markers, spells, maps, absorb, pools (`encode`,
 `decode`, `format_of`; decode never panics, and allocates in proportion to
 the bytes: no power type at or above `POOL_KINDS`, no pools list past
-`MAX_POOLS`). Format 4 is format 3's codec but the head's number, moved
+`MAX_POOLS`). Format 5 is format 4's codec but the head's number, moved
+with the cut's pool readings (a cast's after its cost, an energize's gain on
+the pool it fills: the pools section lists the posts an energize set as it
+lists a cast's second pool) so the rewrite queue recuts every older file,
+and `replay::csv`'s `tracks.csv` writes `power` and `pools` that way.
+Format 4 is format 3's codec but the head's number, moved
 with the cut's aura rules so the rewrite queue recuts every format-3 file
 too; `encode` writes each post's pools tidied (`next_pools`), so what it
 writes decodes. Format 3 keeps each post's

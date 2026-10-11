@@ -846,6 +846,127 @@ fn a_post_keeps_its_shields_and_every_pool_kind() {
     );
 }
 
+/// Format 5: a pool reads as the game's bar. A cast's success after its
+/// cost (its block reports the caster before the cast pays); an energize's
+/// gain on the pool it names, the target's block naming another — a
+/// warlock's shards in the block's tenths (`1.0000` is 10), capped at the
+/// suffix's max, full after a gain that lost any of itself to the cap, a
+/// periodic energize alike; a paladin's holy power from its first gain,
+/// against the last reading's max when the suffix writes none; a block
+/// naming the energized pool already reads after the gain; no max known,
+/// no reading.
+#[test]
+fn a_pool_reads_after_its_cost_and_rises_with_its_gains() {
+    let lock = "Player-1-W,\"Lock-Realm-US\",0x512,0x80000000";
+    let pal = "Player-1-P,\"Pal-Realm-US\",0x512,0x80000000";
+    let dh = "Player-1-D,\"Havoc-Realm-US\",0x512,0x80000000";
+    let other = "Player-1-Q,\"Other-Realm-US\",0x512,0x80000000";
+    let guid = |who: &str| who.split(',').next().unwrap_or_default().to_string();
+    let block = |who: &str, pool: &str| {
+        format!(
+            "{},0000000000000000,900,1000,0,0,0,0,0,0,{pool},1.00,2.00,2434,0.0000,600",
+            guid(who)
+        )
+    };
+    let cast = |t: &str, who: &str, spell: &str, pool: &str| {
+        at(
+            t,
+            &format!(
+                "SPELL_CAST_SUCCESS,{who},{BOSS},{spell},0x20,{}",
+                block(who, pool)
+            ),
+        )
+    };
+    let gain = |t: &str, ev: &str, who: &str, pool: &str, suffix: &str| {
+        at(
+            t,
+            &format!(
+                "{ev},{who},{who},264178,\"Demonbolt\",0x20,{},{suffix}",
+                block(who, pool)
+            ),
+        )
+    };
+    let e = "SPELL_ENERGIZE";
+    let slice = [
+        at("10.000", "ENCOUNTER_START,3000,\"Ula'tek\",16,20,3004"),
+        gain("11.000", e, lock, "0,250000,250000,0", "0.1000,0.9000,7,50"),
+        cast(
+            "11.100",
+            lock,
+            "686,\"Shadow Bolt\"",
+            "0,250000,250000,3750",
+        ),
+        cast("12.000", lock, "105174,\"Hand of Gul'dan\"", "7,50,50,30"),
+        gain("13.000", e, lock, "0,247000,250000,0", "2.0000,0.0000,7,50"),
+        cast("14.000", lock, "105174,\"Hand of Gul'dan\"", "7,40,50,30"),
+        gain(
+            "15.000",
+            "SPELL_PERIODIC_ENERGIZE",
+            lock,
+            "0,248000,250000,0",
+            "1.0000,0.0000,7,50",
+        ),
+        gain("16.000", e, lock, "0,249000,250000,0", "5.0000,0.0000,7,50"),
+        gain("17.000", e, pal, "0,250000,250000,0", "1.0000,0.0000,9,5"),
+        cast(
+            "18.000",
+            pal,
+            "383328,\"Final Verdict\"",
+            "9|0,5|244973,5|250000,3|25000",
+        ),
+        gain("18.500", e, pal, "0,220000,250000,0", "1.0000,0.0000,9,0"),
+        gain("19.000", e, pal, "0,220500,250000,0", "0.0000,1.0000,9,5"),
+        gain("20.000", e, dh, "17,10,120,0", "10.0000,0.0000,17,120"),
+        gain("20.500", e, other, "0,250000,250000,0", "1.0000,0.0000,9,0"),
+        at("30.000", "ENCOUNTER_END,3000,\"Ula'tek\",16,20,1,20000"),
+    ];
+    let c = cut([], slice.iter().map(String::as_str), &Table, None);
+    let w = |kind, current, max| Power { kind, current, max };
+    let track = |name: &str| {
+        let u = c.units.iter().find(|u| u.name == name).unwrap();
+        u.posts
+            .iter()
+            .map(|p| (p.t_ms, p.power, p.pools.clone()))
+            .collect::<Vec<_>>()
+    };
+    let mana = |current| w(0, current, 250_000);
+    let shards = |current| w(7, current, 50);
+    assert_eq!(
+        track("Lock-Realm-US"),
+        [
+            (1000, Some(mana(250_000)), vec![mana(250_000), shards(50)]),
+            (1100, Some(mana(246_250)), vec![mana(246_250), shards(50)]),
+            (2000, Some(shards(20)), vec![mana(246_250), shards(20)]),
+            (3000, Some(mana(247_000)), vec![mana(247_000), shards(40)]),
+            (4000, Some(shards(10)), vec![mana(247_000), shards(10)]),
+            (5000, Some(mana(248_000)), vec![mana(248_000), shards(20)]),
+            (6000, Some(mana(249_000)), vec![mana(249_000), shards(50)]),
+        ],
+        "capped: full; 50 − 30; + 2.0 shards; 40 − 30; + 1.0; + 5.0 to the max"
+    );
+    let holy = |current| w(9, current, 5);
+    assert_eq!(
+        track("Pal-Realm-US"),
+        [
+            (7000, Some(mana(250_000)), vec![mana(250_000), holy(1)]),
+            (8000, Some(holy(2)), vec![mana(219_973), holy(2)]),
+            (8500, Some(mana(220_000)), vec![mana(220_000), holy(3)]),
+            (9000, Some(mana(220_500)), vec![mana(220_500), holy(5)]),
+        ],
+        "from its first gain; each pool after its own cost; the last max; capped"
+    );
+    assert_eq!(
+        track("Havoc-Realm-US"),
+        [(10_000, Some(w(17, 10, 120)), vec![w(17, 10, 120)])],
+        "the block names the fury it gained: read, never added twice"
+    );
+    assert_eq!(
+        track("Other-Realm-US"),
+        [(10_500, Some(mana(250_000)), vec![mana(250_000)])],
+        "no max in the suffix and no reading before it: no pool"
+    );
+}
+
 /// R18's segment-start rule in the cut: a buff R18 names, or a player's
 /// debuff on an NPC, first seen by a refresh, a dose or a removal was up
 /// before the slice — an applied row at t 0 opens it, once per key, sorted

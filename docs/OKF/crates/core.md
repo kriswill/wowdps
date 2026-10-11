@@ -103,7 +103,14 @@ dose only once the slice saw it applied. Format 4 counts an aura up before
 the slice R18's way: a buff R18 names, or a player's debuff on an NPC,
 first seen by a refresh, a dose or a removal opens with an applied row at
 t 0, once per key, and the events are sorted by time; the parser reads no
-power type at or above 64. Gated by
+power type at or above 64. Format 5 reads every pool as the game's bar: the
+parser takes a cast's cost (block field 13, `Power::cost`) off its current
+— a `SPELL_CAST_SUCCESS` reports its caster before the cast pays, which
+moves [R28](../rulings/r28.md)'s power series too — and the cut raises a
+pool an energize fills that the target's block does not name (a warlock's
+shards, a paladin's holy power) by the gain in the block's units
+(`display_mod`: tenths for rage, runic power, shards, astral power;
+hundredths for insanity). Gated by
 [replay.txt](../fixtures/replay.md) (its keystone run too) and every
 fixture's R29 rows.
 

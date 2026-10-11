@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-11
+
+- **Update** — [wowdps-core](core.md), [wowdps-proto](proto.md),
+  [wowdps-daemon](daemon.md): replay format 5 — the parser's `Power::cost`
+  (block field 13) taken off a cast's current, which moves R28's series too;
+  the cut's energize readings (`display_mod`); the rewrite queue recuts
+  formats 1 to 4.
+
 ## 2026-10-10
 
 - **Update** — [wowdps-model](model.md), [wowdps-core](core.md),
