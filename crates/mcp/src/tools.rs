@@ -15,7 +15,7 @@ use wowdps_model::{
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
     Breakdown, Cursor, DeathWindow, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night,
-    OverlayState, SegmentRef, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    OriginFilter, OverlayState, SegmentRef, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -1096,6 +1096,7 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
         limit: 500,
         after_id: None,
         role: None,
+        origin: OriginFilter::Local,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards,
         _ => Vec::new(),
@@ -1147,6 +1148,7 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         // v22: the subject's role (the `player` argument, else the owner) —
         // a no-op when the store has neither, which `role_applied` reports.
         role,
+        origin: OriginFilter::Local,
     })?;
     let HistoryAnswer::Fights { cards, total } = answer else {
         return Err("unexpected answer".to_string());
@@ -1231,6 +1233,7 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         limit: 1,
         after_id: None,
         role: None,
+        origin: OriginFilter::Local,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next(),
         _ => None,
@@ -1306,6 +1309,7 @@ fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         limit: 1,
         after_id: None,
         role: None,
+        origin: OriginFilter::Local,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next().and_then(|c| c.owner),
         _ => None,
@@ -2051,6 +2055,7 @@ fn enclosing_key(
         limit: 50,
         after_id: None,
         role: None,
+        origin: OriginFilter::Local,
     })?
     else {
         return Ok(None);
@@ -4541,6 +4546,7 @@ mod tests {
             best_pct: None,
             players,
             bosses: Vec::new(),
+            origin: wowdps_proto::history::Origin::Local,
         }
     }
 

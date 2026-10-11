@@ -129,6 +129,7 @@ fn a_stored_fight_marks_its_rows_when_it_answers() {
             limit: 10,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     });
     let cards = replies.into_iter().find_map(|m| match m {

@@ -197,6 +197,7 @@ fn every_trend_measure_and_role_roundtrips() {
                 limit: 0,
                 after_id: None,
                 role,
+                origin: wowdps_proto::OriginFilter::Local,
             },
         };
         assert_eq!(roundtrip_client(&msg), msg, "{role:?}");
@@ -214,11 +215,14 @@ fn every_trend_measure_and_role_roundtrips() {
             limit: 0,
             after_id: None,
             role: Some(Role::Dps),
+            origin: wowdps_proto::OriginFilter::Local,
         },
     }
     .encode();
-    let last = frame.len() - 1;
-    frame[last] = 3;
+    // …| role 01 02 | origin 00 (v46): the role's code is 2 from the end.
+    let at = frame.len() - 2;
+    assert_eq!(frame[at], 2);
+    frame[at] = 3;
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
     assert!(
         matches!(
@@ -227,6 +231,41 @@ fn every_trend_measure_and_role_roundtrips() {
         ),
         "role 3"
     );
+    // v46: every origin filter round-trips, and the code past `Any` (2)
+    // is rejected.
+    for origin in [
+        wowdps_proto::OriginFilter::Local,
+        wowdps_proto::OriginFilter::Imported,
+        wowdps_proto::OriginFilter::Any,
+    ] {
+        let msg = ClientMsg::GetHistory {
+            req_id: 2,
+            query: HistoryQuery::Fights {
+                encounter: None,
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Newest,
+                limit: 0,
+                after_id: None,
+                role: None,
+                origin,
+            },
+        };
+        assert_eq!(roundtrip_client(&msg), msg, "{origin:?}");
+        let mut frame = msg.encode();
+        let last = frame.len() - 1;
+        frame[last] = 3;
+        let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+        assert!(
+            matches!(
+                ClientMsg::decode(tag, &body),
+                Err(wire::DecodeError::BadTag(3))
+            ),
+            "origin 3"
+        );
+    }
     let mut frame = ClientMsg::GetHistory {
         req_id: 1,
         query: HistoryQuery::Trend {
@@ -260,10 +299,11 @@ fn every_trend_measure_and_role_roundtrips() {
 
 /// v26 (step 5): `HistoryQuery::RoleNight` is query tag 3 and
 /// `HistoryAnswer::RoleNight` answer tag 6 — both round-trip with and
-/// without their options, and the tag past each is a `BadTag` (4 for a
-/// query, 7 for an answer).
+/// without their options; v46 took answer tags 7 (`ImportedReplay`) and 8
+/// (`Refused`). The tag past each is a `BadTag` (4 for a query, 9 for an
+/// answer).
 #[test]
-fn role_night_is_the_last_query_and_answer_tag() {
+fn role_night_is_the_last_query_tag_and_refused_the_last_answer() {
     for hour in [None, Some(0), Some(23)] {
         let msg = ClientMsg::GetHistory {
             req_id: 3,
@@ -340,12 +380,29 @@ fn role_night_is_the_last_query_and_answer_tag() {
     }
     .encode();
     assert_eq!(frame[9], 6, "answer tag");
-    frame[9] = 7;
+    frame[9] = 9;
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
     assert_eq!(
         DaemonMsg::decode(tag, &body),
-        Err(wire::DecodeError::BadTag(7))
+        Err(wire::DecodeError::BadTag(9))
     );
+    // v46: the import's two answers round-trip.
+    for answer in [
+        HistoryAnswer::ImportedReplay {
+            fight_id: "x-1".to_string(),
+            replaced: false,
+        },
+        HistoryAnswer::ImportedReplay {
+            fight_id: String::new(),
+            replaced: true,
+        },
+        HistoryAnswer::Refused {
+            reason: "the replay does not decode".to_string(),
+        },
+    ] {
+        let msg = DaemonMsg::History { req_id: 4, answer };
+        assert_eq!(roundtrip_daemon(&msg), msg);
+    }
 }
 
 #[test]

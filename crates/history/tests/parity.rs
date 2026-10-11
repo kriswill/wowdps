@@ -461,6 +461,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             limit: 0,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     ) else {
         panic!("fights");
@@ -491,6 +492,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             limit: 1,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     ) else {
         panic!("best");
@@ -776,6 +778,7 @@ fn card(id: &str, players: Vec<CardPlayer>) -> FightCard {
         best_pct: None,
         players,
         bosses: Vec::new(),
+        origin: wowdps_proto::history::Origin::Local,
     }
 }
 

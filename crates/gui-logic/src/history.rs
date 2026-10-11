@@ -31,7 +31,7 @@ use wowdps_model::{Drill, ListRow, Loadout, Screen, SegmentId, SegmentInfo, Segm
 use wowdps_proto::history::{FightCard, FightKind};
 use wowdps_proto::{
     ClientMsg, ClientState, Cursor, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, ListEntry,
-    SegmentRef, StoredFight,
+    OriginFilter, SegmentRef, StoredFight,
 };
 
 /// Cards per request — the rail's pages and Home's alike. Small enough that
@@ -178,6 +178,7 @@ impl Earlier {
                 },
                 after_id,
                 role: None,
+                origin: OriginFilter::Local,
             },
         })
     }

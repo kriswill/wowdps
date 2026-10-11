@@ -36,7 +36,7 @@ use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::creatures::{self, Creature};
 use wowdps_proto::history::{
     Affiliation, COARSE_BUCKET_MS, COUNT_VIEWS, CardPlayer, CountDetail, FightCard, FightDetails,
-    FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail,
+    FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo, Origin, PlayerCoarse, PlayerDetail,
     PlayerMitigation, PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime, Recap,
     StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, addon_table, content_id, fight_id, loadout_hash,
     log_id, sigma_id,
@@ -46,8 +46,8 @@ use wowdps_proto::msg::{DeathWindow, HistoryStatus};
 use wowdps_proto::replay as replay_tier;
 use wowdps_proto::series::{self as series_tier, FightSeries, PlayerSeries};
 use wowdps_proto::{
-    Breakdown, CompareSide, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight,
-    StoredPair, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    Breakdown, CompareSide, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, OriginFilter,
+    StoredFight, StoredPair, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 use crate::addon;
@@ -2230,11 +2230,14 @@ impl<B: Backend> Store<B> {
     }
 
     /// v45: the kept-whole set by why, each card once: (kills, timed keys,
-    /// progression wipes, pins).
-    pub fn kept_counts(&self) -> (u32, u32, u32, u32) {
-        let mut out = (0, 0, 0, 0);
+    /// progression wipes, pins, v46 imports — counted first: an imported
+    /// kill is not one of ours).
+    pub fn kept_counts(&self) -> (u32, u32, u32, u32, u32) {
+        let mut out = (0, 0, 0, 0, 0);
         for c in &self.cards {
-            if self.cfg.keeps_whole(c) && c.kind == FightKind::Encounter {
+            if c.is_imported() {
+                out.4 += 1;
+            } else if self.cfg.keeps_whole(c) && c.kind == FightKind::Encounter {
                 out.0 += 1;
             } else if self.cfg.keeps_whole(c) {
                 out.1 += 1;
@@ -2530,7 +2533,7 @@ impl<B: Backend> Store<B> {
 
     /// [`Store::status`] with whether an owner resolved already known.
     fn status_with(&self, owned: bool) -> HistoryStatus {
-        let (kept_kills, kept_keys, kept_progression, kept_pins) = self.kept_counts();
+        let (kept_kills, kept_keys, kept_progression, kept_pins, kept_imports) = self.kept_counts();
         HistoryStatus {
             enabled: true,
             fights: self.cards.len() as u32,
@@ -2548,6 +2551,7 @@ impl<B: Backend> Store<B> {
             kept_keys,
             kept_progression,
             kept_pins,
+            kept_imports,
         }
     }
 
@@ -3065,6 +3069,7 @@ impl<B: Backend> Store<B> {
                 limit,
                 after_id,
                 role,
+                origin,
             } => {
                 // v22: `role` is the SUBJECT's role — `guid` when one was
                 // given, else the owner. With no subject at all (owner
@@ -3080,6 +3085,7 @@ impl<B: Backend> Store<B> {
                     *limit,
                     after_id.as_deref(),
                     *role,
+                    *origin,
                 );
                 HistoryAnswer::Fights { cards, total }
             }
@@ -3139,12 +3145,15 @@ impl<B: Backend> Store<B> {
         limit: u32,
         after_id: Option<&str>,
         role: Option<Role>,
+        origin: OriginFilter,
     ) -> (Vec<FightCard>, u32) {
         let owner = self.owner().map(|(g, _)| g);
         let subject: Option<&str> = guid.or(owner.as_deref());
         let mut hits: Vec<&FightCard> = self
             .cards
             .iter()
+            // v46: this machine's own unless the client asks for imports.
+            .filter(|c| origin.admits(&c.origin))
             .filter(|c| match (role, subject) {
                 (Some(role), Some(subject)) => c
                     .players
@@ -4214,6 +4223,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             })
             .collect(),
         players,
+        origin: Origin::Local,
     };
     FightDocs {
         card,

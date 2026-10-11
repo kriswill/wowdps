@@ -217,6 +217,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 limit: u32::MAX,
                 after_id: Some("x-1".to_string()),
                 role: Some(Role::Tank),
+                origin: wowdps_proto::OriginFilter::Local,
             },
         },
         ClientMsg::GetHistory {
@@ -244,6 +245,33 @@ fn client_msgs() -> Vec<ClientMsg> {
                 night: i64::MIN,
                 local_cutover_hour: Some(23),
             },
+        },
+        // v46: an import — its card's options, its players' class and spec
+        // codes and the replay's length prefix all under mutation.
+        ClientMsg::ImportReplay {
+            req_id: 4,
+            card: Box::new(wowdps_proto::history::ImportedCard {
+                name: "The Ashen Warden".to_string(),
+                encounter: Some(wowdps_model::Encounter {
+                    id: 3130,
+                    difficulty: 16,
+                    group_size: 20,
+                }),
+                start_local_ms: Some(i64::MIN),
+                tz_min: Some(i16::MIN),
+                success: Some(true),
+                best_pct: Some(u16::MAX),
+                players: vec![wowdps_proto::history::ImportedPlayer {
+                    guid: "Player-1-A".to_string(),
+                    name: "Ana".to_string(),
+                    class: Some(Class::Evoker),
+                    spec: Some(Spec::FrostMage),
+                }],
+                owner: Some("Player-1-A".to_string()),
+                source: "import:test-1".to_string(),
+                ..wowdps_proto::history::ImportedCard::default()
+            }),
+            replay: b"WDRP\x05\x01\0\0\0\x00".to_vec(),
         },
     ]
 }
@@ -494,6 +522,33 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         externals_given: 0,
                     },
                 ],
+            },
+        },
+        // v46: the import's answers, Refused the last answer tag.
+        DaemonMsg::History {
+            req_id: 5,
+            answer: HistoryAnswer::ImportedReplay {
+                fight_id: "x-1".to_string(),
+                replaced: true,
+            },
+        },
+        DaemonMsg::History {
+            req_id: 6,
+            answer: HistoryAnswer::Refused {
+                reason: "no".to_string(),
+            },
+        },
+        // v46: an imported card, its origin's tag and source under mutation.
+        DaemonMsg::History {
+            req_id: 7,
+            answer: HistoryAnswer::Fights {
+                cards: vec![FightCard {
+                    origin: wowdps_proto::history::Origin::Imported {
+                        source: "import:test-1".to_string(),
+                    },
+                    ..FightCard::default()
+                }],
+                total: 1,
             },
         },
     ]

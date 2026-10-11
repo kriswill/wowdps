@@ -102,6 +102,17 @@ pub fn sigma_id(id: &str) -> String {
     }
 }
 
+/// v46: an IMPORTED fight's id — [`fight_id`]'s `<hash>-<start>` shape with
+/// the hash taken over the import's source (`Origin::Imported::source`) in a
+/// domain of its own (`import:` + the source, never a log's first line), and
+/// the start the fight's UTC start. A local fight's id never comes out of
+/// it; the store still refuses an import whose id a local card holds.
+pub fn imported_id(source: &str, start_utc_ms: i64) -> String {
+    let mut bytes = b"import:".to_vec();
+    bytes.extend_from_slice(source.as_bytes());
+    fight_id(fnv64(&bytes), start_utc_ms, false)
+}
+
 /// The log-identity half of a fight id: hash the first complete line with
 /// its line ending stripped, else the file name.
 pub fn log_id(first_line: Option<&str>, file_name: &str) -> u64 {
@@ -183,6 +194,153 @@ impl FightKind {
             "trash" => FightKind::Trash,
             _ => return None,
         })
+    }
+}
+
+/// v46: where a stored fight came from. Every fight the daemon cut from
+/// this machine's logs is `Local`; one handed to it whole by a client
+/// (`ClientMsg::ImportReplay`, a fight converted from outside this
+/// machine's logs) is `Imported`. An imported fight is a card and a replay
+/// tier and nothing else, protected from retention like a pin, and never
+/// read by the store's judgments of its owner's history (CONTRACT.md, the
+/// import ruling).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Origin {
+    #[default]
+    Local,
+    /// `source` is free text naming what the fight was converted from
+    /// (`wcl:<report>-<fight>`, say): it names the import, so a second
+    /// import of the same source replaces the first. Stored on this
+    /// machine only.
+    Imported { source: String },
+}
+
+impl Origin {
+    /// The import's source; `None` for a local fight.
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            Origin::Local => None,
+            Origin::Imported { source } => Some(source),
+        }
+    }
+
+    pub fn is_imported(&self) -> bool {
+        matches!(self, Origin::Imported { .. })
+    }
+}
+
+/// v46: one player of an imported fight, as a card keeps them (the role
+/// is the spec's, never stored).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ImportedPlayer {
+    pub guid: String,
+    pub name: String,
+    pub class: Option<Class>,
+    pub spec: Option<Spec>,
+}
+
+/// v46: the facts an import can know of a fight — what `ClientMsg::
+/// ImportReplay` carries beside the replay tier's bytes, and all of the
+/// card the daemon makes of it ([`ImportedCard::card`]). Unknowns stay
+/// unknown: no tz, no build, no log version, no owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedCard {
+    pub name: String,
+    pub encounter: Option<Encounter>,
+    /// `Encounter` only for now; the store refuses any other.
+    pub kind: FightKind,
+    pub start_utc_ms: i64,
+    /// The start as the logger's clock read it, and that clock's offset
+    /// (minutes east of UTC), when the source says.
+    pub start_local_ms: Option<i64>,
+    pub tz_min: Option<i16>,
+    pub duration_ms: i64,
+    /// Kill or wipe; `None` when the source does not say.
+    pub success: Option<bool>,
+    /// R16's lowest boss health, whole percent, when the source says.
+    pub best_pct: Option<u16>,
+    pub players: Vec<ImportedPlayer>,
+    /// The player whose fight it is (the replay's "you"), by guid.
+    pub owner: Option<String>,
+    /// [`Origin::Imported`]'s source.
+    pub source: String,
+    /// `(0, 0, 0)` and 0 when unknown.
+    pub build: (u16, u16, u16),
+    pub log_version: u32,
+}
+
+impl Default for ImportedCard {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            encounter: None,
+            kind: FightKind::Encounter,
+            start_utc_ms: 0,
+            start_local_ms: None,
+            tz_min: None,
+            duration_ms: 0,
+            success: None,
+            best_pct: None,
+            players: Vec::new(),
+            owner: None,
+            source: String::new(),
+            build: (0, 0, 0),
+            log_version: 0,
+        }
+    }
+}
+
+impl ImportedCard {
+    /// The card the store keeps for it: [`imported_id`], no log (`log` 0,
+    /// no byte range), never aborted, no combat clock (its rates — none —
+    /// would run on `duration_ms`), every player `logged: false` with no
+    /// numbers. The local start is the source's, else the UTC start moved
+    /// by the offset, else the UTC start (and `tz_min` stays `None`, as on
+    /// a legacy log).
+    pub fn card(&self) -> FightCard {
+        let start_local_ms = self.start_local_ms.unwrap_or_else(|| {
+            self.start_utc_ms
+                .saturating_add(i64::from(self.tz_min.unwrap_or(0)).saturating_mul(60_000))
+        });
+        let players: Vec<CardPlayer> = self
+            .players
+            .iter()
+            .map(|p| CardPlayer {
+                guid: p.guid.clone(),
+                name: p.name.clone(),
+                class: p.class,
+                spec: p.spec,
+                ..CardPlayer::default()
+            })
+            .collect();
+        FightCard {
+            id: imported_id(&self.source, self.start_utc_ms),
+            log: 0,
+            content: content_id(
+                self.encounter,
+                self.start_utc_ms,
+                players.iter().map(|p| p.guid.as_str()),
+            ),
+            kind: self.kind,
+            name: self.name.clone(),
+            encounter: self.encounter,
+            start_local_ms,
+            tz_min: self.tz_min,
+            start_utc_ms: self.start_utc_ms,
+            duration_ms: self.duration_ms,
+            success: self.success,
+            aborted: false,
+            build: self.build,
+            log_version: self.log_version,
+            owner: self.owner.clone().filter(|o| !o.is_empty()),
+            byte_range: None,
+            best_pct: self.best_pct,
+            players,
+            origin: Origin::Imported {
+                source: self.source.clone(),
+            },
+            ..FightCard::default()
+        }
     }
 }
 
@@ -349,6 +507,11 @@ pub struct FightCard {
     /// reader can drill into with `GetFight { boss }` (parsed from the log
     /// on demand; members are not stored on their own).
     pub bosses: Vec<KeyBoss>,
+    /// v46: where the fight came from. Written only when it is not this
+    /// machine's own (`"origin": {"kind": "imported", "source": …}`), so a
+    /// local card's document is byte for byte what it was before; a card
+    /// without the key reads `Local`.
+    pub origin: Origin,
 }
 
 /// One boss pull inside a keystone run, as the key's card lists it.
@@ -412,6 +575,7 @@ impl Default for FightCard {
             best_pct: None,
             players: Vec::new(),
             bosses: Vec::new(),
+            origin: Origin::Local,
         }
     }
 }
@@ -424,7 +588,29 @@ impl FightCard {
         self.combat_ms.unwrap_or(self.duration_ms)
     }
 
+    /// v46: a fight imported from outside this machine's logs.
+    pub fn is_imported(&self) -> bool {
+        self.origin.is_imported()
+    }
+
     pub fn to_json(&self) -> Json {
+        let mut doc = self.local_json();
+        // v46: the origin, last, and only off this machine's own fights —
+        // every local document stays byte for byte what it was.
+        if let (Json::Obj(fields), Origin::Imported { source }) = (&mut doc, &self.origin) {
+            fields.push((
+                "origin".to_string(),
+                obj! {
+                    "kind": Json::str("imported"),
+                    "source": Json::str(source.clone()),
+                },
+            ));
+        }
+        doc
+    }
+
+    /// Every key but the origin, in the order the documents fix.
+    fn local_json(&self) -> Json {
         obj! {
             "schema": Json::num(self.schema),
             "id": Json::str(&*self.id),
@@ -521,7 +707,21 @@ impl FightCard {
                 .and_then(Json::as_arr)
                 .map(|a| a.iter().filter_map(KeyBoss::from_json).collect())
                 .unwrap_or_default(),
+            origin: origin_from(v.get("origin")),
         })
+    }
+}
+
+/// v46: a card's origin. Absent or `null` is `Local`; any object is an
+/// import (only a fight not this machine's own is ever written one), its
+/// `source` read when it is a string — so an origin a later build words
+/// differently still reads as not local, and stays protected.
+fn origin_from(v: Option<&Json>) -> Origin {
+    match v {
+        Some(o @ Json::Obj(_)) => Origin::Imported {
+            source: str_of(o, "source").unwrap_or_default().to_string(),
+        },
+        _ => Origin::Local,
     }
 }
 

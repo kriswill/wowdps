@@ -504,6 +504,16 @@ fn handle(
                         },
                     );
                 }
+                // v46: the store does not take imports yet; the one-shot is
+                // answered all the same.
+                ClientMsg::ImportReplay { req_id, .. } => {
+                    s.push_control(DaemonMsg::History {
+                        req_id,
+                        answer: HistoryAnswer::Refused {
+                            reason: "this daemon does not store imports yet".to_string(),
+                        },
+                    });
+                }
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
             }
         }

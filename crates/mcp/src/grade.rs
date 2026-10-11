@@ -249,6 +249,7 @@ mod tests {
             best_pct: None,
             players,
             bosses: Vec::new(),
+            origin: wowdps_proto::history::Origin::Local,
         }
     }
 
