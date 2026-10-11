@@ -36,10 +36,10 @@ use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::creatures::{self, Creature};
 use wowdps_proto::history::{
     Affiliation, COARSE_BUCKET_MS, COUNT_VIEWS, CardPlayer, CountDetail, FightCard, FightDetails,
-    FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo, Origin, PlayerCoarse, PlayerDetail,
-    PlayerMitigation, PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime, Recap,
-    StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, addon_table, content_id, fight_id, loadout_hash,
-    log_id, sigma_id,
+    FightKind, FightRows, HISTORY_SCHEMA, ImportedCard, KeyBoss, KeyInfo, Origin, PlayerCoarse,
+    PlayerDetail, PlayerMitigation, PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime,
+    Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, addon_table, content_id, fight_id,
+    loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::{DeathWindow, HistoryStatus};
@@ -307,6 +307,15 @@ pub enum HistoryReq {
         encounter: Option<u32>,
         difficulty: Option<u32>,
         kind: Option<FightKind>,
+    },
+    /// v46: a session's `ImportReplay` — a fight from outside this
+    /// machine's logs, stored as an imported card with its replay
+    /// ([`Store::import_replay`]); a write, never under the read quota.
+    ImportReplay {
+        session: u64,
+        req_id: u32,
+        card: Box<ImportedCard>,
+        replay: Vec<u8>,
     },
 }
 
@@ -803,6 +812,27 @@ impl<B: Backend> Worker<B> {
                 );
                 self.dispatch();
             }
+            HistoryReq::ImportReplay {
+                session,
+                req_id,
+                card,
+                replay,
+            } => {
+                let (answer, changed) = match self.store.import_replay(&card, &replay) {
+                    Ok((fight_id, replaced)) => (
+                        HistoryAnswer::ImportedReplay {
+                            fight_id: fight_id.clone(),
+                            replaced,
+                        },
+                        Some(fight_id),
+                    ),
+                    Err(reason) => (HistoryAnswer::Refused { reason }, None),
+                };
+                self.reply_to(session, DaemonMsg::History { req_id, answer });
+                if let Some(id) = changed {
+                    self.changed(id);
+                }
+            }
             HistoryReq::Index {
                 log,
                 segments,
@@ -933,6 +963,15 @@ impl<B: Backend> Worker<B> {
             s.addon = self.addon.clone();
             s.affiliations = store.affiliations;
             s.affiliations_utc_ms = store.affiliations_utc_ms;
+            // v45's replay tier and kept-whole counts (and v46's imports):
+            // the store reckons them, `Status` carries them.
+            s.replays = store.replays;
+            s.replay_bytes = store.replay_bytes;
+            s.kept_kills = store.kept_kills;
+            s.kept_keys = store.kept_keys;
+            s.kept_progression = store.kept_progression;
+            s.kept_pins = store.kept_pins;
+            s.kept_imports = store.kept_imports;
             s.importing = (self.queue.len() + usize::from(self.inflight) + self.scans.len()) as u32;
         }
         // v35: a stored card, a pin or an addon read can each name another
@@ -1045,6 +1084,8 @@ impl<B: Backend> Worker<B> {
             .store
             .cards()
             .iter()
+            // v46: an imported fight has no log to be re-read from.
+            .filter(|c| !c.is_imported())
             .filter(|c| match fight_id {
                 Some(id) => c.id == id,
                 // Without an id, at least one of encounter / kind must narrow.
@@ -2014,12 +2055,15 @@ impl<B: Backend> Store<B> {
 
     // ---- v45: progression and the replay tier ---------------------------------
 
-    /// Rebuild [`Store::killed`] from the cards.
+    /// Rebuild [`Store::killed`] from the cards — this machine's own: an
+    /// imported kill (v46) is somebody's fight, and ends no progression of
+    /// ours.
     fn refresh_killed(&mut self) {
         self.killed = self
             .cards
             .iter()
             .filter(|c| c.kind == FightKind::Encounter && c.success == Some(true) && !c.aborted)
+            .filter(|c| !c.is_imported())
             .filter_map(|c| c.encounter.map(|e| (e.id, e.difficulty)))
             .collect();
     }
@@ -2033,6 +2077,7 @@ impl<B: Backend> Store<B> {
     /// Heroic kill says nothing of a Mythic wipe.
     pub fn is_progression(&self, card: &FightCard) -> bool {
         self.cfg.keep_progression
+            && !card.is_imported()
             && card.kind == FightKind::Encounter
             && card.success == Some(false)
             && !card.aborted
@@ -2129,7 +2174,8 @@ impl<B: Backend> Store<B> {
         let Some(card) = self.card(id) else {
             return false;
         };
-        if !self.cfg.wants_replay(card) || !slots.contains(id) {
+        // v46: an imported replay has no log to be recut from.
+        if card.is_imported() || !self.cfg.wants_replay(card) || !slots.contains(id) {
             return false;
         }
         let stale = self
@@ -2194,6 +2240,110 @@ impl<B: Backend> Store<B> {
         );
         self.trim_replays(&protected);
         true
+    }
+
+    /// v46: store a fight from outside this machine's logs — `imported`'s
+    /// card ([`ImportedCard::card`], `Origin::Imported`) and `replay` as its
+    /// replay tier, nothing else (no rows, details or series: the store
+    /// derives those from a log, and an import has none). The replay must
+    /// be a format this build reads and decode whole; it is kept as this
+    /// build encodes it, its owner the card's. Imported fights are
+    /// protected (never trimmed by the caps or the replay size cap), so
+    /// one always earns its replay slot. A second import of the same
+    /// source replaces the first — card, replay and id — pin carried.
+    /// `(id, replaced)`, or why the import was refused.
+    pub fn import_replay(
+        &mut self,
+        imported: &ImportedCard,
+        replay: &[u8],
+    ) -> Result<(String, bool), String> {
+        if imported.source.trim().is_empty() {
+            return Err("an import names its source".to_string());
+        }
+        if imported.kind != FightKind::Encounter {
+            return Err(format!(
+                "only boss pulls are imported, not a {}",
+                imported.kind.as_str()
+            ));
+        }
+        if imported.encounter.is_none() {
+            return Err("an imported boss pull names its encounter".to_string());
+        }
+        let format = replay_tier::format_of(replay).ok_or("the replay has no replay head")?;
+        if !(replay_tier::OLDEST..=replay_tier::FORMAT).contains(&format) {
+            return Err(format!(
+                "replay format {format} is not one this build reads ({}–{})",
+                replay_tier::OLDEST,
+                replay_tier::FORMAT
+            ));
+        }
+        let cut = replay_tier::decode(replay).ok_or("the replay does not decode")?;
+        let mut card = imported.card();
+        let id = card.id.clone();
+        if self.card(&id).is_some_and(|c| !c.is_imported()) {
+            return Err(format!("{id} is a local fight's id; the import is refused"));
+        }
+        // The same source under another id (its start moved since the last
+        // import) is the same fight: once the new one is in, it goes.
+        let previous = self.card(&id).cloned();
+        let moved: Vec<String> = self
+            .cards
+            .iter()
+            .filter(|c| c.origin == card.origin && c.id != id)
+            .map(|c| c.id.clone())
+            .collect();
+        let replaced = previous.is_some() || !moved.is_empty();
+        card.pinned = previous
+            .as_ref()
+            .or_else(|| moved.first().and_then(|m| self.card(m)))
+            .is_some_and(|c| c.pinned);
+        // In the index first (the replay's slot is the card's), the replay,
+        // then the card's file last: its presence is what makes the fight
+        // exist.
+        self.cards.retain(|c| c.id != id);
+        self.insert_card(card.clone());
+        let written = if !self.store_replay(&id, cut) {
+            Err(self
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "the replay was not kept".to_string()))
+        } else {
+            self.backend
+                .write(
+                    "fights",
+                    &format!("{id}.json"),
+                    card.to_json().to_line().as_bytes(),
+                )
+                .map_err(|e| format!("history write failed: {e}"))
+        };
+        if let Err(why) = written {
+            // Back as it was: the fight imported before stays (its replay
+            // may be the new one's), a first import leaves nothing behind.
+            self.cards.retain(|c| c.id != id);
+            match previous {
+                Some(p) => self.insert_card(p),
+                None => {
+                    self.drop_replay(&id);
+                    let _ = self.backend.remove("fights", &format!("{id}.json"));
+                }
+            }
+            self.last_error = Some(why.clone());
+            return Err(why);
+        }
+        for old in &moved {
+            self.drop_replay(old);
+            let _ = self.backend.remove("fights", &format!("{old}.json"));
+            self.cards.retain(|c| &c.id != old);
+        }
+        Ok((id, replaced))
+    }
+
+    /// A card into the index, which is sorted by start.
+    fn insert_card(&mut self, card: FightCard) {
+        let at = self
+            .cards
+            .partition_point(|c| c.start_utc_ms <= card.start_utc_ms);
+        self.cards.insert(at, card);
     }
 
     /// v45: past `history_replay_mb`, the oldest unprotected replays go
@@ -2459,7 +2609,9 @@ impl<B: Backend> Store<B> {
         let Some(card) = self.card(id) else {
             return false;
         };
-        if !self.earns_details(card) {
+        // v46: an imported fight keeps its card and replay alone, and has
+        // no log to be rewritten from.
+        if card.is_imported() || !self.earns_details(card) {
             return false;
         }
         if !self.has_details(id) {
@@ -2766,6 +2918,8 @@ impl<B: Backend> Store<B> {
             .cards
             .iter()
             .enumerate()
+            // v46: an imported card's owner is the import's, as it said.
+            .filter(|(_, c)| !c.is_imported())
             .filter(|(_, c)| {
                 c.owner
                     .as_deref()
@@ -2809,7 +2963,14 @@ impl<B: Backend> Store<B> {
             .values()
             .filter(|a| a.mine)
             .map(|a| a.guid.clone())
-            .chain(self.cards.iter().filter_map(|c| c.owner.clone()))
+            // v46: an imported card's owner is the import's "you", whoever
+            // that is — never one of the account's characters by that alone.
+            .chain(
+                self.cards
+                    .iter()
+                    .filter(|c| !c.is_imported())
+                    .filter_map(|c| c.owner.clone()),
+            )
             .chain(owner.map(|(g, _)| g));
         Mine::new(guids, &self.cfg.characters)
     }
@@ -2838,6 +2999,7 @@ impl<B: Backend> Store<B> {
                 .cards
                 .iter()
                 .rev()
+                .filter(|c| !c.is_imported())
                 .flat_map(|c| c.players.iter())
                 .find(|p| name_matches(&wanted, &p.name))
                 .map(|p| (p.guid.clone(), false));
@@ -2850,13 +3012,15 @@ impl<B: Backend> Store<B> {
             .cards
             .iter()
             .rev()
+            .filter(|c| !c.is_imported())
             .flat_map(|c| c.players.iter())
             .find(|p| self.affiliations.get(&p.guid).is_some_and(|a| a.mine))
         {
             return Some((mine.guid.clone(), true));
         }
+        // v46: the logs are this machine's; an imported card has none.
         let mut per_log: HashMap<u64, HashSet<&str>> = HashMap::new();
-        for c in &self.cards {
+        for c in self.cards.iter().filter(|c| !c.is_imported()) {
             let set = per_log.entry(c.log).or_default();
             for p in c.players.iter().filter(|p| p.logged && !p.enemy) {
                 set.insert(&p.guid);
@@ -2879,6 +3043,7 @@ impl<B: Backend> Store<B> {
         self.cards
             .iter()
             .rev()
+            .filter(|c| !c.is_imported())
             .find_map(|c| c.owner.clone())
             .map(|g| (g, true))
     }
@@ -3002,6 +3167,12 @@ impl<B: Backend> Store<B> {
         // the owner's best value. Zeros never enter (see below).
         let mut best: HashMap<(GroupKey, u32, u8), (f64, &str)> = HashMap::new();
         for c in &self.cards {
+            // v46: an imported fight is kept as a pin is, and races for no
+            // fastest kill or personal best — it is not this machine's.
+            if c.is_imported() {
+                out.insert(c.id.clone());
+                continue;
+            }
             // v42: a boss kill and a timed key are kept whole, all season.
             if c.pinned
                 || self.kept_whole(c)
@@ -3221,6 +3392,7 @@ impl<B: Backend> Store<B> {
         (cards, total)
     }
 
+    /// v46: this machine's own pulls — an imported fight is no pull of ours.
     fn progression(&self, encounter: u32, difficulty: u32, cutover: Option<u8>) -> HistoryAnswer {
         let pulls: Vec<&FightCard> = self
             .cards
@@ -3229,6 +3401,7 @@ impl<B: Backend> Store<B> {
                 c.encounter
                     .is_some_and(|e| e.id == encounter && e.difficulty == difficulty)
                     && !c.aborted
+                    && !c.is_imported()
             })
             .collect();
         let kills: Vec<&FightCard> = pulls
@@ -3316,6 +3489,7 @@ impl<B: Backend> Store<B> {
                 c.encounter
                     .is_some_and(|e| e.id == encounter && e.difficulty == difficulty)
                     && !c.aborted
+                    && !c.is_imported()
                     && bucket_start(c.start_utc_ms, c.tz_min, cutover, false) == night
             })
             .collect();
@@ -3475,7 +3649,8 @@ impl<B: Backend> Store<B> {
         let mut points: Vec<TrendPoint> = self
             .cards
             .iter()
-            .filter(|c| !c.aborted)
+            // v46: a trend is of this machine's own fights.
+            .filter(|c| !c.aborted && !c.is_imported())
             .filter(|c| encounter.is_none_or(|e| c.encounter.is_some_and(|x| x.id == e)))
             .filter(|c| difficulty.is_none_or(|d| card_difficulty(c) == Some(d)))
             .filter(|c| since_utc_ms.is_none_or(|s| c.start_utc_ms >= s))

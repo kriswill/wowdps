@@ -242,6 +242,28 @@ impl MockDaemon {
                     answer: wowdps_proto::HistoryAnswer::Imported { queued: 0 },
                 });
             }
+            // v46: an imported fight, stored as the history thread stores
+            // it, `HistoryChanged` after a stored one.
+            ClientMsg::ImportReplay {
+                req_id,
+                card,
+                replay,
+            } => match self.history.import_replay(&card, &replay) {
+                Ok((fight_id, replaced)) => {
+                    out.push(DaemonMsg::History {
+                        req_id,
+                        answer: wowdps_proto::HistoryAnswer::ImportedReplay {
+                            fight_id: fight_id.clone(),
+                            replaced,
+                        },
+                    });
+                    out.push(DaemonMsg::HistoryChanged { fight_id });
+                }
+                Err(reason) => out.push(DaemonMsg::History {
+                    req_id,
+                    answer: wowdps_proto::HistoryAnswer::Refused { reason },
+                }),
+            },
             // v45 (R29): the replay tier, as the history thread reads it.
             ClientMsg::GetReplay { req_id, fight_id } => {
                 self.cut_replay(&fight_id);

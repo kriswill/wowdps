@@ -209,6 +209,21 @@ fn forward_history(history: &HistoryLink, s: &mut Session, req: HistoryReq) {
             fight_id,
             bytes: None,
         },
+        // v46: a write the store did not take says why — a store that is
+        // off, or a queue full of closing pulls.
+        HistoryReq::ImportReplay { req_id, .. } => DaemonMsg::History {
+            req_id,
+            answer: HistoryAnswer::Refused {
+                reason: if history.enabled() {
+                    "the history store is busy; try again".to_string()
+                } else {
+                    history
+                        .status()
+                        .error
+                        .unwrap_or_else(|| "the history store is off".to_string())
+                },
+            },
+        },
         // Engine-side forwards are lossy by design and answer nobody.
         HistoryReq::Store(_)
         | HistoryReq::Index { .. }
@@ -504,15 +519,23 @@ fn handle(
                         },
                     );
                 }
-                // v46: the store does not take imports yet; the one-shot is
-                // answered all the same.
-                ClientMsg::ImportReplay { req_id, .. } => {
-                    s.push_control(DaemonMsg::History {
-                        req_id,
-                        answer: HistoryAnswer::Refused {
-                            reason: "this daemon does not store imports yet".to_string(),
+                // v46: a fight from outside this machine's logs, stored by
+                // the history thread (the store's one writer).
+                ClientMsg::ImportReplay {
+                    req_id,
+                    card,
+                    replay,
+                } => {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::ImportReplay {
+                            session: id,
+                            req_id,
+                            card,
+                            replay,
                         },
-                    });
+                    );
                 }
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
             }
