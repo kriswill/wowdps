@@ -60,15 +60,24 @@
 //!   the evidence of what a player pressed, a triggered effect whose cast
 //!   the log never writes included (a guardian druid's Feral Frenzy logs
 //!   only its triggered spell, whose debuff on the target is such a row);
+//!   a pet's, a guardian's or a totem's debuff is none (never credited to
+//!   its owner);
 //! - a buff on a player that matters to the fight (`buff_applied`,
 //!   `buff_removed`, `buff_dose`): one whose spell R18's curated table names
 //!   a defensive, a tank's mitigation, an external, a major cooldown or a
 //!   healing cooldown (`role_spells`, its support buffs aside), or any buff
 //!   whose source is not ours (an NPC's, or no one's: an empowerment, a
-//!   mark), `src` its caster. A removal or a dose whose application the cut
-//!   never saw (by player, spell and caster) is dropped: the buff was up
-//!   before the slice's first line. A long buff from before the pull
-//!   (stamina, a flask) is neither, so it makes no row at all.
+//!   mark), `src` its caster. A long buff from before the pull (stamina, a
+//!   flask) is neither, so it makes no row at all.
+//!
+//! AN AURA UP BEFORE THE CUT (format 4) counts R18's way: a player's debuff
+//! on an NPC, or a buff R18's table names, whose first sight in the slice is
+//! a refresh, a dose or a removal (by unit, spell and caster) was up when it
+//! began, so an applied row opens it at t 0, once per key, and the dose or
+//! removal that follows is kept; a later one with nothing up is dropped. An
+//! NPC's buff R18 does not name keeps a removal or dose only once applied in
+//! the slice. The applied row is found at its line (its units numbered
+//! there) and sorted to t 0, after the rows the first lines made.
 //!
 //! THE POSTS carry (format 3) the block's absorb — the unit's shields in
 //! total — and, beside the pool the line names first, the last reading of
@@ -259,6 +268,20 @@ enum AuraStep {
     Applied,
     Removed,
     Dose(u16),
+    /// `SPELL_AURA_REFRESH`: never a row of its own, but a first sight.
+    Refresh,
+}
+
+/// Which of an aura's rows the cut keeps.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Keep {
+    /// Every application, removal and dose.
+    Every,
+    /// Every one, and an applied row at t 0 for a key first seen otherwise
+    /// (R18's segment-start rule): up before the cut began.
+    FromStart,
+    /// A removal or dose only once the cut saw the key applied.
+    OnceApplied,
 }
 
 /// An `events.csv` row in waiting: units as GUIDs, numbered in the order
@@ -353,10 +376,10 @@ struct Cutter {
     floor_votes: HashMap<u32, u64>,
     /// Each posted unit's last reading of every pool kind its posts named.
     pools: HashMap<Gix, Vec<Power>>,
-    /// The buffs on players the slice saw applied and not yet removed, by
-    /// (player, spell, caster): a removal or a dose of any other was up
-    /// before the slice began, and makes no row.
-    buffs_up: HashSet<(Gix, u32, Option<Gix>)>,
+    /// The keyed auras the slice has seen, by (unit, spell, caster) — a
+    /// buff on a player, a player's debuff on an NPC — and whether each is
+    /// up (`Cutter::aura`).
+    auras: HashMap<(Gix, u32, Option<Gix>), bool>,
     drafts: Vec<Draft>,
     placed: Vec<DraftPlaced>,
     markers: Vec<Marker>,
@@ -846,6 +869,13 @@ impl Cutter {
                 stacks,
                 ..
             } => return self.aura(t, AuraStep::Dose(*stacks), src, dst, spell, *aura_type),
+            Ev::AuraRefresh {
+                src,
+                dst,
+                spell,
+                aura_type,
+                ..
+            } => return self.aura(t, AuraStep::Refresh, src, dst, spell, *aura_type),
             _ => return None,
         })
     }
@@ -860,10 +890,17 @@ impl Cutter {
                 .is_some_and(|s| s.hostile)
     }
 
-    /// The row an aura's line makes, if any: a debuff on a player from a
-    /// hostile unit or from no one; (format 3) a player's debuff on an NPC,
-    /// every one; a buff on a player that matters to the fight, whose
-    /// removal or dose counts only after the slice saw it applied.
+    /// The row an aura's line makes, if any, and (format 4) the applied row
+    /// at t 0 it may open first:
+    ///
+    /// - a debuff on a player from a hostile unit or from no one: every row;
+    /// - a player's debuff on an NPC, and a buff on a player whose spell
+    ///   R18's curated table names (its support buffs aside): every row,
+    ///   and R18's segment-start rule — a refresh, dose or removal of a key
+    ///   (unit, spell, caster) the cut has not seen yet was up before it
+    ///   began, so an applied row opens it at t 0, once per key;
+    /// - any other buff on a player whose source is not ours (an NPC's, no
+    ///   one's): its removal or dose only after the cut saw it applied.
     fn aura(
         &mut self,
         t: u32,
@@ -873,60 +910,93 @@ impl Cutter {
         spell: &Spell,
         aura_type: AuraType,
     ) -> Option<DraftEvent> {
-        let buff = aura_type == AuraType::Buff;
-        let kind = if buff {
+        let (kinds, keep) = if aura_type == AuraType::Buff {
+            if !is_player(dst) {
+                return None;
+            }
             // A defensive, a tank's mitigation, an external, a major or a
-            // healing cooldown (R18's curated table, its support buffs
-            // aside), or anything an NPC or no one put on the player.
+            // healing cooldown: R18's curated table, its support buffs aside.
             let fights = crate::role_spells::role_kind(spell.id)
                 .is_some_and(|k| k != RoleSpellKind::SupportBuff);
-            if !is_player(dst) || !(fights || !self.ours_now(src)) {
+            let kinds = [
+                EventKind::BuffApplied,
+                EventKind::BuffRemoved,
+                EventKind::BuffDose,
+            ];
+            if fights {
+                (kinds, Keep::FromStart)
+            } else if !self.ours_now(src) {
+                (kinds, Keep::OnceApplied)
+            } else {
                 return None;
-            }
-            let key = (self.gix(&dst.guid), spell.id, self.src_of(src));
-            let seen = match step {
-                AuraStep::Applied => {
-                    self.buffs_up.insert(key);
-                    true
-                }
-                AuraStep::Removed => self.buffs_up.remove(&key),
-                AuraStep::Dose(_) => self.buffs_up.contains(&key),
-            };
-            if !seen {
-                return None;
-            }
-            match step {
-                AuraStep::Applied => EventKind::BuffApplied,
-                AuraStep::Removed => EventKind::BuffRemoved,
-                AuraStep::Dose(_) => EventKind::BuffDose,
             }
         } else {
-            let on_player = is_player(dst) && (src.guid == NOBODY || self.hostile_now(src));
-            let players_on_npc = is_creature(dst) && is_player(src);
-            if !on_player && !players_on_npc {
+            let kinds = [
+                EventKind::DebuffApplied,
+                EventKind::DebuffRemoved,
+                EventKind::DebuffDose,
+            ];
+            if is_player(dst) && (src.guid == NOBODY || self.hostile_now(src)) {
+                (kinds, Keep::Every)
+            } else if is_creature(dst) && is_player(src) {
+                (kinds, Keep::FromStart)
+            } else {
                 return None;
             }
-            match step {
-                AuraStep::Applied => EventKind::DebuffApplied,
-                AuraStep::Removed => EventKind::DebuffRemoved,
-                AuraStep::Dose(_) => EventKind::DebuffDose,
-            }
         };
-        Some(DraftEvent {
+        let [applied, removed, dose] = kinds;
+        let row = |c: &mut Cutter, t, kind, stacks| DraftEvent {
             t,
             kind,
-            unit: Some(self.gix(&dst.guid)),
+            unit: Some(c.gix(&dst.guid)),
             spell_id: spell.id,
             spell: spell.name.clone(),
             at: None,
-            src: self.src_of(src),
-            stacks: match step {
-                AuraStep::Dose(n) => Some(n),
-                _ => None,
-            },
+            src: c.src_of(src),
+            stacks,
             base: None,
             target: None,
-        })
+        };
+        let (kind, stacks) = match step {
+            AuraStep::Applied => (applied, None),
+            AuraStep::Removed => (removed, None),
+            AuraStep::Dose(n) => (dose, Some(n)),
+            AuraStep::Refresh => (applied, None),
+        };
+        if keep == Keep::Every {
+            return (!matches!(step, AuraStep::Refresh)).then(|| row(self, t, kind, stacks));
+        }
+        // Keyed: whether the cut has seen this aura, and whether it is up.
+        let key = (self.gix(&dst.guid), spell.id, self.src_of(src));
+        let up = match (self.auras.get(&key).copied(), step) {
+            (_, AuraStep::Applied) => {
+                self.auras.insert(key, true);
+                return Some(row(self, t, kind, stacks));
+            }
+            // First seen otherwise: up before the cut began. R18 opens it at
+            // the start; a buff R18 does not name stays out.
+            (None, _) if keep == Keep::FromStart => {
+                let opened = row(self, 0, applied, None);
+                self.drafts.push(Draft::Event(opened));
+                true
+            }
+            (seen, _) => seen.unwrap_or(false),
+        };
+        match step {
+            AuraStep::Refresh => {
+                self.auras.insert(key, up);
+                None
+            }
+            _ if !up => None,
+            AuraStep::Removed => {
+                self.auras.insert(key, false);
+                Some(row(self, t, kind, stacks))
+            }
+            _ => {
+                self.auras.insert(key, true);
+                Some(row(self, t, kind, stacks))
+            }
+        }
     }
 
     /// A source: none for no one, else its unit.
@@ -1175,6 +1245,11 @@ impl Cutter {
             };
             placed_rows.push(row);
         }
+        // In time order: an applied row opened at t 0 (R18's segment-start
+        // rule) is found at a later line, numbering its units there, and moves
+        // to the start after the rows the first lines made; a stable sort
+        // keeps the log's order otherwise.
+        events.sort_by_key(|e: &Event| e.t_ms);
         posts.resize_with(units.order.len(), Vec::new);
         let parts: HashSet<String> = self.titles.iter().flat_map(|t| title_parts(t)).collect();
         let units = self.units(&units.order, posts, &max_hp, &parts, owner);

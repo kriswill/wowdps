@@ -73,7 +73,9 @@ spells are the fixtures' own, hard-coded beside check.awk's other tables
 Every WORLD_MARKER line is an index seed (v45), so a lazily loaded pull
 starts with these two standing. A `SPELL_CAST_FAILED` at 20:00:04 is before
 the pull: no row. At 20:00:05 Tank puts up Bone Shield (195181, R18's
-`ActiveMitigation`): before the pull, so the cut never sees it applied.
+`ActiveMitigation`): before the pull, so the cut never sees it applied — its
+first line in the pull, a dose, opens it at 0 s (format 4, R18's
+segment-start rule), as R18's own span opens at the pull's start.
 
 ## Segment 1 — Ula'tek (encounter 3000, Mythic, kill, 30 s)
 
@@ -110,12 +112,13 @@ Ula'tek 2 + 2), `replay_pool_sum` 148 820.
 | 00.0 | ENCOUNTER_START 3000 | `boss_engaged` (Ula'tek, no unit) |
 | 00.5 | Tank's Death Strike at Ula'tek | `pcast_success`, target Ula'tek |
 | 01.0 | Ula'tek's Venom on Tank, his block on 2434 | `hit` (base 120) |
+| 01.2 | Healer's Ember Mark (a DEBUFF) on Ula'tek refreshed, never seen applied | `debuff_applied` at 0, src Healer (up before the pull); the refresh no row of its own |
 | 01.5 | Ula'tek's `RANGE_DAMAGE` Shoot on Hunt | `hit` (any spell-borne damage) |
 | 02.0 | Ula'tek begins Spit | `cast_start` |
-| 02.2 | Bone Shield on Tank down a stack | — (a dose of a buff the cut never saw applied) |
+| 02.2 | Bone Shield on Tank down a stack, never seen applied | `buff_applied` at 0, src Tank (up before the pull), then `buff_dose` (4) |
 | 02.5 | Ula'tek lands Spit on Tank | `cast_success` |
 | 03.0 | Egg lands Hatch | `cast_success` |
-| 03.0 | Bone Shield off Tank | — (up before the pull: no row) |
+| 03.0 | Bone Shield off Tank | `buff_removed` |
 | 03.2 | Coil's swing on Tank | — (melee is no hit row) |
 | 03.5 | Tank's Death Strike fails, "Not enough runic power" | `pcast_failed` |
 | 03.6 | Hunt begins Aimed Shot | `pcast_start` |
@@ -127,6 +130,7 @@ Ula'tek 2 + 2), `replay_pool_sum` 148 820.
 | 05.7 | Ula'tek's Venom Surge (a BUFF) on Hunt | `buff_applied`, src Ula'tek (an NPC's buff) |
 | 05.8 | Toxic Ward on Healer from no one | `buff_applied`, no source (the encounter's) |
 | 06.0 | Bone Shield on Tank again | `buff_applied`, src Tank |
+| 06.1 | Bone Shield refreshed | — (up: a refresh is never a row) |
 | 06.6 | Bone Shield to 2 stacks | `buff_dose` |
 | 06.7 | Healer's Thorn Rake (a DEBUFF) on Ula'tek | `debuff_applied`, unit Ula'tek, src Healer |
 | 06.8 | Thorn Rake to 2 stacks | `debuff_dose` |
@@ -134,6 +138,8 @@ Ula'tek 2 + 2), `replay_pool_sum` 148 820.
 | 07.0 | Rot off Tank | `debuff_removed` |
 | 07.5 | Pain Suppression off Tank | `buff_removed` |
 | 08.0 | Venom absorbed whole | `hit` (a miss: no position) |
+| 08.2 | Ember Mark off Ula'tek | `debuff_removed` |
+| 08.3 | Ember Mark off again | — (nothing up: once per key) |
 | 08.5 | Falling Rocks on Healer from the nil unit | `hit` — its source names no unit |
 | 09.0 | Tank's Mind Freeze on Spit | `interrupt` |
 | 09.5 | `DAMAGE_SPLIT` on Healer | — (a post, no row) |
@@ -145,6 +151,7 @@ Ula'tek 2 + 2), `replay_pool_sum` 148 820.
 | 11.0 | Tank dies | `death` |
 | 11.5 | Healer's Rebirth on Tank | `rez`, src Healer |
 | 12.0 | Lock casts Demonic Gateway | `pcast_success` |
+| 12.2 | Healer's Power Infusion on Lock refreshed, never seen applied | `buff_applied` at 0, src Healer (an external up before the pull) |
 | 12.8 | Toxic Ward off Healer | `buff_removed` |
 | 14.1 | Shaman summons Spirit Link Totem | — (no placing spell) |
 | 14.2 | Spirit Link on Tank from the totem, `0xa28` | — (one of ours by its summon: no hit) |
@@ -153,11 +160,15 @@ Ula'tek 2 + 2), `replay_pool_sum` 148 820.
 | 30.0 | ENCOUNTER_END 3000, success | `boss_killed` |
 
 `hit` 5, `cast_start` 1, `cast_success` 2, `pcast_start` 1, `pcast_success`
-2, `pcast_failed` 1, `interrupt` 1, `debuff_applied` 3, `debuff_removed` 2,
+2, `pcast_failed` 1, `interrupt` 1, `debuff_applied` 4, `debuff_removed` 3,
 `debuff_dose` 2, `death` 1, `npc_died` 2, `rez` 1, `boss_engaged` 1,
-`boss_killed` 1, `buff_applied` 4, `buff_removed` 2, `buff_dose` 1. The
-Venom Surge and the second Bone Shield are never removed: their rows stand
-applied to the pull's end.
+`boss_killed` 1, `buff_applied` 6, `buff_removed` 3, `buff_dose` 2. The
+three rows opened at 0 (Ember Mark, Bone Shield, Power Infusion) stand at
+t 0 in the cut, after the boss row; the Venom Surge, the second Bone Shield
+and the Power Infusion are never removed: their rows stand applied to the
+pull's end. R18 agrees on the Bone Shield (its span from the pull's start
+to 3 s, `am_uptime_ms` 27 000 with the second from 6 s to the kill) and on
+the Power Infusion (an external of 30 000 ms, the whole pull).
 
 **Placed (7 rows).** 12.0 the gateway cast (Lock, where he stood); 12.5 the
 trip aura on Hunt (a unit numbered: a `touch`); 13.0 Healer's Wind Rush Totem

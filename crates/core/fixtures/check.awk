@@ -540,32 +540,48 @@ function r_post_pools(s, pk,   u, nk, nc, nm, kk, cc, mm, i, n, k, sum) {
     for (i = 1; i <= n; i++) sum += rPool[u SUBSEP k[i]]
     rv[s SUBSEP "replay_pools"] += n; rv[s SUBSEP "replay_pool_sum"] += sum
 }
-# An aura's line (format 3's rows). A DEBUFF (any aura word but BUFF) on a
-# player from the nil unit or a hostile one, or a PLAYER's debuff on an NPC
-# (a Creature- or Vehicle- unit), every one: a debuff row, `unit` the one
-# wearing it. A BUFF on a player whose spell R18's table names (ROLE, its
-# support buffs aside) or whose source is not ours (an NPC's, the nil
-# unit's): a buff row — its removal or dose only after the cut saw it
-# applied, by (player, spell, source), else it was up before the cut began.
-# A line with no aura word, or a dose with no whole stack count, is none.
-function r_aura(s,   dose, step, key) {
+# An aura's line (format 3's rows; format 4's start of the cut). A DEBUFF (any
+# aura word but BUFF) on a player from the nil unit or a hostile one: every
+# application, removal and dose a debuff row. A PLAYER's debuff on an NPC (a
+# Creature- or Vehicle- unit), and a BUFF on a player whose spell R18's table
+# names (ROLE, its support buffs aside): every one a row too — and a key
+# (unit, spell, source) the cut has not seen whose first line is a refresh, a
+# dose or a removal was up before the cut began, so it counts an applied row
+# (at the cut's start), once per key; a later dose or removal with nothing up
+# is none. Any other BUFF on a player whose source is not ours (an NPC's, the
+# nil unit's): its removal or dose only once the cut saw it applied. A refresh
+# is never a row of its own. A line with no aura word, or a dose with no whole
+# stack count, is none.
+function r_aura(s,   dose, step, kind, keep, key) {
     if ($13 == "") return
     dose = (ev ~ /_DOSE$/)
     if (dose && $14 !~ /^[0-9]+$/) return
-    step = dose ? "dose" : (ev == "SPELL_AURA_APPLIED" ? "applied" : "removed")
+    step = dose ? "dose" : (ev == "SPELL_AURA_APPLIED" ? "applied" : (ev == "SPELL_AURA_REFRESH" ? "refresh" : "removed"))
     if (toupper(strip($13)) != "BUFF") {
-        if (($6 ~ /^Player-/ && ($2 == "0000000000000000" || r_hostile(s, $2))) || ($6 ~ /^(Creature|Vehicle)-/ && $2 ~ /^Player-/)) {
-            r_count(s, "debuff_" step); r_unit(s, $6); r_src(s, $2)
-        }
+        kind = "debuff"
+        if ($6 ~ /^Player-/ && ($2 == "0000000000000000" || r_hostile(s, $2))) keep = "every"
+        else if ($6 ~ /^(Creature|Vehicle)-/ && $2 ~ /^Player-/) keep = "start"
+        else return
+    } else {
+        kind = "buff"
+        if ($6 !~ /^Player-/) return
+        if ((($10 + 0) in ROLE) && ROLE[$10 + 0] != "SupportBuff") keep = "start"
+        else if (!r_friend($2)) keep = "applied"
+        else return
+    }
+    if (keep == "every") {
+        if (step != "refresh") { r_count(s, kind "_" step); r_unit(s, $6); r_src(s, $2) }
         return
     }
-    if ($6 !~ /^Player-/) return
-    if (!((($10 + 0) in ROLE) && ROLE[$10 + 0] != "SupportBuff") && r_friend($2)) return
     key = s SUBSEP $6 SUBSEP ($10 + 0) SUBSEP (($2 == "0000000000000000") ? "" : $2)
-    if (step == "applied") rUp[key] = 1
-    else if (!(key in rUp)) return
-    else if (step == "removed") delete rUp[key]
-    r_count(s, "buff_" step); r_unit(s, $6); r_src(s, $2)
+    if (step == "applied") { rUp[key] = 1; r_count(s, kind "_applied"); r_unit(s, $6); r_src(s, $2); return }
+    if (!(key in rUp)) {
+        if (keep == "start") { rUp[key] = 1; r_count(s, kind "_applied"); r_unit(s, $6); r_src(s, $2) }
+        else rUp[key] = 0
+    }
+    if (step == "refresh" || rUp[key] != 1) return
+    if (step == "removed") rUp[key] = 0
+    r_count(s, kind "_" step); r_unit(s, $6); r_src(s, $2)
 }
 # One line of an open cut `s`: the hostility it teaches, its post (on any
 # floor), its event row, and a placed candidate (resolved when the cut
@@ -598,7 +614,7 @@ function r_line(s) {
         }
     } else if (ev ~ /^(SPELL_MISSED|SPELL_PERIODIC_MISSED|RANGE_MISSED|DAMAGE_SHIELD_MISSED)$/) {
         if ($6 ~ /^Player-/ && !r_friend($2)) { r_count(s, "hit"); r_unit(s, $6); r_src(s, $2) }
-    } else if (ev ~ /^SPELL_AURA_(APPLIED|REMOVED|APPLIED_DOSE|REMOVED_DOSE)$/) {
+    } else if (ev ~ /^SPELL_AURA_(APPLIED|REFRESH|REMOVED|APPLIED_DOSE|REMOVED_DOSE)$/) {
         r_aura(s)
     }
     if (ev == "SPELL_CAST_SUCCESS" && $2 ~ /^Player-/ && (($10 + 0) in PLACE)) r_place(s, "cast" SUBSEP $2)

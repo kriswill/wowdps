@@ -606,16 +606,17 @@ fn aura(t: &str, ev: &str, src: &str, dst: &str, spell: &str, word: &str) -> Str
 
 /// The buff rows keep what matters to the fight — an external with its
 /// giver, a defensive and its stacks, an NPC's buff, the encounter's — and
-/// nothing else: no long buff, no support buff, no buff that was up before
-/// the slice (its dose and removal dropped); the debuff rows gain a
-/// player's debuffs on an NPC, never a pet's, never a player's on a player.
+/// nothing else: no long buff, no support buff; a defensive up before the
+/// slice opens at t 0 (R18's way), and one removed twice closes once; the
+/// debuff rows gain a player's debuffs on an NPC, never a pet's, never a
+/// player's on a player.
 #[test]
 fn buffs_that_matter_and_players_debuffs_on_npcs() {
     let wall = "871,\"Shield Wall\",0x1";
     let supp = "33206,\"Pain Suppression\",0x2";
     let rake = "7201,\"Thorn Rake\",0x1";
     let seeds = [
-        // Shield Wall up before the pull: its dose and removal are no rows.
+        // Shield Wall up before the pull: R18's way, it opens at t 0.
         aura("00.000", "SPELL_AURA_APPLIED", TANK, TANK, wall, "BUFF"),
         at(
             "01.000",
@@ -765,6 +766,9 @@ fn buffs_that_matter_and_players_debuffs_on_npcs() {
     assert_eq!(
         rows,
         [
+            (0, BuffApplied, tank, 871, tank, None),
+            (500, BuffDose, tank, 871, tank, Some(2)),
+            (1000, BuffRemoved, tank, 871, tank, None),
             (2000, BuffApplied, tank, 33_206, healer, None),
             (2300, BuffApplied, tank, 7006, boss, None),
             (2400, BuffApplied, healer, 7007, "-", None),
@@ -840,4 +844,98 @@ fn a_post_keeps_its_shields_and_every_pool_kind() {
             (40, Some(w(3, 40, 100)), vec![w(3, 40, 100), w(4, 2, 5)]),
         ]
     );
+}
+
+/// R18's segment-start rule in the cut: a buff R18 names, or a player's
+/// debuff on an NPC, first seen by a refresh, a dose or a removal was up
+/// before the slice — an applied row at t 0 opens it, once per key, sorted
+/// after the rows the first line made. An NPC's buff R18 does not name, and
+/// a debuff on a player, keep their old rules.
+#[test]
+fn an_aura_up_before_the_cut_opens_at_its_start() {
+    let ironfur = "192081,\"Ironfur\",0x1";
+    let rake = "7201,\"Thorn Rake\",0x1";
+    let slice = [
+        at("10.000", "ENCOUNTER_START,3000,\"Ula'tek\",16,20,3004"),
+        aura("11.000", "SPELL_AURA_REFRESH", TANK, TANK, ironfur, "BUFF"),
+        aura("11.500", "SPELL_AURA_REFRESH", TANK, TANK, ironfur, "BUFF"),
+        aura("12.000", "SPELL_AURA_REMOVED", TANK, TANK, ironfur, "BUFF"),
+        // Once per key: a second removal with nothing up is no row.
+        aura("12.500", "SPELL_AURA_REMOVED", TANK, TANK, ironfur, "BUFF"),
+        aura(
+            "13.000",
+            "SPELL_AURA_REMOVED_DOSE",
+            HEALER,
+            BOSS,
+            rake,
+            "DEBUFF,1",
+        ),
+        aura("13.500", "SPELL_AURA_REMOVED", HEALER, BOSS, rake, "DEBUFF"),
+        // An NPC's buff R18 does not name: no application, no row.
+        aura(
+            "14.000",
+            "SPELL_AURA_REMOVED",
+            BOSS,
+            TANK,
+            "7006,\"Venom Surge\",0x8",
+            "BUFF",
+        ),
+        // A debuff on a player keeps every row, as it always did.
+        aura(
+            "14.500",
+            "SPELL_AURA_REMOVED",
+            BOSS,
+            TANK,
+            "7003,\"Rot\",0x8",
+            "DEBUFF",
+        ),
+        // An external first seen by its refresh: open from t 0 to the end.
+        aura(
+            "15.000",
+            "SPELL_AURA_REFRESH",
+            HEALER,
+            TANK,
+            "33206,\"Pain Suppression\",0x2",
+            "BUFF",
+        ),
+        at("20.000", "ENCOUNTER_END,3000,\"Ula'tek\",16,20,1,10000"),
+    ];
+    let c = cut([], slice.iter().map(String::as_str), &Table, None);
+    let name = |u: Option<UnitId>| u.map_or("-", |u| c.units[u as usize].name.as_str());
+    // Time, kind, whom, spell, by whom, stacks.
+    type Row<'a> = (u32, EventKind, &'a str, u32, &'a str, Option<u16>);
+    let rows: Vec<Row> = c
+        .events
+        .iter()
+        .map(|e| {
+            (
+                e.t_ms,
+                e.kind,
+                name(e.unit),
+                e.spell_id,
+                name(e.src),
+                e.stacks,
+            )
+        })
+        .collect();
+    use EventKind::*;
+    let (tank, healer, boss) = ("Tank-Realm-US", "Healer-Realm-US", "Ula'tek");
+    assert_eq!(
+        rows,
+        [
+            (0, BossEngaged, "-", 3000, "-", None),
+            (0, BuffApplied, tank, 192_081, tank, None),
+            (0, DebuffApplied, boss, 7201, healer, None),
+            (0, BuffApplied, tank, 33_206, healer, None),
+            (2000, BuffRemoved, tank, 192_081, tank, None),
+            (3000, DebuffDose, boss, 7201, healer, Some(1)),
+            (3500, DebuffRemoved, boss, 7201, healer, None),
+            (4500, DebuffRemoved, tank, 7003, boss, None),
+            (10_000, BossKilled, "-", 3000, "-", None),
+        ]
+    );
+    // Units numbered where their lines name them: the tank (Ironfur's
+    // refresh), then the boss and the healer (the rake's dose).
+    let units: Vec<&str> = c.units.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(units, [tank, boss, healer]);
 }

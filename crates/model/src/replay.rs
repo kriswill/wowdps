@@ -121,8 +121,9 @@ pub struct Post {
     /// posts have named so far, this one's included — so a class whose
     /// resource only sometimes leads the line (a warlock's shards, a
     /// rogue's combo points) still has it on every later post. By kind
-    /// ascending, one reading per kind ([`set_pool`]); a kind never named is
-    /// absent. An older file's read the same way from its posts' `power`.
+    /// ascending, one reading per kind ([`set_pool`]), at most [`MAX_POOLS`]
+    /// of them, each kind below [`POOL_KINDS`]; a kind never named is absent.
+    /// An older file's read the same way from its posts' `power`.
     pub pools: Vec<Power>,
 }
 
@@ -135,17 +136,64 @@ pub struct Power {
     pub max: u64,
 }
 
+/// Every power type is below this (the game's run below 32): a type at or
+/// above it is no pool — the parser reads none, [`set_pool`] keeps none and
+/// the tier refuses one.
+pub const POOL_KINDS: u32 = 64;
+
+/// The most pool kinds a post carries (a druid's every form names six):
+/// [`set_pool`] keeps no new kind past them, so a post's pools stay a few
+/// readings whatever a log or a file names.
+pub const MAX_POOLS: usize = 8;
+
 /// `reading` into `pools` (by kind ascending, one per kind): the last
-/// reading of its kind replaces the one before. The one rule by which the
-/// cut keeps [`Post::pools`] and the tier reads them back.
+/// reading of its kind replaces the one before; a kind at or above
+/// [`POOL_KINDS`], or a new kind once [`MAX_POOLS`] are held, is left out.
+/// The one rule by which the cut keeps [`Post::pools`] and the tier reads
+/// them back.
 pub fn set_pool(pools: &mut Vec<Power>, reading: Power) {
+    if reading.kind >= POOL_KINDS {
+        return;
+    }
     match pools.binary_search_by_key(&reading.kind, |p| p.kind) {
         Ok(at) => {
             if let Some(p) = pools.get_mut(at) {
                 *p = reading;
             }
         }
-        Err(at) => pools.insert(at, reading),
+        Err(at) if pools.len() < MAX_POOLS => pools.insert(at, reading),
+        Err(_) => {}
+    }
+}
+
+/// The pools a post carries, tidied as [`set_pool`] keeps them: its own
+/// (sorted, one per kind, the later of a kind twice, bounded) — or, when it
+/// lists none (a post built by hand, which never filled them; a cut's pools
+/// never shrink, so an empty list after a full one is never the cut's),
+/// `last`'s with its own pool set in. What the tier writes for any post.
+pub fn next_pools(last: &[Power], post: &Post) -> Vec<Power> {
+    let mut pools = Vec::new();
+    if post.pools.is_empty() {
+        pools.extend_from_slice(last);
+        if let Some(w) = post.power {
+            set_pool(&mut pools, w);
+        }
+    } else {
+        for &w in &post.pools {
+            set_pool(&mut pools, w);
+        }
+    }
+    pools
+}
+
+/// Every post of `track` given [`next_pools`]: what a track built by hand
+/// (an import that fills only `power`) carries once tidied, and what the
+/// tier reads back from it.
+pub fn fill_pools(track: &mut [Post]) {
+    let mut last: Vec<Power> = Vec::new();
+    for p in track {
+        p.pools = next_pools(&last, p);
+        last.clone_from(&p.pools);
     }
 }
 
@@ -564,6 +612,56 @@ mod tests {
         set_pool(&mut pools, w(7, 10, 50));
         set_pool(&mut pools, w(0, 800, 1200));
         assert_eq!(pools, [w(0, 800, 1200), w(3, 40, 100), w(7, 10, 50)]);
+        // No kind at or above POOL_KINDS, and no new kind past MAX_POOLS.
+        set_pool(&mut pools, w(POOL_KINDS, 1, 1));
+        set_pool(&mut pools, w(u32::MAX, 1, 1));
+        assert_eq!(pools.len(), 3);
+        for kind in 10..100 {
+            set_pool(&mut pools, w(kind, 1, 1));
+        }
+        assert_eq!(pools.len(), MAX_POOLS);
+        assert!(pools.windows(2).all(|p| p[0].kind < p[1].kind));
+        set_pool(&mut pools, w(3, 5, 100));
+        assert!(pools.contains(&w(3, 5, 100)), "a held kind still updates");
+    }
+
+    /// A post built by hand is tidied as the cut keeps its pools: its own
+    /// sorted, one per kind, bounded; none listed, its last's with its own
+    /// pool set in.
+    #[test]
+    fn a_hand_built_track_fills_its_pools() {
+        let w = |kind, current, max| Power { kind, current, max };
+        let post = |power: Option<Power>, pools: Vec<Power>| Post {
+            t_ms: 0,
+            x: 0,
+            y: 0,
+            facing: 0,
+            hp: 0,
+            power,
+            map_id: 1,
+            absorb: 0,
+            pools,
+        };
+        let mut track = vec![
+            post(Some(w(0, 90, 100)), Vec::new()),
+            post(Some(w(7, 2, 5)), Vec::new()),
+            post(None, Vec::new()),
+            post(
+                Some(w(0, 80, 100)),
+                vec![w(7, 2, 5), w(0, 70, 100), w(0, 80, 100), w(99, 1, 1)],
+            ),
+        ];
+        fill_pools(&mut track);
+        let pools: Vec<Vec<Power>> = track.iter().map(|p| p.pools.clone()).collect();
+        assert_eq!(
+            pools,
+            [
+                vec![w(0, 90, 100)],
+                vec![w(0, 90, 100), w(7, 2, 5)],
+                vec![w(0, 90, 100), w(7, 2, 5)],
+                vec![w(0, 80, 100), w(7, 2, 5)],
+            ]
+        );
     }
 
     #[test]

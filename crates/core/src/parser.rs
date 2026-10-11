@@ -10,6 +10,7 @@
 
 use std::borrow::Cow;
 
+use wowdps_model::replay::{MAX_POOLS, POOL_KINDS};
 use wowdps_model::{GearItem, LoadoutAura, MissKind, TalentPick};
 
 /// Number of fields in the advanced-combat-logging block. The wiki says 17; that is
@@ -85,9 +86,11 @@ pub struct HpHint {
     /// kept here (R28 reads it alone).
     pub power: Option<Power>,
     /// R29 (replay format 3): the entries of those `a|b` lists after the
-    /// first, in the line's order, each that reads with its max above 0 —
-    /// empty, and never allocated, on a line that names one pool (nearly
-    /// every line). [`HpHint::pools`] walks both.
+    /// first, in the line's order, each that reads with its max above 0 and
+    /// a power type below 64 (`replay::POOL_KINDS`), at most eight
+    /// (`replay::MAX_POOLS`) — empty, and never allocated, on a line that
+    /// names one pool (nearly every line). [`HpHint::pools`] walks both.
+    /// A type at or above 64 is no pool in `power` either.
     pub more_power: Vec<Power>,
     /// v45 (R29): advanced fields 14–17 — where the unit stands and which
     /// way it faces. `None` when any of them does not read, or the map is 0
@@ -769,11 +772,12 @@ fn absorb_at(f: &[Cow<'_, str>], i: usize) -> Option<u64> {
 
 /// Advanced fields `i..i+3` (power type, current, max) → the unit's primary
 /// [`Power`]. A cast spending two resources writes each field as `a|b`;
-/// the first entry of each is kept. `None` when the type does not parse or
+/// the first entry of each is kept. `None` when the type does not parse, is
+/// no power type (at or above `POOL_KINDS`, 64: the game's run below 32), or
 /// the unit has no pool (max 0).
 fn power_at(f: &[Cow<'_, str>], i: usize) -> Option<Power> {
     let first = |k: usize| get(f, i + k).and_then(|s| s.split('|').next());
-    let kind = first(0)?.parse().ok()?;
+    let kind = first(0)?.parse().ok().filter(|k| *k < POOL_KINDS)?;
     let current = first(1)?.parse().ok()?;
     let max = first(2)?.parse().ok()?;
     (max > 0).then_some(Power { kind, current, max })
@@ -781,8 +785,10 @@ fn power_at(f: &[Cow<'_, str>], i: usize) -> Option<Power> {
 
 /// R29 (replay format 3): the entries of the same three fields' `a|b`
 /// lists after the first, taken in step (the n-th type with the n-th
-/// current and max), each that reads with its max above 0. Empty without
-/// allocating when the type names one pool, as nearly every line's does.
+/// current and max), each that reads with its max above 0 and a power type
+/// below `POOL_KINDS`, at most `MAX_POOLS` of them however long the lists
+/// run. Empty without allocating when the type names one pool, as nearly
+/// every line's does.
 fn more_power_at(f: &[Cow<'_, str>], i: usize) -> Vec<Power> {
     let field = |k: usize| get(f, i + k).unwrap_or_default();
     let (kinds, currents, maxes) = (field(0), field(1), field(2));
@@ -796,12 +802,13 @@ fn more_power_at(f: &[Cow<'_, str>], i: usize) -> Vec<Power> {
         .skip(1)
         .filter_map(|((kind, current), max)| {
             let p = Power {
-                kind: kind.parse().ok()?,
+                kind: kind.parse().ok().filter(|k| *k < POOL_KINDS)?,
                 current: current.parse().ok()?,
                 max: max.parse().ok()?,
             };
             (p.max > 0).then_some(p)
         })
+        .take(MAX_POOLS)
         .collect()
 }
 
@@ -2236,6 +2243,21 @@ mod tests {
         ));
         let all: Vec<(u32, u64, u64)> = h.pools().map(|p| (p.kind, p.current, p.max)).collect();
         assert_eq!(all, [(0, 9, 10), (9, 2, 5)]);
+        // No power type at or above 64, and no more than eight pools from
+        // lists however long.
+        let h = hint(format!(
+            "SPELL_CAST_SUCCESS,{PLAYER},{BOSS},1943,\"Rupture\",0x1,Player-1168-0A234B,0000000000000000,812780,812780,0,0,0,0,0,0,64|3|4294967295,9|3|1,10|5|5,0,1.0,2.0,2610,6.1121,323"
+        ));
+        let all: Vec<u32> = h.pools().map(|p| p.kind).collect();
+        assert_eq!(all, [3], "64 and u32::MAX are no power type");
+        let long = |n: u32| (0..n).map(|k| k.to_string()).collect::<Vec<_>>().join("|");
+        let h = hint(format!(
+            "SPELL_CAST_SUCCESS,{PLAYER},{BOSS},1943,\"Rupture\",0x1,Player-1168-0A234B,0000000000000000,812780,812780,0,0,0,0,0,0,{},{},{},0,1.0,2.0,2610,6.1121,323",
+            long(60),
+            long(60),
+            long(60).replace('0', "9"),
+        ));
+        assert_eq!(h.more_power.len(), 8, "the rest capped at MAX_POOLS");
     }
 
     #[test]

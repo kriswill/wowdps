@@ -399,8 +399,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_boss_engaged	1
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_boss_killed	1
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_boss_wiped	0
-1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_buff_applied	11
-1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_buff_removed	10
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_buff_applied	12
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_buff_removed	11
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_buff_dose	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_placed_cast	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_placed_summon	0

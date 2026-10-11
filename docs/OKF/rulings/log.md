@@ -2,6 +2,11 @@
 
 ## 2026-10-10
 
+- **Update** — [R29 The replay cut](r29.md): tier format 4 — R18's
+  segment-start rule for a buff R18 names and a player's debuff on an NPC
+  (an applied row at t 0 on a first refresh, dose or removal, once per key),
+  bounded pools, tidy encoding. [R28 Power](r28.md): a power type at or
+  above 64 is no pool.
 - **Update** — [R29 The replay cut](r29.md): tier format 3 — each post's
   shields and its last reading of every pool kind, the buff rows (R18's
   curated kinds but support buffs, or any buff not ours; a removal or dose
