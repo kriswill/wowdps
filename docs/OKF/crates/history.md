@@ -37,8 +37,8 @@ The views over the lake's JSON files:
   a fight imported from outside this machine's logs; `false` on every card
   of a lake without one, so the column always exists (its probe only asks
   whether any card has the key: `IS NOT NULL` reads any type). `best-kill`,
-  `progression`, `trend` and `role-night` count `NOT imported`, as the
-  daemon's fixed answers do
+  `progression`, `trend`, `role-night` and the `role_ranks` view count
+  `NOT imported`, as the daemon's fixed answers and the mcp grader do
   ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
 
 **Probe-defined columns.** Each nested view is defined only after a probe

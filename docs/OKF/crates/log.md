@@ -2,6 +2,12 @@
 
 ## 2026-10-11
 
+- **Update** — [wowdps-daemon](daemon.md), [wowdps-history](history.md):
+  the review's fixes — `restore_replay`, `retire_import`, an ownerless
+  import never stamped "me", a busy `ImportReplay` refusal counted as a
+  refused read, this build's replay format only; the lake's `role_ranks`
+  leaves imports out.
+
 - **Update** — [wowdps-history](history.md), [wowdps-mcp](mcp.md): v46
   imports — the lake's `fights.imported` / `players.imported`, the fixed
   questions on `NOT imported`, `stats.kept.imports`; the mcp's card

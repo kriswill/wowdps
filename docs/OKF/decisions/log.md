@@ -2,6 +2,13 @@
 
 ## 2026-10-11
 
+- **Update** — [Imported Fights Live In The History Store, Apart From Ours](imported-fights-in-the-store.md):
+  after review — an import must be this build's replay format (a format
+  names the cut's rules, and an import is never recut); a failed write
+  changes nothing (a re-import's old replay put back); a busy refusal is
+  no dropped write; the TUI claim and the commit hashes (now PR #108)
+  corrected.
+
 - **Creation** — [Imported Fights Live In The History Store, Apart From Ours](imported-fights-in-the-store.md):
   v46 — a fight converted from outside this machine's logs is stored by
   the daemon as a card naming its origin and its replay tier alone,

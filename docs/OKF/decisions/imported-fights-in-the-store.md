@@ -39,10 +39,21 @@ usually somebody else's.
 - **Store-only, through the daemon.** A client converts the fight and sends
   `ImportReplay`: the facts its source knows (an `ImportedCard`) and the
   replay tier's bytes. The history thread is the only writer: it validates
-  the replay (a format it reads, a whole decode) and the facts (a source, a
-  boss pull with its encounter), stores the card and keeps the replay
-  through the same `store_replay` the log path uses, re-encoded by this
-  build. No client writes the store's files.[^contract]
+  the replay (this build's format, a whole decode) and the facts (a source,
+  a boss pull with its encounter), stores the card and keeps the replay
+  through the same `store_replay` the log path uses. No client writes the
+  store's files.[^contract]
+- **This build's format alone.** A replay format number names the cut's
+  rules, not only the codec (formats 4 and 5 moved with the rules on an
+  unchanged codec), and the rewrite queue brings a local replay forward by
+  cutting it again from its log. An import has no log, so a file in an
+  older format, kept as it is or re-stamped, would claim rules it was not
+  cut by: it is refused, and the client (`wcl-pull --store`, built from the
+  same tree) cuts it again.
+- **A write that fails changes nothing.** A re-import writes its replay
+  before its card; when the card's write fails, the old replay goes back
+  under the old card. A busy queue answers `Refused` and is no write lost,
+  so `HistoryStatus::dropped`, which a client warns about, does not tick.
 - **A card that names its origin.** `FightCard.origin` is `Local` or
   `Imported { source }`, written in the card's JSON only for an import, so
   every local document stays byte for byte what it was. The id is
@@ -64,11 +75,14 @@ usually somebody else's.
   characters (`mine`), a boss's first kill (an imported kill ends no
   progression of ours), the fastest kill and the owner's bests;
   `Progression`, `Trend` and `RoleNight` count local fights alone, and the
-  lake's fixed questions do the same (`NOT imported`), so parity holds.
+  lake's fixed questions and its `role_ranks` grader do the same
+  (`NOT imported`), so parity holds.
 - **Listed on request.** `HistoryQuery::Fights` carries an `OriginFilter`,
   and every client that predates imports asks `Local`: the GUI's history
-  and home, the mcp and the TUI read exactly what they read before. A
-  client that wants imports (the replay, next) asks `Imported` or `Any`.
+  and home and the mcp read exactly what they read before (the TUI asks
+  the store nothing). A client that wants imports (the replay, next) asks
+  `Imported` or `Any`; a listed import that names no owner stays ownerless,
+  never stamped "me".
 
 ## Consequences
 
@@ -78,9 +92,9 @@ own. Imports count against `history_replay_mb`'s total without ever being
 trimmed by it, as pins do, so many large imports squeeze out unprotected
 local replays first. An imported card carries no numbers, so a client that
 lists one draws its name, date, verdict and roster, and its replay. A
-wire-shape change: deploy per the playbook.[^playbook] Landed in commits
-`7eaa8e6` (the wire and the record) and `d145c63` (the store); the lake's
-column follows in the same branch.
+wire-shape change: deploy per the playbook.[^playbook] Landed in PR #108
+(the wire and the record, the store, the lake's column, and the fixes an
+independent review asked for).
 
 [^contract]: CONTRACT.md's imported fights paragraph (Daemon section) and its v46 row.
 [^playbook]: The bump and deploy steps for a PROTO_VERSION change.
