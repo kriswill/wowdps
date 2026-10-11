@@ -736,6 +736,8 @@ struct Flaky {
     fail_writes_in: std::cell::Cell<Option<&'static str>>,
     fail_reads_in: std::cell::Cell<Option<&'static str>>,
     fail_removes_in: std::cell::Cell<Option<&'static str>>,
+    /// Single files (`dir/name`) whose removal fails.
+    fail_remove_files: std::cell::RefCell<Vec<String>>,
 }
 
 impl Flaky {
@@ -745,6 +747,7 @@ impl Flaky {
             fail_writes_in: std::cell::Cell::new(None),
             fail_reads_in: std::cell::Cell::new(None),
             fail_removes_in: std::cell::Cell::new(None),
+            fail_remove_files: std::cell::RefCell::new(Vec::new()),
         }
     }
 }
@@ -775,7 +778,13 @@ impl Backend for Flaky {
         self.inner.write(dir, name, bytes)
     }
     fn remove(&mut self, dir: &str, name: &str) -> std::io::Result<()> {
-        if self.fail_removes_in.get() == Some(dir) {
+        if self.fail_removes_in.get() == Some(dir)
+            || self
+                .fail_remove_files
+                .borrow()
+                .iter()
+                .any(|f| *f == format!("{dir}/{name}"))
+        {
             return Err(std::io::Error::other(format!("{dir} removals fail")));
         }
         self.inner.remove(dir, name)
@@ -1104,4 +1113,51 @@ fn a_failed_retire_leaves_the_annotations_as_they_were() {
     );
     assert_eq!(notes(&store, &old), None);
     assert!(store.card(&old).is_none());
+}
+
+/// When the card stays AND the annotation copy cannot be undone, the copy
+/// becomes the carry (the old file goes), so a retry never carries the
+/// annotations twice; the store says where they are.
+#[test]
+fn an_undo_that_fails_makes_the_copy_the_carry() {
+    let bytes = replay_bytes();
+    let mut first = mem(Retention::default());
+    let (old, _) = first
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let new = imported_id(SOURCE, 1_005_000);
+    let mut backend = copied(first.backend());
+    backend
+        .write("annotations", &format!("{old}.ndjson"), b"{\"note\":1}\n")
+        .unwrap();
+    let mut store = Store::open(Flaky::over(backend), Retention::default());
+    // The old card cannot be removed, nor the new id's copy (the undo of a
+    // copy made where none was is a removal); the old file can.
+    store.backend().fail_remove_files.replace(vec![
+        format!("fights/{old}.json"),
+        format!("annotations/{new}.ndjson"),
+    ]);
+    let (got, _) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert_eq!(got, new);
+    let notes = |store: &Store<Flaky>, id: &str| {
+        store
+            .backend()
+            .inner
+            .read("annotations", &format!("{id}.ndjson"))
+    };
+    assert!(store.card(&old).is_some(), "the card stays");
+    assert_eq!(notes(&store, &new).as_deref(), Some(&b"{\"note\":1}\n"[..]));
+    assert_eq!(notes(&store, &old), None, "the copy is the carry");
+    let said = store.last_error.clone().unwrap_or_default();
+    assert!(said.contains(&format!("{new}'s now")), "{said}");
+
+    // A retry retires the old card and carries nothing twice.
+    store.backend().fail_remove_files.replace(Vec::new());
+    store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert!(store.card(&old).is_none());
+    assert_eq!(notes(&store, &new).as_deref(), Some(&b"{\"note\":1}\n"[..]));
 }

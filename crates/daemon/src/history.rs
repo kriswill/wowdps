@@ -2443,13 +2443,20 @@ impl<B: Backend> Store<B> {
         }
         if let Err(e) = self.backend.remove("fights", &format!("{old}.json")) {
             // The copy undone: the new id's annotations back as they were.
+            // An undo that fails leaves the copy as the carry instead (the
+            // old file goes), so a retry never carries them twice.
+            let mut why = format!("history remove failed: {e}");
             if let Some((name, before)) = carried {
-                let _ = match before {
+                let undone = match before {
                     Some(bytes) => self.backend.write("annotations", &name, &bytes),
                     None => self.backend.remove("annotations", &name),
                 };
+                if let Err(u) = undone {
+                    let _ = self.backend.remove("annotations", &notes);
+                    why.push_str(&format!("; its annotations are {new}'s now ({u})"));
+                }
             }
-            return keep(self, format!("history remove failed: {e}"));
+            return keep(self, why);
         }
         if carried.is_some() {
             let _ = self.backend.remove("annotations", &notes);
