@@ -502,7 +502,7 @@ fn the_same_source_again_replaces_it() {
     assert!(store.has_replay(&moved));
 }
 
-/// A replay that is not one, a format this build does not read, one that
+/// A replay that is not one, a format not this build's (older or newer), one that
 /// does not decode, a nameless source, anything but a boss pull, and an
 /// id a local card holds: each refused, saying why, nothing written.
 #[test]
@@ -512,10 +512,25 @@ fn a_bad_import_is_refused_and_writes_nothing() {
     let card = imported(1_000_000, false, 15);
     let mut newer = good.clone();
     newer[4] = replay::FORMAT + 1;
+    // An older format decodes, but its number names cut rules this build's
+    // cut no longer follows, and an import is never recut: refused.
+    let mut older = good.clone();
+    older[4] = replay::FORMAT - 1;
+    assert!(replay::decode(&older).is_some(), "the older head decodes");
+    let err = store.import_replay(&card, &older).unwrap_err();
+    assert!(
+        err.contains(&format!(
+            "replay format {} is not this build's format {}",
+            replay::FORMAT - 1,
+            replay::FORMAT
+        )),
+        "{err}"
+    );
     let truncated = good[..good.len() / 2].to_vec();
     for (bytes, why) in [
         (b"not a replay".to_vec(), "replay head"),
-        (newer, "is not one this build reads"),
+        (newer, "is not this build's format"),
+        (older, "is not this build's format"),
         (truncated, "does not decode"),
     ] {
         let err = store.import_replay(&card, &bytes).unwrap_err();
@@ -711,4 +726,181 @@ fn a_failed_write_leaves_the_store_as_it_was() {
     assert!(err.contains("write failed"), "{err}");
     assert_eq!(store.card(&id), first.card(&id), "the first import stands");
     assert!(store.has_replay(&id));
+}
+
+/// A backend over memory whose card writes, or card removals, can be made
+/// to fail on their own — the paths where a replay or an annotation has
+/// already moved when the card's file does not.
+struct FlakyCards {
+    inner: MemBackend,
+    fail_card_writes: std::cell::Cell<bool>,
+    fail_card_removes: std::cell::Cell<bool>,
+}
+
+impl FlakyCards {
+    fn over(inner: MemBackend) -> Self {
+        Self {
+            inner,
+            fail_card_writes: std::cell::Cell::new(false),
+            fail_card_removes: std::cell::Cell::new(false),
+        }
+    }
+}
+
+impl Backend for FlakyCards {
+    fn list(&self, dir: &str) -> Vec<String> {
+        self.inner.list(dir)
+    }
+    fn read(&self, dir: &str, name: &str) -> Option<Vec<u8>> {
+        self.inner.read(dir, name)
+    }
+    fn read_range(&self, dir: &str, name: &str, offset: u64, len: usize) -> Option<Vec<u8>> {
+        self.inner.read_range(dir, name, offset, len)
+    }
+    fn size(&self, dir: &str, name: &str) -> Option<u64> {
+        self.inner.size(dir, name)
+    }
+    fn exists(&self, dir: &str, name: &str) -> bool {
+        self.inner.exists(dir, name)
+    }
+    fn write(&mut self, dir: &str, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+        if dir == "fights" && self.fail_card_writes.get() {
+            return Err(std::io::Error::other("card writes fail"));
+        }
+        self.inner.write(dir, name, bytes)
+    }
+    fn remove(&mut self, dir: &str, name: &str) -> std::io::Result<()> {
+        if dir == "fights" && self.fail_card_removes.get() {
+            return Err(std::io::Error::other("card removals fail"));
+        }
+        self.inner.remove(dir, name)
+    }
+}
+
+/// A re-import writes its replay before its card: when only the card's
+/// write fails, the fight imported before stands over its OWN replay —
+/// the bytes and the index entry put back — not the new import's.
+#[test]
+fn a_failed_card_write_on_a_reimport_puts_the_old_replay_back() {
+    let bytes = replay_bytes();
+    let mut store = Store::open(FlakyCards::over(MemBackend::new()), Retention::default());
+    let (id, _) = store
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let card_before = store.card(&id).unwrap().clone();
+    let replay_before = store.replay_file(&id).unwrap();
+    let total_before = store.replay_total();
+    // The new import's replay differs from the old: an event fewer.
+    let mut cut = replay::decode(&bytes).unwrap();
+    let events = cut.events.len();
+    cut.events.pop();
+    let other = replay::encode(&cut);
+
+    store.backend().fail_card_writes.set(true);
+    let err = store
+        .import_replay(&imported(1_000_000, true, 15), &other)
+        .unwrap_err();
+    assert!(err.contains("card writes fail"), "{err}");
+    assert_eq!(store.card(&id), Some(&card_before), "the old card stands");
+    assert_eq!(
+        store.replay_file(&id).as_deref(),
+        Some(replay_before.as_slice()),
+        "over its own replay"
+    );
+    let kept = replay::decode(&store.replay_file(&id).unwrap()).unwrap();
+    assert_eq!(kept.events.len(), events, "not the new import's");
+    assert_eq!(store.replay_total(), total_before);
+
+    // And a store opened over the files agrees.
+    store.backend().fail_card_writes.set(false);
+    let reopened = Store::open(copied(&store.backend().inner), Retention::default());
+    assert_eq!(reopened.card(&id), Some(&card_before));
+    assert_eq!(
+        reopened.replay_file(&id).as_deref(),
+        Some(replay_before.as_slice())
+    );
+}
+
+/// An import that names no owner stays ownerless in a `Fights` answer,
+/// though the configured character is on its roster: the replay's "you"
+/// and `GetFight` say nobody, and so does the list. A local card is still
+/// owned at answer time.
+#[test]
+fn an_ownerless_import_is_nobodys_in_a_listing() {
+    let tmp = Temp::new("ownerless");
+    let path = log_of(&tmp, &[(30, false, 15)]);
+    let facts = LogFacts::read(&path);
+    let cfg = Retention {
+        characters: vec!["Ana-Realm".to_string()],
+        ..Retention::default()
+    };
+    let mut store = mem(cfg);
+    let local = store.store(&closed_fights(&path)[0], facts).unwrap();
+    let card = ImportedCard {
+        owner: None,
+        ..imported(1_000_000, false, 15)
+    };
+    let (id, _) = store.import_replay(&card, &replay_bytes()).unwrap();
+    let listed = fights(&store, OriginFilter::Any, FightSort::Newest);
+    let owner_of = |want: &str| {
+        listed
+            .iter()
+            .find(|c| c.id == want)
+            .map(|c| c.owner.clone())
+            .unwrap()
+    };
+    assert_eq!(owner_of(&id), None, "the import names nobody");
+    assert_eq!(owner_of(&local).as_deref(), Some(ANA), "ours is ours");
+    let f = store.stored_fight(&id, View::Damage, None, None).unwrap();
+    assert_eq!(f.card.owner, None);
+}
+
+/// An import whose start moved goes out under its old id: its annotations
+/// carried to the new id (appended to any there), its old files gone.
+#[test]
+fn a_moved_import_carries_its_annotations() {
+    let bytes = replay_bytes();
+    let mut store = mem(Retention::default());
+    let (old, _) = store
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let mut backend = copied(store.backend());
+    backend
+        .write("annotations", &format!("{old}.ndjson"), b"{\"note\":1}\n")
+        .unwrap();
+    let mut store = Store::open(backend, Retention::default());
+    let (new, replaced) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert!(replaced && new != old);
+    let b = store.backend();
+    assert_eq!(
+        b.read("annotations", &format!("{new}.ndjson")).as_deref(),
+        Some(&b"{\"note\":1}\n"[..])
+    );
+    assert!(!b.exists("annotations", &format!("{old}.ndjson")));
+    assert!(!b.exists("fights", &format!("{old}.json")));
+    assert!(store.card(&old).is_none());
+}
+
+/// A moved import's old card that cannot be removed is out of the index
+/// all the same, and the store says why it would come back.
+#[test]
+fn a_moved_import_whose_old_card_stays_says_so() {
+    let bytes = replay_bytes();
+    let mut store = Store::open(FlakyCards::over(MemBackend::new()), Retention::default());
+    let (old, _) = store
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    store.backend().fail_card_removes.set(true);
+    let (new, _) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert!(store.card(&old).is_none() && store.card(&new).is_some());
+    assert_eq!(store.cards().len(), 1);
+    let said = store.last_error.clone().unwrap_or_default();
+    assert!(
+        said.contains(&old) && said.contains("returns on a restart"),
+        "{said}"
+    );
 }

@@ -598,6 +598,30 @@ fn a_full_queue_drops_and_counts_instead_of_blocking() {
     );
 }
 
+/// v46: an `ImportReplay` a full queue refuses is handed back to be
+/// answered (`Refused`, busy) and counted as a refused read is — never as
+/// a write the daemon dropped, which a client warns the user about.
+#[test]
+fn a_refused_import_is_answered_not_dropped() {
+    let (link, _rx) = HistoryLink::bounded(1);
+    assert!(
+        link.send(HistoryReq::Sweep(PathBuf::from("/nowhere")))
+            .is_ok()
+    );
+    let refused = link.send(HistoryReq::ImportReplay {
+        session: 1,
+        req_id: 2,
+        card: Box::default(),
+        replay: Vec::new(),
+    });
+    assert!(
+        matches!(refused, Err(HistoryReq::ImportReplay { req_id: 2, .. })),
+        "handed back to be answered"
+    );
+    assert_eq!(link.status().dropped, 0, "nothing was lost");
+    assert_eq!(link.refused_reads(), 1);
+}
+
 /// A dashboard polling the store must never be able to cost the user a
 /// fight: reads hold at most half the queue, so the slots a closing pull's
 /// `Store` needs are still there after a read flood.

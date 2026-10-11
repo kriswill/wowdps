@@ -329,6 +329,14 @@ impl HistoryReq {
             HistoryReq::Query { .. } | HistoryReq::Fight { .. } | HistoryReq::Replay { .. }
         )
     }
+
+    /// v46: a client's write the caller answers when the queue refuses it
+    /// (`Refused`, "busy"): the client is told and may send it again, so
+    /// nothing is lost and `HistoryStatus::dropped` never ticks for it —
+    /// it is counted as a refused read is.
+    fn answered_when_refused(&self) -> bool {
+        matches!(self, HistoryReq::ImportReplay { .. })
+    }
 }
 
 /// The hub's handle: a bounded sender plus the status the hub reads
@@ -379,6 +387,7 @@ impl HistoryLink {
         // amount of client polling can starve the `Store` of a closing pull:
         // past the quota the read is refused here, before it takes a slot.
         let read = req.is_read();
+        let answered = req.answered_when_refused();
         if read && self.reads.fetch_add(1, Ordering::AcqRel) >= READ_QUOTA {
             self.reads.fetch_sub(1, Ordering::AcqRel);
             // Counted apart from `dropped`: nothing was lost, so the store's
@@ -391,6 +400,8 @@ impl HistoryLink {
             Err(TrySendError::Full(req)) | Err(TrySendError::Disconnected(req)) => {
                 if read {
                     self.reads.fetch_sub(1, Ordering::AcqRel);
+                    self.refused_reads.fetch_add(1, Ordering::Relaxed);
+                } else if answered {
                     self.refused_reads.fetch_add(1, Ordering::Relaxed);
                 } else {
                     self.count_drop();
@@ -1893,6 +1904,10 @@ impl From<&HistoryOptions> for Retention {
     }
 }
 
+/// v46: a replay file held aside — its bytes and its index entry (the
+/// format its head names, its size) — to be put back by a failed re-import.
+type HeldReplay = (Vec<u8>, (Option<u8>, u64));
+
 /// The files plus their in-memory index. Generic over the backend so
 /// `daemon::mock` drives it synchronously in memory.
 pub struct Store<B: Backend> {
@@ -2246,12 +2261,12 @@ impl<B: Backend> Store<B> {
     /// card ([`ImportedCard::card`], `Origin::Imported`) and `replay` as its
     /// replay tier, nothing else (no rows, details or series: the store
     /// derives those from a log, and an import has none). The replay must
-    /// be a format this build reads and decode whole; it is kept as this
-    /// build encodes it, its owner the card's. Imported fights are
-    /// protected (never trimmed by the caps or the replay size cap), so
-    /// one always earns its replay slot. A second import of the same
-    /// source replaces the first — card, replay and id — pin carried.
-    /// `(id, replaced)`, or why the import was refused.
+    /// be this build's format and decode whole; it is kept with the card's
+    /// owner as its "you". Imported fights are protected (never trimmed by
+    /// the caps or the replay size cap), so one always earns its replay
+    /// slot. A second import of the same source replaces the first — card,
+    /// replay and id — pin carried. A failed write leaves the store as it
+    /// was. `(id, replaced)`, or why the import was refused.
     pub fn import_replay(
         &mut self,
         imported: &ImportedCard,
@@ -2269,11 +2284,15 @@ impl<B: Backend> Store<B> {
         if imported.encounter.is_none() {
             return Err("an imported boss pull names its encounter".to_string());
         }
+        // This build's format alone: a format number names the cut's rules,
+        // not just the codec, and an import is never recut from a log, so an
+        // older file kept as it is, or re-stamped, would claim rules it was
+        // not cut by. The producer (wcl-pull) is built from the same tree.
         let format = replay_tier::format_of(replay).ok_or("the replay has no replay head")?;
-        if !(replay_tier::OLDEST..=replay_tier::FORMAT).contains(&format) {
+        if format != replay_tier::FORMAT {
             return Err(format!(
-                "replay format {format} is not one this build reads ({}–{})",
-                replay_tier::OLDEST,
+                "replay format {format} is not this build's format {}: an import is never \
+                 recut, so cut it again with this build",
                 replay_tier::FORMAT
             ));
         }
@@ -2297,12 +2316,20 @@ impl<B: Backend> Store<B> {
             .as_ref()
             .or_else(|| moved.first().and_then(|m| self.card(m)))
             .is_some_and(|c| c.pinned);
+        // A re-import overwrites the replay before its card: the one there
+        // now, kept to be put back if the card's write fails.
+        let replay_name = format!("{id}.bin");
+        let old_replay = previous.as_ref().and_then(|_| {
+            let bytes = self.backend.read("replay", &replay_name)?;
+            Some((bytes, self.replays.get(&id).copied()?))
+        });
         // In the index first (the replay's slot is the card's), the replay,
         // then the card's file last: its presence is what makes the fight
         // exist.
         self.cards.retain(|c| c.id != id);
         self.insert_card(card.clone());
-        let written = if !self.store_replay(&id, cut) {
+        let kept = self.store_replay(&id, cut);
+        let written = if !kept {
             Err(self
                 .last_error
                 .clone()
@@ -2317,11 +2344,16 @@ impl<B: Backend> Store<B> {
                 .map_err(|e| format!("history write failed: {e}"))
         };
         if let Err(why) = written {
-            // Back as it was: the fight imported before stays (its replay
-            // may be the new one's), a first import leaves nothing behind.
+            // Back as it was: the fight imported before stays, over its own
+            // replay; a first import leaves nothing behind.
             self.cards.retain(|c| c.id != id);
             match previous {
-                Some(p) => self.insert_card(p),
+                Some(p) => {
+                    self.insert_card(p);
+                    if kept {
+                        self.restore_replay(&id, old_replay);
+                    }
+                }
                 None => {
                     self.drop_replay(&id);
                     let _ = self.backend.remove("fights", &format!("{id}.json"));
@@ -2331,11 +2363,62 @@ impl<B: Backend> Store<B> {
             return Err(why);
         }
         for old in &moved {
-            self.drop_replay(old);
-            let _ = self.backend.remove("fights", &format!("{old}.json"));
-            self.cards.retain(|c| &c.id != old);
+            self.retire_import(old, &id);
         }
         Ok((id, replaced))
+    }
+
+    /// Put back the replay a failed re-import overwrote: its bytes and its
+    /// entry, or — when it cannot be written back, or there was none — no
+    /// replay at all, never the new import's under the old card.
+    fn restore_replay(&mut self, id: &str, old: Option<HeldReplay>) {
+        let name = format!("{id}.bin");
+        match old {
+            Some((bytes, entry)) => match self.backend.write("replay", &name, &bytes) {
+                Ok(()) => {
+                    self.replays.insert(id.to_string(), entry);
+                }
+                Err(e) => {
+                    self.drop_replay(id);
+                    self.last_error = Some(format!("history write failed: {e}"));
+                }
+            },
+            None => self.drop_replay(id),
+        }
+    }
+
+    /// An import replaced under a new id (its start moved): out of the
+    /// index whatever happens, its replay and card files removed, and its
+    /// annotations carried to the id that replaced it. A card file that
+    /// cannot be removed is said in `last_error` (it would come back as a
+    /// second import of the source after a restart).
+    fn retire_import(&mut self, old: &str, new: &str) {
+        self.cards.retain(|c| c.id != old);
+        self.drop_replay(old);
+        let notes = format!("{old}.ndjson");
+        if let Some(text) = self.backend.read("annotations", &notes) {
+            let name = format!("{new}.ndjson");
+            let mut merged = self.backend.read("annotations", &name).unwrap_or_default();
+            if !merged.is_empty() && !merged.ends_with(b"\n") {
+                merged.push(b'\n');
+            }
+            merged.extend_from_slice(&text);
+            match self.backend.write("annotations", &name, &merged) {
+                Ok(()) => {
+                    let _ = self.backend.remove("annotations", &notes);
+                }
+                Err(e) => {
+                    self.last_error = Some(format!(
+                        "history write failed: {e} (the annotations of {old} stay under its id)"
+                    ));
+                }
+            }
+        }
+        if let Err(e) = self.backend.remove("fights", &format!("{old}.json")) {
+            self.last_error = Some(format!(
+                "history remove failed: {e} ({old}, replaced by {new}, returns on a restart)"
+            ));
+        }
     }
 
     /// A card into the index, which is sorted by start.
@@ -3380,7 +3463,9 @@ impl<B: Backend> Store<B> {
             .take(limit)
             .cloned()
             .map(|mut c| {
-                if c.owner.is_none() {
+                // v46: an import's owner is the import's to say: none stays
+                // none, as `GetFight` and its replay's "you" say.
+                if c.owner.is_none() && !c.is_imported() {
                     c.owner = self.owner_of(&c);
                 }
                 // Likewise the guilds: what the addon knows NOW, on a card
