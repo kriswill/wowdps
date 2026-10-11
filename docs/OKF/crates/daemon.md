@@ -119,12 +119,25 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   oldest unprotected goes first, and at the cap the rewrite queue cuts only
   a fight newer than the oldest unprotected replay held. `GetReplay`
   answers it.
+- **Imported fights** (v46). `ImportReplay` lands on the history thread:
+  `Store::import_replay` validates the replay (a format it reads, a whole
+  decode) and the facts, makes `ImportedCard::card` (`Origin::Imported`,
+  `imported_id`, log 0) and keeps the replay through `store_replay`,
+  nothing else, so a stored fight answers the card alone (tier 1). The same
+  source replaces it, pin carried; a failed write leaves the store as it
+  was. Imports are in the protected set and race for no fastest kill or
+  best; the owner inference, `mine`, the killed set, progression,
+  `Progression` / `Trend` / `RoleNight`, regrade and the rewrite queue all
+  skip them, and `Fights` lists them only for `OriginFilter::Imported` or
+  `Any` ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
 - **The rewrite queue.** Each series file's format is read once at open;
   after its first status the thread queues `Store::rewrites` — a kept fight
   short of its details, a series file missing or in an OLDER format (never
   a newer one) — and rewrites them from their logs, a log's fights at a
   time, while idle.
-- `HistoryStatus` rides in `Status`.
+- `HistoryStatus` rides in `Status`; the thread publishes the store's
+  replay and kept counts into it after every request (v46: before, the v45
+  counts were reckoned and never sent).
 
 ## History store: the retire, mine and the replay tier
 

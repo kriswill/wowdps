@@ -18,7 +18,10 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
   declares a `Cursor` (the list, or a segment and view with an optional
   drill) and the daemon pushes snapshots for exactly that, plus an
   unsolicited `SegmentList` broadcast whenever the segment id table changes
-  shape, so off-list navigation always resolves ids.
+  shape, so off-list navigation always resolves ids. `ImportReplay` (v46)
+  hands the daemon a fight from outside this machine's logs, answered
+  `ImportedReplay` or `Refused`; `HistoryQuery::Fights`' `OriginFilter`
+  lists imports only when asked, so every older client reads what it read.
 - `client.rs` — `socket_path()` embeds `PROTO_VERSION`. `ensure_daemon`
   spawns on demand and waits, for one-shot clients.
   `DaemonClient::try_reconnect` is the tick-driven clients' path (window,
@@ -37,7 +40,12 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
 - `history.rs` — the history store's on-disk record codec: `FightCard`,
   `FightRows`, `FightDetails`, `StoredLoadout`, `Annotation`, `Affiliation`
   as one-line JSON documents, `HISTORY_SCHEMA`, the fight, log and content
-  ids and the loadout hash. The daemon writes them and every reader parses
+  ids and the loadout hash. A card's `Origin` (v46) is written only for an
+  import (`"origin": {"kind": "imported", "source": …}`, last), so a local
+  document is byte for byte the older one; `ImportedCard` is what an import
+  knows and `ImportedCard::card` the card the store keeps, its id
+  `imported_id` ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
+  The daemon writes them and every reader parses
   them here; `addon_table` reads the wowdps addon's `WOWDPS_DATA` once and
   `Affiliation::from_addon_table` turns its players into records.
 - `creatures.rs` — the codec of `creatures.tsv`, the addon's NPC

@@ -2,6 +2,12 @@
 
 ## 2026-10-11
 
+- **Update** — [wowdps-proto](proto.md), [wowdps-daemon](daemon.md): v46
+  imported fights — `history::Origin`, `ImportedCard`, `imported_id`;
+  `ImportReplay` answered `ImportedReplay` / `Refused`; `OriginFilter` on
+  `Fights`; `kept_imports`; `Store::import_replay` and the judgments that
+  skip imports; `Status` now carries the v45 replay and kept counts.
+
 - **Update** — [wowdps-core](core.md), [wowdps-proto](proto.md),
   [wowdps-daemon](daemon.md): replay format 5 — the parser's `Power::cost`
   (block field 13) taken off a cast's current, which moves R28's series too;
