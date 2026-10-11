@@ -5528,6 +5528,166 @@ fn the_replay_tier_exports_offline_and_stats_count_it() {
     assert!(wowdps_history::replay_export(&hist, "nope", &out).is_err());
 }
 
+/// v46: an imported fight in the lake — a card naming its origin, and a
+/// replay — is the `fights` (and `players`) view's `imported` column, and
+/// the fixed questions stay this machine's on both sides: the daemon's
+/// best kill and progression equal the SQL's though the import is a
+/// faster kill of the same boss; asked for imports, the daemon lists it;
+/// `stats` counts it apart; `replay-export` writes its files, the details
+/// tier it never had aside.
+#[test]
+fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
+    use wowdps_proto::OriginFilter;
+    use wowdps_proto::history::{ImportedCard, ImportedPlayer, imported_id};
+
+    let tmp = Temp::new("imported");
+    let (socket, hist, _done) = start(&tmp);
+    let mut client =
+        DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
+    wait_for_store(&mut client, 2);
+    let deadline = Instant::now() + DEADLINE;
+    let cards = loop {
+        let cards = stored_cards(&hist);
+        let kill = cards.iter().find(|c| c.success == Some(true));
+        if kill.is_some_and(|k| hist.join("replay").join(format!("{}.bin", k.id)).exists()) {
+            break cards;
+        }
+        assert!(Instant::now() < deadline, "the kill's replay never landed");
+        thread::sleep(Duration::from_millis(20));
+    };
+    let kill = cards.iter().find(|c| c.success == Some(true)).unwrap();
+    let encounter = kill.encounter.unwrap();
+    let bytes = std::fs::read(hist.join("replay").join(format!("{}.bin", kill.id))).unwrap();
+    // The same boss, a day later, in half the time.
+    let start_utc_ms = kill.start_utc_ms + 86_400_000;
+    client.send(&ClientMsg::ImportReplay {
+        req_id: 1,
+        card: Box::new(ImportedCard {
+            name: kill.name.clone(),
+            encounter: Some(encounter),
+            start_utc_ms,
+            duration_ms: kill.duration_ms / 2,
+            success: Some(true),
+            players: vec![ImportedPlayer {
+                guid: "Player-9-Z".to_string(),
+                name: "Zed-Elsewhere".to_string(),
+                ..ImportedPlayer::default()
+            }],
+            source: "import:test-1".to_string(),
+            ..ImportedCard::default()
+        }),
+        replay: bytes,
+    });
+    let id = imported_id("import:test-1", start_utc_ms);
+    let deadline = Instant::now() + DEADLINE;
+    let mut stored = false;
+    while !stored {
+        assert!(Instant::now() < deadline, "the import was never answered");
+        for msg in client.poll() {
+            if let DaemonMsg::History { req_id: 1, answer } = msg {
+                assert_eq!(
+                    answer,
+                    HistoryAnswer::ImportedReplay {
+                        fight_id: id.clone(),
+                        replaced: false,
+                    }
+                );
+                stored = true;
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    wait_for_store(&mut client, 3);
+
+    let lake = Lake::open(&hist).unwrap();
+    let imported = lake.sql("SELECT id FROM fights WHERE imported").unwrap();
+    assert_eq!(imported.rows.len(), 1);
+    assert_eq!(cell_str(&imported.rows[0][0]), id);
+    let local = lake
+        .sql("SELECT id FROM fights WHERE NOT imported")
+        .unwrap();
+    assert_eq!(local.rows.len(), 2);
+    let players = lake.sql("SELECT guid FROM players WHERE imported").unwrap();
+    assert_eq!(players.rows.len(), 1);
+
+    let fights = |client: &mut DaemonClient, sort, limit, origin| -> Vec<FightCard> {
+        match ask(
+            client,
+            2,
+            HistoryQuery::Fights {
+                encounter: Some(encounter.id),
+                difficulty: Some(encounter.difficulty),
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort,
+                limit,
+                after_id: None,
+                role: None,
+                origin,
+            },
+        ) {
+            HistoryAnswer::Fights { cards, .. } => cards,
+            other => panic!("{other:?}"),
+        }
+    };
+    // Best kill: this machine's, on both sides — the import is faster.
+    let best = fights(&mut client, FightSort::Fastest, 1, OriginFilter::Local);
+    assert_eq!(best[0].id, kill.id);
+    let sql = lake.best_kill(encounter.id, encounter.difficulty).unwrap();
+    assert_eq!(sql.rows.len(), 1);
+    assert_eq!(cell_str(&sql.rows[0][0]), kill.id);
+    let any = fights(&mut client, FightSort::Fastest, 1, OriginFilter::Any);
+    assert_eq!(any[0].id, id, "listed when asked for");
+
+    // Progression: the same pulls and nights on both sides, the import in
+    // neither.
+    let HistoryAnswer::Progression { pulls, nights, .. } = ask(
+        &mut client,
+        3,
+        HistoryQuery::Progression {
+            encounter: encounter.id,
+            difficulty: encounter.difficulty,
+            local_cutover_hour: None,
+        },
+    ) else {
+        panic!("progression");
+    };
+    let sql = lake
+        .progression(encounter.id, encounter.difficulty)
+        .unwrap();
+    assert_eq!(sql.rows.len(), nights.len());
+    let sql_pulls: i64 = sql.rows.iter().filter_map(|r| r[1].as_i64()).sum();
+    assert_eq!(sql_pulls, i64::from(pulls));
+    assert_eq!(nights.iter().map(|n| n.pulls).sum::<u32>(), pulls);
+    assert!(
+        nights
+            .iter()
+            .all(|n| n.day_utc_ms != (start_utc_ms / 86_400_000) * 86_400_000),
+        "the import's day is no night of ours"
+    );
+
+    let stats = lake.stats();
+    let num = |path: &[&str]| {
+        path.iter()
+            .try_fold(&stats, |v, k| v.get(k))
+            .and_then(Json::as_u64)
+    };
+    assert_eq!(num(&["kept", "imports"]), Some(1));
+    assert_eq!(
+        num(&["kept", "kills"]),
+        Some(1),
+        "the import is no kill of ours"
+    );
+    assert_eq!(num(&["replay", "files"]), Some(3));
+    let out = tmp.0.join("export");
+    let said = wowdps_history::replay_export(&hist, &id, &out).unwrap();
+    assert!(said.contains("no details tier"), "{said}");
+    for f in wowdps_proto::replay::csv::FILES {
+        assert!(out.join(f).is_file(), "{f}");
+    }
+}
+
 /// The addon's creatures, end to end: a real daemon inside a fake install
 /// reads the account's SavedVariables on start and writes
 /// `<history dir>/creatures.tsv` (newest sighting per creature id, ids

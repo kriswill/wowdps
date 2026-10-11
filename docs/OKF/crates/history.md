@@ -33,6 +33,13 @@ The views over the lake's JSON files:
   pre-R20 and unknown value, never 0).
 - `players.heal_absorbed` (0 on an older card) and `power` (fight × guid ×
   power type: `max`, and `per_sec` a BIGINT list with NULL gaps).
+- `fights.imported` and `players.imported` (v46): the card names an origin,
+  a fight imported from outside this machine's logs; `false` on every card
+  of a lake without one, so the column always exists (its probe only asks
+  whether any card has the key: `IS NOT NULL` reads any type). `best-kill`,
+  `progression`, `trend` and `role-night` count `NOT imported`, as the
+  daemon's fixed answers do
+  ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
 
 **Probe-defined columns.** Each nested view is defined only after a probe
 proves its field exists AND is typed: DuckDB types an all-empty nested field
@@ -55,7 +62,7 @@ that holds the daemon's fixed answers equal to SQL's over the same files.
 a replay reads, offline through `proto::replay::csv`, `raid.csv` from the
 details tier; `stats` counts the tier (its files by format too, off each
 head), `cards_without_replay` and the
-kept-whole set by why ([R29](../rulings/r29.md),
+kept-whole set by why (v46: `imports` counted first, apart) ([R29](../rulings/r29.md),
 [progression](../decisions/progression-kept-whole.md)). No SQL view: the
 tier is binary and read whole.
 

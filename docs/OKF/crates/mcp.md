@@ -69,6 +69,12 @@ through `cargo run`.
     ([R28](../rulings/r28.md)).
   - `role_night { encounter, difficulty, night | date }` — one night's
     roster by role: tanks side by side, healers and DPS ranked.
+  - A card's `origin` (v46) is null for this machine's own fights and
+    `{kind: "imported", source}` for one imported from outside its logs.
+    `history` and the others list this machine's own alone (they ask
+    `OriginFilter::Local`); `stored_fight` names an import by id and says it
+    keeps a card and a replay only
+    ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
 - Talent tools — `talent_tree`, `decode_talents`, `encode_talents` —
   answered from the per-machine talent dataset ([R14](../rulings/r14.md)),
   never the daemon.

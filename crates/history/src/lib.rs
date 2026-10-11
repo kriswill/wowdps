@@ -333,6 +333,24 @@ impl Lake {
                     glob("fights", "json")
                 ))
                 .map_err(|e| e.to_string())?;
+            // v46: `imported` — the card names an origin (a fight imported
+            // from outside this machine's logs; a local card is written
+            // without the key). The probe only asks whether ANY card has
+            // the key: its type does not matter to `IS NOT NULL`, and a
+            // lake without imports reads `false` everywhere, so the column
+            // exists on every lake and the fixed questions can filter on it.
+            let imported = if self.sql("SELECT origin FROM fights LIMIT 0").is_ok() {
+                "origin IS NOT NULL"
+            } else {
+                "false"
+            };
+            self.conn
+                .execute_batch(&format!(
+                    "CREATE OR REPLACE VIEW fights AS SELECT *, {imported} AS imported \
+                     FROM read_json({}, format = 'auto', union_by_name = true);",
+                    glob("fights", "json")
+                ))
+                .map_err(|e| e.to_string())?;
             self.views.push("fights");
             // `role` is derived from `spec` here exactly as the codec does
             // on read (`from_json` ignores the stored field: the spec is
@@ -572,7 +590,7 @@ impl Lake {
             self.conn
                 .execute_batch(&format!(
                     "CREATE VIEW players AS SELECT f.id AS fight_id, f.kind, f.name AS fight, \
-                     f.start_utc_ms, f.duration_ms, f.success, f.aborted, \
+                     f.start_utc_ms, f.duration_ms, f.success, f.aborted, f.imported, \
                      f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
                      p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql}{am_sql}\
                      {shields_sql}{heal_absorbed_sql} \
@@ -1012,7 +1030,8 @@ impl Lake {
         self.sql(&format!(
             "SELECT id, name, duration_ms, start_utc_ms FROM fights \
              WHERE encounter.id = {encounter} AND encounter.difficulty = {difficulty} \
-             AND success AND NOT aborted ORDER BY duration_ms, start_utc_ms LIMIT 1"
+             AND success AND NOT aborted AND NOT imported \
+             ORDER BY duration_ms, start_utc_ms LIMIT 1"
         ))
     }
 
@@ -1021,7 +1040,7 @@ impl Lake {
             "SELECT (start_utc_ms // 86400000) * 86400000 AS day_utc_ms, count(*) AS pulls, \
              bool_or(coalesce(success, false)) AS kill FROM fights \
              WHERE encounter.id = {encounter} AND encounter.difficulty = {difficulty} \
-             AND NOT aborted GROUP BY day_utc_ms ORDER BY day_utc_ms"
+             AND NOT aborted AND NOT imported GROUP BY day_utc_ms ORDER BY day_utc_ms"
         ))
     }
 
@@ -1029,7 +1048,8 @@ impl Lake {
         let col = if healing { "hps" } else { "dps" };
         self.sql(&format!(
             "SELECT fight_id, start_utc_ms, spec, {col} AS per_sec, duration_ms FROM players \
-             WHERE guid = '{}' AND NOT aborted ORDER BY start_utc_ms DESC LIMIT {limit}",
+             WHERE guid = '{}' AND NOT aborted AND NOT imported \
+             ORDER BY start_utc_ms DESC LIMIT {limit}",
             guid.replace('\'', "''")
         ))
     }
@@ -1211,6 +1231,7 @@ impl Lake {
                           {externals_given} AS externals_given \
                    FROM players p \
                    WHERE p.encounter_id = ? AND p.difficulty = ? AND NOT p.aborted \
+                     AND NOT p.imported \
                      AND NOT p.enemy AND (p.start_utc_ms // 86400000) * 86400000 = ?\
                  ), s AS (\
                    SELECT guid, spec, role FROM (\
@@ -1585,15 +1606,21 @@ pub fn replay_stats(dir: &Path) -> Json {
         .iter()
         .filter(|c| matches!(c.kind, FightKind::Encounter | FightKind::Key) && !has(&c.id))
         .count();
+    // The daemon's `kept_counts`: this machine's own kills end a boss's
+    // progression, and an import (v46) is counted first, apart.
     let killed: std::collections::HashSet<(u32, u32)> = cards
         .iter()
         .filter(|c| c.kind == FightKind::Encounter && c.success == Some(true) && !c.aborted)
+        .filter(|c| !c.is_imported())
         .filter_map(|c| c.encounter.map(|e| (e.id, e.difficulty)))
         .collect();
-    let (mut kills, mut keys, mut progression, mut pins) = (0u64, 0u64, 0u64, 0u64);
+    let (mut kills, mut keys, mut progression, mut pins, mut imports) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
     for c in &cards {
         let won = c.success == Some(true) && !c.aborted;
-        if won && c.kind == FightKind::Encounter {
+        if c.is_imported() {
+            imports += 1;
+        } else if won && c.kind == FightKind::Encounter {
             kills += 1;
         } else if won && c.kind == FightKind::Key {
             keys += 1;
@@ -1625,6 +1652,7 @@ pub fn replay_stats(dir: &Path) -> Json {
             "timed_keys": Json::u64(keys),
             "progression": Json::u64(progression),
             "pins": Json::u64(pins),
+            "imports": Json::u64(imports),
         },
     }
 }

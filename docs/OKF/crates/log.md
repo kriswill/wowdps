@@ -2,6 +2,11 @@
 
 ## 2026-10-11
 
+- **Update** — [wowdps-history](history.md), [wowdps-mcp](mcp.md): v46
+  imports — the lake's `fights.imported` / `players.imported`, the fixed
+  questions on `NOT imported`, `stats.kept.imports`; the mcp's card
+  `origin` and an import's word in `stored_fight`.
+
 - **Update** — [wowdps-proto](proto.md), [wowdps-daemon](daemon.md): v46
   imported fights — `history::Origin`, `ImportedCard`, `imported_id`;
   `ImportReplay` answered `ImportedReplay` / `Refused`; `OriginFilter` on

@@ -249,8 +249,16 @@ about are the rows and details tiers' already. Read it whole instead:
 ```sh
 wowdps history replay-export <fight_id> -o /tmp/pull   # the seven files a replay reads
 wowdps history stats                                   # replay.files/bytes/formats, cards_without_replay,
-                                                       # kept.{kills,timed_keys,progression,pins}
+                                                       # kept.{kills,timed_keys,progression,pins,imports}
 ```
+
+Since v46 the store also keeps fights imported from outside this machine's
+logs (a fight a client converted and handed the daemon whole): a card whose
+`origin` names its source, and a replay, nothing else. `fights.imported`
+(and `players.imported`) is true for them on every lake, `false` everywhere
+on one without imports; add `AND NOT imported` to a recipe that is about
+your own fights, as the fixed questions (`best-kill`, `progression`,
+`trend`, `role-night`) do.
 
 `replay-export` needs no daemon (it decodes the file through
 `proto::replay`) and writes `raid.csv` from the details tier when the fight

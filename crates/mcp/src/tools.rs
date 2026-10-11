@@ -1671,9 +1671,16 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ));
     }
     if f.tier < 2 {
-        return Err(format!(
-            "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
-        ));
+        // v46: an imported fight never had more than its card and replay.
+        return Err(if f.card.is_imported() {
+            format!(
+                "{fight_id}: an imported fight — the store keeps its card and replay only, no rows to answer from"
+            )
+        } else {
+            format!(
+                "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
+            )
+        });
     }
     if let Some(guid) = &drill
         && f.breakdown.is_none()
@@ -2470,6 +2477,13 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
         "build": Json::str(format!("{}.{}.{}", c.build.0, c.build.1, c.build.2)),
         "owner": opt_str(c.owner.clone()),
         "pinned": Json::Bool(c.pinned),
+        // v46: where the fight came from — null for this machine's own, the
+        // import's source for a fight imported from outside its logs (one
+        // `stored_fight` names by id; `history` lists this machine's own).
+        "origin": c.origin.source().map_or(Json::Null, |s| obj! {
+            "kind": Json::str("imported"),
+            "source": Json::str(s),
+        }),
         "best_pct": c.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
         "roster_size": Json::u64(c.players.iter().filter(|p| !p.enemy).count() as u64),
         // v31: the roster by guild — {guild: members}, largest first, with
@@ -5471,6 +5485,24 @@ mod tests {
         assert_eq!(guild_of(2), Some(Json::str("")));
         assert_eq!(guild_of(3), Some(Json::Null));
         assert_eq!(graded_row(&c, "E").get("guild"), Some(&Json::str("Exiles")));
+    }
+
+    /// v46: a card says where it came from — null for this machine's own,
+    /// the import's kind and source for an imported one.
+    #[test]
+    fn a_card_names_its_origin() {
+        let local = card(60_000, Vec::new());
+        assert_eq!(card_json(&local).get("origin"), Some(&Json::Null));
+        let imported = FightCard {
+            origin: wowdps_proto::history::Origin::Imported {
+                source: "import:test-1".to_string(),
+            },
+            ..card(60_000, Vec::new())
+        };
+        assert_eq!(
+            card_json(&imported).get("origin").map(Json::to_line),
+            Some(r#"{"kind":"imported","source":"import:test-1"}"#.to_string())
+        );
     }
 
     #[test]
