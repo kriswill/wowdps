@@ -2417,13 +2417,21 @@ impl<B: Backend> Store<B> {
         let keep = |store: &mut Self, why: String| {
             store.last_error = Some(format!("{why} ({old} is kept beside {new})"));
         };
+        // The annotations are COPIED to the new id first and the old file
+        // removed only once the card is gone, so a step that fails leaves
+        // them as they were: never lost, never carried twice on a retry.
         let notes = format!("{old}.ndjson");
+        let mut carried: Option<(String, Option<Vec<u8>>)> = None;
         if self.backend.exists("annotations", &notes) {
             let Some(text) = self.backend.read("annotations", &notes) else {
                 return keep(self, "history read failed: its annotations".to_string());
             };
             let name = format!("{new}.ndjson");
-            let mut merged = self.backend.read("annotations", &name).unwrap_or_default();
+            let before = self.backend.read("annotations", &name);
+            if before.is_none() && self.backend.exists("annotations", &name) {
+                return keep(self, format!("history read failed: {new}'s annotations"));
+            }
+            let mut merged = before.clone().unwrap_or_default();
             if !merged.is_empty() && !merged.ends_with(b"\n") {
                 merged.push(b'\n');
             }
@@ -2431,10 +2439,20 @@ impl<B: Backend> Store<B> {
             if let Err(e) = self.backend.write("annotations", &name, &merged) {
                 return keep(self, format!("history write failed: {e}"));
             }
-            let _ = self.backend.remove("annotations", &notes);
+            carried = Some((name, before));
         }
         if let Err(e) = self.backend.remove("fights", &format!("{old}.json")) {
+            // The copy undone: the new id's annotations back as they were.
+            if let Some((name, before)) = carried {
+                let _ = match before {
+                    Some(bytes) => self.backend.write("annotations", &name, &bytes),
+                    None => self.backend.remove("annotations", &name),
+                };
+            }
             return keep(self, format!("history remove failed: {e}"));
+        }
+        if carried.is_some() {
+            let _ = self.backend.remove("annotations", &notes);
         }
         self.cards.retain(|c| c.id != old);
         self.drop_replay(old);

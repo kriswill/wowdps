@@ -1062,3 +1062,46 @@ fn a_moved_import_whose_annotations_stay_keeps_its_card() {
     let said = store.last_error.clone().unwrap_or_default();
     assert!(said.contains(&old) && said.contains("kept"), "{said}");
 }
+
+/// A moved import whose card file cannot be removed keeps its annotations
+/// where they were — the copy to the new id undone — and a retry carries
+/// them once, never twice.
+#[test]
+fn a_failed_retire_leaves_the_annotations_as_they_were() {
+    let bytes = replay_bytes();
+    let mut first = mem(Retention::default());
+    let (old, _) = first
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let mut backend = copied(first.backend());
+    backend
+        .write("annotations", &format!("{old}.ndjson"), b"{\"note\":1}\n")
+        .unwrap();
+    let mut store = Store::open(Flaky::over(backend), Retention::default());
+    store.backend().fail_removes_in.set(Some("fights"));
+    let (new, _) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    let notes = |store: &Store<Flaky>, id: &str| {
+        store
+            .backend()
+            .inner
+            .read("annotations", &format!("{id}.ndjson"))
+    };
+    assert_eq!(notes(&store, &old).as_deref(), Some(&b"{\"note\":1}\n"[..]));
+    assert_eq!(notes(&store, &new), None, "the copy undone");
+    assert!(store.card(&old).is_some());
+
+    store.backend().fail_removes_in.set(None);
+    let (again, _) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert_eq!(again, new);
+    assert_eq!(
+        notes(&store, &new).as_deref(),
+        Some(&b"{\"note\":1}\n"[..]),
+        "carried once"
+    );
+    assert_eq!(notes(&store, &old), None);
+    assert!(store.card(&old).is_none());
+}
