@@ -41,7 +41,11 @@ pub struct LogLine {
                                           // v45 (R29): + `pos: Option<Position { x, y, map, facing }>`
                                           // (fields 14–17, x/y in hundredths of a yard, facing in
                                           // ten-thousandths of a radian, kept exact; None when any does
-                                          // not read or the map is 0) and `item_level: u32` (field 18)
+                                          // not read or the map is 0) and `item_level: u32` (field 18);
+                                          // R29 (replay format 3): + `more_power: Vec<Power>` (the entries
+                                          // of the `a|b` lists after the first, in step, max above 0; empty —
+                                          // never allocated — on a one-pool line) and `HpHint::pools()`
+                                          // (power, then more_power); R28 still reads the first alone
 
 pub struct Unit { pub guid: String, pub name: String, pub flags: u32 }
 impl Unit { pub fn is_player(&self) -> bool; pub fn is_pet_or_guardian(&self) -> bool; }

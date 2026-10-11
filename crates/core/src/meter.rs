@@ -8281,6 +8281,7 @@ mod tests {
                 flags: 0,
                 absorb: 0,
                 power: None,
+                more_power: Vec::new(),
                 pos: None,
                 item_level: 0,
             });
@@ -8450,6 +8451,7 @@ mod tests {
             flags: 0,
             absorb: 0,
             power: None,
+            more_power: Vec::new(),
             pos: None,
             item_level: 0,
         });
@@ -8476,6 +8478,7 @@ mod tests {
                 flags: 0,
                 absorb,
                 power: None,
+                more_power: Vec::new(),
                 pos: None,
                 item_level: 0,
             });
@@ -8525,6 +8528,7 @@ mod tests {
                 flags: 0,
                 absorb: 0,
                 power: None,
+                more_power: Vec::new(),
                 pos: None,
                 item_level: 0,
             });
@@ -8577,6 +8581,7 @@ mod tests {
                 flags: 0,
                 absorb: 0,
                 power: None,
+                more_power: Vec::new(),
                 pos: None,
                 item_level: 0,
             });
@@ -8686,6 +8691,7 @@ mod tests {
             flags: 0,
             absorb: 0,
             power: None,
+            more_power: Vec::new(),
             pos: None,
             item_level: 0,
         });
@@ -10318,6 +10324,7 @@ mod tests {
             flags,
             absorb: 0,
             power: None,
+            more_power: Vec::new(),
             pos: None,
             item_level: 0,
         });
@@ -11853,6 +11860,7 @@ mod tests {
             flags: 0,
             absorb: 0,
             power: Some(crate::parser::Power { kind, current, max }),
+            more_power: Vec::new(),
             pos: None,
             item_level: 0,
         });

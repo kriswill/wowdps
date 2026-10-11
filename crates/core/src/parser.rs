@@ -82,8 +82,13 @@ pub struct HpHint {
     /// and max. `None` when the unit has no pool (max 0) or the fields do
     /// not read. A cast that spends two resources lists each field as
     /// `a|b` (a Rogue's `3|4`, energy and combo points); the FIRST entry is
-    /// kept.
+    /// kept here (R28 reads it alone).
     pub power: Option<Power>,
+    /// R29 (replay format 3): the entries of those `a|b` lists after the
+    /// first, in the line's order, each that reads with its max above 0 —
+    /// empty, and never allocated, on a line that names one pool (nearly
+    /// every line). [`HpHint::pools`] walks both.
+    pub more_power: Vec<Power>,
     /// v45 (R29): advanced fields 14–17 — where the unit stands and which
     /// way it faces. `None` when any of them does not read, or the map is 0
     /// (a unit the block places nowhere).
@@ -91,6 +96,16 @@ pub struct HpHint {
     /// v45: advanced field 18 — a player's item level (an NPC's own level);
     /// 0 when it does not read.
     pub item_level: u32,
+}
+
+impl HpHint {
+    /// Every pool the block names, in the line's order: [`HpHint::power`],
+    /// then [`HpHint::more_power`].
+    pub fn pools(&self) -> impl Iterator<Item = Power> + '_ {
+        self.power
+            .into_iter()
+            .chain(self.more_power.iter().copied())
+    }
 }
 
 /// v45 (R29): a unit's place from the advanced block, in the log's own
@@ -764,6 +779,32 @@ fn power_at(f: &[Cow<'_, str>], i: usize) -> Option<Power> {
     (max > 0).then_some(Power { kind, current, max })
 }
 
+/// R29 (replay format 3): the entries of the same three fields' `a|b`
+/// lists after the first, taken in step (the n-th type with the n-th
+/// current and max), each that reads with its max above 0. Empty without
+/// allocating when the type names one pool, as nearly every line's does.
+fn more_power_at(f: &[Cow<'_, str>], i: usize) -> Vec<Power> {
+    let field = |k: usize| get(f, i + k).unwrap_or_default();
+    let (kinds, currents, maxes) = (field(0), field(1), field(2));
+    if !kinds.contains('|') {
+        return Vec::new();
+    }
+    kinds
+        .split('|')
+        .zip(currents.split('|'))
+        .zip(maxes.split('|'))
+        .skip(1)
+        .filter_map(|((kind, current), max)| {
+            let p = Power {
+                kind: kind.parse().ok()?,
+                current: current.parse().ok()?,
+                max: max.parse().ok()?,
+            };
+            (p.max > 0).then_some(p)
+        })
+        .collect()
+}
+
 /// v45 (R29): a decimal field as a fixed-point integer — `scale` 100 for a
 /// two-decimal position, 10 000 for a four-decimal facing. Rounded, so the
 /// log's own digits come back exactly; `None` when the field does not read
@@ -1391,6 +1432,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             flags,
             absorb: parse_u64(get(f, adv_start + 9).unwrap_or_default()),
             power: power_at(f, adv_start + 10),
+            more_power: more_power_at(f, adv_start + 10),
             pos: position_at(f, adv_start + 14),
             item_level: get(f, adv_start + 18)
                 .and_then(|s| s.parse().ok())
@@ -2172,10 +2214,28 @@ mod tests {
             }),
             "the first of each `a|b` pair"
         );
+        assert_eq!(
+            h.more_power,
+            [Power {
+                kind: 4,
+                current: 5,
+                max: 7
+            }],
+            "R29: the rest of each list, in step"
+        );
+        let all: Vec<u32> = h.pools().map(|p| p.kind).collect();
+        assert_eq!(all, [3, 4]);
         let h = hint(format!(
             "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,{BOSS_GUID},0000000000000000,125000,180000,0,0,0,0,0,0,0,0,0,0,1.0,2.0,2222,3.14,0,12345,13000,-1,4,0,0,0,nil,nil,nil,ST"
         ));
         assert_eq!((h.absorb, h.power), (0, None), "no pool, no power");
+        assert!(h.more_power.is_empty() && h.pools().next().is_none());
+        // A list entry that reads no pool (max 0, or no number) is left out.
+        let h = hint(format!(
+            "SPELL_CAST_SUCCESS,{PLAYER},{BOSS},1943,\"Rupture\",0x1,Player-1168-0A234B,0000000000000000,812780,812780,0,0,0,0,0,0,0|7|x|9,9|3|1|2,10|0|5|5,0,1.0,2.0,2610,6.1121,323"
+        ));
+        let all: Vec<(u32, u64, u64)> = h.pools().map(|p| (p.kind, p.current, p.max)).collect();
+        assert_eq!(all, [(0, 9, 10), (9, 2, 5)]);
     }
 
     #[test]
@@ -2200,6 +2260,7 @@ mod tests {
                     current: 95,
                     max: 100
                 }),
+                more_power: Vec::new(),
                 // v45 (R29): fields 14–18 — x, y, the floor, the facing and
                 // the item level, the decimals kept exact as integers.
                 pos: Some(Position {
