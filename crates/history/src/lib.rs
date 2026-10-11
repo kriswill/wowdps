@@ -616,7 +616,8 @@ impl Lake {
                        SELECT fight_id, guid, name, role, spec, \
                               CASE role WHEN 'healer' THEN hps ELSE effective_dps_sql END \
                                 AS measure \
-                       FROM players WHERE NOT enemy AND role IN ('dps', 'healer')\
+                       FROM players WHERE NOT enemy AND NOT imported \
+                         AND role IN ('dps', 'healer')\
                      ), f AS (\
                        SELECT a.*, \
                               max(measure) OVER pool AS top, \

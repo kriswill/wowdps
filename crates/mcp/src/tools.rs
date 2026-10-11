@@ -811,8 +811,12 @@ pub fn catalog() -> Vec<Tool> {
                           wowdps-history binary. Views: fights (one row per stored fight: \
                           id, kind, name, encounter{id,difficulty,group_size}, key, \
                           start_utc_ms, duration_ms, success, aborted, build, owner, \
-                          pinned, players[]), players (one row per player per fight: \
-                          fight_id, encounter_id, difficulty, guid, name, class, spec, role \
+                          pinned, players[], and v46 imported: true for a fight imported \
+                          from outside this machine's logs, whose players carry no \
+                          numbers — add `AND NOT imported` to any question about the \
+                          user's own history: averages, kills, bests, ranks), players (one \
+                          row per player per fight: fight_id, imported, encounter_id, \
+                          difficulty, guid, name, class, spec, role \
                           (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
                           — on cards written since roadmap 1a — taken, mitigated, prevented, dtps, \
                           mitigated_pct, overheal, absorbed, heal_absorbed (v44), support_given, support_received, \
@@ -826,7 +830,8 @@ pub fn catalog() -> Vec<Tool> {
                           absorb_wasted is NULL, else absorbed / (absorbed + absorb_wasted) \
                           as a 0..1 ratio — NULL is the honest old value, never 0)), \
                           role_ranks (the me-block grader in SQL: rank, count, \
-                          median within fight and role, the DPS role by effective_dps), rows (the \
+                          median within fight and role, the DPS role by effective_dps; \
+                          imported fights left out), rows (the \
                           seven views' meter rows + death recaps), details (breakdowns + timelines \
                           for kills, bests, pins and longer wipes), loadouts, annotations, and \
                           the probed views taken, mitigation, taken_spells, taken_sources, \

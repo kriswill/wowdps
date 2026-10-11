@@ -258,7 +258,7 @@ logs (a fight a client converted and handed the daemon whole): a card whose
 (and `players.imported`) is true for them on every lake, `false` everywhere
 on one without imports; add `AND NOT imported` to a recipe that is about
 your own fights, as the fixed questions (`best-kill`, `progression`,
-`trend`, `role-night`) do.
+`trend`, `role-night`) and the `role_ranks` view do.
 
 `replay-export` needs no daemon (it decodes the file through
 `proto::replay`) and writes `raid.csv` from the details tier when the fight

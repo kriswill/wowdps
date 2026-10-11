@@ -5568,10 +5568,13 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
             start_utc_ms,
             duration_ms: kill.duration_ms / 2,
             success: Some(true),
+            // A specced player, so the grader would rank them were the
+            // import not left out.
             players: vec![ImportedPlayer {
                 guid: "Player-9-Z".to_string(),
                 name: "Zed-Elsewhere".to_string(),
-                ..ImportedPlayer::default()
+                class: Some(wowdps_model::Class::Mage),
+                spec: Some(Spec::FrostMage),
             }],
             source: "import:test-1".to_string(),
             ..ImportedCard::default()
@@ -5609,6 +5612,21 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
     assert_eq!(local.rows.len(), 2);
     let players = lake.sql("SELECT guid FROM players WHERE imported").unwrap();
     assert_eq!(players.rows.len(), 1);
+    // The grader in SQL ranks this machine's own fights alone.
+    let ranked = lake
+        .sql_with(
+            "SELECT guid FROM role_ranks WHERE fight_id = ?",
+            &[Json::str(id.clone())],
+        )
+        .unwrap();
+    assert!(ranked.rows.is_empty(), "{:?}", ranked.rows);
+    let ours = lake
+        .sql_with(
+            "SELECT guid FROM role_ranks WHERE fight_id = ?",
+            &[Json::str(kill.id.clone())],
+        )
+        .unwrap();
+    assert!(!ours.rows.is_empty(), "our kill is ranked");
 
     let fights = |client: &mut DaemonClient, sort, limit, origin| -> Vec<FightCard> {
         match ask(
