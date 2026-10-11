@@ -110,7 +110,8 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   and regrade (`CutJob::Also`, one parse), as a cut alone after a live close
   once idle (`CutJob::Only`), and by the rewrite queue (`Store::recuts`) for
   a slot lacking a current file — missing, or an older format (format 1,
-  the head's floor alone, recut as format 2). A replay is kept while protected, else
+  the head's floor alone; format 2, no shields, no second pool, no buff
+  rows — each recut as format 3). A replay is kept while protected, else
   among the newest `history_keep_details_per_encounter` of its group
   (`Store::replay_slots`); past `history_replay_mb` (default 4096) the
   oldest unprotected goes first, and at the cap the rewrite queue cuts only

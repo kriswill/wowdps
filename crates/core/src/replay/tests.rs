@@ -158,27 +158,45 @@ fn units_are_numbered_where_first_seen() {
 #[test]
 fn posts_keep_every_floor_with_health_and_power() {
     let c = second();
-    let p = |t_ms, x, y, facing, hp, power: Option<(u32, u64, u64)>, map_id| Post {
-        t_ms,
-        x,
-        y,
-        facing,
-        hp,
-        power: power.map(|(kind, current, max)| Power { kind, current, max }),
-        map_id,
+    let p = |t_ms, x, y, facing, hp, power: Option<(u32, u64, u64)>, map_id| {
+        let power = power.map(|(kind, current, max)| Power { kind, current, max });
+        Post {
+            t_ms,
+            x,
+            y,
+            facing,
+            hp,
+            power,
+            map_id,
+            absorb: 0,
+            pools: power.into_iter().collect(),
+        }
     };
+    // The tank's blocks carry 6 in field 9: his shields.
+    let shielded = |post: Post| Post { absorb: 6, ..post };
+    let tank = [
+        p(500, 150_025, -350, 15_000, 900, Some((0, 100, 100)), 2434),
+        p(1000, 150_100, -300, 16_000, 800, Some((0, 100, 100)), 2434),
+        p(4500, 1000, 2000, 0, 700, Some((0, 100, 100)), 2435),
+    ]
+    .map(shielded);
     assert_eq!(
-        c.units[0].posts,
-        [
-            p(500, 150_025, -350, 15_000, 900, Some((0, 100, 100)), 2434),
-            p(1000, 150_100, -300, 16_000, 800, Some((0, 100, 100)), 2434),
-            p(4500, 1000, 2000, 0, 700, Some((0, 100, 100)), 2435),
-        ],
+        c.units[0].posts, tank,
         "the post on floor 2435 is kept, with its floor"
     );
+    // The boss's Spit names two pools (`3|4`): its post carries both.
+    let spit = p(2500, 151_000, 0, 31_416, 900, Some((3, 25, 100)), 2434);
+    let combo = Power {
+        kind: 4,
+        current: 1,
+        max: 5,
+    };
     assert_eq!(
         c.units[1].posts,
-        [p(2500, 151_000, 0, 31_416, 900, Some((3, 25, 100)), 2434)]
+        [Post {
+            pools: spit.pools.iter().copied().chain([combo]).collect(),
+            ..spit
+        }]
     );
     // No pool, no power (the text cutter wrote `1,0,0`).
     assert_eq!(
@@ -565,4 +583,261 @@ fn a_keys_run_keeps_every_floor_and_its_bosses() {
     assert_eq!(hits, [Some((1000, 2000)), Some((5000, 6000))]);
     let rain: Vec<Option<(i32, i32)>> = c.placed.iter().map(|p| p.at).collect();
     assert_eq!(rain, [Some((1200, 2200))]);
+}
+
+// ---- format 3: the buffs that matter, players' debuffs on NPCs, pools -------------
+
+/// A line `body` at `t` (seconds past 21:00:00) on 10/7/2026.
+fn at(t: &str, body: &str) -> String {
+    format!("10/7/2026 21:00:{t}-7  {body}")
+}
+
+const TANK: &str = "Player-1-A,\"Tank-Realm-US\",0x511,0x80000000";
+const HEALER: &str = "Player-1-B,\"Healer-Realm-US\",0x512,0x80000000";
+const EVOKER: &str = "Player-1-E,\"Evoker-Realm-US\",0x512,0x80000000";
+const BOSS: &str = "Creature-0-1-2-3-500-AA,\"Ula'tek\",0xa48,0x80000000";
+const NOONE: &str = "0000000000000000,nil,0x80000000,0x80000000";
+const PET: &str = "Pet-0-1-2-3-4-P,\"Pet\",0x1111,0x80000000";
+const TOTEM: &str = "Creature-0-1-2-3-53006-SL,\"Spirit Link Totem\",0x2111,0x80000000";
+
+fn aura(t: &str, ev: &str, src: &str, dst: &str, spell: &str, word: &str) -> String {
+    at(t, &format!("{ev},{src},{dst},{spell},{word}"))
+}
+
+/// The buff rows keep what matters to the fight — an external with its
+/// giver, a defensive and its stacks, an NPC's buff, the encounter's — and
+/// nothing else: no long buff, no support buff, no buff that was up before
+/// the slice (its dose and removal dropped); the debuff rows gain a
+/// player's debuffs on an NPC, never a pet's, never a player's on a player.
+#[test]
+fn buffs_that_matter_and_players_debuffs_on_npcs() {
+    let wall = "871,\"Shield Wall\",0x1";
+    let supp = "33206,\"Pain Suppression\",0x2";
+    let rake = "7201,\"Thorn Rake\",0x1";
+    let seeds = [
+        // Shield Wall up before the pull: its dose and removal are no rows.
+        aura("00.000", "SPELL_AURA_APPLIED", TANK, TANK, wall, "BUFF"),
+        at(
+            "01.000",
+            "SPELL_SUMMON,Player-1-S,\"Shaman-Realm-US\",0x512,0x80000000,Creature-0-1-2-3-53006-SL,\"Spirit Link Totem\",0x2111,0x80000000,98008,\"Spirit Link Totem\",0x8",
+        ),
+    ];
+    let slice = [
+        at("10.000", "ENCOUNTER_START,3000,\"Ula'tek\",16,20,3004"),
+        aura(
+            "10.500",
+            "SPELL_AURA_APPLIED_DOSE",
+            TANK,
+            TANK,
+            wall,
+            "BUFF,2",
+        ),
+        aura("11.000", "SPELL_AURA_REMOVED", TANK, TANK, wall, "BUFF"),
+        aura("12.000", "SPELL_AURA_APPLIED", HEALER, TANK, supp, "BUFF"),
+        aura(
+            "12.100",
+            "SPELL_AURA_APPLIED",
+            HEALER,
+            TANK,
+            "21562,\"Power Word: Fortitude\",0x2",
+            "BUFF",
+        ),
+        aura(
+            "12.200",
+            "SPELL_AURA_APPLIED",
+            EVOKER,
+            TANK,
+            "395152,\"Ebon Might\",0x4",
+            "BUFF",
+        ),
+        aura(
+            "12.300",
+            "SPELL_AURA_APPLIED",
+            BOSS,
+            TANK,
+            "7006,\"Venom Surge\",0x8",
+            "BUFF",
+        ),
+        aura(
+            "12.400",
+            "SPELL_AURA_APPLIED",
+            NOONE,
+            HEALER,
+            "7007,\"Toxic Ward\",0x8",
+            "BUFF",
+        ),
+        aura(
+            "12.500",
+            "SPELL_AURA_APPLIED",
+            TOTEM,
+            TANK,
+            "325174,\"Spirit Link Totem\",0x8",
+            "BUFF",
+        ),
+        aura(
+            "12.600",
+            "SPELL_AURA_APPLIED",
+            TOTEM,
+            TANK,
+            "7008,\"Totem Ward\",0x8",
+            "BUFF",
+        ),
+        aura("13.000", "SPELL_AURA_APPLIED", TANK, TANK, wall, "BUFF"),
+        aura(
+            "13.500",
+            "SPELL_AURA_APPLIED_DOSE",
+            TANK,
+            TANK,
+            wall,
+            "BUFF,2",
+        ),
+        aura("14.000", "SPELL_AURA_APPLIED", HEALER, BOSS, rake, "DEBUFF"),
+        aura(
+            "14.500",
+            "SPELL_AURA_APPLIED_DOSE",
+            HEALER,
+            BOSS,
+            rake,
+            "DEBUFF,3",
+        ),
+        aura(
+            "14.600",
+            "SPELL_AURA_APPLIED",
+            HEALER,
+            TANK,
+            "7202,\"Mark\",0x1",
+            "DEBUFF",
+        ),
+        aura(
+            "14.700",
+            "SPELL_AURA_APPLIED",
+            PET,
+            BOSS,
+            "7203,\"Claw Bleed\",0x1",
+            "DEBUFF",
+        ),
+        aura(
+            "14.800",
+            "SPELL_AURA_APPLIED",
+            HEALER,
+            BOSS,
+            "774,\"Rejuvenation\",0x8",
+            "BUFF",
+        ),
+        aura("15.000", "SPELL_AURA_REMOVED", HEALER, TANK, supp, "BUFF"),
+        aura("15.500", "SPELL_AURA_REMOVED", HEALER, BOSS, rake, "DEBUFF"),
+        // Removed twice: the second finds nothing applied.
+        aura("16.000", "SPELL_AURA_REMOVED", HEALER, TANK, supp, "BUFF"),
+        aura("17.000", "SPELL_AURA_REMOVED", TANK, TANK, wall, "BUFF"),
+        at("20.000", "ENCOUNTER_END,3000,\"Ula'tek\",16,20,1,10000"),
+    ];
+    let c = cut(
+        seeds.iter().map(String::as_str),
+        slice.iter().map(String::as_str),
+        &Table,
+        None,
+    );
+    let name = |u: Option<UnitId>| u.map_or("-", |u| c.units[u as usize].name.as_str());
+    // Time, kind, whom, spell, by whom, stacks.
+    type Row<'a> = (u32, EventKind, &'a str, u32, &'a str, Option<u16>);
+    let rows: Vec<Row> = c
+        .events
+        .iter()
+        .filter(|e| !e.kind.is_boss())
+        .map(|e| {
+            (
+                e.t_ms,
+                e.kind,
+                name(e.unit),
+                e.spell_id,
+                name(e.src),
+                e.stacks,
+            )
+        })
+        .collect();
+    use EventKind::*;
+    let (tank, healer, boss, totem) = (
+        "Tank-Realm-US",
+        "Healer-Realm-US",
+        "Ula'tek",
+        "Spirit Link Totem",
+    );
+    assert_eq!(
+        rows,
+        [
+            (2000, BuffApplied, tank, 33_206, healer, None),
+            (2300, BuffApplied, tank, 7006, boss, None),
+            (2400, BuffApplied, healer, 7007, "-", None),
+            (2500, BuffApplied, tank, 325_174, totem, None),
+            (3000, BuffApplied, tank, 871, tank, None),
+            (3500, BuffDose, tank, 871, tank, Some(2)),
+            (4000, DebuffApplied, boss, 7201, healer, None),
+            (4500, DebuffDose, boss, 7201, healer, Some(3)),
+            (5000, BuffRemoved, tank, 33_206, healer, None),
+            (5500, DebuffRemoved, boss, 7201, healer, None),
+            (7000, BuffRemoved, tank, 871, tank, None),
+        ]
+    );
+    // The evoker, named by no row, is no unit; the pet neither.
+    assert!(
+        c.units
+            .iter()
+            .all(|u| u.name != "Evoker-Realm-US" && u.name != "Pet")
+    );
+}
+
+/// A post keeps the block's shields and the last reading of every pool
+/// kind its unit's posts have named: a warlock's shards stay after a line
+/// naming his mana, and a rogue's `a|b` line names energy and combo points.
+#[test]
+fn a_post_keeps_its_shields_and_every_pool_kind() {
+    let block = |guid: &str, absorb: u32, pool: &str| {
+        format!(
+            "{guid},0000000000000000,900,1000,0,0,0,0,0,{absorb},{pool},0,1.00,2.00,2434,0.0000,600"
+        )
+    };
+    let lock = "Player-1-W,\"Lock-Realm-US\",0x512,0x80000000";
+    let rogue = "Player-1-R,\"Rogue-Realm-US\",0x512,0x80000000";
+    let cast = |t: &str, who: &str, guid: &str, absorb, pool: &str| {
+        at(
+            t,
+            &format!(
+                "SPELL_CAST_SUCCESS,{who},{BOSS},686,\"Bolt\",0x20,{}",
+                block(guid, absorb, pool)
+            ),
+        )
+    };
+    let slice = [
+        at("10.000", "ENCOUNTER_START,3000,\"Ula'tek\",16,20,3004"),
+        cast("11.000", lock, "Player-1-W", 250, "0,90,100"),
+        cast("12.000", lock, "Player-1-W", 0, "7,2,5"),
+        cast("13.000", lock, "Player-1-W", 0, "0,80,100"),
+        cast("14.000", rogue, "Player-1-R", 40, "3|4,50|2,100|5"),
+        cast("15.000", rogue, "Player-1-R", 40, "3,40,100"),
+        at("20.000", "ENCOUNTER_END,3000,\"Ula'tek\",16,20,1,10000"),
+    ];
+    let c = cut([], slice.iter().map(String::as_str), &Table, None);
+    let w = |kind, current, max| Power { kind, current, max };
+    let track = |name: &str| {
+        let u = c.units.iter().find(|u| u.name == name).unwrap();
+        u.posts
+            .iter()
+            .map(|p| (p.absorb, p.power, p.pools.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        track("Lock-Realm-US"),
+        [
+            (250, Some(w(0, 90, 100)), vec![w(0, 90, 100)]),
+            (0, Some(w(7, 2, 5)), vec![w(0, 90, 100), w(7, 2, 5)]),
+            (0, Some(w(0, 80, 100)), vec![w(0, 80, 100), w(7, 2, 5)]),
+        ]
+    );
+    assert_eq!(
+        track("Rogue-Realm-US"),
+        [
+            (40, Some(w(3, 50, 100)), vec![w(3, 50, 100), w(4, 2, 5)]),
+            (40, Some(w(3, 40, 100)), vec![w(3, 40, 100), w(4, 2, 5)]),
+        ]
+    );
 }

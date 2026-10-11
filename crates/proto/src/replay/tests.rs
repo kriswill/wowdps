@@ -10,11 +10,12 @@ fn unit(kind: UnitKind, name: &str, npc: u32, posts: Vec<Post>) -> Unit {
         spec: None,
         you: false,
         npc,
-        posts,
+        posts: track(posts),
     }
 }
 
-/// A post on `ulatek()`'s floor, 2434.
+/// A post on `ulatek()`'s floor, 2434, no shields; its pools are
+/// [`track`]'s to fill.
 fn post(t_ms: u32, x: i32, y: i32, facing: i32, hp: u16, power: Option<(u32, u64, u64)>) -> Post {
     Post {
         t_ms,
@@ -24,7 +25,22 @@ fn post(t_ms: u32, x: i32, y: i32, facing: i32, hp: u16, power: Option<(u32, u64
         hp,
         power: power.map(|(kind, current, max)| Power { kind, current, max }),
         map_id: 2434,
+        absorb: 0,
+        pools: Vec::new(),
     }
+}
+
+/// `posts` with each one's pools as the cut keeps them, and every format
+/// reads them back: its own pool set into its last's.
+fn track(mut posts: Vec<Post>) -> Vec<Post> {
+    let mut pools = Vec::new();
+    for p in &mut posts {
+        if let Some(w) = p.power {
+            set_pool(&mut pools, w);
+        }
+        p.pools.clone_from(&pools);
+    }
+    posts
 }
 
 /// `p` on another floor.
@@ -348,7 +364,7 @@ fn a_cut_round_trips() {
 #[test]
 fn posts_round_trip_through_every_change() {
     let mut cut = ulatek();
-    cut.units[0].posts = vec![
+    cut.units[0].posts = track(vec![
         post(0, 0, 0, 0, 0, None),
         post(0, 0, 0, 0, 0, None),
         post(6, -5, 7, 62_831, 1000, Some((0, 250_000, 250_000))),
@@ -357,7 +373,7 @@ fn posts_round_trip_through_every_change() {
         post(u32::MAX, 0, 0, 0, 0, None),
         post(100, 1, 1, 1, 1, Some((17, 120, 120))),
         post(100, 1, 1, 1, 1, Some((17, 0, 120))),
-    ];
+    ]);
     assert_eq!(decode(&encode(&cut)), Some(cut));
 }
 
@@ -380,9 +396,10 @@ fn bad_bytes_are_refused_never_a_panic() {
             let _ = decode(&b);
         }
     }
-    // Format 2's own: a track leaving its floor, the boss rows — and the
-    // format-1 golden, every byte of it flipped too.
-    for bytes in [encode(&small_floors()), unhex(FORMAT1)] {
+    // Format 3's own: a track leaving its floor, the boss rows, shields, a
+    // second pool, the buff rows — and the format-1 and format-2 goldens,
+    // every byte of each flipped too.
+    for bytes in [encode(&small_auras()), unhex(FORMAT1), unhex(FORMAT2)] {
         for n in 0..bytes.len() {
             assert_eq!(decode(&bytes[..n]), None, "cut at {n}");
         }
@@ -419,7 +436,7 @@ fn a_long_pull_is_a_few_bytes_a_post() {
         })
         .collect();
     let mut cut = ulatek();
-    cut.units[0].posts = posts;
+    cut.units[0].posts = track(posts);
     let bytes = encode(&cut).len();
     assert!(bytes < 3000 * 9, "{bytes} bytes for 3000 posts");
 }
@@ -429,12 +446,12 @@ fn the_files_read_as_the_extractor_wrote_them() {
     let cut = ulatek();
     assert_eq!(
         csv::tracks_csv(&cut),
-        "unit,t_ms,x,y,facing,hp,power_type,power,power_max,map_id\n\
-         0,500,1500.25,-3.50,1.500,90.0,0,100,100,2434\n\
-         0,1000,1501.00,-3.00,1.600,80.0,0,100,100,2434\n\
-         1,2500,1510.00,0.00,3.142,90.0,3,25,100,2434\n\
-         2,3000,1520.00,5.00,0.000,100.0,1,0,0,2434\n\
-         3,4000,1499.00,-2.00,0.500,100.0,0,0,0,2434\n"
+        "unit,t_ms,x,y,facing,hp,power_type,power,power_max,map_id,absorb,pools\n\
+         0,500,1500.25,-3.50,1.500,90.0,0,100,100,2434,0,0:100:100\n\
+         0,1000,1501.00,-3.00,1.600,80.0,0,100,100,2434,0,0:100:100\n\
+         1,2500,1510.00,0.00,3.142,90.0,3,25,100,2434,0,3:25:100\n\
+         2,3000,1520.00,5.00,0.000,100.0,1,0,0,2434,0,1:0:0\n\
+         3,4000,1499.00,-2.00,0.500,100.0,0,0,0,2434,0,0:0:0\n"
     );
     assert_eq!(
         csv::events_csv(&cut),
@@ -649,6 +666,7 @@ fn small_floors() -> Cut {
         post(1500, 1000, 2000, 0, 700, Some((6, 100, 100))),
     ));
     tank.push(post(2000, 150_100, -300, 0, 700, Some((6, 100, 100))));
+    *tank = track(std::mem::take(tank));
     cut.events
         .insert(0, boss_row(0, EventKind::BossEngaged, 3000, "Ula'tek"));
     cut.events
@@ -670,7 +688,8 @@ fn hex(b: &[u8]) -> String {
 /// `small()` as a format-1 build wrote it (v45, before every floor).
 const FORMAT1: &str = "57445250011d0000000801004c024c1b036713047a2c05a6011506bb010d07c8010908d1010a07125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010002010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc701ff8827b0b71200f0ea03880e0103643202d00f0000000ba8a912d7040178a09c010a00010001d00f00030002a09c01c0b80201000101d08c01cf0f03d8360500049be90606";
 
-/// `small_floors()` as this build writes it.
+/// `small_floors()` as a format-2 build wrote it (before the shields, the
+/// pools and the buff rows).
 const FORMAT2: &str = "5744525002210000000901004c024c1b036713047a4105bb012106dc010d07e9010908f2010d09ff010c07125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643204000d000020d00f0000010ba8a912d7040178a09c010a000200f0a8020e00002001d00f00030003a09c01c0b80201000101d08c01cf0f04b81701d8360500049be90606028213831301000202010100";
 
 /// A format-1 file still reads: every post on its floor, every row naming
@@ -695,15 +714,214 @@ fn a_format_1_file_reads_every_post_on_its_floor() {
     assert_eq!(maps, [(2434, 3, 2)]);
 }
 
-/// Format 2's golden bytes: a diff here is a format change, never a
+/// A format-2 file still reads: every floor and the boss rows as written,
+/// each post's pools from its own and its last's, no shields.
+#[test]
+fn a_format_2_file_reads_its_pools_and_no_shields() {
+    let bytes = unhex(FORMAT2);
+    assert_eq!(format_of(&bytes), Some(2));
+    let cut = decode(&bytes).expect("format 2 decodes");
+    assert_eq!(cut, small_floors());
+    assert!(
+        cut.units
+            .iter()
+            .flat_map(|u| &u.posts)
+            .all(|p| p.absorb == 0)
+    );
+    let tank: Vec<usize> = cut.units[0].posts.iter().map(|p| p.pools.len()).collect();
+    assert_eq!(tank, [1, 1, 1, 1], "runic power on every post");
+}
+
+// ---- format 3: the shields, every pool, the buff rows ------------------------------
+
+/// `small_floors()` in format 3: the tank's shields rise and fall, the
+/// boss's Spit names a second pool (`3|4`), the tank's Shield Wall goes up,
+/// stacks and comes off, and his debuff sits on the boss.
+fn small_auras() -> Cut {
+    let mut cut = small_floors();
+    let tank = &mut cut.units[0].posts;
+    tank[1].absorb = 5000;
+    tank[2].absorb = 5000;
+    tank[3].absorb = 0;
+    cut.units[1].posts[0].pools.push(Power {
+        kind: 4,
+        current: 1,
+        max: 5,
+    });
+    let row = |t_ms, kind, unit, spell_id, spell: &str, stacks| {
+        event(
+            t_ms,
+            kind,
+            unit,
+            spell_id,
+            spell,
+            None,
+            Some(0),
+            stacks,
+            None,
+            None,
+        )
+    };
+    let wall = "Shield Wall";
+    cut.events
+        .insert(2, row(1200, EventKind::BuffApplied, 0, 871, wall, None));
+    cut.events
+        .insert(3, row(1300, EventKind::BuffDose, 0, 871, wall, Some(2)));
+    cut.events.insert(
+        4,
+        row(2500, EventKind::DebuffApplied, 1, 7201, "Thorn Rake", None),
+    );
+    cut.events
+        .insert(5, row(9000, EventKind::BuffRemoved, 0, 871, wall, None));
+    cut
+}
+
+/// `small_auras()` as this build writes it.
+const FORMAT3: &str = "57445250032a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
+
+/// Format 3's golden bytes: a diff here is a format change, never a
 /// fixture to refresh.
 #[test]
-fn format_2_reads_and_writes_its_golden_bytes() {
-    let cut = small_floors();
+fn format_3_reads_and_writes_its_golden_bytes() {
+    let cut = small_auras();
     let bytes = encode(&cut);
-    assert_eq!(hex(&bytes), FORMAT2);
-    assert_eq!(format_of(&bytes), Some(2));
-    assert_eq!(decode(&unhex(FORMAT2)), Some(cut));
+    assert_eq!(hex(&bytes), FORMAT3);
+    assert_eq!(format_of(&bytes), Some(3));
+    assert_eq!(decode(&unhex(FORMAT3)), Some(cut));
+}
+
+/// Shields against their track's last (0 before the first), any amount
+/// up to u64::MAX and back; pools the posts' own do not make — a second
+/// pool, none at all, one dropped — written whole and read back.
+#[test]
+fn shields_and_pools_round_trip_through_every_change() {
+    let mut cut = ulatek();
+    let mut posts = track(vec![
+        post(0, 0, 0, 0, 0, Some((0, 100, 100))),
+        post(10, 0, 0, 0, 0, Some((7, 3, 5))),
+        post(20, 0, 0, 0, 0, None),
+        post(30, 0, 0, 0, 0, Some((0, 90, 100))),
+        post(40, 0, 0, 0, 0, Some((0, 80, 100))),
+        post(50, 0, 0, 0, 0, None),
+    ]);
+    for (p, absorb) in posts.iter_mut().zip([0, u64::MAX, 1, 1, 0, 350_042]) {
+        p.absorb = absorb;
+    }
+    let w = |kind, current, max| Power { kind, current, max };
+    // A second pool at post 2; post 3 grows from it, as the cut keeps it;
+    // none at post 4; one past any kind at post 5.
+    posts[2].pools = vec![w(0, 100, 100), w(4, 1, 5), w(7, 3, 5)];
+    posts[3].pools = vec![w(0, 90, 100), w(4, 1, 5), w(7, 3, 5)];
+    posts[4].pools = Vec::new();
+    posts[5].pools = vec![w(u32::MAX, u64::MAX, u64::MAX)];
+    cut.units[0].posts = posts;
+    let bytes = encode(&cut);
+    assert_eq!(decode(&bytes), Some(cut.clone()));
+    // Only posts 2, 4 and 5 are written whole: post 3 reads against 2.
+    let (from, _) = section_at(&bytes, POOLS);
+    assert_eq!(
+        &bytes[from..from + 4],
+        &[1, 0, 3, 2],
+        "unit 0, three, the first at 2"
+    );
+}
+
+/// A pull with no shield and no second pool pays a byte for each section:
+/// no unit listed.
+#[test]
+fn no_shield_and_no_second_pool_cost_a_byte_each() {
+    let bytes = encode(&ulatek());
+    for tag in [ABSORB, POOLS] {
+        let (from, len) = section_at(&bytes, tag);
+        assert_eq!(&bytes[from..from + len], &[0], "section {tag}");
+    }
+}
+
+/// Every lie the absorb and pools sections can tell is refused, and a
+/// format-2 head over a buff row is no file a format-2 build wrote.
+#[test]
+fn format_3_lies_are_refused() {
+    let good = encode(&small_auras());
+    let mut b = good.clone();
+    b[4] = 2;
+    assert_eq!(decode(&b), None, "format 2 knew no buff row");
+    let zz = |v: i64| {
+        let mut out = Vec::new();
+        put_zz(&mut out, v);
+        out
+    };
+    // The tank (unit 0): 5000 at post 1, back to 0 at post 3.
+    let mut absorb = vec![1, 0, 2, 1];
+    absorb.extend(zz(5000));
+    absorb.push(2);
+    absorb.extend(zz(-5000));
+    let again = |section: &[u8], tag| decode(&with_section(&good, tag, section));
+    assert_eq!(again(&absorb, ABSORB), Some(small_auras()));
+    let five = zz(5000);
+    let at = |prefix: &[u8], d: &[u8], rest: &[u8]| [prefix, d, rest].concat();
+    for lie in [
+        // A unit past the units.
+        at(&[1, 9, 1, 1], &five, &[]),
+        // A unit listed twice.
+        at(&[2, 0, 1, 1], &five, &[0, 1, 1, 2]),
+        // A unit listed with no change.
+        vec![1, 0, 0, 0, 0],
+        // A change at no post.
+        at(&[1, 0, 1, 9], &five, &[]),
+        // A change not after the last.
+        at(&[1, 0, 2, 1], &five, &[0, 2]),
+        // A count the bytes cannot hold.
+        at(&[9, 0, 1, 1], &five, &[]),
+        // Trailing bytes.
+        at(&absorb, &[], &[0]),
+    ] {
+        assert_eq!(again(&lie, ABSORB), None, "absorb {lie:02x?}");
+    }
+    // The boss (unit 1) at its one post: energy 25 of 100, combo points 1 of 5.
+    let pools = [1, 1, 1, 0, 2, 3, 25, 100, 4, 1, 5];
+    assert_eq!(again(&pools, POOLS), Some(small_auras()));
+    for lie in [
+        // Out of kind order.
+        &[1, 1, 1, 0, 2, 4, 1, 5, 3, 25, 100][..],
+        // A kind twice.
+        &[1, 1, 1, 0, 2, 3, 25, 100, 3, 1, 5][..],
+        // More pools than the bytes hold.
+        &[1, 1, 1, 0, 9, 3, 25, 100][..],
+        // A unit past the units.
+        &[1, 7, 1, 0, 1, 3, 25, 100][..],
+        // A change at no post.
+        &[1, 1, 1, 1, 1, 3, 25, 100][..],
+        // Trailing bytes.
+        &[1, 1, 1, 0, 2, 3, 25, 100, 4, 1, 5, 0][..],
+    ] {
+        assert_eq!(again(lie, POOLS), None, "pools {lie:02x?}");
+    }
+}
+
+#[test]
+fn the_files_carry_the_shields_pools_and_buff_rows() {
+    let cut = small_auras();
+    assert_eq!(
+        csv::tracks_csv(&cut),
+        "unit,t_ms,x,y,facing,hp,power_type,power,power_max,map_id,absorb,pools\n\
+         0,500,1500.25,-3.50,1.500,90.0,6,100,100,2434,0,6:100:100\n\
+         0,1000,1501.00,-3.00,1.600,80.0,6,100,100,2434,5000,6:100:100\n\
+         0,1500,10.00,20.00,0.000,70.0,6,100,100,2435,5000,6:100:100\n\
+         0,2000,1501.00,-3.00,0.000,70.0,6,100,100,2434,0,6:100:100\n\
+         1,2500,1510.00,0.00,3.142,90.0,3,25,100,2434,0,3:25:100|4:1:5\n"
+    );
+    assert_eq!(
+        csv::events_csv(&cut),
+        "t_ms,kind,unit,spell_id,spell,x,y,src,stacks,base,target\n\
+         0,boss_engaged,,3000,Ula'tek,,,\n\
+         1000,hit,0,7000,Venom,1501.00,-3.00,1,,120\n\
+         1200,buff_applied,0,871,Shield Wall,,,0\n\
+         1300,buff_dose,0,871,Shield Wall,,,0,2\n\
+         2500,debuff_applied,1,7201,Thorn Rake,,,0\n\
+         9000,buff_removed,0,871,Shield Wall,,,0\n\
+         11000,death,0,,,,,\n\
+         30000,boss_killed,,3000,Ula'tek,,,\n"
+    );
 }
 
 /// Tracks moving between floors, a unit never on the head's floor, a head
@@ -759,17 +977,36 @@ fn one_floor_costs_four_bytes() {
     assert_eq!(&bytes[from..from + len], &[1, 0x82, 0x13, 0]);
 }
 
+/// `good` with section `tag` replaced by `bytes`, its index rebuilt.
+fn with_section(good: &[u8], tag: u8, bytes: &[u8]) -> Vec<u8> {
+    let index_len = u32::from_le_bytes(good[5..9].try_into().unwrap()) as usize;
+    let base = HEAD_LEN + index_len;
+    let mut c = Cur::new(&good[HEAD_LEN..base]);
+    let n = c.usize().unwrap();
+    let (mut index, mut body) = (Vec::new(), Vec::new());
+    put_varint(&mut index, n as u64);
+    for _ in 0..n {
+        let (t, from, len) = (c.u8().unwrap(), c.usize().unwrap(), c.usize().unwrap());
+        let section = if t == tag {
+            bytes
+        } else {
+            &good[base + from..base + from + len]
+        };
+        index.push(t);
+        put_varint(&mut index, body.len() as u64);
+        put_varint(&mut index, section.len() as u64);
+        body.extend_from_slice(section);
+    }
+    let mut out = good[..5].to_vec();
+    out.extend_from_slice(&u32::try_from(index.len()).unwrap().to_le_bytes());
+    out.extend_from_slice(&index);
+    out.extend_from_slice(&body);
+    out
+}
+
 /// `small_floors()` with its maps section replaced by `maps`.
 fn with_maps(maps: &[u8]) -> Option<Cut> {
-    let good = encode(&small_floors());
-    let (from, len) = section_at(&good, MAPS);
-    // The maps section is written last, its length the index's last byte.
-    assert_eq!(from + len, good.len());
-    let mut b = good[..from].to_vec();
-    b.extend_from_slice(maps);
-    let index_len = u32::from_le_bytes(b[5..9].try_into().unwrap()) as usize;
-    b[HEAD_LEN + index_len - 1] = u8::try_from(maps.len()).unwrap();
-    decode(&b)
+    decode(&with_section(&encode(&small_floors()), MAPS, maps))
 }
 
 /// A format-1 head over format-2 rows is no file a format-1 build wrote
@@ -826,12 +1063,12 @@ fn the_files_carry_every_floor_and_the_boss_rows() {
     let cut = small_floors();
     assert_eq!(
         csv::tracks_csv(&cut),
-        "unit,t_ms,x,y,facing,hp,power_type,power,power_max,map_id\n\
-         0,500,1500.25,-3.50,1.500,90.0,6,100,100,2434\n\
-         0,1000,1501.00,-3.00,1.600,80.0,6,100,100,2434\n\
-         0,1500,10.00,20.00,0.000,70.0,6,100,100,2435\n\
-         0,2000,1501.00,-3.00,0.000,70.0,6,100,100,2434\n\
-         1,2500,1510.00,0.00,3.142,90.0,3,25,100,2434\n"
+        "unit,t_ms,x,y,facing,hp,power_type,power,power_max,map_id,absorb,pools\n\
+         0,500,1500.25,-3.50,1.500,90.0,6,100,100,2434,0,6:100:100\n\
+         0,1000,1501.00,-3.00,1.600,80.0,6,100,100,2434,0,6:100:100\n\
+         0,1500,10.00,20.00,0.000,70.0,6,100,100,2435,0,6:100:100\n\
+         0,2000,1501.00,-3.00,0.000,70.0,6,100,100,2434,0,6:100:100\n\
+         1,2500,1510.00,0.00,3.142,90.0,3,25,100,2434,0,3:25:100\n"
     );
     assert_eq!(
         csv::events_csv(&cut),

@@ -377,8 +377,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C31	power_seconds	2
 2	Trash	Trash		8000			Player-1168-0A1B2C31	power_sum	120
 2	Trash	Trash		8000			Player-1168-0A1B2C31	power_max	100
-1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_units	4
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_units	5
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_posts	34
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_absorb	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_pools	11
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_pool_sum	180600
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_floor	2287
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_hit	1
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_cast_start	0
@@ -396,6 +399,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_boss_engaged	1
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_boss_killed	1
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_boss_wiped	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_buff_applied	11
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_buff_removed	10
+1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_buff_dose	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_placed_cast	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_placed_summon	0
 1	Encounter	Spans Test Boss	kill	60000	3147	16	*	replay_placed_touch	0

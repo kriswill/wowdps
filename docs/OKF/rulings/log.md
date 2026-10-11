@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-10
+
+- **Update** — [R29 The replay cut](r29.md): tier format 3 — each post's
+  shields and its last reading of every pool kind, the buff rows (R18's
+  curated kinds but support buffs, or any buff not ours; a removal or dose
+  only once applied in the cut), a player's debuffs on NPCs; a buff from a
+  hostile unit is a buff row, no longer a debuff row.
+
 ## 2026-10-09
 
 - **Update** — [R29 The replay cut](r29.md): every post on whichever floor it

@@ -316,6 +316,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	power_max	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_units	1
 1	Encounter	Relog Test A		9000	3140	15	*	replay_posts	2
+1	Encounter	Relog Test A		9000	3140	15	*	replay_absorb	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_pools	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_pool_sum	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_floor	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_hit	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_cast_start	0
@@ -333,6 +336,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	*	replay_boss_engaged	1
 1	Encounter	Relog Test A		9000	3140	15	*	replay_boss_killed	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_boss_wiped	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_buff_applied	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_buff_removed	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_buff_dose	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_placed_cast	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_placed_summon	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_placed_touch	0
@@ -341,6 +347,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	2287	replay_map_posts	2
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_units	1
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_posts	3
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_absorb	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_pools	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_pool_sum	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_floor	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_hit	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_cast_start	0
@@ -358,6 +367,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_boss_engaged	1
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_boss_killed	1
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_boss_wiped	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_buff_applied	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_buff_removed	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_buff_dose	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_placed_cast	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_placed_summon	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_placed_touch	0

@@ -2,6 +2,12 @@
 
 ## 2026-10-10
 
+- **Update** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
+  format 3 adds each post's shields and every pool kind, the buffs that
+  matter to the fight (R18's curated kinds or an NPC's, never one up before
+  the pull) and every debuff a player puts on an NPC — the rows a followed
+  unit's HUD reads; two real +15 runs grew 11.7 and 12.1 %, and the rewrite
+  queue recuts formats 1 and 2.
 - **Update** — [Creature Classifications Come From The Addon, Kept As One TSV](creature-classes-come-from-the-addon.md):
   the amendment adds that a file that exists but cannot be read is refused,
   not rewritten.

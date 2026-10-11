@@ -13,11 +13,15 @@
 //! every post by time and, within a millisecond, by unit: the cut keeps
 //! each unit's track whole, and a reader sorts each unit's track anyway.
 //!
-//! Beyond the extractor's columns, two additions a reader by column takes
-//! or leaves: (format 2) `tracks.csv`'s trailing `map_id`, the floor each
+//! Beyond the extractor's columns, additions a reader by column takes or
+//! leaves: (format 2) `tracks.csv`'s trailing `map_id`, the floor each
 //! post stands on, and `events.csv`'s boss rows (`boss_engaged`,
 //! `boss_killed`, `boss_wiped`: the encounter's id and name in `spell_id`
-//! and `spell`, `unit` empty).
+//! and `spell`, `unit` empty); (format 3) `tracks.csv`'s trailing `absorb`
+//! (the unit's shields) and `pools` (its last reading of every pool kind,
+//! `kind:current:max` each, `|` between, by kind; empty for none), and
+//! `events.csv`'s buff rows (`buff_applied`, `buff_removed` in eight
+//! columns, `buff_dose` in nine, as the debuff rows are).
 
 use std::fmt::Write as _;
 use std::io;
@@ -27,7 +31,8 @@ use wowdps_model::replay::{Cut, MarkerKind, PlacedKind, UnitKind};
 
 /// Each file's heading line.
 pub const UNITS_HEAD: &str = "unit\tkind\tname\tclass\tspec\tspec_name\trole\tyou\tnpc\n";
-pub const TRACKS_HEAD: &str = "unit,t_ms,x,y,facing,hp,power_type,power,power_max,map_id\n";
+pub const TRACKS_HEAD: &str =
+    "unit,t_ms,x,y,facing,hp,power_type,power,power_max,map_id,absorb,pools\n";
 pub const EVENTS_HEAD: &str = "t_ms,kind,unit,spell_id,spell,x,y,src,stacks,base,target\n";
 pub const PLACED_HEAD: &str = "t_ms,kind,unit,spell_id,spell,x,y,src,target\n";
 pub const RAID_HEAD: &str = "t_ms,damage\n";
@@ -113,8 +118,9 @@ pub fn units_tsv(cut: &Cut) -> String {
 }
 
 /// `tracks.csv`: every post — by time, then unit — with its facing (three
-/// decimals), its health share (one), its power (empty where none) and
-/// the floor it stands on.
+/// decimals), its health share (one), the pool it names first (empty where
+/// none), the floor it stands on, its shields and its last reading of
+/// every pool kind.
 pub fn tracks_csv(cut: &Cut) -> String {
     let mut rows: Vec<(u32, usize, usize)> = cut
         .units
@@ -128,7 +134,7 @@ pub fn tracks_csv(cut: &Cut) -> String {
         })
         .collect();
     rows.sort_unstable();
-    let mut out = String::with_capacity(TRACKS_HEAD.len() + rows.len() * 48);
+    let mut out = String::with_capacity(TRACKS_HEAD.len() + rows.len() * 64);
     out.push_str(TRACKS_HEAD);
     for (_, u, i) in rows {
         let Some(p) = cut.units.get(u).and_then(|unit| unit.posts.get(i)) else {
@@ -138,9 +144,14 @@ pub fn tracks_csv(cut: &Cut) -> String {
             || ",,".to_string(),
             |w| format!("{},{},{}", w.kind, w.current, w.max),
         );
+        let pools: Vec<String> = p
+            .pools
+            .iter()
+            .map(|w| format!("{}:{}:{}", w.kind, w.current, w.max))
+            .collect();
         let _ = writeln!(
             out,
-            "{u},{},{},{},{:.3},{}.{},{power},{}",
+            "{u},{},{},{},{:.3},{}.{},{power},{},{},{}",
             p.t_ms,
             yd(p.x),
             yd(p.y),
@@ -148,6 +159,8 @@ pub fn tracks_csv(cut: &Cut) -> String {
             p.hp / 10,
             p.hp % 10,
             p.map_id,
+            p.absorb,
+            pools.join("|"),
         );
     }
     out

@@ -17,7 +17,12 @@ The wowdps domain vocabulary: what a meter shows, said without reference to how 
 files a replay reads, the raid's damage per second left to R25. A `Post`
 carries its floor (`map_id`) and `Cut::maps` counts each floor's posts; a
 boss row (`boss_engaged`, `boss_killed`, `boss_wiped`) is the one `Event`
-whose `unit` is `None`.
+whose `unit` is `None`. Format 3: a `Post` also carries the block's shields
+(`absorb`) and the last reading of every pool kind its unit's posts have
+named (`pools`, grown by `set_pool`, the one rule the cut and the tier
+share), so `Post` is `Clone`, no longer `Copy`; the buff rows (`buff_applied`,
+`buff_removed`, `buff_dose`) join the debuff rows, which now also hold a
+player's debuffs on NPCs.
 
 ## Source
 

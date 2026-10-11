@@ -442,6 +442,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	power_max	100
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_units	6
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_posts	41
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_absorb	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_pools	18
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_pool_sum	1080
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_floor	2287
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_hit	10
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_cast_start	0
@@ -459,6 +462,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_boss_engaged	1
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_boss_killed	1
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_boss_wiped	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_buff_applied	4
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_buff_removed	3
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_buff_dose	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_cast	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_summon	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_touch	0

@@ -47,12 +47,34 @@
 //! victim stood, its amount before mitigation) or its miss — ours being a
 //! player or a pet, or a unit one of ours summoned (R22's fold, so Spirit
 //! Link Totem's redistribution is no hit, while a neutral NPC's spell and
-//! one from no unit still are); an aura from a hostile unit
-//! or from no one going on a player, coming off, or its stacks changing;
-//! and every ENCOUNTER_START (`boss_engaged`) and ENCOUNTER_END
-//! (`boss_killed` or `boss_wiped`) the slice holds, the encounter's id and
-//! name as the row's spell and no unit — a keystone run's bosses where they
-//! begin and end, and a boss pull's own two (t 0 and its end).
+//! one from no unit still are); a debuff from a hostile unit or from no one
+//! going on a player, coming off, or its stacks changing; every
+//! ENCOUNTER_START (`boss_engaged`) and ENCOUNTER_END (`boss_killed` or
+//! `boss_wiped`) the slice holds, the encounter's id and name as the row's
+//! spell and no unit — a keystone run's bosses where they begin and end,
+//! and a boss pull's own two (t 0 and its end); and (format 3) the auras
+//! a followed unit's HUD reads:
+//!
+//! - a player's debuff on an NPC (a creature or a vehicle) going on, coming
+//!   off or changing stacks, every one (`unit` the NPC, `src` the player):
+//!   the evidence of what a player pressed, a triggered effect whose cast
+//!   the log never writes included (a guardian druid's Feral Frenzy logs
+//!   only its triggered spell, whose debuff on the target is such a row);
+//! - a buff on a player that matters to the fight (`buff_applied`,
+//!   `buff_removed`, `buff_dose`): one whose spell R18's curated table names
+//!   a defensive, a tank's mitigation, an external, a major cooldown or a
+//!   healing cooldown (`role_spells`, its support buffs aside), or any buff
+//!   whose source is not ours (an NPC's, or no one's: an empowerment, a
+//!   mark), `src` its caster. A removal or a dose whose application the cut
+//!   never saw (by player, spell and caster) is dropped: the buff was up
+//!   before the slice's first line. A long buff from before the pull
+//!   (stamina, a flask) is neither, so it makes no row at all.
+//!
+//! THE POSTS carry (format 3) the block's absorb — the unit's shields in
+//! total — and, beside the pool the line names first, the last reading of
+//! every pool kind the unit's posts have named so far (`Post::pools`): a
+//! line names one pool, not always the same, and a cast's `a|b` lists name
+//! two.
 //!
 //! THE PLACED THINGS ([`PlacedTable`] says which spells): a player's landed
 //! cast of a placing spell (where they stood) and its aim; their summon or
@@ -110,17 +132,21 @@
 //! - The slice's ENCOUNTER_START and ENCOUNTER_END lines are rows
 //!   (`boss_engaged`, `boss_killed`, `boss_wiped`); the text cutter wrote
 //!   none.
+//! - An aura row on a player is a DEBUFF's (format 3): a buff from a hostile
+//!   unit or from no one, which the text cutter wrote as a debuff row, is a
+//!   buff row. Players' debuffs on NPCs, the buffs that matter to the fight,
+//!   each post's absorb and every pool kind are format 3's own.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use wowdps_model::replay::{
     Cut, EncounterHead, Event, EventKind, Head, KeyHead, Marker, MarkerKind, Placed, PlacedKind,
-    Post, Power, Unit, UnitId, UnitKind,
+    Post, Power, Unit, UnitId, UnitKind, set_pool,
 };
-use wowdps_model::{Class, Spec};
+use wowdps_model::{Class, RoleSpellKind, Spec};
 
 use crate::meter::Meter;
-use crate::parser::{self, Event as Ev, LogLine, Position, Unit as LogUnit};
+use crate::parser::{self, AuraType, Event as Ev, LogLine, Position, Spell, Unit as LogUnit};
 
 /// Which spells place something in the room, and which tell where one
 /// stands: the encounter rubric's generated `placed` table, which core
@@ -218,8 +244,21 @@ enum Draft {
         hp: u16,
         max_hp: u64,
         power: Option<Power>,
+        /// The block's shields in total.
+        absorb: u64,
+        /// The unit's last reading of every pool kind, this line's in.
+        pools: Vec<Power>,
     },
     Event(DraftEvent),
+}
+
+/// Which line of an aura's life: its application, its removal, a change of
+/// its stacks.
+#[derive(Clone, Copy)]
+enum AuraStep {
+    Applied,
+    Removed,
+    Dose(u16),
 }
 
 /// An `events.csv` row in waiting: units as GUIDs, numbered in the order
@@ -312,6 +351,12 @@ struct Cutter {
     titles: Vec<String>,
     /// Players' posts per floor: the cut's main floor is the most voted.
     floor_votes: HashMap<u32, u64>,
+    /// Each posted unit's last reading of every pool kind its posts named.
+    pools: HashMap<Gix, Vec<Power>>,
+    /// The buffs on players the slice saw applied and not yet removed, by
+    /// (player, spell, caster): a removal or a dose of any other was up
+    /// before the slice began, and makes no row.
+    buffs_up: HashSet<(Gix, u32, Option<Gix>)>,
     drafts: Vec<Draft>,
     placed: Vec<DraftPlaced>,
     markers: Vec<Marker>,
@@ -501,17 +546,25 @@ impl Cutter {
                 *self.floor_votes.entry(pos.map).or_default() += 1;
             }
             let g = self.gix(&h.unit_guid);
+            let reading = |p: parser::Power| Power {
+                kind: p.kind,
+                current: p.current,
+                max: p.max,
+            };
+            let pools = self.pools.entry(g).or_default();
+            for p in h.pools() {
+                set_pool(pools, reading(p));
+            }
+            let pools = pools.clone();
             self.drafts.push(Draft::Post {
                 t,
                 g,
                 pos,
                 hp: hp_tenths(h.current, h.max),
                 max_hp: h.max,
-                power: h.power.map(|p| Power {
-                    kind: p.kind,
-                    current: p.current,
-                    max: p.max,
-                }),
+                power: h.power.map(reading),
+                absorb: h.absorb,
+                pools,
             });
         }
         if let Some(e) = self.event(t, line) {
@@ -659,14 +712,7 @@ impl Cutter {
             base: None,
             target: None,
         };
-        let hostile_now = |c: &Cutter, u: &LogUnit| {
-            !ours(&u.guid)
-                && c.index
-                    .get(&u.guid)
-                    .and_then(|&g| c.guids.get(g as usize))
-                    .is_some_and(|s| s.hostile)
-        };
-        let hostile_or_none = |c: &Cutter, u: &LogUnit| u.guid == NOBODY || hostile_now(c, u);
+        let hostile_now = |c: &Cutter, u: &LogUnit| c.hostile_now(u);
         // A hit's source: anything but one of ours — a neutral NPC's spell
         // that finds a player is still the room's — so a totem or guardian
         // of ours (Spirit Link Totem's redistribution) is never one.
@@ -779,38 +825,107 @@ impl Cutter {
                 r
             }
             Ev::AuraApplied {
-                src, dst, spell, ..
-            }
-            | Ev::AuraRemoved {
-                src, dst, spell, ..
-            } if is_player(dst) && hostile_or_none(self, src) => {
-                let kind = if matches!(ev, Ev::AuraApplied { .. }) {
-                    EventKind::DebuffApplied
-                } else {
-                    EventKind::DebuffRemoved
-                };
-                let mut r = row(kind, self.gix(&dst.guid), spell.id, &spell.name);
-                r.src = self.src_of(src);
-                r
-            }
+                src,
+                dst,
+                spell,
+                aura_type,
+                ..
+            } => return self.aura(t, AuraStep::Applied, src, dst, spell, *aura_type),
+            Ev::AuraRemoved {
+                src,
+                dst,
+                spell,
+                aura_type,
+                ..
+            } => return self.aura(t, AuraStep::Removed, src, dst, spell, *aura_type),
             Ev::AuraDose {
                 src,
                 dst,
                 spell,
+                aura_type,
                 stacks,
                 ..
-            } if is_player(dst) && hostile_or_none(self, src) => {
-                let mut r = row(
-                    EventKind::DebuffDose,
-                    self.gix(&dst.guid),
-                    spell.id,
-                    &spell.name,
-                );
-                r.src = self.src_of(src);
-                r.stacks = Some(*stacks);
-                r
-            }
+            } => return self.aura(t, AuraStep::Dose(*stacks), src, dst, spell, *aura_type),
             _ => return None,
+        })
+    }
+
+    /// A unit some line flagged hostile by now, never one of ours.
+    fn hostile_now(&self, u: &LogUnit) -> bool {
+        !ours(&u.guid)
+            && self
+                .index
+                .get(&u.guid)
+                .and_then(|&g| self.guids.get(g as usize))
+                .is_some_and(|s| s.hostile)
+    }
+
+    /// The row an aura's line makes, if any: a debuff on a player from a
+    /// hostile unit or from no one; (format 3) a player's debuff on an NPC,
+    /// every one; a buff on a player that matters to the fight, whose
+    /// removal or dose counts only after the slice saw it applied.
+    fn aura(
+        &mut self,
+        t: u32,
+        step: AuraStep,
+        src: &LogUnit,
+        dst: &LogUnit,
+        spell: &Spell,
+        aura_type: AuraType,
+    ) -> Option<DraftEvent> {
+        let buff = aura_type == AuraType::Buff;
+        let kind = if buff {
+            // A defensive, a tank's mitigation, an external, a major or a
+            // healing cooldown (R18's curated table, its support buffs
+            // aside), or anything an NPC or no one put on the player.
+            let fights = crate::role_spells::role_kind(spell.id)
+                .is_some_and(|k| k != RoleSpellKind::SupportBuff);
+            if !is_player(dst) || !(fights || !self.ours_now(src)) {
+                return None;
+            }
+            let key = (self.gix(&dst.guid), spell.id, self.src_of(src));
+            let seen = match step {
+                AuraStep::Applied => {
+                    self.buffs_up.insert(key);
+                    true
+                }
+                AuraStep::Removed => self.buffs_up.remove(&key),
+                AuraStep::Dose(_) => self.buffs_up.contains(&key),
+            };
+            if !seen {
+                return None;
+            }
+            match step {
+                AuraStep::Applied => EventKind::BuffApplied,
+                AuraStep::Removed => EventKind::BuffRemoved,
+                AuraStep::Dose(_) => EventKind::BuffDose,
+            }
+        } else {
+            let on_player = is_player(dst) && (src.guid == NOBODY || self.hostile_now(src));
+            let players_on_npc = is_creature(dst) && is_player(src);
+            if !on_player && !players_on_npc {
+                return None;
+            }
+            match step {
+                AuraStep::Applied => EventKind::DebuffApplied,
+                AuraStep::Removed => EventKind::DebuffRemoved,
+                AuraStep::Dose(_) => EventKind::DebuffDose,
+            }
+        };
+        Some(DraftEvent {
+            t,
+            kind,
+            unit: Some(self.gix(&dst.guid)),
+            spell_id: spell.id,
+            spell: spell.name.clone(),
+            at: None,
+            src: self.src_of(src),
+            stacks: match step {
+                AuraStep::Dose(n) => Some(n),
+                _ => None,
+            },
+            base: None,
+            target: None,
         })
     }
 
@@ -920,6 +1035,8 @@ impl Cutter {
                     hp,
                     max_hp: m,
                     power,
+                    absorb,
+                    pools,
                 } => {
                     let u = units.of(g) as usize;
                     if posts.len() <= u {
@@ -936,6 +1053,8 @@ impl Cutter {
                         hp,
                         power,
                         map_id: pos.map,
+                        absorb,
+                        pools,
                     });
                     let best = max_hp.entry(g).or_insert(0);
                     *best = (*best).max(m);

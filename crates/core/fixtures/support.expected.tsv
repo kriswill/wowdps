@@ -442,6 +442,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C21	power_max	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_units	5
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_posts	43
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_absorb	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_pools	13
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_pool_sum	826550
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_floor	2287
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_hit	1
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_cast_start	0
@@ -459,6 +462,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_boss_engaged	1
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_boss_killed	1
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_boss_wiped	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_buff_applied	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_buff_removed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_buff_dose	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_placed_cast	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_placed_summon	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_placed_touch	0
