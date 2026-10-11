@@ -37,8 +37,11 @@ pub fn drill_mitigation_line(app: &ClientState) -> Option<String> {
     Some(mitigation_line(m, taken))
 }
 
-/// v17: the game's name for a school bitmask — the singles, the named
-/// combos players actually see, and a component join for the rest.
+/// v17: the game's name for a school bitmask — the singles, every combo
+/// the game names (its `STRING_SCHOOL_*` words in the client's
+/// GlobalStrings: a two-school tag names its pair, as `HOLYSTRIKE` is
+/// Holy and Physical, and the word shown can differ from the tag, as
+/// `FIRESTORM` reads "Volcanic"), and a component join for the rest.
 pub fn school_name(mask: u32) -> Option<String> {
     let named = match mask {
         0x01 => Some("Physical"),
@@ -48,20 +51,34 @@ pub fn school_name(mask: u32) -> Option<String> {
         0x10 => Some("Frost"),
         0x20 => Some("Shadow"),
         0x40 => Some("Arcane"),
+        // Two schools.
+        0x03 => Some("Holystrike"),
+        0x05 => Some("Flamestrike"),
         0x06 => Some("Radiant"),
+        0x09 => Some("Stormstrike"),
+        0x0A => Some("Holystorm"),
         0x0C => Some("Volcanic"),
+        0x11 => Some("Froststrike"),
+        0x12 => Some("Holyfrost"),
         0x14 => Some("Frostfire"),
         0x18 => Some("Froststorm"),
+        0x21 => Some("Shadowstrike"),
         0x22 => Some("Twilight"),
         0x24 => Some("Shadowflame"),
         0x28 => Some("Plague"),
         0x30 => Some("Shadowfrost"),
+        0x41 => Some("Spellstrike"),
+        0x42 => Some("Divine"),
         0x44 => Some("Spellfire"),
         0x48 => Some("Astral"),
         0x50 => Some("Spellfrost"),
         0x60 => Some("Spellshadow"),
-        0x7C => Some("Elemental"),
-        0x7E => Some("Chromatic"),
+        // More: the three elements, the chromatic five, the cosmic four,
+        // every magic school, all seven.
+        0x1C => Some("Elemental"),
+        0x7C => Some("Chromatic"),
+        0x6A => Some("Cosmic"),
+        0x7E => Some("Magic"),
         0x7F => Some("Chaos"),
         _ => None,
     };
@@ -201,8 +218,9 @@ mod tests {
         assert_eq!(school_name(0x40).as_deref(), Some("Arcane"));
         assert_eq!(school_name(0x24).as_deref(), Some("Shadowflame"));
         assert_eq!(school_name(0x7F).as_deref(), Some("Chaos"));
-        assert_eq!(school_name(0x41).as_deref(), Some("Physical+Arcane"));
+        // A mask the game names nothing is its schools joined.
         assert_eq!(school_name(0x23).as_deref(), Some("Physical+Holy+Shadow"));
+        assert_eq!(school_name(0x68).as_deref(), Some("Nature+Shadow+Arcane"));
         assert_eq!(school_name(0), None);
         assert_eq!(school_name(0x80), None);
         // The game's own combo names, every one.
@@ -212,19 +230,30 @@ mod tests {
             (0x08, "Nature"),
             (0x10, "Frost"),
             (0x20, "Shadow"),
+            (0x03, "Holystrike"),
+            (0x05, "Flamestrike"),
             (0x06, "Radiant"),
+            (0x09, "Stormstrike"),
+            (0x0A, "Holystorm"),
             (0x0C, "Volcanic"),
+            (0x11, "Froststrike"),
+            (0x12, "Holyfrost"),
             (0x14, "Frostfire"),
             (0x18, "Froststorm"),
+            (0x21, "Shadowstrike"),
             (0x22, "Twilight"),
             (0x28, "Plague"),
             (0x30, "Shadowfrost"),
+            (0x41, "Spellstrike"),
+            (0x42, "Divine"),
             (0x44, "Spellfire"),
             (0x48, "Astral"),
             (0x50, "Spellfrost"),
             (0x60, "Spellshadow"),
-            (0x7C, "Elemental"),
-            (0x7E, "Chromatic"),
+            (0x1C, "Elemental"),
+            (0x7C, "Chromatic"),
+            (0x6A, "Cosmic"),
+            (0x7E, "Magic"),
         ] {
             assert_eq!(school_name(mask).as_deref(), Some(name), "{mask:#x}");
         }
