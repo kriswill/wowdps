@@ -469,10 +469,11 @@ function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
 # own): the FLOOR — the UiMap id the advanced block reports players on most
 # (pass 1; a tie to the lower id) —, every post on EVERY floor (a Player /
 # Creature / Vehicle block whose health reads, max above 0, with x, y,
-# facing and a map above 0) and the posts per floor, the event rows by kind
-# (the boss rows: each ENCOUNTER_START and ENCOUNTER_END the cut holds), the
-# placed rows by kind, the world markers (those standing on the cut's
-# instance map at its start, then each placement there and each removal)
+# facing and a map above 0) and the posts per floor, (format 3) the posts'
+# shields and pools (`r_post_pools`), the event rows by kind (the boss rows:
+# each ENCOUNTER_START and ENCOUNTER_END the cut holds; format 3's aura rows,
+# `r_aura`), the placed rows by kind, the world markers (those standing on
+# the cut's instance map at its start, then each placement there and each removal)
 # and the units the rows number. Written from the ruling's words, never the
 # Rust: the advanced block starts at off12 on a spell-shaped line (SPELL_,
 # RANGE_, DAMAGE_SHIELD, DAMAGE_SPLIT, every _SUPPORT), else at off9;
@@ -517,6 +518,55 @@ function r_floor(votes, n,   k, kk, best, fl) {
     }
     return fl
 }
+# Format 3, a post's shields and pools: the block's offset 9 (its absorb, a
+# whole number, else 0) summed over the cut's posts (`replay_absorb`); each
+# pool the block names at offsets 10–12 — every entry of an `a|b` list, the
+# n-th type with the n-th current and max, each reading with its max above 0
+# — kept as the unit's LAST reading of that type; and over the posts, how
+# many types each carries (`replay_pools`) and Σ of their currents
+# (`replay_pool_sum`).
+function r_post_pools(s, pk,   u, nk, nc, nm, kk, cc, mm, i, n, k, sum) {
+    if ($(pk + 9) ~ /^[0-9]+$/) rv[s SUBSEP "replay_absorb"] += $(pk + 9)
+    nk = split($(pk + 10), kk, "|"); nc = split($(pk + 11), cc, "|"); nm = split($(pk + 12), mm, "|")
+    if (nc < nk) nk = nc
+    if (nm < nk) nk = nm
+    u = s SUBSEP rguid
+    for (i = 1; i <= nk; i++) {
+        if (kk[i] !~ /^[0-9]+$/ || cc[i] !~ /^[0-9]+$/ || mm[i] !~ /^[0-9]+$/ || mm[i] + 0 == 0) continue
+        if (!((u SUBSEP (kk[i] + 0)) in rPool)) rKinds[u] = rKinds[u] " " (kk[i] + 0)
+        rPool[u SUBSEP (kk[i] + 0)] = cc[i] + 0
+    }
+    n = split(rKinds[u], k, " "); sum = 0
+    for (i = 1; i <= n; i++) sum += rPool[u SUBSEP k[i]]
+    rv[s SUBSEP "replay_pools"] += n; rv[s SUBSEP "replay_pool_sum"] += sum
+}
+# An aura's line (format 3's rows). A DEBUFF (any aura word but BUFF) on a
+# player from the nil unit or a hostile one, or a PLAYER's debuff on an NPC
+# (a Creature- or Vehicle- unit), every one: a debuff row, `unit` the one
+# wearing it. A BUFF on a player whose spell R18's table names (ROLE, its
+# support buffs aside) or whose source is not ours (an NPC's, the nil
+# unit's): a buff row — its removal or dose only after the cut saw it
+# applied, by (player, spell, source), else it was up before the cut began.
+# A line with no aura word, or a dose with no whole stack count, is none.
+function r_aura(s,   dose, step, key) {
+    if ($13 == "") return
+    dose = (ev ~ /_DOSE$/)
+    if (dose && $14 !~ /^[0-9]+$/) return
+    step = dose ? "dose" : (ev == "SPELL_AURA_APPLIED" ? "applied" : "removed")
+    if (toupper(strip($13)) != "BUFF") {
+        if (($6 ~ /^Player-/ && ($2 == "0000000000000000" || r_hostile(s, $2))) || ($6 ~ /^(Creature|Vehicle)-/ && $2 ~ /^Player-/)) {
+            r_count(s, "debuff_" step); r_unit(s, $6); r_src(s, $2)
+        }
+        return
+    }
+    if ($6 !~ /^Player-/) return
+    if (!((($10 + 0) in ROLE) && ROLE[$10 + 0] != "SupportBuff") && r_friend($2)) return
+    key = s SUBSEP $6 SUBSEP ($10 + 0) SUBSEP (($2 == "0000000000000000") ? "" : $2)
+    if (step == "applied") rUp[key] = 1
+    else if (!(key in rUp)) return
+    else if (step == "removed") delete rUp[key]
+    r_count(s, "buff_" step); r_unit(s, $6); r_src(s, $2)
+}
 # One line of an open cut `s`: the hostility it teaches, its post (on any
 # floor), its event row, and a placed candidate (resolved when the cut
 # closes, once every other row has numbered its units).
@@ -526,6 +576,7 @@ function r_line(s) {
     else if (ev == "UNIT_DIED" || ev == "UNIT_DESTROYED") r_side(s, $6, $8)
     if (r_block(r_pk()) && rguid ~ /^(Player|Creature|Vehicle)-/) {
         rPosts[s SUBSEP rguid]++; rMapP[s SUBSEP rmap]++; r_count(s, "posts"); r_unit(s, rguid)
+        r_post_pools(s, r_pk())
     }
     if (ev == "UNIT_DIED") {
         if ($6 ~ /^Player-/) { if ($10 != "1") { r_count(s, "death"); r_unit(s, $6) } }
@@ -547,14 +598,8 @@ function r_line(s) {
         }
     } else if (ev ~ /^(SPELL_MISSED|SPELL_PERIODIC_MISSED|RANGE_MISSED|DAMAGE_SHIELD_MISSED)$/) {
         if ($6 ~ /^Player-/ && !r_friend($2)) { r_count(s, "hit"); r_unit(s, $6); r_src(s, $2) }
-    } else if (ev == "SPELL_AURA_APPLIED" || ev == "SPELL_AURA_REMOVED") {
-        if ($6 ~ /^Player-/ && ($2 == "0000000000000000" || r_hostile(s, $2))) {
-            r_count(s, ev == "SPELL_AURA_APPLIED" ? "debuff_applied" : "debuff_removed"); r_unit(s, $6); r_src(s, $2)
-        }
-    } else if (ev == "SPELL_AURA_APPLIED_DOSE" || ev == "SPELL_AURA_REMOVED_DOSE") {
-        if ($6 ~ /^Player-/ && $14 ~ /^[0-9]+$/ && ($2 == "0000000000000000" || r_hostile(s, $2))) {
-            r_count(s, "debuff_dose"); r_unit(s, $6); r_src(s, $2)
-        }
+    } else if (ev ~ /^SPELL_AURA_(APPLIED|REMOVED|APPLIED_DOSE|REMOVED_DOSE)$/) {
+        r_aura(s)
     }
     if (ev == "SPELL_CAST_SUCCESS" && $2 ~ /^Player-/ && (($10 + 0) in PLACE)) r_place(s, "cast" SUBSEP $2)
     else if ((ev == "SPELL_SUMMON" || ev == "SPELL_CREATE") && $2 ~ /^Player-/ && (($10 + 0) in PLACE))
@@ -1249,7 +1294,7 @@ END {
     # R29: each closed boss pull's replay cut, then each finished keystone
     # run's ("K<n>", kind Key, its name and level, timed or over, its START to
     # its END) — `r_emit`'s rows.
-    split("units posts floor hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped placed_cast placed_summon placed_touch placed_gone markers", rnames, " ")
+    split("units posts absorb pools pool_sum floor hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped buff_applied buff_removed buff_dose placed_cast placed_summon placed_touch placed_gone markers", rnames, " ")
     for (s = 1; s <= nseg; s++) {
         if (!(s in rEnc) || segEnd[s] == "") continue
         dur = segEnd[s] - segStart[s]

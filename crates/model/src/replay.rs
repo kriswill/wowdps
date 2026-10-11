@@ -8,11 +8,12 @@
 //!
 //! What the replay needs and nothing more: where every unit stood — on
 //! whichever floor (UiMap) the log put it, so a keystone run follows the
-//! party from level to level — which way it faced and how much health and
-//! power it had whenever the log said (a [`Post`]); the deaths, the hostile
-//! casts, the hits on players, the debuffs on them and where each boss
-//! fight began and ended ([`Event`]); what players placed in the room
-//! ([`Placed`]); the raid's world markers ([`Marker`]). The group's damage
+//! party from level to level — which way it faced, how much health, shield
+//! and power it had whenever the log said (a [`Post`]); the deaths, the
+//! hostile casts, the hits on players, the debuffs on them, the buffs that
+//! matter to the fight on them, the players' own debuffs on NPCs and where
+//! each boss fight began and ended ([`Event`]); what players placed in the
+//! room ([`Placed`]); the raid's world markers ([`Marker`]). The group's damage
 //! each second (`raid.csv`) is NOT kept here: R25's raid timeline already
 //! answers it from the details tier (`stored_fight`'s `raid`), so the
 //! writer takes it from there rather than storing it twice.
@@ -87,9 +88,9 @@ pub struct Unit {
 }
 
 /// One row of `tracks.csv` (`unit, t_ms, x, y, facing, hp, power_type,
-/// power, power_max, map_id`): where the advanced block put the unit at a
-/// time, in the log's own units and precision, kept exact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// power, power_max, map_id, absorb, pools`): where the advanced block put
+/// the unit at a time, in the log's own units and precision, kept exact.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Post {
     /// `t_ms`: milliseconds from the cut's start.
     pub t_ms: u32,
@@ -103,8 +104,8 @@ pub struct Post {
     /// `hp`: the unit's health as a share of its most, in tenths of a
     /// percent — exactly the file's one decimal.
     pub hp: u16,
-    /// `power_type`, `power`, `power_max`: its primary power (the first of
-    /// a cast's two); `None` where the unit has no pool.
+    /// `power_type`, `power`, `power_max`: the pool this line names first
+    /// (the first of a cast's `a|b` lists); `None` where it names none.
     pub power: Option<Power>,
     /// `map_id`: the UiMap id the block put the unit on — the floor (a
     /// dungeon's level, a raid's room) `x` and `y` are on. Every post keeps
@@ -112,6 +113,17 @@ pub struct Post {
     /// format-1 file kept the cut's [`Cut::floor`] alone, and reads with
     /// that on every post.
     pub map_id: u32,
+    /// `absorb` (format 3): the shields on the unit in total, as the block
+    /// says them after the line (its field 9); 0 for none, and on every post
+    /// of an older file.
+    pub absorb: u64,
+    /// `pools` (format 3): the LAST reading of every pool kind the unit's
+    /// posts have named so far, this one's included — so a class whose
+    /// resource only sometimes leads the line (a warlock's shards, a
+    /// rogue's combo points) still has it on every later post. By kind
+    /// ascending, one reading per kind ([`set_pool`]); a kind never named is
+    /// absent. An older file's read the same way from its posts' `power`.
+    pub pools: Vec<Power>,
 }
 
 /// A unit's power reading: the game's power type (0 mana, 1 rage, 2
@@ -121,6 +133,20 @@ pub struct Power {
     pub kind: u32,
     pub current: u64,
     pub max: u64,
+}
+
+/// `reading` into `pools` (by kind ascending, one per kind): the last
+/// reading of its kind replaces the one before. The one rule by which the
+/// cut keeps [`Post::pools`] and the tier reads them back.
+pub fn set_pool(pools: &mut Vec<Power>, reading: Power) {
+    match pools.binary_search_by_key(&reading.kind, |p| p.kind) {
+        Ok(at) => {
+            if let Some(p) = pools.get_mut(at) {
+                *p = reading;
+            }
+        }
+        Err(at) => pools.insert(at, reading),
+    }
 }
 
 /// `events.csv`'s `kind`.
@@ -138,8 +164,10 @@ pub enum EventKind {
     PcastFailed,
     /// A hostile unit's cast cut short by a player.
     Interrupt,
-    /// An aura from a hostile unit (or from no one) going on a player,
-    /// coming off, and its stacks changing.
+    /// A debuff going on, coming off, and its stacks changing: on a player
+    /// from a hostile unit (or from no one) — `unit` the player, `src` the
+    /// NPC — and (format 3) on an NPC from a player — `unit` the NPC, `src`
+    /// the player, every such row kept.
     DebuffApplied,
     DebuffRemoved,
     DebuffDose,
@@ -155,10 +183,20 @@ pub enum EventKind {
     BossEngaged,
     BossKilled,
     BossWiped,
+    /// (Format 3) a buff going on a player, coming off, and its stacks
+    /// changing — only a buff that matters to the fight: a defensive, a
+    /// tank's mitigation, an external, a major cooldown or a healing
+    /// cooldown (R18's curated table, its support buffs aside), or any buff
+    /// an NPC or no one put on them. `unit` the player, `src` the caster (an
+    /// external's giver). A removal or a dose whose application the cut never
+    /// saw is no row: that buff was up before the cut began.
+    BuffApplied,
+    BuffRemoved,
+    BuffDose,
 }
 
 impl EventKind {
-    pub const ALL: [EventKind; 16] = [
+    pub const ALL: [EventKind; 19] = [
         EventKind::Hit,
         EventKind::CastStart,
         EventKind::CastSuccess,
@@ -175,6 +213,9 @@ impl EventKind {
         EventKind::BossEngaged,
         EventKind::BossKilled,
         EventKind::BossWiped,
+        EventKind::BuffApplied,
+        EventKind::BuffRemoved,
+        EventKind::BuffDose,
     ];
 
     /// The file's word for it.
@@ -196,6 +237,9 @@ impl EventKind {
             EventKind::BossEngaged => "boss_engaged",
             EventKind::BossKilled => "boss_killed",
             EventKind::BossWiped => "boss_wiped",
+            EventKind::BuffApplied => "buff_applied",
+            EventKind::BuffRemoved => "buff_removed",
+            EventKind::BuffDose => "buff_dose",
         }
     }
 
@@ -224,7 +268,7 @@ impl EventKind {
             | EventKind::PcastSuccess
             | EventKind::PcastFailed => 11,
             EventKind::Hit => 10,
-            EventKind::DebuffDose => 9,
+            EventKind::DebuffDose | EventKind::BuffDose => 9,
             _ => 8,
         }
     }
@@ -241,9 +285,10 @@ impl EventKind {
 pub struct Event {
     pub t_ms: u32,
     pub kind: EventKind,
-    /// `unit`: whom it is about — the victim of a hit, a debuff or a death,
-    /// the caster of a cast, the unit whose cast was interrupted; `None`
-    /// on a boss row alone (an encounter is no unit).
+    /// `unit`: whom it is about — the victim of a hit or a death, the one
+    /// wearing a debuff or a buff (a player's debuff on an NPC: the NPC),
+    /// the caster of a cast, the unit whose cast was interrupted; `None` on
+    /// a boss row alone (an encounter is no unit).
     pub unit: Option<UnitId>,
     /// `spell_id`, `spell`: the ability (an interrupt's: the cast it cut
     /// short); 0 and empty on a death; a boss row's encounter id and name.
@@ -254,8 +299,8 @@ pub struct Event {
     /// victim's post at that moment carries the floor); `None` for a miss
     /// and every other kind.
     pub at: Option<(i32, i32)>,
-    /// `src`: who did it — a hit's attacker, a debuff's source, an
-    /// interrupter, a rezzer; `None` for no one.
+    /// `src`: who did it — a hit's attacker, a debuff's or a buff's source
+    /// (an external's giver), an interrupter, a rezzer; `None` for no one.
     pub src: Option<UnitId>,
     /// `stacks`: a dose's new stack count.
     pub stacks: Option<u16>,
@@ -499,6 +544,26 @@ mod tests {
             .map(|k| k.word())
             .collect();
         assert_eq!(boss, ["boss_engaged", "boss_killed", "boss_wiped"]);
+        let doses: Vec<&str> = EventKind::ALL
+            .iter()
+            .filter(|k| k.columns() == 9)
+            .map(|k| k.word())
+            .collect();
+        assert_eq!(doses, ["debuff_dose", "buff_dose"]);
+        assert_eq!(EventKind::BuffApplied.columns(), 8);
+    }
+
+    #[test]
+    fn a_pool_reading_replaces_its_kinds_last() {
+        let w = |kind, current, max| Power { kind, current, max };
+        let mut pools = Vec::new();
+        set_pool(&mut pools, w(0, 900, 1000));
+        set_pool(&mut pools, w(7, 30, 50));
+        set_pool(&mut pools, w(3, 40, 100));
+        assert_eq!(pools, [w(0, 900, 1000), w(3, 40, 100), w(7, 30, 50)]);
+        set_pool(&mut pools, w(7, 10, 50));
+        set_pool(&mut pools, w(0, 800, 1200));
+        assert_eq!(pools, [w(0, 800, 1200), w(3, 40, 100), w(7, 10, 50)]);
     }
 
     #[test]
@@ -511,6 +576,8 @@ mod tests {
             hp: 0,
             power: None,
             map_id,
+            absorb: 0,
+            pools: Vec::new(),
         };
         let unit = |kind, posts| Unit {
             kind,

@@ -565,59 +565,67 @@ fn copied(from: &MemBackend) -> MemBackend {
     to
 }
 
-/// A format-1 replay still answers, and is OLDER than this build's: the
-/// rewrite queue recuts it from its log as format 2 (every floor, the boss
-/// rows), as the series tier's were at v42. A later build's format is left
-/// alone and answers nothing.
+/// A format-2 replay file — the same kill stepping onto a second floor, the
+/// boss rows round it, as a format-2 build wrote it (`proto::replay`'s own
+/// format-2 golden).
+const FORMAT2: &str = "5744525002210000000901004c024c1b036713047a4105bb012106dc010d07e9010908f2010d09ff010c07125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643204000d000020d00f0000010ba8a912d7040178a09c010a000200f0a8020e00002001d00f00030003a09c01c0b80201000101d08c01cf0f04b81701d8360500049be90606028213831301000202010100";
+
+/// A format-1 or format-2 replay still answers, and is OLDER than this
+/// build's: the rewrite queue recuts it from its log as format 3 (every
+/// floor, the boss rows, each post's shields and pools, the buff rows and
+/// the players' debuffs on NPCs), as the series tier's were at v42. A later
+/// build's format is left alone and answers nothing.
 #[test]
-fn a_format_1_replay_is_recut_as_format_2() {
-    let tmp = Temp::new("format1");
-    let (path, fights) = log_of(&tmp, &[(90, true, 15)]);
-    let facts = LogFacts::read(&path);
-    let mut first = Store::open(MemBackend::new(), Retention::default());
-    let id = first.store(&fights[0], facts).unwrap();
-    assert!(cut_into(&mut first, &path, &id));
-    assert!(first.recuts().is_empty(), "a current replay wants nothing");
-    // The same store, its replay as a format-1 build wrote it.
-    let mut old = copied(first.backend());
-    old.write("replay", &format!("{id}.bin"), &unhex(FORMAT1))
-        .unwrap();
-    let mut store = Store::open(old, Retention::default());
-    assert!(store.has_replay(&id), "format 1 still answers");
-    let bytes = store.replay_file(&id).unwrap();
-    assert_eq!(replay::format_of(&bytes), Some(1));
-    assert!(replay::decode(&bytes).is_some());
-    assert!(store.rewrites().is_empty(), "its details and series stand");
-    assert_eq!(
-        store.recuts(),
-        std::slice::from_ref(&id),
-        "older: queued for its recut"
-    );
-    assert!(cut_into(&mut store, &path, &id));
-    let bytes = store.replay_file(&id).unwrap();
-    assert_eq!(replay::format_of(&bytes), Some(replay::FORMAT));
-    let cut = replay::decode(&bytes).unwrap();
-    let boss: Vec<replay_kind::EventKind> = cut
-        .events
-        .iter()
-        .filter(|e| e.kind.is_boss())
-        .map(|e| e.kind)
-        .collect();
-    assert_eq!(
-        boss,
-        [
-            replay_kind::EventKind::BossEngaged,
-            replay_kind::EventKind::BossKilled
-        ],
-        "recut: the boss rows a format-1 file never held"
-    );
-    assert!(store.recuts().is_empty(), "and nothing more to do");
-    // A later build's format: never rewritten, never answered.
-    let mut newer = copied(store.backend());
-    newer
-        .write("replay", &format!("{id}.bin"), b"WDRP\x03\0\0\0\0")
-        .unwrap();
-    let store = Store::open(newer, Retention::default());
-    assert!(!store.has_replay(&id));
-    assert!(store.recuts().is_empty(), "a newer format is left alone");
+fn an_older_replay_is_recut_as_format_3() {
+    for (bytes, format) in [(FORMAT1, 1), (FORMAT2, 2)] {
+        let tmp = Temp::new(&format!("format{format}"));
+        let (path, fights) = log_of(&tmp, &[(90, true, 15)]);
+        let facts = LogFacts::read(&path);
+        let mut first = Store::open(MemBackend::new(), Retention::default());
+        let id = first.store(&fights[0], facts).unwrap();
+        assert!(cut_into(&mut first, &path, &id));
+        assert!(first.recuts().is_empty(), "a current replay wants nothing");
+        // The same store, its replay as an older build wrote it.
+        let mut old = copied(first.backend());
+        old.write("replay", &format!("{id}.bin"), &unhex(bytes))
+            .unwrap();
+        let mut store = Store::open(old, Retention::default());
+        assert!(store.has_replay(&id), "format {format} still answers");
+        let bytes = store.replay_file(&id).unwrap();
+        assert_eq!(replay::format_of(&bytes), Some(format));
+        assert!(replay::decode(&bytes).is_some());
+        assert!(store.rewrites().is_empty(), "its details and series stand");
+        assert_eq!(
+            store.recuts(),
+            std::slice::from_ref(&id),
+            "format {format}, older: queued for its recut"
+        );
+        assert!(cut_into(&mut store, &path, &id));
+        let bytes = store.replay_file(&id).unwrap();
+        assert_eq!(replay::format_of(&bytes), Some(replay::FORMAT));
+        assert_eq!(replay::FORMAT, 3);
+        let cut = replay::decode(&bytes).unwrap();
+        let boss: Vec<replay_kind::EventKind> = cut
+            .events
+            .iter()
+            .filter(|e| e.kind.is_boss())
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(
+            boss,
+            [
+                replay_kind::EventKind::BossEngaged,
+                replay_kind::EventKind::BossKilled
+            ],
+            "recut from its log: the kill's own boss rows"
+        );
+        assert!(store.recuts().is_empty(), "and nothing more to do");
+        // A later build's format: never rewritten, never answered.
+        let mut newer = copied(store.backend());
+        let head = [&b"WDRP"[..], &[replay::FORMAT + 1, 0, 0, 0, 0]].concat();
+        newer.write("replay", &format!("{id}.bin"), &head).unwrap();
+        let store = Store::open(newer, Retention::default());
+        assert!(!store.has_replay(&id));
+        assert!(store.recuts().is_empty(), "a newer format is left alone");
+    }
 }

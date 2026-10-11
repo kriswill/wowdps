@@ -93,8 +93,14 @@ it, the index seeds every WORLD_MARKER line, and the module doc lists each
 deliberate difference from the extractor's old text cutter
 ([why](../decisions/replay-tier-in-the-store.md)). Every post keeps its
 floor (a keystone run walks a dungeon's levels; the cut's `floor` is the
-players' most posted) and the slice's ENCOUNTER lines are boss rows; gated
-by [replay.txt](../fixtures/replay.md) (its keystone run too) and every
+players' most posted) and the slice's ENCOUNTER lines are boss rows. Format
+3 adds each post's shields and every pool kind (the parser's
+`HpHint.more_power` reads a cast's `a|b` lists whole; R28 still reads the
+first alone), a player's every debuff on an NPC, and the buff rows that
+matter to the fight: [R18](../rulings/r18.md)'s curated `role_spells` (its
+support buffs aside) or any buff whose source is not ours, a removal or
+dose only once the slice saw it applied. Gated by
+[replay.txt](../fixtures/replay.md) (its keystone run too) and every
 fixture's R29 rows.
 
 ## Source

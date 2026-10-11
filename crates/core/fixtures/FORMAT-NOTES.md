@@ -84,6 +84,18 @@ damage/heal suffix by two columns.
  R28 (v44) keeps a player's 10–12 as a 1 s series per power type (a
 > healer's mana reads `0,233204,250000`: type 0, 233 204 of 250 000; Astral
 > Power is in tenths, `8,902,1000`).
+>
+> **Replay format 3 (R29) — field 9 and every pool.** A line names one pool,
+> not always the same one for a unit (in a real +15 run a Retribution
+> paladin's posts named mana 10 727 times and holy power 395, a Demonology
+> warlock's mana 9 319 and soul shards 288), and a cast's `a|b` lists name two. The
+> replay keeps each post's field 9 (`Post::absorb`), reads every entry of the
+> lists in step (`HpHint.more_power`, each with its max above 0; the first
+> stays `HpHint.power`, which R28 alone reads), and keeps per unit the LAST
+> reading of every kind its posts have named (`Post::pools`). Over two real
+> +15 keystone runs (2026-10-10, 291 490 posts), 21 885 and 37 972 posts —
+> every one a player's, 52 and 57 % of theirs — carried two kinds or more, and
+> two of the 538 900 lines then in the log were `a|b` (a paladin's holy power and mana).
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 

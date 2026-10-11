@@ -258,10 +258,16 @@ keeps one — R25's raid series, which the replay tier never stores twice.
 Since format 2 `tracks.csv` ends each post with its floor (`map_id`) and
 `events.csv` carries the boss rows (`boss_engaged`, `boss_killed`,
 `boss_wiped`, the encounter as `spell_id` and `spell`); a format-1 file
-exports every post on its one floor. `replay.formats` counts the files by
-the format their head names (`{"1": …, "2": …}`): the daemon's rewrite
-queue recuts every format-1 file from its log while idle, so the 1s drain
-to 0 once it has run.
+exports every post on its one floor. Since format 3 `tracks.csv` also ends
+each post with its shields (`absorb`) and the last reading of every pool
+kind its unit has named (`pools`, `kind:current:max` joined by `|`), and
+`events.csv` carries the buff rows that matter to the fight (`buff_applied`,
+`buff_removed`, `buff_dose`) and every debuff a player put on an NPC (the
+debuff rows with the NPC as `unit`); an older file exports no shield and its
+posts' own pools. `replay.formats` counts the files by the format their head
+names (`{"2": …, "3": …}`): the daemon's rewrite queue recuts every older
+file from its log while idle, so all but the newest drain to 0 once it has
+run.
 `cards_without_replay` counts the boss pulls and runs with no file: the store
 keeps one only for the fights retention keeps whole or protects and the
 newest `history_keep_details_per_encounter` of the rest per boss and

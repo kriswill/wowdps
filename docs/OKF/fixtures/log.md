@@ -1,5 +1,15 @@
 # Log
 
+## 2026-10-10
+
+- **Update** — [replay.txt](replay.md): format 3's cases in the first pull —
+  a pre-pull Bone Shield whose dose and removal are no rows, the buffs that
+  matter, a healer's debuff on the boss and a pet's that is none, two
+  shields and a warlock's soul shards; every gated fixture's TSV gains
+  `replay_absorb`, `replay_pools`, `replay_pool_sum` and the buff rows, and
+  [sample.txt](sample.md)'s and [tree.txt](tree.md)'s pulls count their
+  players' debuffs on the boss.
+
 ## 2026-10-09
 
 - **Update** — [replay.txt](replay.md): the hunter's posts and a hit on a

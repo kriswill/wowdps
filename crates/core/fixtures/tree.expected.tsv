@@ -316,6 +316,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1500			Player-1168-0A1B2C61	power_max	250000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_units	6
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_posts	40
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_absorb	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_pools	50
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_pool_sum	6180220
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_floor	2287
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_hit	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_cast_start	1
@@ -324,8 +327,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_pcast_success	10
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_pcast_failed	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_interrupt	0
-1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_debuff_applied	0
-1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_debuff_removed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_debuff_applied	3
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_debuff_removed	2
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_debuff_dose	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_death	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_npc_died	0
@@ -333,6 +336,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_boss_engaged	1
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_boss_killed	1
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_boss_wiped	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_buff_applied	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_buff_removed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_buff_dose	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_placed_cast	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_placed_summon	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_placed_touch	0

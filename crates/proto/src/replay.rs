@@ -48,6 +48,19 @@
 //!            against the last change's (the first against 0), to the
 //!            table's ix-th floor; its posts before the first change stand
 //!            on the head's floor)
+//! absorb 10 := varint m | (varint dunit | varint k | (varint dat | zz dabsorb)*)*
+//!            (the m units whose shields ever leave 0, listed as in maps;
+//!            a unit's k changes, each at a post index as in maps, its
+//!            absorb against the last change's (the first against 0), the
+//!            difference taken modulo 2^64; a post holds the last change's
+//!            absorb at or before it, 0 before the first)
+//! pools 11 := varint m | (varint dunit | varint k
+//!            | (varint dat | varint n | (varint kind | varint current | varint max)*)*)*
+//!            (a post's pools are its last's with its own pool set in by
+//!            kind — the track's first against none — save at the posts
+//!            listed here, as in maps, each with its n pools whole, by kind
+//!            ascending: a cast's `a|b` lists name a second pool the post's
+//!            own does not carry)
 //! str     := varint len | utf-8
 //! opt(x)  := u8 0 | u8 1 x;  zz := zigzag varint;  name := index into strs
 //! ```
@@ -67,14 +80,22 @@
 //!   floor; the store's rewrite queue recuts it from its log as format 2.
 //! - 2: every floor's posts (`maps`, tag 9), and the boss rows
 //!   (`boss_engaged`, `boss_killed`, `boss_wiped`, kinds 13 to 15) with
-//!   `has` bit 5 for a row that names no unit.
+//!   `has` bit 5 for a row that names no unit. It still reads, as format 3
+//!   with every absorb 0; the rewrite queue recuts it as format 3.
+//! - 3: each post's shields (`absorb`, tag 10) and its last reading of
+//!   every pool kind (`pools`, tag 11: only where the posts' own pools do
+//!   not make them), and the buff rows (`buff_applied`, `buff_removed`,
+//!   `buff_dose`, kinds 16 to 18). Its posts section is format 2's, byte
+//!   for byte. Every format reads [`Post::pools`] the same way: each post's
+//!   pool set into its last's, so an older file's pools are what its posts
+//!   named.
 
 use std::collections::HashMap;
 
 use crate::varint::{Cur, put_opt, put_varint, put_zz};
 use wowdps_model::replay::{
     Cut, EncounterHead, Event, EventKind, Head, KeyHead, Marker, MarkerKind, Placed, PlacedKind,
-    Post, Power, Unit, UnitKind,
+    Post, Power, Unit, UnitKind, set_pool,
 };
 use wowdps_model::{Class, Spec};
 
@@ -83,7 +104,7 @@ pub mod csv;
 /// The file's first four bytes.
 pub const MAGIC: &[u8; 4] = b"WDRP";
 /// The layout above, as this build writes it.
-pub const FORMAT: u8 = 2;
+pub const FORMAT: u8 = 3;
 /// The oldest layout a reader takes.
 pub const OLDEST: u8 = 1;
 /// The fixed head: magic, format, the index's length.
@@ -98,12 +119,17 @@ const PLACED: u8 = 6;
 const MARKS: u8 = 7;
 const SPELLS: u8 = 8;
 const MAPS: u8 = 9;
-const SECTIONS: [u8; 9] = [
-    STRS, HEAD, UNITS, POSTS, EVENTS, PLACED, MARKS, SPELLS, MAPS,
+const ABSORB: u8 = 10;
+const POOLS: u8 = 11;
+const SECTIONS: [u8; 11] = [
+    STRS, HEAD, UNITS, POSTS, EVENTS, PLACED, MARKS, SPELLS, MAPS, ABSORB, POOLS,
 ];
 /// The event kinds format 1 knew (`EventKind::ALL`'s first thirteen): the
 /// boss rows came with format 2.
 const FORMAT1_KINDS: usize = 13;
+/// The event kinds format 2 knew (the first sixteen): the buff rows came
+/// with format 3.
+const FORMAT2_KINDS: usize = 16;
 /// `has` bit 5 on an event: it names no unit (a boss row; format 2 on).
 const NO_UNIT: u8 = 1 << 5;
 
@@ -143,6 +169,8 @@ pub fn encode(cut: &Cut) -> Vec<u8> {
     let placed = w.placed(cut);
     let marks = w.marks(cut);
     let maps = maps(cut);
+    let absorb = absorb(cut);
+    let pools = pools(cut);
     let spells = w.spell_table();
     let strs = w.str_table();
     let mut index = Vec::new();
@@ -158,6 +186,8 @@ pub fn encode(cut: &Cut) -> Vec<u8> {
         (MARKS, marks),
         (SPELLS, spells),
         (MAPS, maps),
+        (ABSORB, absorb),
+        (POOLS, pools),
     ] {
         index.push(tag);
         put_varint(&mut index, body.len() as u64);
@@ -206,6 +236,14 @@ pub fn decode(bytes: &[u8]) -> Option<Cut> {
     if format >= 2 {
         read_maps(&mut section(MAPS)?, &mut units)?;
     }
+    // Each post's pools from its own and its last's, every format alike;
+    // format 3's shields, and the posts whose pools a cast's lists made.
+    let mut lists = HashMap::new();
+    if format >= 3 {
+        read_absorb(&mut section(ABSORB)?, &mut units)?;
+        lists = read_pool_lists(&mut section(POOLS)?, &units)?;
+    }
+    fill_pools(&mut units, &lists);
     let n_units = units.len();
     let events = read_events(&mut section(EVENTS)?, &spells, n_units, format)?;
     let placed = read_placed(&mut section(PLACED)?, &spells, n_units)?;
@@ -341,12 +379,13 @@ impl Writer {
 
     fn posts(&mut self, cut: &Cut) -> Vec<u8> {
         let mut out = Vec::new();
+        let zero = zero_post(0);
         for u in &cut.units {
             // The floor is the maps section's: a post here is its place.
-            let mut last = zero_post(0);
+            let mut last = &zero;
             for p in &u.posts {
-                put_post(&mut out, &last, p);
-                last = *p;
+                put_post(&mut out, last, p);
+                last = p;
             }
         }
         out
@@ -456,7 +495,94 @@ fn zero_post(map_id: u32) -> Post {
         hp: 0,
         power: None,
         map_id,
+        absorb: 0,
+        pools: Vec::new(),
     }
+}
+
+/// Per unit with any (by its number), its changes: (post index, payload).
+type Changes<T> = Vec<(usize, Vec<(usize, T)>)>;
+
+/// A section of changes at post indices, the maps section's shape: the
+/// units with any, in unit order, each number against the last listed (the
+/// first against 0), then each unit's changes, each at a post index against
+/// the last change's (the first against 0), its payload after it.
+fn put_changes<T>(out: &mut Vec<u8>, lists: &Changes<T>, mut put: impl FnMut(&mut Vec<u8>, &T)) {
+    put_varint(out, lists.len() as u64);
+    let mut last_unit = 0;
+    for (u, changes) in lists {
+        put_varint(out, u.saturating_sub(last_unit) as u64);
+        last_unit = *u;
+        put_varint(out, changes.len() as u64);
+        let mut last_at = 0;
+        for (at, payload) in changes {
+            put_varint(out, at.saturating_sub(last_at) as u64);
+            last_at = *at;
+            put(out, payload);
+        }
+    }
+}
+
+/// The absorb section: each track's changes of shield from 0.
+fn absorb(cut: &Cut) -> Vec<u8> {
+    let mut lists: Changes<u64> = Vec::new();
+    for (u, unit) in cut.units.iter().enumerate() {
+        let mut last = 0u64;
+        let mut changes = Vec::new();
+        for (i, p) in unit.posts.iter().enumerate() {
+            if p.absorb != last {
+                // Modulo 2^64, so any two amounts code and read back.
+                changes.push((i, p.absorb.wrapping_sub(last)));
+                last = p.absorb;
+            }
+        }
+        if !changes.is_empty() {
+            lists.push((u, changes));
+        }
+    }
+    let mut out = Vec::new();
+    put_changes(&mut out, &lists, |out, d| put_zz(out, *d as i64));
+    out
+}
+
+/// What a post's pools are unless the pools section says otherwise: its
+/// last's with its own pool set in.
+fn pools_after(last: &[Power], power: Option<Power>) -> Vec<Power> {
+    let mut pools = last.to_vec();
+    if let Some(w) = power {
+        set_pool(&mut pools, w);
+    }
+    pools
+}
+
+/// The pools section: the posts whose pools are not [`pools_after`] their
+/// last's — a cast's `a|b` lists named a pool the post's own does not
+/// carry — each with its pools whole.
+fn pools(cut: &Cut) -> Vec<u8> {
+    let mut lists: Changes<&[Power]> = Vec::new();
+    for (u, unit) in cut.units.iter().enumerate() {
+        let mut last: &[Power] = &[];
+        let mut changes = Vec::new();
+        for (i, p) in unit.posts.iter().enumerate() {
+            if pools_after(last, p.power) != p.pools {
+                changes.push((i, p.pools.as_slice()));
+            }
+            last = &p.pools;
+        }
+        if !changes.is_empty() {
+            lists.push((u, changes));
+        }
+    }
+    let mut out = Vec::new();
+    put_changes(&mut out, &lists, |out, pools| {
+        put_varint(out, pools.len() as u64);
+        for w in *pools {
+            put_varint(out, u64::from(w.kind));
+            put_varint(out, w.current);
+            put_varint(out, w.max);
+        }
+    });
+    out
 }
 
 /// The maps section: the floors the posts stand on, and each track's
@@ -692,11 +818,10 @@ fn read_posts(c: &mut Cur, units: &mut [Unit], counts: &[usize], floor: u32) -> 
             return None;
         }
         u.posts.reserve_exact(n);
-        let mut last = zero_post(floor);
+        let zero = zero_post(floor);
         for _ in 0..n {
-            let p = read_post(c, &last)?;
+            let p = read_post(c, u.posts.last().unwrap_or(&zero))?;
             u.posts.push(p);
-            last = p;
         }
     }
     c.done().then_some(())
@@ -754,7 +879,123 @@ fn read_post(c: &mut Cur, last: &Post) -> Option<Post> {
         hp,
         power,
         map_id: last.map_id,
+        // The absorb and pools sections', once every post is read.
+        absorb: 0,
+        pools: Vec::new(),
     })
+}
+
+/// Format 3's changes at post indices (the absorb and pools sections, in
+/// the maps section's shape): `each` reads a change's payload at a post of
+/// a unit. A unit listed twice or past the units, a unit with no change, a
+/// change at no post or not after the last: `None`. `min` is the least a
+/// change takes, a payload included, against a lying count.
+fn read_changes(
+    c: &mut Cur,
+    units: &[Unit],
+    min: usize,
+    mut each: impl FnMut(&mut Cur, usize, usize) -> Option<()>,
+) -> Option<()> {
+    // A unit, its count and one change: two bytes and the change at least.
+    let m = c.count(min + 2)?;
+    let mut unit = 0usize;
+    for listed in 0..m {
+        let d = c.usize()?;
+        if listed > 0 && d == 0 {
+            return None;
+        }
+        unit = unit.checked_add(d)?;
+        let posts = units.get(unit)?.posts.len();
+        let k = c.count(min)?;
+        if k == 0 {
+            return None;
+        }
+        let mut at = 0usize;
+        for change in 0..k {
+            let d = c.usize()?;
+            if change > 0 && d == 0 {
+                return None;
+            }
+            at = at.checked_add(d)?;
+            if at >= posts {
+                return None;
+            }
+            each(c, unit, at)?;
+        }
+    }
+    c.done().then_some(())
+}
+
+/// Format 3's absorb section: each listed track's shields from each change
+/// to the next.
+fn read_absorb(c: &mut Cur, units: &mut [Unit]) -> Option<()> {
+    // (unit, post, absorb) in the section's order: units and posts ascending.
+    let mut changes: Vec<(usize, usize, u64)> = Vec::new();
+    let mut last: Option<(usize, u64)> = None;
+    read_changes(c, units, 2, |c, unit, at| {
+        let from = match last {
+            Some((u, v)) if u == unit => v,
+            _ => 0,
+        };
+        let v = from.wrapping_add(c.zz()? as u64);
+        last = Some((unit, v));
+        changes.push((unit, at, v));
+        Some(())
+    })?;
+    for (i, &(unit, at, v)) in changes.iter().enumerate() {
+        let to = match changes.get(i + 1) {
+            Some(&(u, next, _)) if u == unit => next,
+            _ => units.get(unit)?.posts.len(),
+        };
+        for p in units.get_mut(unit)?.posts.get_mut(at..to)? {
+            p.absorb = v;
+        }
+    }
+    Some(())
+}
+
+/// Format 3's pools section: the posts whose pools are written whole, by
+/// unit and post index. Pools out of kind order or a kind twice: `None`.
+fn read_pool_lists(c: &mut Cur, units: &[Unit]) -> Option<HashMap<(usize, usize), Vec<Power>>> {
+    let mut lists = HashMap::new();
+    read_changes(c, units, 2, |c, unit, at| {
+        // A pool is three varints: three bytes at least.
+        let n = c.count(3)?;
+        let mut pools: Vec<Power> = Vec::with_capacity(n);
+        for _ in 0..n {
+            let w = Power {
+                kind: c.u32()?,
+                current: c.varint()?,
+                max: c.varint()?,
+            };
+            if pools.last().is_some_and(|l| l.kind >= w.kind) {
+                return None;
+            }
+            pools.push(w);
+        }
+        lists.insert((unit, at), pools);
+        Some(())
+    })?;
+    Some(lists)
+}
+
+/// Every post's pools: its last's with its own pool set in, save where the
+/// pools section wrote them whole.
+fn fill_pools(units: &mut [Unit], lists: &HashMap<(usize, usize), Vec<Power>>) {
+    for (u, unit) in units.iter_mut().enumerate() {
+        let mut pools: Vec<Power> = Vec::new();
+        for (i, p) in unit.posts.iter_mut().enumerate() {
+            match lists.get(&(u, i)) {
+                Some(whole) => pools.clone_from(whole),
+                None => {
+                    if let Some(w) = p.power {
+                        set_pool(&mut pools, w);
+                    }
+                }
+            }
+            p.pools.clone_from(&pools);
+        }
+    }
 }
 
 /// Format 2's maps section: each listed track's stretches moved to their
@@ -824,11 +1065,12 @@ fn read_events(
     let n = c.count(5)?;
     let mut out = Vec::with_capacity(n);
     let mut t = 0i64;
-    // Format 1 knew neither the boss rows nor a row naming no unit.
-    let (kinds, flags) = if format >= 2 {
-        (EventKind::ALL.len(), 6)
-    } else {
-        (FORMAT1_KINDS, 5)
+    // Format 1 knew neither the boss rows nor a row naming no unit; format
+    // 2, no buff row.
+    let (kinds, flags) = match format {
+        1 => (FORMAT1_KINDS, 5),
+        2 => (FORMAT2_KINDS, 6),
+        _ => (EventKind::ALL.len(), 6),
     };
     for _ in 0..n {
         t = t.checked_add(c.zz()?)?;

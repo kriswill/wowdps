@@ -34,7 +34,7 @@ codecs and binary tiers, and the shared client extras (`json`, `talents`,
   classifications, read by the replay): its header names `FORMAT` 1, and
   `tests/creatures.rs` pins its bytes.
 - **Binary tiers keep their formats.** `series.rs` (`FORMAT` 2) and
-  `replay.rs` (`FORMAT` 2) each carry a format number read by `format_of`;
+  `replay.rs` (`FORMAT` 3) each carry a format number read by `format_of`;
   a reader takes older formats and refuses newer ones, and a format bump
   needs the daemon's rewrite queue to bring old files forward. Both code
   through the crate-private `varint.rs`.

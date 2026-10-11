@@ -18,17 +18,23 @@ Regenerate / check:
 
 Every closed boss pull (an ENCOUNTER_START's segment closed by its END, a
 version seam or the next START) of every gated fixture ends the TSV with
-twenty-four `*` rows — `replay_units`, `replay_posts` (on every floor),
-`replay_floor`, the sixteen event kinds (`replay_hit` … `replay_rez`, then
-the boss rows `replay_boss_engaged`, `replay_boss_killed`,
-`replay_boss_wiped`), the four placed kinds (`replay_placed_cast` …
+thirty `*` rows — `replay_units`, `replay_posts` (on every floor), the
+format 3 post sums `replay_absorb` (Σ of the posts' shields, the block's
+field 9), `replay_pools` (how many pool kinds the posts carry, each the
+unit's last reading of that kind) and `replay_pool_sum` (Σ of those
+readings' currents), `replay_floor`, the nineteen event kinds (`replay_hit`
+… `replay_rez`, then the boss rows `replay_boss_engaged`,
+`replay_boss_killed`, `replay_boss_wiped`, then format 3's buff rows
+`replay_buff_applied`, `replay_buff_removed`, `replay_buff_dose`), the four placed kinds (`replay_placed_cast` …
 `replay_placed_gone`) and `replay_markers` — then a `replay_map_posts` row
 per floor posted on (its UiMap id in the player column, ascending), then a
 `replay_posts` row per player posted, guid order. A finished keystone run
 (a CHALLENGE_MODE_START to its END, both its own lines) writes the same rows
 after every segment's, `K<n>` in the segment column, kind `Key`, its name and
 level, `timed` or `over` as its END says, its START to its END, no encounter
-or difficulty. The placed
+or difficulty. The buff rows' curated
+spells are check.awk's `ROLE` table (R18's fixture ids, its `SupportBuff`s
+aside); the placed
 spells are the fixtures' own, hard-coded beside check.awk's other tables
 (`PLACE`: Demonic Gateway 111771, Wind Rush Totem 192077, Demonic Circle
 48018; `TELL`: the gateway's trip 113942, Wind Rush 192082, Anti-Magic Zone
@@ -66,7 +72,8 @@ spells are the fixtures' own, hard-coded beside check.awk's other tables
 
 Every WORLD_MARKER line is an index seed (v45), so a lazily loaded pull
 starts with these two standing. A `SPELL_CAST_FAILED` at 20:00:04 is before
-the pull: no row.
+the pull: no row. At 20:00:05 Tank puts up Bone Shield (195181, R18's
+`ActiveMitigation`): before the pull, so the cut never sees it applied.
 
 ## Segment 1 — Ula'tek (encounter 3000, Mythic, kill, 30 s)
 
@@ -83,6 +90,19 @@ at 02.5, the Incinerate finding it at 16.0), Egg 1, Coil 1 (a swing — its
 block at off9 describes the SOURCE — whose amount, 2434, is the floor's id:
 no line is read twice for it). Per floor: 2434 13, 2435 2.
 
+**Shields and pools (format 3).** Two blocks carry a shield in field 9:
+Tank's at 01.0 (300, after the Venom) and Ula'tek's at 16.0 (1 200, as the
+Incinerate finds it): `replay_absorb` 1 500. Each post carries its unit's
+last reading of every pool kind its posts have named, each with its max
+above 0: Tank's three runic power 100 (300); Hunt's three focus 80, 90, 90
+(260); Healer's three mana 50 000, 49 000, 49 000 (148 000); Lock's mana
+100 at 12.0, then at 14.5 the Healing Rain's block names his soul shards
+(3 of 5) and his mana stays beside them (100 + 103); Ula'tek's Spit names
+two pools (`3|4,25|1,100|5`: energy 25, combo points 1), and at 16.0 its
+energy reads 30 with the combo point kept (26 + 31); Egg and Coil name none
+(`1,0,0`, max 0). `replay_pools` 16 (Tank 3, Hunt 3, Healer 3, Lock 1 + 2,
+Ula'tek 2 + 2), `replay_pool_sum` 148 820.
+
 **Events.**
 
 | t | line | row |
@@ -92,16 +112,27 @@ no line is read twice for it). Per floor: 2434 13, 2435 2.
 | 01.0 | Ula'tek's Venom on Tank, his block on 2434 | `hit` (base 120) |
 | 01.5 | Ula'tek's `RANGE_DAMAGE` Shoot on Hunt | `hit` (any spell-borne damage) |
 | 02.0 | Ula'tek begins Spit | `cast_start` |
+| 02.2 | Bone Shield on Tank down a stack | — (a dose of a buff the cut never saw applied) |
 | 02.5 | Ula'tek lands Spit on Tank | `cast_success` |
 | 03.0 | Egg lands Hatch | `cast_success` |
+| 03.0 | Bone Shield off Tank | — (up before the pull: no row) |
 | 03.2 | Coil's swing on Tank | — (melee is no hit row) |
 | 03.5 | Tank's Death Strike fails, "Not enough runic power" | `pcast_failed` |
 | 03.6 | Hunt begins Aimed Shot | `pcast_start` |
 | 04.0 | Ula'tek's Rot on Tank | `debuff_applied` |
 | 04.5 | Rot to 2 stacks | `debuff_dose` |
 | 05.0 | Helical Toxins on Healer from no one | `debuff_applied` (no source) |
-| 05.5 | Healer's Fortitude on Tank | — (a player's aura) |
+| 05.5 | Healer's Fortitude on Tank | — (a long buff: no R18 kind, a player's) |
+| 05.6 | Healer's Pain Suppression on Tank | `buff_applied`, src Healer (an external) |
+| 05.7 | Ula'tek's Venom Surge (a BUFF) on Hunt | `buff_applied`, src Ula'tek (an NPC's buff) |
+| 05.8 | Toxic Ward on Healer from no one | `buff_applied`, no source (the encounter's) |
+| 06.0 | Bone Shield on Tank again | `buff_applied`, src Tank |
+| 06.6 | Bone Shield to 2 stacks | `buff_dose` |
+| 06.7 | Healer's Thorn Rake (a DEBUFF) on Ula'tek | `debuff_applied`, unit Ula'tek, src Healer |
+| 06.8 | Thorn Rake to 2 stacks | `debuff_dose` |
+| 06.9 | the pet's Claw Bleed on Ula'tek | — (a pet's, no player's) |
 | 07.0 | Rot off Tank | `debuff_removed` |
+| 07.5 | Pain Suppression off Tank | `buff_removed` |
 | 08.0 | Venom absorbed whole | `hit` (a miss: no position) |
 | 08.5 | Falling Rocks on Healer from the nil unit | `hit` — its source names no unit |
 | 09.0 | Tank's Mind Freeze on Spit | `interrupt` |
@@ -114,15 +145,19 @@ no line is read twice for it). Per floor: 2434 13, 2435 2.
 | 11.0 | Tank dies | `death` |
 | 11.5 | Healer's Rebirth on Tank | `rez`, src Healer |
 | 12.0 | Lock casts Demonic Gateway | `pcast_success` |
+| 12.8 | Toxic Ward off Healer | `buff_removed` |
 | 14.1 | Shaman summons Spirit Link Totem | — (no placing spell) |
 | 14.2 | Spirit Link on Tank from the totem, `0xa28` | — (one of ours by its summon: no hit) |
 | 14.25 | Spirit Link's heal on Healer | — (a post, no row) |
+| 16.5 | Thorn Rake off Ula'tek | `debuff_removed` |
 | 30.0 | ENCOUNTER_END 3000, success | `boss_killed` |
 
 `hit` 5, `cast_start` 1, `cast_success` 2, `pcast_start` 1, `pcast_success`
-2, `pcast_failed` 1, `interrupt` 1, `debuff_applied` 2, `debuff_removed` 1,
-`debuff_dose` 1, `death` 1, `npc_died` 2, `rez` 1, `boss_engaged` 1,
-`boss_killed` 1.
+2, `pcast_failed` 1, `interrupt` 1, `debuff_applied` 3, `debuff_removed` 2,
+`debuff_dose` 2, `death` 1, `npc_died` 2, `rez` 1, `boss_engaged` 1,
+`boss_killed` 1, `buff_applied` 4, `buff_removed` 2, `buff_dose` 1. The
+Venom Surge and the second Bone Shield are never removed: their rows stand
+applied to the pull's end.
 
 **Placed (7 rows).** 12.0 the gateway cast (Lock, where he stood); 12.5 the
 trip aura on Hunt (a unit numbered: a `touch`); 13.0 Healer's Wind Rush Totem
@@ -145,7 +180,9 @@ unit.
 
 ## Segment 2 — Twin Venoms (encounter 3001, Mythic, wipe, 20 s)
 
-Floor 2434 (Tank's one block). Posts 2 (Twin Venoms, Tank), both on 2434.
+Floor 2434 (Tank's one block). Posts 2 (Twin Venoms, Tank), both on 2434,
+each with one pool (energy 0, runic power 50: `replay_pools` 2,
+`replay_pool_sum` 50).
 `cast_success` 2 (Twin Venoms' Bite; Egg's Hatch — the Egg's own flags mark
 it hostile on the line, a cut's hostility being its own), `hit` 1,
 `boss_engaged` 1 (t 0) and `boss_wiped` 1 (its END, 20 s). Markers 2: 1 and
@@ -168,7 +205,8 @@ The Glass Drake's Shard on Tank (20:10:05.0) and Tank's Death Strike on it
 
 Player blocks: Tank 01.0, Healer 02.0 and 04.0 — all 2095: **floor 2095**.
 Posts 4 (Tank 1, Healer 2, the Warden 1 — its block on Tank's Death Strike
-at 03.0), all on 2095. Events: `boss_engaged` at t 0, the Warden's Frost on
+at 03.0), all on 2095; pools 3 (Tank's runic power 100, Healer's mana
+49 000 then 48 000; the Warden's `1,0,0` none), Σ 97 100. Events: `boss_engaged` at t 0, the Warden's Frost on
 Tank (`hit`), Healer's two Rejuvenations (`pcast_success` 2), the Warden
 dies (`npc_died`), `boss_killed` at its END (31 s). Units 3: Tank, the
 Warden (the hit's source), Healer. No marker stands on 2521.
@@ -182,6 +220,8 @@ of the boss (2095): 2094 two votes, 2095 three — **floor 2095**.
 **Posts (7).** On 2094: Tank 2, the drake 1 (its block on Tank's Death
 Strike); on 2095: Tank 1, Healer 2, the Warden 1. Per floor 2094 3, 2095 4
 (format 1 would have dropped the three above). Per player: Tank 3, Healer 2.
+Pools 5 (Tank's runic power 100 on each of his three, Healer's mana 49 000
+and 48 000), Σ 97 300; no shield anywhere in the run.
 
 **Events (8).** The drake's Shard on Tank (`hit`, where his post on 2094
 says — off the main floor, kept), the drake dies (`npc_died`),

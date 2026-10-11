@@ -71,6 +71,16 @@ fn counts(seg: &str, c: &Cut, out: &mut Golden) {
     };
     put("*", "units", c.units.len() as u64);
     put("*", "posts", c.posts() as u64);
+    // Format 3: the posts' shields, and the pools each carries and their
+    // currents, summed.
+    let posts = || c.units.iter().flat_map(|u| &u.posts);
+    put("*", "absorb", posts().map(|p| p.absorb).sum());
+    put("*", "pools", posts().map(|p| p.pools.len() as u64).sum());
+    put(
+        "*",
+        "pool_sum",
+        posts().flat_map(|p| &p.pools).map(|w| w.current).sum(),
+    );
     put("*", "floor", u64::from(c.floor));
     for k in EventKind::ALL {
         let n = c.events.iter().filter(|e| e.kind == k).count();

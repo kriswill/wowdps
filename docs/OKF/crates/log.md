@@ -2,6 +2,11 @@
 
 ## 2026-10-10
 
+- **Update** — [wowdps-model](model.md), [wowdps-core](core.md),
+  [wowdps-proto](proto.md), [wowdps-daemon](daemon.md): R29's replay tier
+  format 3 — `Post::absorb` and `Post::pools` (`set_pool`), the parser's
+  `HpHint.more_power`, the buff rows and players' debuffs on NPCs, the
+  `absorb` and `pools` sections; the rewrite queue recuts formats 1 and 2.
 - **Update** — [wowdps-daemon](daemon.md): a `creatures.tsv` that exists
   but cannot be read is refused, at open and before a merge, rather than
   read as empty and rewritten.

@@ -73,16 +73,22 @@ replay reads; `GetReplay` / `Replay` carry it
 through one crate-private `varint` module (varints, zigzag, strings, the
 bounds-checked cursor), so the two decoders share their refusals.
 
-The file is `WDRP` | format 2 | a section index | strings, head, units,
-posts, events, placed, markers, spells, maps (`encode`, `decode`,
-`format_of`; decode never panics). Format 2 keeps every floor's posts — the
+The file is `WDRP` | format 3 | a section index | strings, head, units,
+posts, events, placed, markers, spells, maps, absorb, pools (`encode`,
+`decode`, `format_of`; decode never panics). Format 3 keeps each post's
+shields (the `absorb` section: each track's changes at their post indices)
+and every pool kind (the `pools` section lists only the posts whose pools
+are not their last's with their own pool set in — a cast's second pool;
+every format reads the rest by that rule), and the buff rows (kinds 16–18);
+its posts section is format 2's, byte for byte, and format 2 still reads,
+with no shield. Format 2 keeps every floor's posts — the
 `maps` section codes each post's floor as the changes of the tracks that
 leave the head's, so a one-floor pull pays four bytes — and the boss rows
 (a row naming no unit is `has` bit 5); format 1 (the head's floor alone)
 still reads, every post on that floor, and the daemon's rewrite queue
-recuts it. `replay::csv` writes a `Cut` column for column as the
-extractor's old cutter did, plus `tracks.csv`'s trailing `map_id` and the
-boss rows: `units.tsv`, `tracks.csv`, `events.csv`, `placed.csv`,
+recuts it, as it recuts format 2. `replay::csv` writes a `Cut` column for
+column as the extractor's old cutter did, plus `tracks.csv`'s trailing
+`map_id`, `absorb` and `pools`, the boss rows and the buff rows: `units.tsv`, `tracks.csv`, `events.csv`, `placed.csv`,
 `markers.csv`, `raid.csv` (R25's series, never stored twice) and
 `pull.txt`.
 
