@@ -61,7 +61,8 @@
 //!            listed here, as in maps, each with its n pools whole, by kind
 //!            ascending, n at most `MAX_POOLS`, each kind below
 //!            `POOL_KINDS`: where an entry of a cast's `a|b` lists after
-//!            the first set a reading the post's own pool does not)
+//!            the first, or (format 5) an energize, set a reading the
+//!            post's own pool does not)
 //! str     := varint len | utf-8
 //! opt(x)  := u8 0 | u8 1 x;  zz := zigzag varint;  name := index into strs
 //! ```
@@ -94,13 +95,19 @@
 //!   `buff_dose`, kinds 16 to 18). Its posts section is format 2's, byte
 //!   for byte. Every format reads [`Post::pools`] the same way: each post's
 //!   pool set into its last's, so an older file's pools are what its posts
-//!   named. It still reads, the codec being format 4's; the rewrite queue
+//!   named. It still reads, the codec being format 5's; the rewrite queue
 //!   recuts it, since it was cut by the old aura rules.
 //! - 4: format 3's codec, byte for byte but this head byte; the number moved
 //!   with the cut's rules (an aura up before the cut opens at t 0, R18's
 //!   segment-start rule) so the rewrite queue recuts every file the old
 //!   rules cut. A format moves with what the cut writes, not the codec
-//!   alone: the queue knows a file by its number only.
+//!   alone: the queue knows a file by its number only. It still reads; the
+//!   rewrite queue recuts it, its pools read the old way.
+//! - 5: format 4's codec, byte for byte but this head byte; the number moved
+//!   with the cut's pool readings (R29): a cast's success after its cost,
+//!   and an energize's gain on the pool it names, so a warlock's shards and
+//!   a paladin's holy power move between spenders. Every stored file's
+//!   `pools` and `power` change, so the rewrite queue recuts every older one.
 
 use std::collections::HashMap;
 
@@ -116,7 +123,7 @@ pub mod csv;
 /// The file's first four bytes.
 pub const MAGIC: &[u8; 4] = b"WDRP";
 /// The layout above, as this build writes it.
-pub const FORMAT: u8 = 4;
+pub const FORMAT: u8 = 5;
 /// The oldest layout a reader takes.
 pub const OLDEST: u8 = 1;
 /// The fixed head: magic, format, the index's length.
@@ -249,8 +256,8 @@ pub fn decode(bytes: &[u8]) -> Option<Cut> {
         read_maps(&mut section(MAPS)?, &mut units)?;
     }
     // Each post's pools from its own and its last's, every format alike;
-    // format 3's (and 4's, the same codec) shields, and the posts whose
-    // pools a cast's lists made.
+    // format 3's (and 4's and 5's, the same codec) shields, and the posts
+    // whose pools a cast's lists or an energize made.
     let mut lists = HashMap::new();
     if format >= 3 {
         read_absorb(&mut section(ABSORB)?, &mut units)?;
@@ -577,8 +584,9 @@ fn pools_after(last: &[Power], power: Option<Power>) -> Vec<Power> {
 /// The pools section: the posts whose pools, tidied (`next_pools`: sorted,
 /// one per kind, bounded, grown from the post's own pool when it lists
 /// none), are not [`pools_after`] their last's — an entry of a cast's `a|b`
-/// lists set a reading the post's own pool does not — each with its pools
-/// whole. Whatever a post holds, what is written decodes.
+/// lists, or (format 5) an energize, set a reading the post's own pool does
+/// not — each with its pools whole. Whatever a post holds, what is written
+/// decodes.
 fn pools(cut: &Cut) -> Vec<u8> {
     let mut lists: Changes<Vec<Power>> = Vec::new();
     for (u, unit) in cut.units.iter().enumerate() {

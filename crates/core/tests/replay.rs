@@ -321,6 +321,41 @@ fn the_replay_fixtures_kill_reads_as_its_ruling_says() {
         (c.head.success, c.head.fight_ms),
         (Some(true), Some(30_000))
     );
+    // Format 5: the warlock's soul shards (tenths of 50) as his bar showed
+    // them — 30, Chaos Bolt's 20 spent, + 0.2 and a periodic + 0.1 in the
+    // block's tenths, then a gain that went over the cap: full.
+    let shards: Vec<(u32, u64)> = lock
+        .posts
+        .iter()
+        .filter_map(|p| {
+            p.pools
+                .iter()
+                .find(|w| w.kind == 7)
+                .map(|w| (p.t_ms, w.current))
+        })
+        .collect();
+    assert_eq!(
+        shards,
+        [
+            (14_500, 30),
+            (17_000, 10),
+            (18_000, 12),
+            (19_000, 13),
+            (20_000, 50)
+        ]
+    );
+    // Ula'tek's Spit pays a cost from each pool its `a|b` lists name.
+    let boss = c.units.iter().find(|u| u.name == "Ula'tek").unwrap();
+    let spit: Vec<(u32, u64)> = boss.posts[0]
+        .pools
+        .iter()
+        .map(|w| (w.kind, w.current))
+        .collect();
+    assert_eq!(
+        spit,
+        [(3, 20), (4, 0)],
+        "energy 25 − 5, a combo point spent"
+    );
 }
 
 /// The replay fixture's keystone run, cut whole: its trash on the upper

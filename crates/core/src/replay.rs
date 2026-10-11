@@ -83,7 +83,20 @@
 //! total — and, beside the pool the line names first, the last reading of
 //! every pool kind the unit's posts have named so far (`Post::pools`): a
 //! line names one pool, not always the same, and a cast's `a|b` lists name
-//! two.
+//! two. Format 5 reads them as the game's own bars do: a cast's success
+//! after its cost (the block reports its caster before the cast pays; the
+//! parser takes field 13 off), and an energize's gain on the pool it names
+//! in its suffix, which the target's block, naming another, never shows —
+//! a warlock's shards, a paladin's holy power, a rogue's combo points rise
+//! there and nowhere else. The gain counts in the block's units (a shard
+//! energize's `1.0000` is 10 of the block's 50: `display_mod`), at most
+//! the pool's max, and a gain that lost any of itself to the cap leaves the
+//! pool full. An energize STARTS a pool no block has named only when it is
+//! a counted class resource (its max below 100 in the block's units:
+//! shards, holy power, combo points, chi, arcane charges, essence, runes);
+//! a continuous one (mana, energy, rage, focus …) it only advances once a
+//! block has named it, so a shaman's Mana Spring on an elemental shaman
+//! opens no mana pool. Nothing between two lines is inferred.
 //!
 //! THE PLACED THINGS ([`PlacedTable`] says which spells): a player's landed
 //! cast of a placing spell (where they stood) and its aim; their summon or
@@ -145,6 +158,9 @@
 //!   unit or from no one, which the text cutter wrote as a debuff row, is a
 //!   buff row. Players' debuffs on NPCs, the buffs that matter to the fight,
 //!   each post's absorb and every pool kind are format 3's own.
+//! - A pool reads as the game's bar (format 5): a cast's success after its
+//!   cost, and an energize's gain on the pool it fills (the text cutter
+//!   wrote the block's numbers as they stood, a spender's before it paid).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -569,6 +585,7 @@ impl Cutter {
                 *self.floor_votes.entry(pos.map).or_default() += 1;
             }
             let g = self.gix(&h.unit_guid);
+            // The parser reads a cast's pools after its cost (format 5).
             let reading = |p: parser::Power| Power {
                 kind: p.kind,
                 current: p.current,
@@ -577,6 +594,22 @@ impl Cutter {
             let pools = self.pools.entry(g).or_default();
             for p in h.pools() {
                 set_pool(pools, reading(p));
+            }
+            // An energize names its gain in the suffix, not the block, which
+            // describes its target: a warlock's shards beside the mana his
+            // block names advance by what the line says (format 5).
+            if let Ev::Energize {
+                dst,
+                amount,
+                over,
+                power_type,
+                max_power,
+                ..
+            } = ev
+                && dst.guid == h.unit_guid
+                && h.pools().all(|p| p.kind != *power_type)
+            {
+                energize(pools, *power_type, *amount, *over, *max_power);
             }
             let pools = pools.clone();
             self.drafts.push(Draft::Post {
@@ -1437,6 +1470,67 @@ fn hp_tenths(current: u64, max: u64) -> u16 {
         .saturating_mul(10)
         .saturating_add(tenth.parse::<u64>().unwrap_or(0));
     u16::try_from(tenths).unwrap_or(u16::MAX)
+}
+
+/// How many of the block's units make one of an energize's (format 5): the
+/// block and the suffix's max count rage, runic power, soul shards and
+/// astral power in tenths and insanity in hundredths, while the gain is
+/// written as the game's bar shows it (a warlock's `1.0000` shard is 10 of
+/// the block's 50; a druid's 25 rage, 250 of 1000). Every other pool counts
+/// alike in both — mana, energy, focus, fury, holy power, combo points,
+/// chi, runes, arcane charges, essence, maelstrom.
+fn display_mod(kind: u32) -> f64 {
+    match kind {
+        1 | 6 | 7 | 8 => 10.0,
+        13 => 100.0,
+        _ => 1.0,
+    }
+}
+
+/// The most an energize's pool may hold, in the block's units, and still be
+/// STARTED by the energize (format 5): a counted class resource. A counted
+/// pool — soul shards (50 tenths), holy power (5), combo points (5–7), chi
+/// (5–6), arcane charges (4), essence (5–6), runes (6) — is named by its
+/// unit's block only on a spender's line, so its gains arrive before any
+/// reading and must open it; it empties out of combat, so starting it from
+/// 0 is near the truth, and the next spender re-anchors it. A continuous
+/// pool — energy (100 at the least, so exactly 100 is out), focus, fury
+/// (120), maelstrom (150), rage (1000), astral power (1000), runic power
+/// (1250), insanity (10 000), mana (250 000) — regenerates and is spent on
+/// lines that never name it to a unit whose block names another (a
+/// Restoration shaman's Mana Spring on an elemental shaman, whose blocks
+/// name maelstrom): started by its energizes it would only ever climb, and a
+/// replay's frame that shows the pool which moved most would pick it. So an
+/// energize advances a continuous pool only once a block has named it.
+const COUNTED_POOL_MAX: u64 = 100;
+
+/// An energize's gain on the pool it fills, the line's block naming
+/// another (format 5): the unit's last reading of that kind plus the gain
+/// in the block's units, at most the pool's max — the suffix's, else the
+/// last reading's. With no reading before it, only a counted resource (its
+/// max below [`COUNTED_POOL_MAX`]) starts, from 0; a continuous pool no
+/// block named is left alone. A gain that lost any of itself to the cap
+/// (`over` above 0) left the pool full. No max known, no reading. Only what
+/// the line says: nothing between two lines (a regenerating pool) is ever
+/// inferred.
+fn energize(pools: &mut Vec<Power>, kind: u32, amount: f64, over: f64, max_power: u32) {
+    let last = pools.iter().find(|p| p.kind == kind).copied();
+    let max = match u64::from(max_power) {
+        0 => last.map_or(0, |p| p.max),
+        max => max,
+    };
+    if max == 0 || (last.is_none() && max >= COUNTED_POOL_MAX) {
+        return;
+    }
+    let current = if over > 0.0 {
+        max
+    } else {
+        // The parser's amounts are finite and never negative; `as`
+        // saturates whatever it is handed.
+        let gain = (amount * display_mod(kind)).round() as u64;
+        last.map_or(0, |p| p.current).saturating_add(gain).min(max)
+    };
+    set_pool(pools, Power { kind, current, max });
 }
 
 /// A GUID's NPC id: its sixth dash-separated field, where the four before

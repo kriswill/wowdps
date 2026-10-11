@@ -265,11 +265,13 @@ kind its unit has named (`pools`, `kind:current:max` joined by `|`), and
 `buff_removed`, `buff_dose`) and every debuff a player put on an NPC (the
 debuff rows with the NPC as `unit`); an older file exports no shield and its
 posts' own pools. `replay.formats` counts the files by the format their head
-names (`{"3": …, "4": …}`): the daemon's rewrite queue recuts every older
+names (`{"4": …, "5": …}`): the daemon's rewrite queue recuts every older
 file from its log while idle, so all but the newest drain to 0 once it has
 run. Format 4 writes format 3's columns; its cut opens at t 0 an aura up
 before the pull (a buff R18 names, a player's debuff on an NPC), as R18
-counts it.
+counts it. Format 5 writes them too, its `power` and `pools` read as the
+game's bars: a cast's after its cost, and a pool an energize filled (a
+warlock's soul shards, a paladin's holy power) raised by its gain.
 `cards_without_replay` counts the boss pulls and runs with no file: the store
 keeps one only for the fights retention keeps whole or protects and the
 newest `history_keep_details_per_encounter` of the rest per boss and

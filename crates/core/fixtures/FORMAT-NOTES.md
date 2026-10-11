@@ -99,6 +99,42 @@ damage/heal suffix by two columns.
 > Format 4 bounds them: a power type at or above 64 is no pool (the game's
 > run below 32), in `HpHint.power` too, and a post keeps at most eight kinds;
 > no real post carried more than three.
+>
+> **Field 13, the cost (2026-10-11, R28 and replay format 5).** Only a
+> `SPELL_CAST_SUCCESS` writes it nonzero (every other event's is 0: 18 945 of
+> 34 143 casts in a real +15 night, 136 691 in a raid night, nothing else), an
+> `a|b` entry per pool (`9|0,5|244973,5|250000,3|25000`: holy power 5 costing
+> 3, mana 244 973 costing 25 000) — and the block it sits in reports the
+> caster BEFORE the cast pays. A Demonology warlock's Hand of Gul'dan reads
+> `7,50,50,30` with 5 shards in hand, and his next reading is 2 shards plus
+> what came in between; his mana reads 250 000 at a cost of 3 750 (a Shadow
+> Bolt) and, 0.2 s later, 246 795. The parser takes the cost off (`Power::current`, the
+> cost kept as `Power::cost`), so R28's series and the replay read the pool
+> after the cast, as the game's own bar shows it.
+>
+> **An energize names its pool in its suffix, the block another.** A
+> warlock's shards, a paladin's holy power, a rogue's combo points, a monk's
+> chi gain through `SPELL_ENERGIZE` / `SPELL_PERIODIC_ENERGIZE` whose block —
+> the destination's — names mana or energy (a real night: mana block, shard
+> gain 1 094 times; mana block, holy power 1 401; energy block, combo points
+> 72), so a spender's line is the only one that reads those pools. The
+> suffix's amount is in the game's DISPLAYED units and its max in the
+> block's: rage, runic power, soul shards and astral power count tenths in
+> the block (`1.0000` shard against `maxPower` 50; Bear Form's 25 rage reads
+> `1,250,1000` after it), insanity hundredths (Tentacle Slam's 6 reads
+> `13,600,10000`), every other pool alike. When the block names the
+> energized pool itself (fury, rage, runic power, focus, mana — 7 316 fury
+> lines alone), it already reads after the gain (Consume's `10.0000` fury
+> reads `17,10,120`). Replay format 5 advances the pool the block does not
+> name: over two +15 runs, 526 of a warlock's 533 shard spenders read his last
+> spender's leftover plus the gains between exactly, and 394 of a paladin's 395
+> holy power spenders theirs. The suffix's max tells a counted resource from a
+> continuous pool: below 100 in the block's units for shards (50), holy power
+> (5), combo points (5–7), chi (5–6), arcane charges (4), essence (5–6) and
+> runes (6), 100 or more for energy, focus, fury, maelstrom, rage, astral
+> power, runic power, insanity and mana; format 5 lets an energize start only
+> a counted pool, so a Restoration shaman's Mana Spring (`0,250000` in the
+> suffix) on an elemental shaman, whose blocks name maelstrom, opens none.
 
 Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 

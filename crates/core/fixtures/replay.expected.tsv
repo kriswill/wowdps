@@ -45,23 +45,23 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stack_max	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stack_cells	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	stack_auras	0
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	casts	1
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	casts	2
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	cast_starts	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	damage_periodic	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	heal_periodic	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	misses_dealt	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	dot_uptime_ms	0
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	energize_gained	0.0000
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	energize_wasted	0.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	energize_gained	4.0000
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	energize_wasted	0.3000
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	heal_absorbed	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_stage1	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_stage2	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_stage3	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_stage4	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	empower_cancelled	0
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_seconds	2
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_sum	103
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_max	105
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_seconds	6
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_sum	428
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_max	150
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	damage	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	overkill	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	petdamage	0
@@ -567,16 +567,16 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	power_sum	100
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	power_max	100
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_units	9
-1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_posts	15
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_posts	19
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_absorb	1500
-1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pools	16
-1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pool_sum	148820
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pools	24
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pool_sum	149313
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_floor	2434
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_hit	5
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_cast_start	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_cast_success	2
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pcast_start	1
-1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pcast_success	2
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pcast_success	3
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_pcast_failed	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_interrupt	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_debuff_applied	4
@@ -596,12 +596,12 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_touch	3
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_gone	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_markers	6
-1	Encounter	Ula'tek	kill	30000	3000	16	2434	replay_map_posts	13
+1	Encounter	Ula'tek	kill	30000	3000	16	2434	replay_map_posts	17
 1	Encounter	Ula'tek	kill	30000	3000	16	2435	replay_map_posts	2
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	replay_posts	3
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	replay_posts	3
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	replay_posts	3
-1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	replay_posts	2
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	replay_posts	6
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_units	3
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_posts	2
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_absorb	0
@@ -638,7 +638,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_posts	4
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_absorb	0
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_pools	3
-4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_pool_sum	97100
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_pool_sum	95900
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_floor	2095
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_hit	1
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_cast_start	0
@@ -671,7 +671,7 @@ K1	Key	The Glass Hollow +14	timed	119000			*	replay_units	4
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_posts	7
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_absorb	0
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_pools	5
-K1	Key	The Glass Hollow +14	timed	119000			*	replay_pool_sum	97300
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_pool_sum	96100
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_floor	2095
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_hit	2
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_cast_start	0

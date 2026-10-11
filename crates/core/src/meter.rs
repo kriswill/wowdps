@@ -11859,7 +11859,12 @@ mod tests {
             max: 100,
             flags: 0,
             absorb: 0,
-            power: Some(crate::parser::Power { kind, current, max }),
+            power: Some(crate::parser::Power {
+                kind,
+                current,
+                max,
+                cost: 0,
+            }),
             more_power: Vec::new(),
             pos: None,
             item_level: 0,
@@ -11906,6 +11911,31 @@ mod tests {
         assert!(seg.power(PET).is_empty(), "a pet's pool is its own");
         assert_eq!(seg.power(P1).len(), 2, "never the pet's focus beside it");
         assert!(seg.power(P2).is_empty());
+    }
+
+    /// R28 (2026-10-11): a cast's success reports its caster's pool before
+    /// the cast pays; the second keeps it after (the parser takes field 13's
+    /// cost off), as the game's own bar shows it — a warlock's 50 shard
+    /// tenths at a cost of 30 are 20.
+    #[test]
+    fn r28_a_casts_report_is_its_pool_after_the_cost() {
+        let mut cast = crate::parser::parse_line(&format!(
+            "10/7/2026 21:00:02.100-7  SPELL_CAST_SUCCESS,{P1},\"Ash-Realm-US\",0x512,0x80000000,0000000000000000,nil,0x80000000,0x80000000,105174,\"Hand of Gul'dan\",0x24,{P1},0000000000000000,900,1000,0,0,0,0,0,0,7,50,50,30,1.00,2.00,2434,0.0000,600"
+        ))
+        .unwrap();
+        cast.ts_ms = 2_100;
+        let m = fed(vec![
+            start(1_000, "Ashen Warden"),
+            cast,
+            end(7_000, "Ashen Warden", true),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.power(P1)
+                .first()
+                .map(|s| (s.power_type, s.max, s.per_sec.clone())),
+            Some((7, 50, vec![None, Some(20)]))
+        );
     }
 
     /// R28: an Overall lays each member's seconds at its own offset on the

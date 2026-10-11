@@ -1,11 +1,11 @@
 ---
 type: Fixture
 title: replay.txt
-description: 'The replay cut''s fixture (R29, v45) — two boss pulls with world markers placed and replaced before the first, a player''s posts on a second floor and a hit that found him there, every event kind a replay draws (a ranged hit, a miss, a hit from no source, a friendly totem''s tick that is none, a failed cast, a Feign Death, a creature down unconscious, a rez, the boss rows), a warlock known by R8, what players place (a gateway, a totem''s summon, touches, a create, a totem destroyed), a keystone run whose trash and boss stand on two floors, and (format 3) the buffs that matter beside one up before the pull, a healer''s debuff on the boss, two shields and a warlock''s second pool, and (format 4) a buff and a debuff up before the pull opened at its start.'
+description: 'The replay cut''s fixture (R29, v45) — two boss pulls with world markers placed and replaced before the first, a player''s posts on a second floor and a hit that found him there, every event kind a replay draws (a ranged hit, a miss, a hit from no source, a friendly totem''s tick that is none, a failed cast, a Feign Death, a creature down unconscious, a rez, the boss rows), a warlock known by R8, what players place (a gateway, a totem''s summon, touches, a create, a totem destroyed), a keystone run whose trash and boss stand on two floors, and (format 3) the buffs that matter beside one up before the pull, a healer''s debuff on the boss, two shields and a warlock''s second pool, and (format 4) a buff and a debuff up before the pull opened at its start, and (format 5) casts read after their cost and a warlock''s shards advanced by his energizes.'
 resource: crates/core/fixtures/replay.txt
 tags: [fixture]
 status: stable
-generated: { by: claude-code/opus-5.5, at: 2026-10-09T22:00:00-07:00 }
+generated: { by: claude-code/opus-5.5, at: 2026-10-11T12:00:00-07:00 }
 ---
 
 Every count is laid out by hand in `replay.expected.md`; the TSV holds what
@@ -25,7 +25,7 @@ check.awk as its other tables are.
 
 ## Rulings exercised
 
-- [R29 The replay cut](../rulings/r29.md): the floor (nine votes on 2434,
+- [R29 The replay cut](../rulings/r29.md): the floor (thirteen votes on 2434,
   two on 2435, where the hunter's posts and the hit that found him are kept
   with their floor), units in order of first sight, the nineteen event kinds
   (the boss rows at t 0 and the END; format 3's buff rows, format 4's
@@ -49,8 +49,13 @@ check.awk as its other tables are.
   Fortitude none (a long buff); Healer's Thorn Rake on the boss is three
   debuff rows (unit the boss), the pet's beside it none; two posts carry a
   shield (`replay_absorb` 1 500), and Lock's soul shards join his mana while
-  Ula'tek's `3|4` Spit gives it two pools (`replay_pools` 16,
-  `replay_pool_sum` 148 820).
+  Ula'tek's `3|4` Spit gives it two pools. Format 5: the Spit pays a cost
+  from each (`5|1`: energy 20, combo points 0), Lock's Chaos Bolt spends 20
+  of his 30 shard tenths, an Incinerate energize (+ 0.2 shards, 2 tenths), a
+  periodic Immolate one (+ 0.1) and a Soul Fire one that went over the cap
+  (full, 50) advance the shards his mana-naming blocks never show, and the
+  healer's second Rejuvenation in the run pays 1 200 mana (`replay_pools`
+  24, `replay_pool_sum` 149 313; the run's 96 100).
 - [R22 Self-harm](../rulings/r22.md): Spirit Link Totem's
   redistribution (its damage line a neutral `0xa28`) is friendly fire under
   the Shaman who summoned it and stays in the Tank's Taken — and, one of ours
@@ -61,7 +66,9 @@ check.awk as its other tables are.
   COMBATANT_INFO is Destruction by Incinerate.
 - [R28 Power](../rulings/r28.md): the `DAMAGE_SPLIT`'s block (off12) reports
   the healer's mana; Lock's second post reports his soul shards, a second
-  power series beside his mana.
+  power series beside his mana; his Chaos Bolt's second reports 10, after
+  its cost (`power_sum` 428); the energizes add 4.0 gained and 0.3 wasted
+  ([R27](../rulings/r27.md)).
 - [R18 Aura spans](../rulings/r18.md): the pre-pull Bone Shield's removal
   opens a span at the pull's start (the segment-start rule), and since
   format 4 the replay opens it there too; Power Infusion, seen only by its

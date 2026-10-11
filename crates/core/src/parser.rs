@@ -83,7 +83,9 @@ pub struct HpHint {
     /// and max. `None` when the unit has no pool (max 0) or the fields do
     /// not read. A cast that spends two resources lists each field as
     /// `a|b` (a Rogue's `3|4`, energy and combo points); the FIRST entry is
-    /// kept here (R28 reads it alone).
+    /// kept here (R28 reads it alone). Its current is the pool AFTER the
+    /// line: a cast's success reports it before the cast pays, so the cost
+    /// (field 13, each `a|b` entry its own) comes off ([`Power::cost`]).
     pub power: Option<Power>,
     /// R29 (replay format 3): the entries of those `a|b` lists after the
     /// first, in the line's order, each that reads with its max above 0 and
@@ -129,8 +131,16 @@ pub struct Position {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Power {
     pub kind: u32,
+    /// What the pool holds after the line, as the game's own bar shows it:
+    /// the block's current less [`Power::cost`], never below 0.
     pub current: u64,
     pub max: u64,
+    /// Advanced field 13 (R28, R29; 2026-10-11): what the line's cast spent
+    /// of this pool, its entry of the `a|b` list beside the others. The game
+    /// writes a `SPELL_CAST_SUCCESS`'s block BEFORE the cast pays (a
+    /// warlock's Hand of Gul'dan reads 50 shard tenths at a cost of 30 and
+    /// leaves him 20) and 0 on every other line; 0 when it does not read.
+    pub cost: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -770,44 +780,58 @@ fn absorb_at(f: &[Cow<'_, str>], i: usize) -> Option<u64> {
     get(f, i).and_then(|s| s.parse().ok())
 }
 
-/// Advanced fields `i..i+3` (power type, current, max) → the unit's primary
-/// [`Power`]. A cast spending two resources writes each field as `a|b`;
-/// the first entry of each is kept. `None` when the type does not parse, is
-/// no power type (at or above `POOL_KINDS`, 64: the game's run below 32), or
-/// the unit has no pool (max 0).
-fn power_at(f: &[Cow<'_, str>], i: usize) -> Option<Power> {
-    let first = |k: usize| get(f, i + k).and_then(|s| s.split('|').next());
-    let kind = first(0)?.parse().ok().filter(|k| *k < POOL_KINDS)?;
-    let current = first(1)?.parse().ok()?;
-    let max = first(2)?.parse().ok()?;
-    (max > 0).then_some(Power { kind, current, max })
+/// One pool's reading: its type, the block's current less the cast's cost
+/// (never below 0) and its max. `None` when the type does not parse, is no
+/// power type (at or above `POOL_KINDS`, 64: the game's run below 32), the
+/// current or max does not read, or the unit has no pool (max 0). A cost
+/// that does not read is none.
+fn reading(kind: &str, current: &str, max: &str, cost: &str) -> Option<Power> {
+    let kind = kind.parse().ok().filter(|k| *k < POOL_KINDS)?;
+    let current: u64 = current.parse().ok()?;
+    let max = max.parse().ok()?;
+    let cost = cost.parse().unwrap_or(0);
+    (max > 0).then_some(Power {
+        kind,
+        current: current.saturating_sub(cost),
+        max,
+        cost,
+    })
 }
 
-/// R29 (replay format 3): the entries of the same three fields' `a|b`
-/// lists after the first, taken in step (the n-th type with the n-th
-/// current and max), each that reads with its max above 0 and a power type
-/// below `POOL_KINDS`, at most `MAX_POOLS` of them however long the lists
-/// run. Empty without allocating when the type names one pool, as nearly
-/// every line's does.
+/// Advanced fields `i..i+4` (power type, current, max, cost) → the unit's
+/// primary [`Power`], after the line's cost. A cast spending two resources
+/// writes each field as `a|b`; the first entry of each is kept.
+fn power_at(f: &[Cow<'_, str>], i: usize) -> Option<Power> {
+    let first = |k: usize| get(f, i + k).and_then(|s| s.split('|').next());
+    reading(
+        first(0)?,
+        first(1)?,
+        first(2)?,
+        first(3).unwrap_or_default(),
+    )
+}
+
+/// R29 (replay format 3): the entries of the same fields' `a|b` lists after
+/// the first, taken in step (the n-th type with the n-th current, max and
+/// cost — a cost list shorter than the rest costs nothing past its end),
+/// each that reads with its max above 0 and a power type below
+/// `POOL_KINDS`, at most `MAX_POOLS` of them however long the lists run.
+/// Empty without allocating when the type names one pool, as nearly every
+/// line's does.
 fn more_power_at(f: &[Cow<'_, str>], i: usize) -> Vec<Power> {
     let field = |k: usize| get(f, i + k).unwrap_or_default();
-    let (kinds, currents, maxes) = (field(0), field(1), field(2));
+    let (kinds, currents, maxes, costs) = (field(0), field(1), field(2), field(3));
     if !kinds.contains('|') {
         return Vec::new();
     }
+    let mut costs = costs.split('|');
     kinds
         .split('|')
         .zip(currents.split('|'))
         .zip(maxes.split('|'))
+        .map(|((kind, current), max)| (kind, current, max, costs.next().unwrap_or_default()))
         .skip(1)
-        .filter_map(|((kind, current), max)| {
-            let p = Power {
-                kind: kind.parse().ok().filter(|k| *k < POOL_KINDS)?,
-                current: current.parse().ok()?,
-                max: max.parse().ok()?,
-            };
-            (p.max > 0).then_some(p)
-        })
+        .filter_map(|(kind, current, max, cost)| reading(kind, current, max, cost))
         .take(MAX_POOLS)
         .collect()
 }
@@ -2183,8 +2207,8 @@ mod tests {
     /// 2026-10-08: the block's field 9 is the unit's shields and 10–12 its
     /// power — read from real lines' shapes: a healed player carrying a
     /// shield, a boss's energy on her own swing, a cast spending two
-    /// resources (`3|4,191|5,250|7`: energy and combo points — the first
-    /// kept), and a creature with no pool.
+    /// resources (`3|4,191|5,250|7,25|5`: energy and combo points — the
+    /// first kept, each read after its cost), and a creature with no pool.
     #[test]
     fn the_hint_carries_the_units_absorb_and_power() {
         let hint = |body: String| parse_line(&line(&body)).unwrap().hp_hint.unwrap();
@@ -2197,7 +2221,8 @@ mod tests {
             Some(Power {
                 kind: 3,
                 current: 250,
-                max: 250
+                max: 250,
+                cost: 0
             })
         );
         let h = hint(format!(
@@ -2216,19 +2241,21 @@ mod tests {
             h.power,
             Some(Power {
                 kind: 3,
-                current: 191,
-                max: 250
+                current: 166,
+                max: 250,
+                cost: 25
             }),
-            "the first of each `a|b` pair"
+            "the first of each `a|b` list, its cost off: 191 − 25"
         );
         assert_eq!(
             h.more_power,
             [Power {
                 kind: 4,
-                current: 5,
-                max: 7
+                current: 0,
+                max: 7,
+                cost: 5
             }],
-            "R29: the rest of each list, in step"
+            "R29: the rest of each list in step, the cost list too"
         );
         let all: Vec<u32> = h.pools().map(|p| p.kind).collect();
         assert_eq!(all, [3, 4]);
@@ -2260,6 +2287,39 @@ mod tests {
         assert_eq!(h.more_power.len(), 8, "the rest capped at MAX_POOLS");
     }
 
+    /// R28, R29 (2026-10-11): a cast's success reports its caster's pools
+    /// BEFORE the cast pays, its cost in field 13 — shaped on real lines: a
+    /// warlock's Hand of Gul'dan (soul shards in tenths, 50 at a cost of 30:
+    /// 20 left), a paladin's spender listing holy power and mana with a cost
+    /// each, a cost list shorter than the rest, a cost past the pool and one
+    /// that does not read. A line with cost 0 reads as it always did.
+    #[test]
+    fn a_casts_pools_read_after_its_cost() {
+        let pools = |pool: &str| {
+            let body = format!(
+                "SPELL_CAST_SUCCESS,{PLAYER},{BOSS},105174,\"Hand of Gul'dan\",0x24,Player-1168-0A234B,0000000000000000,919233,919233,337,3618,1415,761,160,64236,{pool},1459.05,-224.42,2094,1.6775,326"
+            );
+            let h = parse_line(&line(&body)).unwrap().hp_hint.unwrap();
+            h.pools()
+                .map(|p| (p.kind, p.current, p.max, p.cost))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pools("7,50,50,30"), [(7, 20, 50, 30)], "5 shards, 3 spent");
+        assert_eq!(
+            pools("9|0,5|244973,5|250000,3|25000"),
+            [(9, 2, 5, 3), (0, 219_973, 250_000, 25_000)],
+            "each entry its own cost"
+        );
+        assert_eq!(
+            pools("3|4,50|2,100|5,10"),
+            [(3, 40, 100, 10), (4, 2, 5, 0)],
+            "past the cost list's end, nothing spent"
+        );
+        assert_eq!(pools("7,20,50,30"), [(7, 0, 50, 30)], "never below 0");
+        assert_eq!(pools("0,900,1000,x"), [(0, 900, 1000, 0)], "no cost read");
+        assert_eq!(pools("0,900,1000,0"), [(0, 900, 1000, 0)]);
+    }
+
     #[test]
     fn advanced_lines_carry_an_hp_hint_even_when_the_event_is_dropped() {
         // SPELL_DAMAGE: the block describes the target, post-hit.
@@ -2280,7 +2340,8 @@ mod tests {
                 power: Some(Power {
                     kind: 3,
                     current: 95,
-                    max: 100
+                    max: 100,
+                    cost: 0
                 }),
                 more_power: Vec::new(),
                 // v45 (R29): fields 14–18 — x, y, the floor, the facing and

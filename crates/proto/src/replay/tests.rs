@@ -777,35 +777,43 @@ fn small_auras() -> Cut {
 }
 
 /// `small_auras()` as a format-3 build wrote it (#104's rules, the same
-/// codec as format 4's).
+/// codec as format 5's).
 const FORMAT3: &str = "57445250032a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
 
-/// `small_auras()` as this build writes it: format 3's bytes but the head's
-/// number.
+/// `small_auras()` as a format-4 build wrote it: the old pool readings
+/// (a cast's before its cost, no energize), the same codec as format 5's.
 const FORMAT4: &str = "57445250042a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
 
-/// A format-3 file still reads, the codec being format 4's.
+/// `small_auras()` as this build writes it: format 4's bytes but the head's
+/// number.
+const FORMAT5: &str = "57445250052a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
+
+/// A format-3 or format-4 file still reads, the codec being format 5's.
 #[test]
-fn a_format_3_file_reads_as_format_4() {
-    let bytes = unhex(FORMAT3);
-    assert_eq!(format_of(&bytes), Some(3));
-    assert_eq!(decode(&bytes), Some(small_auras()));
+fn a_format_3_or_4_file_reads_as_format_5() {
+    for (hex, format) in [(FORMAT3, 3), (FORMAT4, 4)] {
+        let bytes = unhex(hex);
+        assert_eq!(format_of(&bytes), Some(format));
+        assert_eq!(decode(&bytes), Some(small_auras()), "format {format}");
+    }
 }
 
-/// Format 4's golden bytes: a diff here is a format change, never a
+/// Format 5's golden bytes: a diff here is a format change, never a
 /// fixture to refresh.
 #[test]
-fn format_4_reads_and_writes_its_golden_bytes() {
+fn format_5_reads_and_writes_its_golden_bytes() {
     let cut = small_auras();
     let bytes = encode(&cut);
-    assert_eq!(hex(&bytes), FORMAT4);
-    assert_eq!(format_of(&bytes), Some(4));
-    assert_eq!(decode(&unhex(FORMAT4)), Some(cut));
-    assert_eq!(
-        &bytes[5..],
-        &unhex(FORMAT3)[5..],
-        "format 3's codec, byte for byte"
-    );
+    assert_eq!(hex(&bytes), FORMAT5);
+    assert_eq!(format_of(&bytes), Some(5));
+    assert_eq!(decode(&unhex(FORMAT5)), Some(cut));
+    for older in [FORMAT3, FORMAT4] {
+        assert_eq!(
+            &bytes[5..],
+            &unhex(older)[5..],
+            "format 3's and 4's codec, byte for byte"
+        );
+    }
 }
 
 /// Shields against their track's last (0 before the first), any amount

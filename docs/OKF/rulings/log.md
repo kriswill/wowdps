@@ -1,5 +1,15 @@
 # Log
 
+## 2026-10-11
+
+- **Update** — [R29 The replay cut](r29.md): tier format 5 — a cast's pools
+  read after its cost (block field 13), and an energize's gain on the pool it
+  fills that its target's block does not name, in the block's units (tenths
+  for rage, runic power, soul shards and astral power; hundredths for
+  insanity), capped, full after an overcap; an energize starts only a
+  counted pool (`COUNTED_POOL_MAX`, max below 100). [R28 Power](r28.md): a cast's
+  report is the pool after its cost.
+
 ## 2026-10-10
 
 - **Update** — [R29 The replay cut](r29.md): tier format 4 — R18's

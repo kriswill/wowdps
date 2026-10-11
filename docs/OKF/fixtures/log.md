@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-11
+
+- **Update** — [replay.txt](replay.md): format 5's cases — the boss's Spit
+  paying a cost from each of its `a|b` pools, the warlock's shards in the
+  game's tenths, his Chaos Bolt's cost, a shard energize and a periodic one
+  scaled, one past the cap filling the pool, and a healer's mana cost in the
+  keystone run.
+
 ## 2026-10-10
 
 - **Update** — [replay.txt](replay.md): format 4's cases — the pre-pull Bone

@@ -572,19 +572,25 @@ const FORMAT2: &str = "5744525002210000000901004c024c1b036713047a4105bb012106dc0
 
 /// A format-3 replay file — the kill with its shields, a second pool and the
 /// buff rows, cut by #104's aura rules (`proto::replay`'s own format-3
-/// golden; format 4's codec).
+/// golden; format 5's codec).
 const FORMAT3: &str = "57445250032a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
 
-/// A format-1, 2 or 3 replay still answers, and is OLDER than this build's:
-/// the rewrite queue recuts it from its log as format 4 (every floor, the
-/// boss rows, each post's shields and pools, the buff rows and the players'
-/// debuffs on NPCs, an aura up before the cut opened at its start), as the
-/// series tier's were at v42 — format 3 too, whose codec is format 4's but
-/// whose aura rules are not. A later build's format is left alone and
-/// answers nothing.
+/// The same file as a format-4 build wrote it: its pools read the old way, a
+/// cast's before its cost and no energize (`proto::replay`'s own format-4
+/// golden; format 5's codec).
+const FORMAT4: &str = "57445250042a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
+
+/// A format-1, 2, 3 or 4 replay still answers, and is OLDER than this
+/// build's: the rewrite queue recuts it from its log as format 5 (every
+/// floor, the boss rows, each post's shields and pools, the buff rows and the
+/// players' debuffs on NPCs, an aura up before the cut opened at its start, a
+/// pool read after a cast's cost and raised by its energizes), as the series
+/// tier's were at v42 — formats 3 and 4 too, whose codec is format 5's but
+/// whose cut rules are not. A later build's format is left alone and answers
+/// nothing.
 #[test]
-fn an_older_replay_is_recut_as_format_4() {
-    for (bytes, format) in [(FORMAT1, 1), (FORMAT2, 2), (FORMAT3, 3)] {
+fn an_older_replay_is_recut_as_format_5() {
+    for (bytes, format) in [(FORMAT1, 1), (FORMAT2, 2), (FORMAT3, 3), (FORMAT4, 4)] {
         let tmp = Temp::new(&format!("format{format}"));
         let (path, fights) = log_of(&tmp, &[(90, true, 15)]);
         let facts = LogFacts::read(&path);
@@ -610,7 +616,7 @@ fn an_older_replay_is_recut_as_format_4() {
         assert!(cut_into(&mut store, &path, &id));
         let bytes = store.replay_file(&id).unwrap();
         assert_eq!(replay::format_of(&bytes), Some(replay::FORMAT));
-        assert_eq!(replay::FORMAT, 4);
+        assert_eq!(replay::FORMAT, 5);
         let cut = replay::decode(&bytes).unwrap();
         let boss: Vec<replay_kind::EventKind> = cut
             .events

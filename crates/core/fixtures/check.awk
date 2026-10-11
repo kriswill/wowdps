@@ -524,17 +524,47 @@ function r_floor(votes, n,   k, kk, best, fl) {
 # n-th type with the n-th current and max, each reading with its max above 0
 # — kept as the unit's LAST reading of that type; and over the posts, how
 # many types each carries (`replay_pools`) and Σ of their currents
-# (`replay_pool_sum`).
-function r_post_pools(s, pk,   u, nk, nc, nm, kk, cc, mm, i, n, k, sum) {
+# (`replay_pool_sum`). Format 5 reads them as the game's bars do: each
+# current less the n-th entry of offset 13, the cast's cost (a whole number,
+# else nothing; never below 0); and an ENERGIZE line whose block describes
+# its destination and names no reading of the pool its suffix fills (the
+# line's last four fields: amount, overEnergize, powerType, maxPower) sets
+# that pool too — full, at the suffix's max (else the last reading's), when
+# any of it went over; else the last reading (0 with none) plus the amount in
+# the block's units (×10 rage 1, runic power 6, soul shards 7, astral power
+# 8; ×100 insanity 13; ×1 every other), at most that max; no max, nothing.
+# A pool no reading named yet starts so only when it is a COUNTED resource,
+# its max below 100 (shards 50, holy power 5, combo points, chi, arcane
+# charges, essence, runes); a continuous one (energy 100, mana, rage …) an
+# energize never starts.
+function r_scale(t) { return (t == 1 || t == 6 || t == 7 || t == 8) ? 10 : (t == 13 ? 100 : 1) }
+function r_post_pools(s, pk,   u, nk, nc, nm, kk, cc, mm, co, i, n, k, sum, cur0, named, et, emax, ev0) {
     if ($(pk + 9) ~ /^[0-9]+$/) rv[s SUBSEP "replay_absorb"] += $(pk + 9)
     nk = split($(pk + 10), kk, "|"); nc = split($(pk + 11), cc, "|"); nm = split($(pk + 12), mm, "|")
+    split($(pk + 13), co, "|")
     if (nc < nk) nk = nc
     if (nm < nk) nk = nm
     u = s SUBSEP rguid
     for (i = 1; i <= nk; i++) {
         if (kk[i] !~ /^[0-9]+$/ || cc[i] !~ /^[0-9]+$/ || mm[i] !~ /^[0-9]+$/ || mm[i] + 0 == 0) continue
         if (!((u SUBSEP (kk[i] + 0)) in rPool)) rKinds[u] = rKinds[u] " " (kk[i] + 0)
-        rPool[u SUBSEP (kk[i] + 0)] = cc[i] + 0
+        cur0 = cc[i] - ((co[i] ~ /^[0-9]+$/) ? co[i] : 0)
+        rPool[u SUBSEP (kk[i] + 0)] = (cur0 < 0) ? 0 : cur0
+        rPoolMax[u SUBSEP (kk[i] + 0)] = mm[i] + 0
+        named[kk[i] + 0] = 1
+    }
+    if ((ev == "SPELL_ENERGIZE" || ev == "SPELL_PERIODIC_ENERGIZE") && $6 == rguid && !(($(NF - 1) + 0) in named)) {
+        et = $(NF - 1) + 0
+        emax = ($NF + 0 > 0) ? $NF + 0 : (((u SUBSEP et) in rPool) ? rPoolMax[u SUBSEP et] : 0)
+        if (emax > 0 && (((u SUBSEP et) in rPool) || emax < 100)) {
+            if ($(NF - 2) + 0 > 0) ev0 = emax
+            else {
+                ev0 = (((u SUBSEP et) in rPool) ? rPool[u SUBSEP et] : 0) + int($(NF - 3) * r_scale(et) + 0.5)
+                if (ev0 > emax) ev0 = emax
+            }
+            if (!((u SUBSEP et) in rPool)) rKinds[u] = rKinds[u] " " et
+            rPool[u SUBSEP et] = ev0; rPoolMax[u SUBSEP et] = emax
+        }
     }
     n = split(rKinds[u], k, " "); sum = 0
     for (i = 1; i <= n; i++) sum += rPool[u SUBSEP k[i]]
@@ -792,15 +822,18 @@ ev == "COMBAT_LOG_VERSION" {
     # pet's pool is its own). SPELL_ABSORBED has no advanced block. Passive, and
     # read BEFORE this line can open or extend a segment (the Rust reads the
     # advanced block ahead of the event), so a line past a pull's end or the
-    # trash gap lands nowhere.
+    # trash gap lands nowhere. (2026-10-11) The report is the pool after the
+    # line: the current less block offset 13's first entry, the cast's cost (a
+    # whole number, else nothing; never below 0).
     if (ev != "SPELL_ABSORBED") {
         pk = (ev ~ /^(SPELL_|RANGE_|DAMAGE_SHIELD|DAMAGE_SPLIT)/ || ev ~ /_SUPPORT$/) ? 13 : 10
         if ($pk ~ /^Player-/ && $(pk + 3) + 0 > 0 && !passive_stale()) {
-            pt = $(pk + 10); pc = $(pk + 11); pm = $(pk + 12)
-            sub(/\|.*/, "", pt); sub(/\|.*/, "", pc); sub(/\|.*/, "", pm)
+            pt = $(pk + 10); pc = $(pk + 11); pm = $(pk + 12); po = $(pk + 13)
+            sub(/\|.*/, "", pt); sub(/\|.*/, "", pc); sub(/\|.*/, "", pm); sub(/\|.*/, "", po)
             if (pt ~ /^[0-9]+$/ && pc ~ /^[0-9]+$/ && pm ~ /^[0-9]+$/ && pm + 0 > 0) {
                 psec = int((now - segStart[cur]) / 1000)
-                powv[cur SUBSEP $pk SUBSEP pt SUBSEP psec] = pc + 0
+                pc = pc - ((po ~ /^[0-9]+$/) ? po : 0)
+                powv[cur SUBSEP $pk SUBSEP pt SUBSEP psec] = (pc < 0) ? 0 : pc + 0
                 if (pm + 0 > powm[cur SUBSEP $pk SUBSEP pt]) powm[cur SUBSEP $pk SUBSEP pt] = pm + 0
             }
         }
