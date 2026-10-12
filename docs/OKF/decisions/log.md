@@ -1,5 +1,20 @@
 # Log
 
+## 2026-10-12
+
+- **Update** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+  after review — altitudes filled from the view before they are checked
+  (`Area::altitudes`), an ordered crop, fade, court and spell checks, an
+  arena's own `travel`, a levels fixture, Echo of Doragosa's court posted
+  on 2097 though its draft says 2099; and the base rule narrowed to what
+  holds: a set may amend an arena's map and view, never a level's.
+
+- **Creation** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+  a dungeon level is an instance file's `[level.<ui_map>]`, the same `Map`
+  an arena's is; any map names its areas (with altitudes), paths (with a
+  mode) and a transition, and the render's crop, include, fade, ground and
+  exposure; all base, every resolved map held to origin/main's.
+
 ## 2026-10-11
 
 - **Update** — [Imported Fights Live In The History Store, Apart From Ours](imported-fights-in-the-store.md):

@@ -1,5 +1,17 @@
 # Log
 
+## 2026-10-12
+
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): after review
+  — `Area::altitudes`, `travel` in `INSTANCE_TABLES`,
+  `fixtures/resolved-levels.txt`; a set may amend an arena's map, never a
+  level's.
+
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): a dungeon's
+  levels (`[level.<ui_map>]`, `Level`, `Rubric::level`, `levels`,
+  `check_level`) and the map's areas, paths, transition and render tweaks;
+  `gate_map`; `fixtures/resolved-maps.txt`.
+
 ## 2026-10-11
 
 - **Update** — [wowdps-daemon](daemon.md): an import trims the replay cap
