@@ -3,6 +3,10 @@
 ## 2026-10-11
 
 - **Update** — [Imported Fights Live In The History Store, Apart From Ours](imported-fights-in-the-store.md):
+  the replay goes through `write_replay`, the size cap trimming only once
+  the card lands.
+
+- **Update** — [Imported Fights Live In The History Store, Apart From Ours](imported-fights-in-the-store.md):
   after review — an import must be this build's replay format (a format
   names the cut's rules, and an import is never recut); a failed write
   changes nothing (a re-import's old replay put back); a busy refusal is

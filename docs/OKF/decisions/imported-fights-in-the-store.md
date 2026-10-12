@@ -41,7 +41,8 @@ usually somebody else's.
   replay tier's bytes. The history thread is the only writer: it validates
   the replay (this build's format, a whole decode) and the facts (a source,
   a boss pull with its encounter), stores the card and keeps the replay
-  through the same `store_replay` the log path uses. No client writes the
+  through `write_replay` — the log path's `store_replay` without its trim
+  — the size cap trimming only once the card lands. No client writes the
   store's files.[^contract]
 - **This build's format alone.** A replay format number names the cut's
   rules, not only the codec (formats 4 and 5 moved with the rules on an
