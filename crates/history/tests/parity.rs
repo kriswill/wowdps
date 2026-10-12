@@ -166,7 +166,12 @@ fn start_over_with(
         let _ = tx.send(run(opts));
     });
     let deadline = Instant::now() + DEADLINE;
-    while !socket.exists() {
+    loop {
+        // The socket's vnode appears at bind(); listen() follows. A connect
+        // in that gap is refused, so readiness is a connect, not exists().
+        if UnixStream::connect(&socket).is_ok() {
+            break;
+        }
         assert!(Instant::now() < deadline, "daemon never bound");
         thread::sleep(Duration::from_millis(5));
     }

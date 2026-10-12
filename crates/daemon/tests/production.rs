@@ -131,7 +131,12 @@ fn a_production_daemon_runs_with_the_cache_and_watcher_wired() {
 
     let daemon = thread::spawn(move || run(opts));
     let deadline = Instant::now() + DEADLINE;
-    while !socket.exists() {
+    loop {
+        // The socket's vnode appears at bind(); listen() follows. A connect
+        // in that gap is refused, so readiness is a connect, not exists().
+        if UnixStream::connect(&socket).is_ok() {
+            break;
+        }
         assert!(Instant::now() < deadline, "daemon never bound {socket:?}");
         thread::sleep(Duration::from_millis(5));
     }

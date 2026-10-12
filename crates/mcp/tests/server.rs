@@ -79,7 +79,12 @@ fn start_daemon_with(tmp: &Temp, log: &str, tweak: impl FnOnce(&mut DaemonOption
         let _ = tx.send(run(opts));
     });
     let deadline = Instant::now() + DEADLINE;
-    while !socket.exists() {
+    loop {
+        // The socket's vnode appears at bind(); listen() follows. A connect
+        // in that gap is refused, so readiness is a connect, not exists().
+        if UnixStream::connect(&socket).is_ok() {
+            break;
+        }
         assert!(Instant::now() < deadline, "daemon never bound {socket:?}");
         thread::sleep(Duration::from_millis(5));
     }
@@ -116,7 +121,8 @@ fn tool_doc(reply: &Json) -> Json {
         .and_then(|b| b.get("text"))
         .and_then(Json::as_str)
         .expect("text content");
-    json::parse(text).expect("tool output is JSON")
+    json::parse(text)
+        .unwrap_or_else(|e| panic!("tool output is JSON: {e}; text was: {text}"))
 }
 
 fn is_error(reply: &Json) -> bool {
