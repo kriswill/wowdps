@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-12
+
+- **Creation** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+  a dungeon level is an instance file's `[level.<ui_map>]`, the same `Map`
+  an arena's is; any map names its areas (with altitudes), paths (with a
+  mode) and a transition, and the render's crop, include, fade, ground and
+  exposure; all base, every resolved map held to origin/main's.
+
 ## 2026-10-11
 
 - **Update** — [Imported Fights Live In The History Store, Apart From Ours](imported-fights-in-the-store.md):
