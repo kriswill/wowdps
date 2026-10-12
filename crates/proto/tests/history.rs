@@ -13,10 +13,10 @@ use wowdps_model::{
 use wowdps_model::{Empower, GroupKind, PowerSeries, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_proto::history::{
     Affiliation, Annotation, COARSE_BUCKET_MS, CardPlayer, CountDetail, FightCard, FightDetails,
-    FightKind, FightRows, HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation,
-    PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime, Recap, RoleCount, StoredLoadout,
-    TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id, fnv64, loadout_hash, log_id,
-    mitigation_from, mitigation_json, sigma_id,
+    FightKind, FightRows, HISTORY_SCHEMA, ImportedCard, ImportedPlayer, KeyInfo, Origin,
+    PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields, PlayerStacks, PlayerSupport,
+    PlayerUptime, Recap, RoleCount, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id,
+    fight_id, fnv64, imported_id, loadout_hash, log_id, mitigation_from, mitigation_json, sigma_id,
 };
 use wowdps_proto::json::{self, Json};
 
@@ -201,6 +201,9 @@ fn card() -> FightCard {
             },
         ],
         bosses: Vec::new(),
+        // v46: a local card — the golden below proves its document is
+        // byte for byte the v45 one (no `origin` key).
+        origin: Origin::Local,
     }
 }
 
@@ -1986,4 +1989,126 @@ fn heal_absorbed_round_trips_on_the_card_and_reads_0_when_absent() {
     assert_ne!(old, CARD_GOLDEN);
     let back = FightCard::from_json(&json::parse(&old).unwrap()).unwrap();
     assert_eq!(back.players[1].heal_absorbed, 0);
+}
+
+// ---- v46: imported fights ------------------------------------------------------
+
+fn imported() -> ImportedCard {
+    ImportedCard {
+        name: "The Ashen Warden".to_string(),
+        encounter: Some(Encounter {
+            id: 3130,
+            difficulty: 16,
+            group_size: 20,
+        }),
+        kind: FightKind::Encounter,
+        start_utc_ms: 1_722_014_400_000,
+        start_local_ms: None,
+        tz_min: Some(-240),
+        duration_ms: 301_500,
+        success: Some(true),
+        best_pct: Some(0),
+        players: vec![
+            ImportedPlayer {
+                guid: "Player-1-A".to_string(),
+                name: "Ana-Realm".to_string(),
+                class: Some(Class::Mage),
+                spec: Some(Spec::FrostMage),
+            },
+            ImportedPlayer {
+                guid: "Player-1-B".to_string(),
+                name: "Bo-Realm".to_string(),
+                class: None,
+                spec: None,
+            },
+        ],
+        owner: Some("Player-1-A".to_string()),
+        source: "import:test-1".to_string(),
+        build: (12, 0, 7),
+        log_version: 22,
+    }
+}
+
+/// An import's card: its id from the source (never a log's hash), no log,
+/// never aborted, the local start moved by the offset, each player bare
+/// and unlogged, and the origin naming the source.
+#[test]
+fn an_imported_card_is_made_from_the_facts_alone() {
+    let c = imported().card();
+    assert_eq!(c.id, imported_id("import:test-1", 1_722_014_400_000));
+    assert_eq!(
+        c.id,
+        fight_id(fnv64(b"import:import:test-1"), 1_722_014_400_000, false)
+    );
+    assert_ne!(
+        c.id,
+        fight_id(fnv64(b"import:test-1"), 1_722_014_400_000, false),
+        "the source is hashed in a domain of its own"
+    );
+    assert_eq!(c.log, 0);
+    assert_eq!(c.byte_range, None);
+    assert!(!c.aborted && !c.pinned);
+    assert_eq!(c.combat_ms, None);
+    assert_eq!(c.start_local_ms, 1_722_014_400_000 - 240 * 60_000);
+    assert_eq!(c.success, Some(true));
+    assert_eq!(c.best_pct, Some(0));
+    assert_eq!(c.owner.as_deref(), Some("Player-1-A"));
+    assert_eq!(
+        c.content,
+        content_id(c.encounter, c.start_utc_ms, ["Player-1-A", "Player-1-B"])
+    );
+    assert_eq!(c.players.len(), 2);
+    assert!(
+        c.players
+            .iter()
+            .all(|p| !p.logged && !p.enemy && p.damage == 0)
+    );
+    assert_eq!(c.players[0].spec, Some(Spec::FrostMage));
+    assert_eq!(c.players[0].role(), Some(Role::Dps));
+    assert!(c.is_imported());
+    assert_eq!(c.origin.source(), Some("import:test-1"));
+    // The source's own local start wins over the offset; an empty owner
+    // is no owner.
+    let c = ImportedCard {
+        start_local_ms: Some(5),
+        owner: Some(String::new()),
+        ..imported()
+    }
+    .card();
+    assert_eq!(c.start_local_ms, 5);
+    assert_eq!(c.owner, None);
+}
+
+/// The origin is written only off this machine's own fights: a local
+/// card's document has no `origin` key (and reads `Local`), an imported
+/// one ends `"origin":{"kind":"imported","source":…}` and reads back
+/// whole; any origin object a later build words differently still reads
+/// as an import.
+#[test]
+fn the_origin_is_written_only_for_an_import() {
+    let local = card().to_json().to_line();
+    assert!(!local.contains("origin"), "{local}");
+    let back = FightCard::from_json(&json::parse(&local).unwrap()).unwrap();
+    assert_eq!(back.origin, Origin::Local);
+
+    let c = imported().card();
+    let line = c.to_json().to_line();
+    assert!(
+        line.ends_with(r#","origin":{"kind":"imported","source":"import:test-1"}}"#),
+        "{line}"
+    );
+    let back = FightCard::from_json(&json::parse(&line).unwrap()).unwrap();
+    assert_eq!(back, c);
+
+    let odd = local.replacen("{", r#"{"origin":{"kind":"mirrored"},"#, 1);
+    let back = FightCard::from_json(&json::parse(&odd).unwrap()).unwrap();
+    assert_eq!(
+        back.origin,
+        Origin::Imported {
+            source: String::new()
+        }
+    );
+    let null = local.replacen("{", r#"{"origin":null,"#, 1);
+    let back = FightCard::from_json(&json::parse(&null).unwrap()).unwrap();
+    assert_eq!(back.origin, Origin::Local);
 }

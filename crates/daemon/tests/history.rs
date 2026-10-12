@@ -598,6 +598,30 @@ fn a_full_queue_drops_and_counts_instead_of_blocking() {
     );
 }
 
+/// v46: an `ImportReplay` a full queue refuses is handed back to be
+/// answered (`Refused`, busy) and counted as a refused read is — never as
+/// a write the daemon dropped, which a client warns the user about.
+#[test]
+fn a_refused_import_is_answered_not_dropped() {
+    let (link, _rx) = HistoryLink::bounded(1);
+    assert!(
+        link.send(HistoryReq::Sweep(PathBuf::from("/nowhere")))
+            .is_ok()
+    );
+    let refused = link.send(HistoryReq::ImportReplay {
+        session: 1,
+        req_id: 2,
+        card: Box::default(),
+        replay: Vec::new(),
+    });
+    assert!(
+        matches!(refused, Err(HistoryReq::ImportReplay { req_id: 2, .. })),
+        "handed back to be answered"
+    );
+    assert_eq!(link.status().dropped, 0, "nothing was lost");
+    assert_eq!(link.refused_reads(), 1);
+}
+
 /// A dashboard polling the store must never be able to cost the user a
 /// fight: reads hold at most half the queue, so the slots a closing pull's
 /// `Store` needs are still there after a read flood.
@@ -619,6 +643,7 @@ fn a_flood_of_reads_cannot_drop_a_store() {
             limit: 200,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     };
     // Far more reads than the whole queue could hold, none of them drained.
@@ -996,6 +1021,7 @@ fn a_fights_answer_is_capped_however_much_the_client_asks_for() {
         limit: u32::MAX,
         after_id: None,
         role: None,
+        origin: wowdps_proto::OriginFilter::Local,
     });
     let wowdps_proto::HistoryAnswer::Fights { cards: got, total } = answer else {
         panic!("Fights asked, {answer:?} answered");
@@ -1695,6 +1721,220 @@ fn a_restart_mid_fight_stores_the_pull_once_via_import() {
     assert!(reopened.cards().iter().all(|c| c.success.is_some()));
 }
 
+/// v46 end to end over the socket: an `ImportReplay` lands in the store's
+/// files as an imported card and its replay — answered with the id, then
+/// broadcast — and `GetReplay` answers the replay; the import is listed
+/// only to a client that asks for imports and counted apart in `Status`;
+/// the same source again says it replaced the first; a replay that does
+/// not decode is refused, saying why.
+#[test]
+fn an_import_over_the_socket_lands_in_the_store() {
+    use wowdps_daemon::mock::MockDaemon;
+    use wowdps_model::Encounter;
+    use wowdps_proto::history::{ImportedCard, ImportedPlayer, imported_id};
+    use wowdps_proto::{OriginFilter, replay};
+
+    // A replay tier's bytes, as the store cuts one: the fixture's kill.
+    let mut mock = MockDaemon::fixture().with_history();
+    let kill = mock
+        .history()
+        .cards()
+        .iter()
+        .find(|c| c.kind == FightKind::Encounter && c.success == Some(true))
+        .unwrap()
+        .id
+        .clone();
+    let out = mock.handle(ClientMsg::GetReplay {
+        req_id: 1,
+        fight_id: kill,
+    });
+    let Some(DaemonMsg::Replay {
+        bytes: Some(bytes), ..
+    }) = out.into_iter().next()
+    else {
+        panic!("the mock's replay");
+    };
+    let card = ImportedCard {
+        name: "The Ashen Warden".to_string(),
+        encounter: Some(Encounter {
+            id: 3130,
+            difficulty: 15,
+            group_size: 20,
+        }),
+        start_utc_ms: 1_722_014_400_000,
+        duration_ms: 90_000,
+        success: Some(true),
+        players: vec![ImportedPlayer {
+            guid: "Player-9-Z".to_string(),
+            name: "Zed-Elsewhere".to_string(),
+            ..ImportedPlayer::default()
+        }],
+        owner: Some("Player-9-Z".to_string()),
+        source: "import:test-1".to_string(),
+        ..ImportedCard::default()
+    };
+    let id = imported_id("import:test-1", 1_722_014_400_000);
+
+    let tmp = Temp::new("import-replay");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs), hist.clone()));
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    // Every message until `done` says it has what it needs.
+    let until = |client: &mut DaemonClient, done: &mut dyn FnMut(&DaemonMsg) -> bool| {
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            assert!(Instant::now() < deadline, "the daemon never answered");
+            // Every message of the batch is seen, not just those up to the
+            // first that satisfies.
+            let mut hit = false;
+            for m in client.poll() {
+                hit |= done(&m);
+            }
+            if hit {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+
+    client.send(&ClientMsg::ImportReplay {
+        req_id: 7,
+        card: Box::new(card.clone()),
+        replay: bytes.clone(),
+    });
+    let (mut answered, mut told) = (None, false);
+    until(&mut client, &mut |m| {
+        match m {
+            DaemonMsg::History { req_id: 7, answer } => answered = Some(answer.clone()),
+            DaemonMsg::HistoryChanged { fight_id } if *fight_id == id => told = true,
+            _ => {}
+        }
+        answered.is_some() && told
+    });
+    assert_eq!(
+        answered,
+        Some(HistoryAnswer::ImportedReplay {
+            fight_id: id.clone(),
+            replaced: false,
+        })
+    );
+    // The files: a card naming its origin, a replay, no other tier.
+    let doc = std::fs::read_to_string(hist.join("fights").join(format!("{id}.json"))).unwrap();
+    assert!(
+        doc.ends_with(r#","origin":{"kind":"imported","source":"import:test-1"}}"#),
+        "{doc}"
+    );
+    assert!(hist.join("replay").join(format!("{id}.bin")).exists());
+    assert_eq!(
+        (
+            count(&hist, "rows"),
+            count(&hist, "details"),
+            count(&hist, "series")
+        ),
+        (0, 0, 0)
+    );
+
+    client.send(&ClientMsg::GetReplay {
+        req_id: 8,
+        fight_id: id.clone(),
+    });
+    let mut kept = None;
+    until(&mut client, &mut |m| {
+        if let DaemonMsg::Replay {
+            req_id: 8, bytes, ..
+        } = m
+        {
+            kept = Some(bytes.clone());
+        }
+        kept.is_some()
+    });
+    let kept = replay::decode(&kept.flatten().unwrap()).unwrap();
+    let sent = replay::decode(&bytes).unwrap();
+    assert_eq!(
+        (kept.units.len(), kept.posts(), kept.events.len()),
+        (sent.units.len(), sent.posts(), sent.events.len())
+    );
+
+    for (origin, want) in [
+        (OriginFilter::Local, 0),
+        (OriginFilter::Imported, 1),
+        (OriginFilter::Any, 1),
+    ] {
+        client.send(&ClientMsg::GetHistory {
+            req_id: 9,
+            query: HistoryQuery::Fights {
+                encounter: None,
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Newest,
+                limit: 0,
+                after_id: None,
+                role: None,
+                origin,
+            },
+        });
+        let mut cards = None;
+        until(&mut client, &mut |m| {
+            if let DaemonMsg::History {
+                req_id: 9,
+                answer: HistoryAnswer::Fights { cards: c, .. },
+            } = m
+            {
+                cards = Some(c.clone());
+            }
+            cards.is_some()
+        });
+        let cards = cards.unwrap();
+        assert_eq!(cards.len(), want, "{origin:?}");
+        assert!(cards.iter().all(|c| c.is_imported() && c.id == id));
+    }
+    let st = wait_for_fights(&d.socket, 1);
+    assert_eq!((st.kept_imports, st.replays), (1, 1));
+
+    client.send(&ClientMsg::ImportReplay {
+        req_id: 10,
+        card: Box::new(card.clone()),
+        replay: bytes.clone(),
+    });
+    let mut again = None;
+    until(&mut client, &mut |m| {
+        if let DaemonMsg::History { req_id: 10, answer } = m {
+            again = Some(answer.clone());
+        }
+        again.is_some()
+    });
+    assert_eq!(
+        again,
+        Some(HistoryAnswer::ImportedReplay {
+            fight_id: id.clone(),
+            replaced: true,
+        })
+    );
+    client.send(&ClientMsg::ImportReplay {
+        req_id: 11,
+        card: Box::new(card),
+        replay: b"WDRP".to_vec(),
+    });
+    let mut refused = None;
+    until(&mut client, &mut |m| {
+        if let DaemonMsg::History { req_id: 11, answer } = m {
+            refused = Some(answer.clone());
+        }
+        refused.is_some()
+    });
+    assert!(
+        matches!(&refused, Some(HistoryAnswer::Refused { reason }) if reason.contains("replay")),
+        "{refused:?}"
+    );
+    stop(d);
+    assert_eq!((count(&hist, "fights"), count(&hist, "replay")), (1, 1));
+}
+
 /// Perf gate over a real log: how many fights a night holds, how long the
 /// import sweep takes, and the bytes per fight the lake costs.
 #[test]
@@ -1777,6 +2017,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             limit: 0,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     });
     let [
@@ -1804,6 +2045,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
                 limit: 1,
                 after_id: after_id.map(str::to_string),
                 role: None,
+                origin: wowdps_proto::OriginFilter::Local,
             },
         });
         match out.as_slice() {
@@ -1844,6 +2086,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             limit: 1,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     });
     let [
@@ -2438,6 +2681,7 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
             limit: 0,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     });
     let deadline = Instant::now() + DEADLINE;
@@ -2621,6 +2865,7 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
             limit: 0,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     });
     let deadline = Instant::now() + DEADLINE;
@@ -3346,6 +3591,7 @@ fn affiliations_are_merged_newest_first_and_joined_when_a_card_is_answered() {
         limit: 0,
         after_id: None,
         role: None,
+        origin: wowdps_proto::OriginFilter::Local,
     }) else {
         panic!("not a Fights answer");
     };
@@ -3610,6 +3856,7 @@ fn a_daemon_updates_a_stale_addon_and_files_the_saved_variables_it_finds() {
             limit: 0,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     });
     let deadline = Instant::now() + DEADLINE;
@@ -4062,6 +4309,7 @@ fn pinning_a_wipe_backfills_its_series_from_the_log() {
                 limit: 1,
                 after_id: None,
                 role: None,
+                origin: wowdps_proto::OriginFilter::Local,
             },
         },
         1,

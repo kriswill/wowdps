@@ -15,7 +15,7 @@ use wowdps_model::{
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
     Breakdown, Cursor, DeathWindow, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night,
-    OverlayState, SegmentRef, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    OriginFilter, OverlayState, SegmentRef, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -811,8 +811,12 @@ pub fn catalog() -> Vec<Tool> {
                           wowdps-history binary. Views: fights (one row per stored fight: \
                           id, kind, name, encounter{id,difficulty,group_size}, key, \
                           start_utc_ms, duration_ms, success, aborted, build, owner, \
-                          pinned, players[]), players (one row per player per fight: \
-                          fight_id, encounter_id, difficulty, guid, name, class, spec, role \
+                          pinned, players[], and v46 imported: true for a fight imported \
+                          from outside this machine's logs, whose players carry no \
+                          numbers — add `AND NOT imported` to any question about the \
+                          user's own history: averages, kills, bests, ranks), players (one \
+                          row per player per fight: fight_id, imported, encounter_id, \
+                          difficulty, guid, name, class, spec, role \
                           (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
                           — on cards written since roadmap 1a — taken, mitigated, prevented, dtps, \
                           mitigated_pct, overheal, absorbed, heal_absorbed (v44), support_given, support_received, \
@@ -826,7 +830,8 @@ pub fn catalog() -> Vec<Tool> {
                           absorb_wasted is NULL, else absorbed / (absorbed + absorb_wasted) \
                           as a 0..1 ratio — NULL is the honest old value, never 0)), \
                           role_ranks (the me-block grader in SQL: rank, count, \
-                          median within fight and role, the DPS role by effective_dps), rows (the \
+                          median within fight and role, the DPS role by effective_dps; \
+                          imported fights left out), rows (the \
                           seven views' meter rows + death recaps), details (breakdowns + timelines \
                           for kills, bests, pins and longer wipes), loadouts, annotations, and \
                           the probed views taken, mitigation, taken_spells, taken_sources, \
@@ -1096,6 +1101,7 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
         limit: 500,
         after_id: None,
         role: None,
+        origin: OriginFilter::Local,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards,
         _ => Vec::new(),
@@ -1147,6 +1153,7 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         // v22: the subject's role (the `player` argument, else the owner) —
         // a no-op when the store has neither, which `role_applied` reports.
         role,
+        origin: OriginFilter::Local,
     })?;
     let HistoryAnswer::Fights { cards, total } = answer else {
         return Err("unexpected answer".to_string());
@@ -1231,6 +1238,7 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         limit: 1,
         after_id: None,
         role: None,
+        origin: OriginFilter::Local,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next(),
         _ => None,
@@ -1306,6 +1314,7 @@ fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         limit: 1,
         after_id: None,
         role: None,
+        origin: OriginFilter::Local,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next().and_then(|c| c.owner),
         _ => None,
@@ -1667,9 +1676,16 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ));
     }
     if f.tier < 2 {
-        return Err(format!(
-            "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
-        ));
+        // v46: an imported fight never had more than its card and replay.
+        return Err(if f.card.is_imported() {
+            format!(
+                "{fight_id}: an imported fight — the store keeps its card and replay only, no rows to answer from"
+            )
+        } else {
+            format!(
+                "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
+            )
+        });
     }
     if let Some(guid) = &drill
         && f.breakdown.is_none()
@@ -2051,6 +2067,7 @@ fn enclosing_key(
         limit: 50,
         after_id: None,
         role: None,
+        origin: OriginFilter::Local,
     })?
     else {
         return Ok(None);
@@ -2465,6 +2482,13 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
         "build": Json::str(format!("{}.{}.{}", c.build.0, c.build.1, c.build.2)),
         "owner": opt_str(c.owner.clone()),
         "pinned": Json::Bool(c.pinned),
+        // v46: where the fight came from — null for this machine's own, the
+        // import's source for a fight imported from outside its logs (one
+        // `stored_fight` names by id; `history` lists this machine's own).
+        "origin": c.origin.source().map_or(Json::Null, |s| obj! {
+            "kind": Json::str("imported"),
+            "source": Json::str(s),
+        }),
         "best_pct": c.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
         "roster_size": Json::u64(c.players.iter().filter(|p| !p.enemy).count() as u64),
         // v31: the roster by guild — {guild: members}, largest first, with
@@ -4541,6 +4565,7 @@ mod tests {
             best_pct: None,
             players,
             bosses: Vec::new(),
+            origin: wowdps_proto::history::Origin::Local,
         }
     }
 
@@ -5465,6 +5490,24 @@ mod tests {
         assert_eq!(guild_of(2), Some(Json::str("")));
         assert_eq!(guild_of(3), Some(Json::Null));
         assert_eq!(graded_row(&c, "E").get("guild"), Some(&Json::str("Exiles")));
+    }
+
+    /// v46: a card says where it came from — null for this machine's own,
+    /// the import's kind and source for an imported one.
+    #[test]
+    fn a_card_names_its_origin() {
+        let local = card(60_000, Vec::new());
+        assert_eq!(card_json(&local).get("origin"), Some(&Json::Null));
+        let imported = FightCard {
+            origin: wowdps_proto::history::Origin::Imported {
+                source: "import:test-1".to_string(),
+            },
+            ..card(60_000, Vec::new())
+        };
+        assert_eq!(
+            card_json(&imported).get("origin").map(Json::to_line),
+            Some(r#"{"kind":"imported","source":"import:test-1"}"#.to_string())
+        );
     }
 
     #[test]

@@ -9,7 +9,9 @@ use wowdps_model::{
     SegmentInfo, SegmentKind, ShieldRow, Spec, StackCell, StackingDebuff, TalentPick, Timeline,
     UptimeCell, View,
 };
-use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
+use wowdps_proto::history::{
+    CardPlayer, FightCard, FightKind, ImportedCard, ImportedPlayer, KeyInfo, PlayerSupport,
+};
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
@@ -264,6 +266,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 after_id: Some("2f53c7079010c5a2-1788380107617".to_string()),
                 // v22: the subject's role.
                 role: Some(Role::Healer),
+                origin: wowdps_proto::OriginFilter::Local,
             },
         },
         ClientMsg::GetHistory {
@@ -278,6 +281,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 limit: 0,
                 after_id: None,
                 role: None,
+                origin: wowdps_proto::OriginFilter::Local,
             },
         },
         ClientMsg::GetHistory {
@@ -356,6 +360,32 @@ fn client_msgs() -> Vec<ClientMsg> {
             req_id: 10,
             fight_id: "x-1".to_string(),
         },
+        // v46: an imported fight — every field set, then every option empty.
+        ClientMsg::ImportReplay {
+            req_id: 13,
+            card: Box::new(imported_card()),
+            replay: b"WDRP\x05\0\0\0\0".to_vec(),
+        },
+        ClientMsg::ImportReplay {
+            req_id: 14,
+            card: Box::new(ImportedCard::default()),
+            replay: Vec::new(),
+        },
+        ClientMsg::GetHistory {
+            req_id: 15,
+            query: HistoryQuery::Fights {
+                encounter: None,
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Newest,
+                limit: 0,
+                after_id: None,
+                role: None,
+                origin: wowdps_proto::OriginFilter::Any,
+            },
+        },
         // v26: the role roster of one night, with and without a cutover.
         ClientMsg::GetHistory {
             req_id: 11,
@@ -376,6 +406,38 @@ fn client_msgs() -> Vec<ClientMsg> {
             },
         },
     ]
+}
+
+/// v46: an import's card facts, every field distinct.
+fn imported_card() -> ImportedCard {
+    ImportedCard {
+        name: "The Ashen Warden".to_string(),
+        encounter: Some(Encounter {
+            id: 3130,
+            difficulty: 16,
+            group_size: 20,
+        }),
+        kind: FightKind::Encounter,
+        start_utc_ms: 1_722_014_400_123,
+        start_local_ms: Some(1_722_000_000_123),
+        tz_min: Some(-240),
+        duration_ms: 301_500,
+        success: Some(false),
+        best_pct: Some(12),
+        players: vec![
+            ImportedPlayer {
+                guid: "Player-1-A".to_string(),
+                name: "Ana-Realm".to_string(),
+                class: Some(Class::Mage),
+                spec: Some(Spec::FrostMage),
+            },
+            ImportedPlayer::default(),
+        ],
+        owner: Some("Player-1-A".to_string()),
+        source: "import:test-1".to_string(),
+        build: (12, 0, 7),
+        log_version: 22,
+    }
 }
 
 /// A fully populated card for the history payload round trips.
@@ -468,6 +530,7 @@ fn card() -> FightCard {
             duration_ms: 60_000,
             success: Some(true),
         }],
+        origin: wowdps_proto::history::Origin::Local,
     }
 }
 
@@ -629,6 +692,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 kept_keys: 7,
                 kept_progression: 300,
                 kept_pins: 2,
+                // v46: the imports.
+                kept_imports: 5,
             },
         },
         DaemonMsg::SetVisible(true),
@@ -742,6 +807,37 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
         DaemonMsg::History {
             req_id: 6,
             answer: HistoryAnswer::Regraded { queued: 2 },
+        },
+        // v46: an import stored (replacing one), and one refused.
+        DaemonMsg::History {
+            req_id: 11,
+            answer: HistoryAnswer::ImportedReplay {
+                fight_id: "0123456789abcdef-1722014400123".to_string(),
+                replaced: true,
+            },
+        },
+        DaemonMsg::History {
+            req_id: 12,
+            answer: HistoryAnswer::Refused {
+                reason: "the replay does not decode".to_string(),
+            },
+        },
+        // v46: an imported card beside a local one — the origin trails
+        // the card, the import's source with it.
+        DaemonMsg::History {
+            req_id: 13,
+            answer: HistoryAnswer::Fights {
+                cards: vec![
+                    FightCard::default(),
+                    FightCard {
+                        origin: wowdps_proto::history::Origin::Imported {
+                            source: "import:test-1".to_string(),
+                        },
+                        ..card()
+                    },
+                ],
+                total: 2,
+            },
         },
         // v26: a night's role roster — every row field distinct, both
         // options in both states.
@@ -1042,8 +1138,9 @@ fn unknown_tags_are_rejected() {
     // 0x89 was free until v8 gave it to CompareSnapshot (R12); 0x07/0x8A
     // were free until v19 gave them to GetLoadout/Loadout.
     // v20 took 0x08–0x0C (history one-shots, Regrade last) and 0x8B–0x8D
-    // (their replies); v45 0x0D / 0x8E (GetReplay / Replay).
-    for tag in [0x00u8, 0x0E, 0x42, 0x80, 0x8F, 0xFF] {
+    // (their replies); v45 0x0D / 0x8E (GetReplay / Replay); v46 0x0E
+    // (ImportReplay, answered on `History`).
+    for tag in [0x00u8, 0x0F, 0x42, 0x80, 0x8F, 0xFF] {
         assert_eq!(ClientMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
         assert_eq!(DaemonMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
     }
@@ -1114,7 +1211,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 45, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 46, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1493,13 +1590,14 @@ fn golden_bytes_pin_the_encoding() {
             kept_keys: 5,
             kept_progression: 6,
             kept_pins: 7,
+            kept_imports: 8,
             ..HistoryStatus::default()
         },
     };
     assert_eq!(
         hex(&status.encode()),
         concat!(
-            "3e00000086",
+            "4200000086",
             "01000000",
             "00",
             "00",
@@ -1524,7 +1622,179 @@ fn golden_bytes_pin_the_encoding() {
             "05000000",
             "06000000",
             "07000000",
+            // v46: kept_imports
+            "08000000",
         )
+    );
+    // v46: ImportReplay 0x0E — req_id | the import's card | the replay's
+    // u32-length bytes; a card with every option empty and one player.
+    let import_replay = ClientMsg::ImportReplay {
+        req_id: 2,
+        card: Box::new(ImportedCard {
+            name: "B".to_string(),
+            encounter: None,
+            kind: FightKind::Encounter,
+            start_utc_ms: 1,
+            start_local_ms: None,
+            tz_min: None,
+            duration_ms: 2,
+            success: None,
+            best_pct: None,
+            players: vec![ImportedPlayer {
+                guid: "G".to_string(),
+                name: "N".to_string(),
+                class: Some(Class::Mage),
+                spec: Some(Spec::FrostMage),
+            }],
+            owner: None,
+            source: "s".to_string(),
+            build: (12, 0, 7),
+            log_version: 22,
+        }),
+        replay: b"WDRP".to_vec(),
+    };
+    assert_eq!(
+        hex(&import_replay.encode()),
+        concat!(
+            "4a000000",
+            "0e",
+            "02000000",
+            // name "B" | encounter 00 | kind 00 (Encounter) | start_utc 1
+            "0100000042",
+            "00",
+            "00",
+            "0100000000000000",
+            // start_local 00 | tz 00 | duration 2 | success 00 | best_pct 00
+            "00",
+            "00",
+            "0200000000000000",
+            "00",
+            "00",
+            // one player: guid "G" | name "N" | class 01 07 (Mage) | spec 64
+            "01000000",
+            "0100000047",
+            "010000004e",
+            "0107",
+            "4000",
+            // owner 00 | source "s" | build 12.0.7 | log_version 22
+            "00",
+            "0100000073",
+            "0c00",
+            "0000",
+            "0700",
+            "16000000",
+            // the replay: 4 bytes
+            "04000000",
+            "57445250",
+        )
+    );
+    // v46: History answers ImportedReplay (tag 7: id | replaced) and
+    // Refused (tag 8: why).
+    let stored = DaemonMsg::History {
+        req_id: 2,
+        answer: HistoryAnswer::ImportedReplay {
+            fight_id: "x-1".to_string(),
+            replaced: true,
+        },
+    };
+    assert_eq!(
+        hex(&stored.encode()),
+        "0e0000008b020000000703000000782d3101"
+    );
+    let refused = DaemonMsg::History {
+        req_id: 2,
+        answer: HistoryAnswer::Refused {
+            reason: "no".to_string(),
+        },
+    };
+    assert_eq!(hex(&refused.encode()), "0c0000008b0200000008020000006e6f");
+    // v46: the import's card with every option present — the encounter's
+    // three u32, a negative local start, the offset's u16 bits (−240 is
+    // 0xff10), a verdict, a best pct and an owner — no players, no replay.
+    let import_some = ClientMsg::ImportReplay {
+        req_id: 3,
+        card: Box::new(ImportedCard {
+            name: "B".to_string(),
+            encounter: Some(Encounter {
+                id: 3130,
+                difficulty: 16,
+                group_size: 20,
+            }),
+            kind: FightKind::Encounter,
+            start_utc_ms: 1,
+            start_local_ms: Some(-1),
+            tz_min: Some(-240),
+            duration_ms: 2,
+            success: Some(true),
+            best_pct: Some(37),
+            players: Vec::new(),
+            owner: Some("O".to_string()),
+            source: "s".to_string(),
+            build: (0, 0, 0),
+            log_version: 0,
+        }),
+        replay: Vec::new(),
+    };
+    assert_eq!(
+        hex(&import_some.encode()),
+        concat!(
+            "56000000",
+            "0e",
+            "03000000",
+            // name "B" | encounter 01 3130 16 20 | kind 00 | start_utc 1
+            "0100000042",
+            "01",
+            "3a0c0000",
+            "10000000",
+            "14000000",
+            "00",
+            "0100000000000000",
+            // start_local 01 −1 | tz 01 0xff10 | duration 2 | success 01 01 |
+            // best_pct 01 37
+            "01",
+            "ffffffffffffffff",
+            "01",
+            "10ff",
+            "0200000000000000",
+            "0101",
+            "01",
+            "2500",
+            // no players | owner 01 "O" | source "s" | build 0.0.0 |
+            // log_version 0 | an empty replay
+            "00000000",
+            "01",
+            "010000004f",
+            "0100000073",
+            "000000000000",
+            "00000000",
+            "00000000",
+        )
+    );
+    // v46: a card's origin trails its bosses — `00` for a local card, `01`
+    // and the source for an imported one: the frame grows by exactly that.
+    let fights_of = |origin| {
+        DaemonMsg::History {
+            req_id: 1,
+            answer: HistoryAnswer::Fights {
+                cards: vec![FightCard {
+                    origin,
+                    ..FightCard::default()
+                }],
+                total: 1,
+            },
+        }
+        .encode()
+    };
+    let local = fights_of(wowdps_proto::history::Origin::Local);
+    let imported = fights_of(wowdps_proto::history::Origin::Imported {
+        source: "s".to_string(),
+    });
+    assert_eq!(imported.len(), local.len() + 5);
+    // The card's last byte is the origin's, then the answer's u32 total.
+    assert_eq!(hex(&local[local.len() - 5..]), "0001000000");
+    assert_eq!(
+        hex(&imported[imported.len() - 10..]),
+        "01010000007301000000"
     );
     let imported = DaemonMsg::History {
         req_id: 7,
@@ -1558,7 +1828,8 @@ fn golden_bytes_pin_the_encoding() {
         "16000000 08 04000000 02 0100000054 00 00 00 03 01 00 07000000 00".replace(' ', "")
     );
     // v22: `Fights` gained a trailing Option<Role> (Tank 0 / Healer 1 /
-    // Dps 2) — the `0100` after `after_id`'s presence byte.
+    // Dps 2) — the `0100` after `after_id`'s presence byte; v46 a trailing
+    // u8 origin filter (0 Local / 1 Imported / 2 Any), here `02`.
     let fights = ClientMsg::GetHistory {
         req_id: 1,
         query: HistoryQuery::Fights {
@@ -1571,13 +1842,15 @@ fn golden_bytes_pin_the_encoding() {
             limit: 1,
             after_id: None,
             role: Some(Role::Tank),
+            origin: wowdps_proto::OriginFilter::Any,
         },
     };
     assert_eq!(
         hex(&fights.encode()),
-        // len 0x13 | 08 | req 1 | code 00 | enc 00 | diff 00 | guid 00 |
-        // since 00 | kind 00 | sort 00 | limit 1 | after 00 | role 01 00.
-        "13000000 08 01000000 00 00 00 00 00 00 00 01000000 00 0100".replace(' ', "")
+        // len 0x14 | 08 | req 1 | code 00 | enc 00 | diff 00 | guid 00 |
+        // since 00 | kind 00 | sort 00 | limit 1 | after 00 | role 01 00 |
+        // origin 02.
+        "14000000 08 01000000 00 00 00 00 00 00 00 01000000 00 0100 02".replace(' ', "")
     );
     // v22: CardPlayer gained trailing u64 taken, u64 mitigated, u64
     // prevented, f64 dtps — 32 bytes after `deaths`, proven by diffing a
@@ -1632,8 +1905,9 @@ fn golden_bytes_pin_the_encoding() {
     // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
     // fields are the 32 bytes before the v23 48 before the v25 32 before
     // the v26 13 before the v31 guild byte, v43's 8-byte `reduced` and
-    // v44's 8-byte `heal_absorbed` before those 50.
-    let player_end = zero.len() - 4 - 42 - 4 - 8 - 8 - 1 - 13;
+    // v44's 8-byte `heal_absorbed` before those 50 (v46's origin byte, `00`
+    // on this local card, trails the bosses).
+    let player_end = zero.len() - 4 - 1 - 42 - 4 - 8 - 8 - 1 - 13;
     let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
     assert_eq!(
         first_diff,

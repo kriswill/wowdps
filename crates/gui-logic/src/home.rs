@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use wowdps_model::fmt::key_tier;
 use wowdps_model::{Class, Role, Spec, difficulty_name};
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
-use wowdps_proto::{ClientMsg, FightSort, HistoryAnswer, HistoryQuery};
+use wowdps_proto::{ClientMsg, FightSort, HistoryAnswer, HistoryQuery, OriginFilter};
 
 use crate::config::Config;
 use crate::rail::{self, Mark};
@@ -121,6 +121,7 @@ impl Home {
                 limit: PAGE,
                 after_id: self.cursor.clone(),
                 role: None,
+                origin: OriginFilter::Local,
             },
         })
     }

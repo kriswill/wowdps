@@ -82,7 +82,9 @@ features can use. A unit's number is its first sight, so it is the format's
 identity — renumbering is a format bump. Format 1 recorded only the most
 posted floor; format 2 (below) keeps the rest. Units carry a GUID for
 players alone, what names the owner as `you` at write time; NPCs are known
-by creature id.
+by creature id. Since v46 the tier also holds fights imported from outside this
+machine's logs, a card and a replay alone
+([Imported Fights Live In The History Store](imported-fights-in-the-store.md)).
 
 ## Format 2: every floor and the boss rows
 

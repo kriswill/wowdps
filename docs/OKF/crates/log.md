@@ -2,6 +2,28 @@
 
 ## 2026-10-11
 
+- **Update** — [wowdps-daemon](daemon.md): an import trims the replay cap
+  only once its card is in (`write_replay`), refuses a re-import over a
+  replay it cannot read, and keeps a moved import whose annotations it
+  cannot carry.
+
+- **Update** — [wowdps-daemon](daemon.md), [wowdps-history](history.md):
+  the review's fixes — `restore_replay`, `retire_import`, an ownerless
+  import never stamped "me", a busy `ImportReplay` refusal counted as a
+  refused read, this build's replay format only; the lake's `role_ranks`
+  leaves imports out.
+
+- **Update** — [wowdps-history](history.md), [wowdps-mcp](mcp.md): v46
+  imports — the lake's `fights.imported` / `players.imported`, the fixed
+  questions on `NOT imported`, `stats.kept.imports`; the mcp's card
+  `origin` and an import's word in `stored_fight`.
+
+- **Update** — [wowdps-proto](proto.md), [wowdps-daemon](daemon.md): v46
+  imported fights — `history::Origin`, `ImportedCard`, `imported_id`;
+  `ImportReplay` answered `ImportedReplay` / `Refused`; `OriginFilter` on
+  `Fights`; `kept_imports`; `Store::import_replay` and the judgments that
+  skip imports; `Status` now carries the v45 replay and kept counts.
+
 - **Update** — [wowdps-core](core.md), [wowdps-proto](proto.md),
   [wowdps-daemon](daemon.md): replay format 5 — the parser's `Power::cost`
   (block field 13) taken off a cast's current, which moves R28's series too;

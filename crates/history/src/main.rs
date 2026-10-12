@@ -39,8 +39,11 @@ Usage:
 Options:
   --dir <path>   the lake (config `history_dir`, else $XDG_DATA_HOME/wowdps/history/v1)
 
-Views: fights (one row per stored fight), players (the cards' player lines,
-one row per player per fight, `role` and the R19 `support` flag from the
+Views: fights (one row per stored fight; v46 `imported` is true for a
+fight imported from outside this machine's logs, its card's `origin`
+naming the source — best-kill, progression, trend, role-night and the
+role_ranks view count this machine's own alone), players (the cards' player lines, `imported`
+beside them, one row per player per fight, `role` and the R19 `support` flag from the
 spec — no card stores either), role_ranks (the daemon's grader: friendly
 dps ranked by effective_dps_sql among dps, healers by hps among healers,
 floors applied, `excluded` per fight + role; tanks unranked), rows (the

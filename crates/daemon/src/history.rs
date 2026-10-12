@@ -36,18 +36,18 @@ use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::creatures::{self, Creature};
 use wowdps_proto::history::{
     Affiliation, COARSE_BUCKET_MS, COUNT_VIEWS, CardPlayer, CountDetail, FightCard, FightDetails,
-    FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail,
-    PlayerMitigation, PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime, Recap,
-    StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, addon_table, content_id, fight_id, loadout_hash,
-    log_id, sigma_id,
+    FightKind, FightRows, HISTORY_SCHEMA, ImportedCard, KeyBoss, KeyInfo, Origin, PlayerCoarse,
+    PlayerDetail, PlayerMitigation, PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime,
+    Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, addon_table, content_id, fight_id,
+    loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::{DeathWindow, HistoryStatus};
 use wowdps_proto::replay as replay_tier;
 use wowdps_proto::series::{self as series_tier, FightSeries, PlayerSeries};
 use wowdps_proto::{
-    Breakdown, CompareSide, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight,
-    StoredPair, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    Breakdown, CompareSide, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, OriginFilter,
+    StoredFight, StoredPair, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 use crate::addon;
@@ -308,6 +308,15 @@ pub enum HistoryReq {
         difficulty: Option<u32>,
         kind: Option<FightKind>,
     },
+    /// v46: a session's `ImportReplay` — a fight from outside this
+    /// machine's logs, stored as an imported card with its replay
+    /// ([`Store::import_replay`]); a write, never under the read quota.
+    ImportReplay {
+        session: u64,
+        req_id: u32,
+        card: Box<ImportedCard>,
+        replay: Vec<u8>,
+    },
 }
 
 impl HistoryReq {
@@ -319,6 +328,14 @@ impl HistoryReq {
             self,
             HistoryReq::Query { .. } | HistoryReq::Fight { .. } | HistoryReq::Replay { .. }
         )
+    }
+
+    /// v46: a client's write the caller answers when the queue refuses it
+    /// (`Refused`, "busy"): the client is told and may send it again, so
+    /// nothing is lost and `HistoryStatus::dropped` never ticks for it —
+    /// it is counted as a refused read is.
+    fn answered_when_refused(&self) -> bool {
+        matches!(self, HistoryReq::ImportReplay { .. })
     }
 }
 
@@ -370,6 +387,7 @@ impl HistoryLink {
         // amount of client polling can starve the `Store` of a closing pull:
         // past the quota the read is refused here, before it takes a slot.
         let read = req.is_read();
+        let answered = req.answered_when_refused();
         if read && self.reads.fetch_add(1, Ordering::AcqRel) >= READ_QUOTA {
             self.reads.fetch_sub(1, Ordering::AcqRel);
             // Counted apart from `dropped`: nothing was lost, so the store's
@@ -382,6 +400,8 @@ impl HistoryLink {
             Err(TrySendError::Full(req)) | Err(TrySendError::Disconnected(req)) => {
                 if read {
                     self.reads.fetch_sub(1, Ordering::AcqRel);
+                    self.refused_reads.fetch_add(1, Ordering::Relaxed);
+                } else if answered {
                     self.refused_reads.fetch_add(1, Ordering::Relaxed);
                 } else {
                     self.count_drop();
@@ -803,6 +823,27 @@ impl<B: Backend> Worker<B> {
                 );
                 self.dispatch();
             }
+            HistoryReq::ImportReplay {
+                session,
+                req_id,
+                card,
+                replay,
+            } => {
+                let (answer, changed) = match self.store.import_replay(&card, &replay) {
+                    Ok((fight_id, replaced)) => (
+                        HistoryAnswer::ImportedReplay {
+                            fight_id: fight_id.clone(),
+                            replaced,
+                        },
+                        Some(fight_id),
+                    ),
+                    Err(reason) => (HistoryAnswer::Refused { reason }, None),
+                };
+                self.reply_to(session, DaemonMsg::History { req_id, answer });
+                if let Some(id) = changed {
+                    self.changed(id);
+                }
+            }
             HistoryReq::Index {
                 log,
                 segments,
@@ -933,6 +974,15 @@ impl<B: Backend> Worker<B> {
             s.addon = self.addon.clone();
             s.affiliations = store.affiliations;
             s.affiliations_utc_ms = store.affiliations_utc_ms;
+            // v45's replay tier and kept-whole counts (and v46's imports):
+            // the store reckons them, `Status` carries them.
+            s.replays = store.replays;
+            s.replay_bytes = store.replay_bytes;
+            s.kept_kills = store.kept_kills;
+            s.kept_keys = store.kept_keys;
+            s.kept_progression = store.kept_progression;
+            s.kept_pins = store.kept_pins;
+            s.kept_imports = store.kept_imports;
             s.importing = (self.queue.len() + usize::from(self.inflight) + self.scans.len()) as u32;
         }
         // v35: a stored card, a pin or an addon read can each name another
@@ -1045,6 +1095,8 @@ impl<B: Backend> Worker<B> {
             .store
             .cards()
             .iter()
+            // v46: an imported fight has no log to be re-read from.
+            .filter(|c| !c.is_imported())
             .filter(|c| match fight_id {
                 Some(id) => c.id == id,
                 // Without an id, at least one of encounter / kind must narrow.
@@ -1852,6 +1904,19 @@ impl From<&HistoryOptions> for Retention {
     }
 }
 
+/// v46: a replay file held aside — its bytes and its index entry (the
+/// format its head names, its size) — to be put back by a failed re-import.
+type HeldReplay = (Vec<u8>, (Option<u8>, u64));
+
+/// v46: annotations carried from a retired import to the id that replaced
+/// it, held to be undone: the new id's file name, what it held before (if
+/// anything), and the text carried.
+struct Carried {
+    name: String,
+    before: Option<Vec<u8>>,
+    text: Vec<u8>,
+}
+
 /// The files plus their in-memory index. Generic over the backend so
 /// `daemon::mock` drives it synchronously in memory.
 pub struct Store<B: Backend> {
@@ -2014,12 +2079,15 @@ impl<B: Backend> Store<B> {
 
     // ---- v45: progression and the replay tier ---------------------------------
 
-    /// Rebuild [`Store::killed`] from the cards.
+    /// Rebuild [`Store::killed`] from the cards — this machine's own: an
+    /// imported kill (v46) is somebody's fight, and ends no progression of
+    /// ours.
     fn refresh_killed(&mut self) {
         self.killed = self
             .cards
             .iter()
             .filter(|c| c.kind == FightKind::Encounter && c.success == Some(true) && !c.aborted)
+            .filter(|c| !c.is_imported())
             .filter_map(|c| c.encounter.map(|e| (e.id, e.difficulty)))
             .collect();
     }
@@ -2033,6 +2101,7 @@ impl<B: Backend> Store<B> {
     /// Heroic kill says nothing of a Mythic wipe.
     pub fn is_progression(&self, card: &FightCard) -> bool {
         self.cfg.keep_progression
+            && !card.is_imported()
             && card.kind == FightKind::Encounter
             && card.success == Some(false)
             && !card.aborted
@@ -2129,7 +2198,8 @@ impl<B: Backend> Store<B> {
         let Some(card) = self.card(id) else {
             return false;
         };
-        if !self.cfg.wants_replay(card) || !slots.contains(id) {
+        // v46: an imported replay has no log to be recut from.
+        if card.is_imported() || !self.cfg.wants_replay(card) || !slots.contains(id) {
             return false;
         }
         let stale = self
@@ -2170,7 +2240,19 @@ impl<B: Backend> Store<B> {
     /// protected set serves the slot test and the trim, never a whole
     /// retention pass (an import's `store` has just run one). `false` when
     /// the card is unknown, earns none, or the write fails.
-    pub fn store_replay(&mut self, id: &str, mut cut: Cut) -> bool {
+    pub fn store_replay(&mut self, id: &str, cut: Cut) -> bool {
+        let protected = self.protected();
+        if !self.write_replay(id, cut, &protected) {
+            return false;
+        }
+        self.trim_replays(&protected);
+        true
+    }
+
+    /// [`Store::store_replay`]'s write without its trim: the import trims
+    /// only once its card is in (v46), so a failed import takes no other
+    /// fight's replay with it.
+    fn write_replay(&mut self, id: &str, mut cut: Cut, protected: &HashSet<String>) -> bool {
         let Some(card) = self.card(id) else {
             return false;
         };
@@ -2178,8 +2260,7 @@ impl<B: Backend> Store<B> {
             return false;
         }
         let owner = card.owner.clone();
-        let protected = self.protected();
-        if !self.slots_from(&protected).contains(id) {
+        if !self.slots_from(protected).contains(id) {
             return false;
         }
         cut.set_owner(owner.as_deref());
@@ -2192,8 +2273,256 @@ impl<B: Backend> Store<B> {
             id.to_string(),
             (Some(replay_tier::FORMAT), bytes.len() as u64),
         );
-        self.trim_replays(&protected);
         true
+    }
+
+    /// v46: store a fight from outside this machine's logs — `imported`'s
+    /// card ([`ImportedCard::card`], `Origin::Imported`) and `replay` as its
+    /// replay tier, nothing else (no rows, details or series: the store
+    /// derives those from a log, and an import has none). The replay must
+    /// be this build's format and decode whole; it is kept with the card's
+    /// owner as its "you". Imported fights are protected (never trimmed by
+    /// the caps or the replay size cap), so one always earns its replay
+    /// slot. A second import of the same source replaces the first — card,
+    /// replay and id — pin carried. A failed write leaves the store as it
+    /// was. `(id, replaced)`, or why the import was refused.
+    pub fn import_replay(
+        &mut self,
+        imported: &ImportedCard,
+        replay: &[u8],
+    ) -> Result<(String, bool), String> {
+        if imported.source.trim().is_empty() {
+            return Err("an import names its source".to_string());
+        }
+        if imported.kind != FightKind::Encounter {
+            return Err(format!(
+                "only boss pulls are imported, not a {}",
+                imported.kind.as_str()
+            ));
+        }
+        if imported.encounter.is_none() {
+            return Err("an imported boss pull names its encounter".to_string());
+        }
+        // This build's format alone: a format number names the cut's rules,
+        // not just the codec, and an import is never recut from a log, so an
+        // older file kept as it is, or re-stamped, would claim rules it was
+        // not cut by. The producer (wcl-pull) is built from the same tree.
+        let format = replay_tier::format_of(replay).ok_or("the replay has no replay head")?;
+        if format != replay_tier::FORMAT {
+            return Err(format!(
+                "replay format {format} is not this build's format {}: an import is never \
+                 recut, so cut it again with this build",
+                replay_tier::FORMAT
+            ));
+        }
+        let cut = replay_tier::decode(replay).ok_or("the replay does not decode")?;
+        let mut card = imported.card();
+        let id = card.id.clone();
+        if self.card(&id).is_some_and(|c| !c.is_imported()) {
+            return Err(format!("{id} is a local fight's id; the import is refused"));
+        }
+        // The same source under another id (its start moved since the last
+        // import) is the same fight: once the new one is in, it goes.
+        let previous = self.card(&id).cloned();
+        let moved: Vec<String> = self
+            .cards
+            .iter()
+            .filter(|c| c.origin == card.origin && c.id != id)
+            .map(|c| c.id.clone())
+            .collect();
+        let mut replaced = previous.is_some();
+        card.pinned = previous
+            .as_ref()
+            .or_else(|| moved.first().and_then(|m| self.card(m)))
+            .is_some_and(|c| c.pinned);
+        // A re-import overwrites the replay before its card: the one there
+        // now, kept to be put back if the card's write fails.
+        let replay_name = format!("{id}.bin");
+        let old_replay = previous.as_ref().and_then(|_| {
+            let bytes = self.backend.read("replay", &replay_name)?;
+            Some((bytes, self.replays.get(&id).copied()?))
+        });
+        // A replay that is there but cannot be read could not be put back:
+        // refused before anything is written.
+        if previous.is_some() && self.replays.contains_key(&id) && old_replay.is_none() {
+            return Err(format!(
+                "the replay {id} would replace cannot be read; the import is refused"
+            ));
+        }
+        // In the index first (the replay's slot is the card's), the replay,
+        // then the card's file last: its presence is what makes the fight
+        // exist. The size cap trims only once it is in.
+        self.cards.retain(|c| c.id != id);
+        self.insert_card(card.clone());
+        let protected = self.protected();
+        let kept = self.write_replay(&id, cut, &protected);
+        let written = if !kept {
+            Err(self
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "the replay was not kept".to_string()))
+        } else {
+            self.backend
+                .write(
+                    "fights",
+                    &format!("{id}.json"),
+                    card.to_json().to_line().as_bytes(),
+                )
+                .map_err(|e| format!("history write failed: {e}"))
+        };
+        if let Err(mut why) = written {
+            // Back as it was: the fight imported before stays, over its own
+            // replay; a first import leaves nothing behind.
+            self.cards.retain(|c| c.id != id);
+            match previous {
+                Some(p) => {
+                    self.insert_card(p);
+                    if kept && let Some(lost) = self.restore_replay(&id, old_replay) {
+                        // Both said: the card write that failed, and that
+                        // the old card is left without its replay.
+                        why.push_str(&format!("; {lost}"));
+                    }
+                }
+                None => {
+                    self.drop_replay(&id);
+                    let _ = self.backend.remove("fights", &format!("{id}.json"));
+                }
+            }
+            self.last_error = Some(why.clone());
+            return Err(why);
+        }
+        for old in &moved {
+            // Replaced only when the earlier import is gone, not kept beside.
+            replaced |= self.retire_import(old, &id);
+        }
+        self.trim_replays(&protected);
+        Ok((id, replaced))
+    }
+
+    /// Put back the replay a failed re-import overwrote: its bytes and its
+    /// entry, or — when it cannot be written back, or there was none — no
+    /// replay at all, never the new import's under the old card.
+    /// What could not be put back, if anything: the caller says it beside
+    /// its own failure.
+    fn restore_replay(&mut self, id: &str, old: Option<HeldReplay>) -> Option<String> {
+        let name = format!("{id}.bin");
+        match old {
+            Some((bytes, entry)) => match self.backend.write("replay", &name, &bytes) {
+                Ok(()) => {
+                    self.replays.insert(id.to_string(), entry);
+                    None
+                }
+                Err(e) => {
+                    self.drop_replay(id);
+                    Some(format!(
+                        "its old replay could not be put back ({e}): {id} is left without one"
+                    ))
+                }
+            },
+            None => {
+                self.drop_replay(id);
+                None
+            }
+        }
+    }
+
+    /// An import replaced under a new id (its start moved): its
+    /// annotations MOVED to the id that replaced it (copied, then the old
+    /// file removed), then its card file removed, and only then its replay
+    /// and its place in the index. When any one step fails what was done is
+    /// undone and the old import stays whole — the index keeps what the
+    /// files hold, so a restart brings back nothing it does not show, and
+    /// the next import of the source retires it again — and `last_error`
+    /// says why. Whether it was retired.
+    fn retire_import(&mut self, old: &str, new: &str) -> bool {
+        let keep = |store: &mut Self, why: String| {
+            store.last_error = Some(format!("{why} ({old} is kept beside {new})"));
+            false
+        };
+        let notes = format!("{old}.ndjson");
+        let mut carried: Option<Carried> = None;
+        if self.backend.exists("annotations", &notes) {
+            let Some(text) = self.backend.read("annotations", &notes) else {
+                return keep(self, "history read failed: its annotations".to_string());
+            };
+            let name = format!("{new}.ndjson");
+            let before = self.backend.read("annotations", &name);
+            if before.is_none() && self.backend.exists("annotations", &name) {
+                return keep(self, format!("history read failed: {new}'s annotations"));
+            }
+            let mut merged = before.clone().unwrap_or_default();
+            if !merged.is_empty() && !merged.ends_with(b"\n") {
+                merged.push(b'\n');
+            }
+            merged.extend_from_slice(&text);
+            if let Err(e) = self.backend.write("annotations", &name, &merged) {
+                return keep(self, format!("history write failed: {e}"));
+            }
+            let carry = Carried { name, before, text };
+            if let Err(e) = self.backend.remove("annotations", &notes) {
+                // The old file is still there: only the copy to undo.
+                let why = format!("history remove failed: {e}");
+                let why = self.undo_carry(&notes, carry, false, why);
+                return keep(self, why);
+            }
+            carried = Some(carry);
+        }
+        if let Err(e) = self.backend.remove("fights", &format!("{old}.json")) {
+            let mut why = format!("history remove failed: {e}");
+            if let Some(carry) = carried {
+                why = self.undo_carry(&notes, carry, true, why);
+            }
+            return keep(self, why);
+        }
+        self.cards.retain(|c| c.id != old);
+        self.drop_replay(old);
+        true
+    }
+
+    /// Undo a carry of annotations to another id: the old file's text
+    /// written back first when it was removed (`restore_old`), then the new
+    /// id's file put back as it was. When the old text cannot be written
+    /// back the copy stays (the annotations live on, under the new id).
+    /// When the new id's file cannot be put back after the old text was,
+    /// the old file goes again and the copy is the carry, so a retry never
+    /// carries them twice; only when that fails too do they stand under
+    /// both. `why` with what went wrong.
+    fn undo_carry(
+        &mut self,
+        notes: &str,
+        carry: Carried,
+        restore_old: bool,
+        why: String,
+    ) -> String {
+        let mut why = why;
+        let Carried { name, before, text } = carry;
+        let new = name.strip_suffix(".ndjson").unwrap_or(&name).to_string();
+        if restore_old && let Err(e) = self.backend.write("annotations", notes, &text) {
+            why.push_str(&format!("; its annotations are {new}'s now ({e})"));
+            return why;
+        }
+        let undone = match before {
+            Some(bytes) => self.backend.write("annotations", &name, &bytes),
+            None => self.backend.remove("annotations", &name),
+        };
+        if let Err(e) = undone {
+            if restore_old && self.backend.remove("annotations", notes).is_ok() {
+                why.push_str(&format!("; its annotations are {new}'s now ({e})"));
+            } else {
+                why.push_str(&format!(
+                    "; its annotations stand under both ids until it is retired ({e})"
+                ));
+            }
+        }
+        why
+    }
+
+    /// A card into the index, which is sorted by start.
+    fn insert_card(&mut self, card: FightCard) {
+        let at = self
+            .cards
+            .partition_point(|c| c.start_utc_ms <= card.start_utc_ms);
+        self.cards.insert(at, card);
     }
 
     /// v45: past `history_replay_mb`, the oldest unprotected replays go
@@ -2223,18 +2552,30 @@ impl<B: Backend> Store<B> {
     }
 
     /// v45: remove a fight's replay tier, if it has one.
+    /// The index entry goes only with the file: one that cannot be removed
+    /// stays listed (and answered), and retention tries it again, so a
+    /// restart shows nothing the index did not.
     fn drop_replay(&mut self, id: &str) {
-        if self.replays.remove(id).is_some() {
-            let _ = self.backend.remove("replay", &format!("{id}.bin"));
+        if !self.replays.contains_key(id) {
+            return;
+        }
+        match self.backend.remove("replay", &format!("{id}.bin")) {
+            Ok(()) => {
+                self.replays.remove(id);
+            }
+            Err(e) => self.last_error = Some(format!("history remove failed: {e} ({id}.bin)")),
         }
     }
 
     /// v45: the kept-whole set by why, each card once: (kills, timed keys,
-    /// progression wipes, pins).
-    pub fn kept_counts(&self) -> (u32, u32, u32, u32) {
-        let mut out = (0, 0, 0, 0);
+    /// progression wipes, pins, v46 imports — counted first: an imported
+    /// kill is not one of ours).
+    pub fn kept_counts(&self) -> (u32, u32, u32, u32, u32) {
+        let mut out = (0, 0, 0, 0, 0);
         for c in &self.cards {
-            if self.cfg.keeps_whole(c) && c.kind == FightKind::Encounter {
+            if c.is_imported() {
+                out.4 += 1;
+            } else if self.cfg.keeps_whole(c) && c.kind == FightKind::Encounter {
                 out.0 += 1;
             } else if self.cfg.keeps_whole(c) {
                 out.1 += 1;
@@ -2456,7 +2797,9 @@ impl<B: Backend> Store<B> {
         let Some(card) = self.card(id) else {
             return false;
         };
-        if !self.earns_details(card) {
+        // v46: an imported fight keeps its card and replay alone, and has
+        // no log to be rewritten from.
+        if card.is_imported() || !self.earns_details(card) {
             return false;
         }
         if !self.has_details(id) {
@@ -2530,7 +2873,7 @@ impl<B: Backend> Store<B> {
 
     /// [`Store::status`] with whether an owner resolved already known.
     fn status_with(&self, owned: bool) -> HistoryStatus {
-        let (kept_kills, kept_keys, kept_progression, kept_pins) = self.kept_counts();
+        let (kept_kills, kept_keys, kept_progression, kept_pins, kept_imports) = self.kept_counts();
         HistoryStatus {
             enabled: true,
             fights: self.cards.len() as u32,
@@ -2548,6 +2891,7 @@ impl<B: Backend> Store<B> {
             kept_keys,
             kept_progression,
             kept_pins,
+            kept_imports,
         }
     }
 
@@ -2762,6 +3106,8 @@ impl<B: Backend> Store<B> {
             .cards
             .iter()
             .enumerate()
+            // v46: an imported card's owner is the import's, as it said.
+            .filter(|(_, c)| !c.is_imported())
             .filter(|(_, c)| {
                 c.owner
                     .as_deref()
@@ -2805,7 +3151,14 @@ impl<B: Backend> Store<B> {
             .values()
             .filter(|a| a.mine)
             .map(|a| a.guid.clone())
-            .chain(self.cards.iter().filter_map(|c| c.owner.clone()))
+            // v46: an imported card's owner is the import's "you", whoever
+            // that is — never one of the account's characters by that alone.
+            .chain(
+                self.cards
+                    .iter()
+                    .filter(|c| !c.is_imported())
+                    .filter_map(|c| c.owner.clone()),
+            )
             .chain(owner.map(|(g, _)| g));
         Mine::new(guids, &self.cfg.characters)
     }
@@ -2834,6 +3187,7 @@ impl<B: Backend> Store<B> {
                 .cards
                 .iter()
                 .rev()
+                .filter(|c| !c.is_imported())
                 .flat_map(|c| c.players.iter())
                 .find(|p| name_matches(&wanted, &p.name))
                 .map(|p| (p.guid.clone(), false));
@@ -2846,13 +3200,15 @@ impl<B: Backend> Store<B> {
             .cards
             .iter()
             .rev()
+            .filter(|c| !c.is_imported())
             .flat_map(|c| c.players.iter())
             .find(|p| self.affiliations.get(&p.guid).is_some_and(|a| a.mine))
         {
             return Some((mine.guid.clone(), true));
         }
+        // v46: the logs are this machine's; an imported card has none.
         let mut per_log: HashMap<u64, HashSet<&str>> = HashMap::new();
-        for c in &self.cards {
+        for c in self.cards.iter().filter(|c| !c.is_imported()) {
             let set = per_log.entry(c.log).or_default();
             for p in c.players.iter().filter(|p| p.logged && !p.enemy) {
                 set.insert(&p.guid);
@@ -2875,6 +3231,7 @@ impl<B: Backend> Store<B> {
         self.cards
             .iter()
             .rev()
+            .filter(|c| !c.is_imported())
             .find_map(|c| c.owner.clone())
             .map(|g| (g, true))
     }
@@ -2998,6 +3355,12 @@ impl<B: Backend> Store<B> {
         // the owner's best value. Zeros never enter (see below).
         let mut best: HashMap<(GroupKey, u32, u8), (f64, &str)> = HashMap::new();
         for c in &self.cards {
+            // v46: an imported fight is kept as a pin is, and races for no
+            // fastest kill or personal best — it is not this machine's.
+            if c.is_imported() {
+                out.insert(c.id.clone());
+                continue;
+            }
             // v42: a boss kill and a timed key are kept whole, all season.
             if c.pinned
                 || self.kept_whole(c)
@@ -3065,6 +3428,7 @@ impl<B: Backend> Store<B> {
                 limit,
                 after_id,
                 role,
+                origin,
             } => {
                 // v22: `role` is the SUBJECT's role — `guid` when one was
                 // given, else the owner. With no subject at all (owner
@@ -3080,6 +3444,7 @@ impl<B: Backend> Store<B> {
                     *limit,
                     after_id.as_deref(),
                     *role,
+                    *origin,
                 );
                 HistoryAnswer::Fights { cards, total }
             }
@@ -3139,12 +3504,15 @@ impl<B: Backend> Store<B> {
         limit: u32,
         after_id: Option<&str>,
         role: Option<Role>,
+        origin: OriginFilter,
     ) -> (Vec<FightCard>, u32) {
         let owner = self.owner().map(|(g, _)| g);
         let subject: Option<&str> = guid.or(owner.as_deref());
         let mut hits: Vec<&FightCard> = self
             .cards
             .iter()
+            // v46: this machine's own unless the client asks for imports.
+            .filter(|c| origin.admits(&c.origin))
             .filter(|c| match (role, subject) {
                 (Some(role), Some(subject)) => c
                     .players
@@ -3200,7 +3568,9 @@ impl<B: Backend> Store<B> {
             .take(limit)
             .cloned()
             .map(|mut c| {
-                if c.owner.is_none() {
+                // v46: an import's owner is the import's to say: none stays
+                // none, as `GetFight` and its replay's "you" say.
+                if c.owner.is_none() && !c.is_imported() {
                     c.owner = self.owner_of(&c);
                 }
                 // Likewise the guilds: what the addon knows NOW, on a card
@@ -3212,6 +3582,7 @@ impl<B: Backend> Store<B> {
         (cards, total)
     }
 
+    /// v46: this machine's own pulls — an imported fight is no pull of ours.
     fn progression(&self, encounter: u32, difficulty: u32, cutover: Option<u8>) -> HistoryAnswer {
         let pulls: Vec<&FightCard> = self
             .cards
@@ -3220,6 +3591,7 @@ impl<B: Backend> Store<B> {
                 c.encounter
                     .is_some_and(|e| e.id == encounter && e.difficulty == difficulty)
                     && !c.aborted
+                    && !c.is_imported()
             })
             .collect();
         let kills: Vec<&FightCard> = pulls
@@ -3307,6 +3679,7 @@ impl<B: Backend> Store<B> {
                 c.encounter
                     .is_some_and(|e| e.id == encounter && e.difficulty == difficulty)
                     && !c.aborted
+                    && !c.is_imported()
                     && bucket_start(c.start_utc_ms, c.tz_min, cutover, false) == night
             })
             .collect();
@@ -3466,7 +3839,8 @@ impl<B: Backend> Store<B> {
         let mut points: Vec<TrendPoint> = self
             .cards
             .iter()
-            .filter(|c| !c.aborted)
+            // v46: a trend is of this machine's own fights.
+            .filter(|c| !c.aborted && !c.is_imported())
             .filter(|c| encounter.is_none_or(|e| c.encounter.is_some_and(|x| x.id == e)))
             .filter(|c| difficulty.is_none_or(|d| card_difficulty(c) == Some(d)))
             .filter(|c| since_utc_ms.is_none_or(|s| c.start_utc_ms >= s))
@@ -4214,6 +4588,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             })
             .collect(),
         players,
+        origin: Origin::Local,
     };
     FightDocs {
         card,

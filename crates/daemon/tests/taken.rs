@@ -1331,6 +1331,7 @@ fn fights_with(store: &Store<MemBackend>, guid: Option<&str>, role: Option<Role>
         limit: 0,
         after_id: None,
         role,
+        origin: wowdps_proto::OriginFilter::Local,
     }) {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().map(|c| c.id).collect(),
         other => panic!("{other:?}"),

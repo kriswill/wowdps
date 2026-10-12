@@ -209,6 +209,21 @@ fn forward_history(history: &HistoryLink, s: &mut Session, req: HistoryReq) {
             fight_id,
             bytes: None,
         },
+        // v46: a write the store did not take says why — a store that is
+        // off, or a queue full of closing pulls.
+        HistoryReq::ImportReplay { req_id, .. } => DaemonMsg::History {
+            req_id,
+            answer: HistoryAnswer::Refused {
+                reason: if history.enabled() {
+                    "the history store is busy; try again".to_string()
+                } else {
+                    history
+                        .status()
+                        .error
+                        .unwrap_or_else(|| "the history store is off".to_string())
+                },
+            },
+        },
         // Engine-side forwards are lossy by design and answer nobody.
         HistoryReq::Store(_)
         | HistoryReq::Index { .. }
@@ -501,6 +516,24 @@ fn handle(
                             encounter,
                             difficulty,
                             kind,
+                        },
+                    );
+                }
+                // v46: a fight from outside this machine's logs, stored by
+                // the history thread (the store's one writer).
+                ClientMsg::ImportReplay {
+                    req_id,
+                    card,
+                    replay,
+                } => {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::ImportReplay {
+                            session: id,
+                            req_id,
+                            card,
+                            replay,
                         },
                     );
                 }
@@ -1364,5 +1397,43 @@ mod tests {
             });
             assert_eq!(raid, Some(*want), "{kind:?}");
         }
+    }
+
+    /// v46: an `ImportReplay` the history thread never takes is answered
+    /// `Refused` here, with why — the store's error when it is off, "busy"
+    /// when the queue is full — and a busy refusal ticks no `dropped`.
+    #[test]
+    fn a_refused_import_is_answered_with_why() {
+        let import = || HistoryReq::ImportReplay {
+            session: 1,
+            req_id: 9,
+            card: Box::default(),
+            replay: Vec::new(),
+        };
+        let refusal = |rx: &Receiver<DaemonMsg>| match rx.try_recv() {
+            Ok(DaemonMsg::History {
+                req_id: 9,
+                answer: HistoryAnswer::Refused { reason },
+            }) => reason,
+            other => panic!("{other:?}"),
+        };
+
+        let (mut s, rx) = session(1);
+        forward_history(
+            &HistoryLink::disabled("history off for the test"),
+            &mut s,
+            import(),
+        );
+        assert_eq!(refusal(&rx), "history off for the test");
+
+        let (link, _queue) = HistoryLink::bounded(1);
+        assert!(
+            link.send(HistoryReq::Sweep(PathBuf::from("/nowhere")))
+                .is_ok()
+        );
+        let (mut s, rx) = session(2);
+        forward_history(&link, &mut s, import());
+        assert!(refusal(&rx).contains("busy"));
+        assert_eq!(link.status().dropped, 0);
     }
 }

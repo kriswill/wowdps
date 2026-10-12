@@ -179,6 +179,7 @@ fn kill(mock: &mut MockDaemon) -> (SegmentId, String) {
             limit: 1,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     });
     let id = out
@@ -320,6 +321,7 @@ fn a_stored_window_answers_what_the_live_one_did() {
             limit: 1,
             after_id: None,
             role: None,
+            origin: wowdps_proto::OriginFilter::Local,
         },
     });
     let wipe_id = short_wipe

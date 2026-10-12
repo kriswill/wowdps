@@ -14,12 +14,14 @@ use wowdps_model::{
     Timeline, UptimeCell, View,
 };
 
-use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
+use crate::history::{
+    CardPlayer, FightCard, FightKind, ImportedCard, ImportedPlayer, KeyInfo, Origin, PlayerSupport,
+};
 use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 45;
+pub const PROTO_VERSION: u16 = 46;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -199,6 +201,43 @@ pub enum ClientMsg {
         req_id: u32,
         fight_id: String,
     },
+    /// v46: store a fight converted from outside this machine's logs — the
+    /// facts its source knows (`card`) and its replay tier as
+    /// `proto::replay::encode` writes it — as an IMPORTED card (`Origin::
+    /// Imported`) with that replay and no other tier. The daemon validates
+    /// the replay (a format it reads, decodable) and answers `History` /
+    /// `ImportedReplay`, or `Refused` with why; the same source again
+    /// replaces it. Boxed: the card is the largest payload a client sends.
+    ImportReplay {
+        req_id: u32,
+        card: Box<ImportedCard>,
+        replay: Vec<u8>,
+    },
+}
+
+/// v46: which origins a `HistoryQuery::Fights` lists. Every client that
+/// predates imports asks `Local` and reads exactly what it read before; an
+/// imported fight is listed only to a client that asks for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OriginFilter {
+    /// This machine's own fights (`Origin::Local`).
+    #[default]
+    Local,
+    /// The imported ones alone.
+    Imported,
+    /// Both.
+    Any,
+}
+
+impl OriginFilter {
+    /// Whether a card of `origin` is listed.
+    pub fn admits(self, origin: &Origin) -> bool {
+        match self {
+            OriginFilter::Local => !origin.is_imported(),
+            OriginFilter::Imported => origin.is_imported(),
+            OriginFilter::Any => true,
+        }
+    }
 }
 
 /// v20: how `HistoryQuery::Fights` orders its answer.
@@ -294,6 +333,9 @@ pub enum HistoryQuery {
         /// this role in, by their spec on the card. With no subject (owner
         /// uninferred and no `guid`) the filter is a no-op.
         role: Option<Role>,
+        /// v46: which origins are listed — `Local` (this machine's own,
+        /// what every answer held before imports) unless a client asks.
+        origin: OriginFilter,
     },
     Progression {
         encounter: u32,
@@ -404,6 +446,17 @@ pub enum HistoryAnswer {
     RoleNight {
         night: Night,
         rows: Vec<RoleNightRow>,
+    },
+    /// v46: answers `ImportReplay` — the stored fight's id, and whether a
+    /// fight of the same source was there before and is replaced.
+    ImportedReplay {
+        fight_id: String,
+        replaced: bool,
+    },
+    /// v46: a write request the store would not take (an `ImportReplay`
+    /// whose replay does not decode, a store that is off or busy), and why.
+    Refused {
+        reason: String,
     },
 }
 
@@ -653,6 +706,9 @@ pub struct HistoryStatus {
     pub kept_keys: u32,
     pub kept_progression: u32,
     pub kept_pins: u32,
+    /// v46: the imported fights (`Origin::Imported`), protected as pins are
+    /// and counted before every other reason.
+    pub kept_imports: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1757,6 +1813,8 @@ fn put_history_status(buf: &mut Vec<u8>, h: &HistoryStatus) {
     for n in [h.kept_kills, h.kept_keys, h.kept_progression, h.kept_pins] {
         wire::put_u32(buf, n);
     }
+    // v46: the imports, trailing.
+    wire::put_u32(buf, h.kept_imports);
 }
 
 fn get_history_status(rd: &mut Reader) -> Result<HistoryStatus> {
@@ -1776,6 +1834,7 @@ fn get_history_status(rd: &mut Reader) -> Result<HistoryStatus> {
         kept_keys: rd.u32()?,
         kept_progression: rd.u32()?,
         kept_pins: rd.u32()?,
+        kept_imports: rd.u32()?,
     })
 }
 
@@ -1963,6 +2022,100 @@ fn put_card(buf: &mut Vec<u8>, c: &FightCard) {
         wire::put_i64(b, k.duration_ms);
         wire::put_opt(b, k.success.as_ref(), |b, s| wire::put_bool(b, *s));
     });
+    // v46: the origin, trailing — u8 0 Local, 1 Imported then its source.
+    put_origin(buf, &c.origin);
+}
+
+fn put_origin(buf: &mut Vec<u8>, o: &Origin) {
+    match o {
+        Origin::Local => wire::put_u8(buf, 0),
+        Origin::Imported { source } => {
+            wire::put_u8(buf, 1);
+            wire::put_str(buf, source);
+        }
+    }
+}
+
+fn get_origin(rd: &mut Reader) -> Result<Origin> {
+    Ok(match rd.u8()? {
+        0 => Origin::Local,
+        1 => Origin::Imported {
+            source: rd.string()?,
+        },
+        other => return Err(DecodeError::BadTag(other)),
+    })
+}
+
+fn origin_filter_code(f: OriginFilter) -> u8 {
+    match f {
+        OriginFilter::Local => 0,
+        OriginFilter::Imported => 1,
+        OriginFilter::Any => 2,
+    }
+}
+
+fn origin_filter_from(b: u8) -> Result<OriginFilter> {
+    Ok(match b {
+        0 => OriginFilter::Local,
+        1 => OriginFilter::Imported,
+        2 => OriginFilter::Any,
+        other => return Err(DecodeError::BadTag(other)),
+    })
+}
+
+/// v46: `ImportReplay`'s card — string name | opt Encounter | u8 kind | i64
+/// start_utc_ms | opt i64 start_local_ms | opt u16 tz_min (as bits) | i64
+/// duration_ms | opt bool success | opt u16 best_pct | vec player (string
+/// guid | string name | opt u8 class | u16 spec, 0 = none) | opt string
+/// owner | string source | u16 ×3 build | u32 log_version.
+fn put_imported_card(buf: &mut Vec<u8>, c: &ImportedCard) {
+    wire::put_str(buf, &c.name);
+    wire::put_opt(buf, c.encounter.as_ref(), put_encounter);
+    wire::put_u8(buf, fight_kind_code(c.kind));
+    wire::put_i64(buf, c.start_utc_ms);
+    put_opt_i64(buf, c.start_local_ms);
+    wire::put_opt(buf, c.tz_min.as_ref(), |b, m| wire::put_u16(b, *m as u16));
+    wire::put_i64(buf, c.duration_ms);
+    wire::put_opt(buf, c.success.as_ref(), |b, v| wire::put_bool(b, *v));
+    wire::put_opt(buf, c.best_pct.as_ref(), |b, p| wire::put_u16(b, *p));
+    wire::put_vec(buf, &c.players, |b, p| {
+        wire::put_str(b, &p.guid);
+        wire::put_str(b, &p.name);
+        wire::put_opt(b, p.class.as_ref(), |b, c| wire::put_u8(b, class_code(*c)));
+        wire::put_u16(b, p.spec.map_or(0, |s| s.id() as u16));
+    });
+    put_opt_str(buf, c.owner.as_deref());
+    wire::put_str(buf, &c.source);
+    wire::put_u16(buf, c.build.0);
+    wire::put_u16(buf, c.build.1);
+    wire::put_u16(buf, c.build.2);
+    wire::put_u32(buf, c.log_version);
+}
+
+fn get_imported_card(rd: &mut Reader) -> Result<ImportedCard> {
+    Ok(ImportedCard {
+        name: rd.string()?,
+        encounter: rd.opt(get_encounter)?,
+        kind: fight_kind_from(rd.u8()?)?,
+        start_utc_ms: rd.i64()?,
+        start_local_ms: rd.opt(|r| r.i64())?,
+        tz_min: rd.opt(|r| Ok(r.u16()? as i16))?,
+        duration_ms: rd.i64()?,
+        success: rd.opt(|r| r.bool())?,
+        best_pct: rd.opt(|r| r.u16())?,
+        players: rd.vec(|r| {
+            Ok(ImportedPlayer {
+                guid: r.string()?,
+                name: r.string()?,
+                class: r.opt(|r| class_from(r.u8()?))?,
+                spec: Spec::from_id(r.u16()? as u32),
+            })
+        })?,
+        owner: rd.opt(|r| r.string())?,
+        source: rd.string()?,
+        build: (rd.u16()?, rd.u16()?, rd.u16()?),
+        log_version: rd.u32()?,
+    })
 }
 
 fn get_card(rd: &mut Reader) -> Result<FightCard> {
@@ -2008,6 +2161,7 @@ fn get_card(rd: &mut Reader) -> Result<FightCard> {
                 success: r.opt(|r| r.bool())?,
             })
         })?,
+        origin: get_origin(rd)?,
     })
 }
 
@@ -2023,6 +2177,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             limit,
             after_id,
             role,
+            origin,
         } => {
             wire::put_u8(buf, 0);
             put_opt_u32(buf, *encounter);
@@ -2044,6 +2199,8 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             put_opt_str(buf, after_id.as_deref());
             // v22: trailing Option<Role>.
             wire::put_opt(buf, role.as_ref(), |b, r| wire::put_u8(b, role_code(*r)));
+            // v46: trailing u8 origin filter (0 Local / 1 Imported / 2 Any).
+            wire::put_u8(buf, origin_filter_code(*origin));
         }
         HistoryQuery::Progression {
             encounter,
@@ -2119,6 +2276,7 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             limit: rd.u32()?,
             after_id: rd.opt(|r| r.string())?,
             role: rd.opt(|r| role_from(r.u8()?))?,
+            origin: origin_filter_from(rd.u8()?)?,
         },
         1 => HistoryQuery::Progression {
             encounter: rd.u32()?,
@@ -2267,6 +2425,16 @@ fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
             put_night(buf, night);
             wire::put_vec(buf, rows, put_role_night_row);
         }
+        // v46: tag 7 = string fight_id | bool replaced; tag 8 = string reason.
+        HistoryAnswer::ImportedReplay { fight_id, replaced } => {
+            wire::put_u8(buf, 7);
+            wire::put_str(buf, fight_id);
+            wire::put_bool(buf, *replaced);
+        }
+        HistoryAnswer::Refused { reason } => {
+            wire::put_u8(buf, 8);
+            wire::put_str(buf, reason);
+        }
     }
 }
 
@@ -2304,6 +2472,13 @@ fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
         6 => HistoryAnswer::RoleNight {
             night: get_night(rd)?,
             rows: rd.vec(get_role_night_row)?,
+        },
+        7 => HistoryAnswer::ImportedReplay {
+            fight_id: rd.string()?,
+            replaced: rd.bool()?,
+        },
+        8 => HistoryAnswer::Refused {
+            reason: rd.string()?,
         },
         other => return Err(DecodeError::BadTag(other)),
     })
@@ -2523,6 +2698,7 @@ const T_PIN_FIGHT: u8 = 0x0A;
 const T_IMPORT_LOG: u8 = 0x0B;
 const T_REGRADE: u8 = 0x0C;
 const T_GET_REPLAY: u8 = 0x0D;
+const T_IMPORT_REPLAY: u8 = 0x0E;
 
 impl ClientMsg {
     /// One complete on-the-wire frame.
@@ -2623,6 +2799,16 @@ impl ClientMsg {
                 wire::put_str(&mut body, fight_id);
                 T_GET_REPLAY
             }
+            ClientMsg::ImportReplay {
+                req_id,
+                card,
+                replay,
+            } => {
+                wire::put_u32(&mut body, *req_id);
+                put_imported_card(&mut body, card);
+                wire::put_bytes(&mut body, replay);
+                T_IMPORT_REPLAY
+            }
         };
         wire::frame(tag, &body)
     }
@@ -2681,6 +2867,11 @@ impl ClientMsg {
             T_GET_REPLAY => ClientMsg::GetReplay {
                 req_id: rd.u32()?,
                 fight_id: rd.string()?,
+            },
+            T_IMPORT_REPLAY => ClientMsg::ImportReplay {
+                req_id: rd.u32()?,
+                card: Box::new(get_imported_card(&mut rd)?),
+                replay: rd.bytes()?,
             },
             other => return Err(DecodeError::BadTag(other)),
         };
