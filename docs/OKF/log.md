@@ -1,5 +1,16 @@
 # Log
 
+## 2026-10-12
+
+- **Update** — macOS support across [core](crates/core.md)
+  (install discovery checks the Applications roots),
+  [daemon](crates/daemon.md) (game detection runs `pgrep -fil`; the
+  default `game_process` is per platform) and [gui](crates/gui.md) (the
+  overlay is a floating non-activating panel, content-sized, re-anchored
+  on every size change; monitor choice takes a display index). Unchanged:
+  the TUI, the tail, the wire, [hypr.rs](crates/gui-logic.md) (absent
+  Hyprland degrades to no-ops).
+
 ## 2026-10-09
 
 - **Update** — the [OKF Profile](okf-profile.md): the working instructions
