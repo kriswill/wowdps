@@ -719,14 +719,24 @@ fn network_access_is_off() {
         lake.sql("SET custom_extension_repository = 'http://x'")
             .is_err()
     );
-    // The statically linked extensions are all a lake ever needs.
+    // The statically linked extensions are all a lake ever needs. icu
+    // rides the nixpkgs build but not the bundled one — taking it would
+    // mean duckdb-rs' cmake path, a full duckdb-rs checkout — and no
+    // query uses it, so only json and parquet are pinned on macOS.
+    let (names, count) = if cfg!(target_os = "macos") {
+        ("('json', 'parquet')", 2)
+    } else {
+        ("('json', 'parquet', 'icu')", 3)
+    };
     let t = lake
         .sql(
-            "SELECT extension_name FROM duckdb_extensions() WHERE loaded AND \
-             extension_name IN ('json', 'parquet', 'icu') ORDER BY 1",
+            &format!(
+                "SELECT extension_name FROM duckdb_extensions() WHERE loaded AND \
+                 extension_name IN {names} ORDER BY 1"
+            ),
         )
         .unwrap();
-    assert_eq!(t.rows.len(), 3, "{t:?}");
+    assert_eq!(t.rows.len(), count, "{t:?}");
 }
 
 #[test]

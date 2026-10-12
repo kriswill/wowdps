@@ -13,17 +13,28 @@ repository.workspace = true
 # as a thin client for `import` — so it links model + proto (and the daemon
 # crate for its config reader), plus the
 # one signed-off dependency in the workspace: DuckDB, SYSTEM-linked to the
-# nixpkgs library (flake.nix sets DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR and
-# patches the rpath); never `bundled`, whose build would cost CI minutes.
-# The crate version encodes the library version (1.10504 = DuckDB 1.5.4)
-# and must move with `pkgs.duckdb`; tests/duckdb_version.rs fails by name
-# when the two drift (a dependabot bump ahead of nixpkgs, or a nixpkgs bump
-# that leaves the pin behind).
+# nixpkgs library on Linux (flake.nix sets DUCKDB_LIB_DIR /
+# DUCKDB_INCLUDE_DIR and patches the rpath) and `bundled` on macOS, where
+# there is no nix and the bundled library is by construction the crate's
+# own version. The crate version encodes the library version (1.10504 =
+# DuckDB 1.5.4) and must move with `pkgs.duckdb` on Linux;
+# tests/duckdb_version.rs fails by name when the two drift there (a
+# dependabot bump ahead of nixpkgs, or a nixpkgs bump that leaves the pin
+# behind).
 
 [dependencies]
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
 duckdb = { version = "=1.10505.0", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# No nix on the dev Mac: build libduckdb from the crate's own source there
+# (resolver 3 keeps Linux system-linked; CI is Linux-only). The bundled
+# core ships no extensions, so json (read_json) and parquet come in as
+# features on the plain cc build. icu would need `bundled-cmake` — a full
+# duckdb-rs checkout with sources — and no query uses it, so mac lakes
+# run without it (network_access_is_off gates the icu leg to non-mac).
+duckdb = { version = "=1.10505.0", default-features = false, features = ["bundled", "json", "parquet"] }
 
 [dev-dependencies]
 wowdps-core = { path = "../core" }

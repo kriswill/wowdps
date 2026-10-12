@@ -245,8 +245,9 @@ impl Lake {
         // Offline by construction: nothing auto-installs or auto-loads, an
         // explicit INSTALL can only look in a repository that does not
         // exist (never the network, never ~/.duckdb), and LOAD can only find
-        // what sits in the lake's own (empty) extension directory. JSON,
-        // Parquet and ICU are statically linked in the nixpkgs build, so
+        // what sits in the lake's own (empty) extension directory. JSON and
+        // Parquet are statically linked in the nixpkgs build, and on macOS
+        // in the bundled one via crate features (icu is nixpkgs-only), so
         // nothing here needs an extension anyway.
         let quoted = |p: PathBuf| p.display().to_string().replace('\'', "''");
         conn.execute_batch(&format!(

@@ -102,11 +102,13 @@ On a dev machine the live daemon is the `wowdps-dev` systemd user unit
 ## Toolchain and shell
 
 Nightly, from `rust-toolchain.toml`; the tree must still build on stable,
-so no `#![feature]`. Build in the dev shell (devenv, entered by its cd hook,
-or `nix develop`): the GUI and `wowdps-history` link libraries only it
-provides. In the shell `wowdps`, `wowdps-history`, `wowdps-mcp` and
-`wowdps-gui` are wrappers that rebuild release from this checkout before
-they run (`WOWDPS_NO_BUILD=1` skips the build).
+so no `#![feature]`. On Linux, build in the dev shell (devenv, entered by
+its cd hook, or `nix develop`): the GUI and `wowdps-history` link
+libraries only it provides. macOS needs no nix: `wowdps-history` bundles
+DuckDB and the GUI uses system frameworks, though the bundled build costs
+several minutes once. In the shell `wowdps`, `wowdps-history`, `wowdps-mcp`
+and `wowdps-gui` are wrappers that rebuild release from this checkout
+before they run (`WOWDPS_NO_BUILD=1` skips the build).
 
 ## Commands
 

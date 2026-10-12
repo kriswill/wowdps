@@ -1024,8 +1024,13 @@ resolve through; the rubric is reviewed as TOML files under the crate's own
 `seasons/` and embedded at build time, and every reader reads and writes it through this
 crate, never naming serde/toml itself — the daemon among them (v45: its replay cut reads the
 rubric's generated `placed` table through core's `replay::PlacedTable`). history: model + proto + duckdb
-(SYSTEM-linked to nixpkgs' libduckdb, the crate version pinned to the
-library's; never `bundled` — signed off 2026-09-02 for roadmap item 1, the one
+(SYSTEM-linked to nixpkgs' libduckdb on Linux, the crate version pinned to the
+library's, and `bundled` on macOS where there is no nix, with the json and
+parquet extension features on because the bundled core ships no extensions
+and the nixpkgs build links them statically — icu stays nixpkgs-only, since
+bundling it needs duckdb-rs' cmake path (a source checkout) and no query
+uses it — signed off
+2026-09-02 for roadmap item 1, macOS bundling 2026-10-12, the one
 analytical engine in the tree, and it lives in the `wowdps-history` binary
 only, never in the daemon). Everything else stdlib unless justified and signed
 off. No chrono (hand-parse the timestamp), no tokio (threads +

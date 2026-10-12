@@ -1,10 +1,11 @@
-//! The DuckDB pin holds the library it links. The crate is SYSTEM-linked to
-//! nixpkgs' libduckdb (CONTRACT.md §Dependencies), and its version encodes
-//! the library version it was written against: `=1.10505.0` is DuckDB
-//! 1.5.5. Dependabot bumps the crate on its own, and `nix flake update`
-//! moves the library on its own, so either can leave the two apart, and
-//! nothing else fails when they drift. This does, by name, on the PR that
-//! moved one of them.
+//! The DuckDB pin holds the library it links. On Linux the crate is
+//! SYSTEM-linked to nixpkgs' libduckdb (CONTRACT.md §Dependencies); on
+//! macOS it bundles the crate's own source, so the pair cannot drift
+//! there. The crate version encodes the library version it was written
+//! against: `=1.10505.0` is DuckDB 1.5.5. On Linux, dependabot bumps the
+//! crate on its own, and `nix flake update` moves the library on its own,
+//! so either can leave the two apart, and nothing else fails when they
+//! drift. This does, by name, on the PR that moved one of them.
 
 #![allow(clippy::expect_used, clippy::panic)]
 

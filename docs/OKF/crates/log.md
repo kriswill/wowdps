@@ -1,5 +1,11 @@
 # Log
 
+## 2026-10-12
+
+- **Update** — [wowdps-history](history.md): DuckDB is `bundled` on macOS
+  (no nix there); Linux stays system-linked, and the version test guards
+  the Linux pair.
+
 ## 2026-10-11
 
 - **Update** — [wowdps-daemon](daemon.md): an import trims the replay cap
