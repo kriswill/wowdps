@@ -991,12 +991,16 @@ fn status_words_the_overlay_and_a_lost_daemon() {
 
     // A supervisor set to spawn a gui that does not exist, woken by a
     // "game" whose process pattern is this very test binary.
-    let me = std::env::current_exe()
-        .expect("exe")
-        .file_name()
-        .expect("name")
-        .to_string_lossy()
-        .into_owned();
+    // A supervisor set to spawn a gui that does not exist, woken by a
+    // "game" whose process pattern is a real sleep we spawn. The test
+    // binary itself would be the game on Linux (its name matches), but it
+    // is an ancestor of the daemon's pgrep call and macOS pgrep does not
+    // match its own ancestors — so the game is a process on neither side.
+    let mut game = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn the fake game");
+    let me = "sleep 30".to_string();
     let tmp2 = Temp::new("spawnfail");
     let socket = start_daemon_with(&tmp2, FIXTURE, move |opts| {
         opts.game_pattern = Some(me);
@@ -1015,6 +1019,8 @@ fn status_words_the_overlay_and_a_lost_daemon() {
         assert!(Instant::now() < deadline, "the game watcher never saw us");
         thread::sleep(Duration::from_millis(50));
     }
+    let _ = game.kill();
+    let _ = game.wait();
 
     // Shut the daemon down behind the bridge's back.
     use std::io::Write as _;

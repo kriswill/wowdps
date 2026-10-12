@@ -818,7 +818,8 @@ when that is not a row — so the TUI, which never draws the tree, is untouched.
 One process owns bytes → rows: tail thread, engine (live meter + index + stable
 ids + LRU of ≤16 lazily parsed segments), loader worker pool (historical parses
 never run on the hub thread), hub (session table, 10 Hz changed-only pushes),
-game watcher (3s /proc sweep for a case-insensitive `game_process` substring),
+game watcher (3s sweep for a case-insensitive `game_process` substring — /proc
+comm+cmdline on Linux, `pgrep -fil` on macOS),
 overlay supervisor (spawns/hides/terminates `<gui_binary> --overlay`, by default
 `wowdps-gui`, on game transitions; a manual hide sticks until the next transition; spawn failures
 surface in `Status`). Single instance via a lockfile taken *before* the stale
