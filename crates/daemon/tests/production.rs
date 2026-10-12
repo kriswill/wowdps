@@ -54,14 +54,20 @@ static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn the_source_comes_from_the_override_the_config_or_nowhere() {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = sandbox();
-    let cfg = Config::default();
 
-    // Nothing configured, nothing installed: a clear error, no made-up path.
-    let err = DaemonOptions::production(&cfg, None, false)
-        .err()
-        .expect("no source");
-    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
-    assert!(err.to_string().contains("no logs_dir configured"), "{err}");
+    // Nothing configured, nothing installed: a clear error, no made-up
+    // path. Off macOS only: discovery also scans /Applications, which a
+    // machine with the game installed fills (as core's cli tests note),
+    // making the error path unreachable there.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let cfg = Config::default();
+        let err = DaemonOptions::production(&cfg, None, false)
+            .err()
+            .expect("no source");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("no logs_dir configured"), "{err}");
+    }
 
     // The config's logs_dir.
     let configured = Config {
