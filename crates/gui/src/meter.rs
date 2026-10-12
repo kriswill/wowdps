@@ -170,6 +170,7 @@ mod tests {
     /// where a label is as wide as its glyphs shaped in the theme's font —
     /// and a row is one line of that text tall, plus its padding.
     #[test]
+    #[cfg_attr(target_os = "macos", ignore = "gpui's mac platform must be created on the main thread")]
     fn a_row_lays_out_real_text() {
         let mut cx = testkit::headless();
         let (window, probe) = testkit::open_headless(&mut cx, size(px(420.), px(320.)), |_, cx| {

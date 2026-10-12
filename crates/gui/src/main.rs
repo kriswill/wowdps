@@ -1,8 +1,8 @@
 //! The wowdps GUI on Zed's GPUI through GPUI Kit (`docs/spec-gui-new.md`):
 //! a pure rendering client of the wowdps daemon, drawn either as the meter
-//! window (default) or as a wlr-layer-shell overlay tab (`--overlay`) that
-//! pins to a screen edge above the game. It replaced the iced GUI at the
-//! cutover (`docs/plan-gui-new.md` phase 5).
+//! window (default) or as an overlay tab pinned over the game (`--overlay`,
+//! a wlr-layer-shell surface on Linux, a floating panel on macOS). It
+//! replaced the iced GUI at the cutover (`docs/plan-gui-new.md` phase 5).
 //!
 //! It depends on `wowdps-model`, `wowdps-proto` and the framework-free
 //! `wowdps-gui-logic` only, never the engine, so it cannot open a combat
@@ -42,9 +42,10 @@ wowdps-gui - a damage meter window for World of Warcraft combat logs
 
 Usage:
   wowdps-gui             meter window (starts the wowdps daemon if needed)
-  wowdps-gui --overlay   pin an edge tab over the game (wlr-layer-shell);
-                         click it to expand the meter, drag it along the edge
-                         (on Hyprland: onto another edge). Under Hyprland it
+  wowdps-gui --overlay   pin an edge tab over the game (a layer surface on
+                         Linux, a floating panel on macOS); click it to
+                         expand the meter, drag it along the edge (on
+                         Hyprland: onto another edge). Under Hyprland it
                          is born on the game's monitor and follows the game:
                          it hides whenever WoW's workspace is off screen
                          (follow_game = false in the config disables this;

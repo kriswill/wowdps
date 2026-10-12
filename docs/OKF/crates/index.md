@@ -10,7 +10,7 @@ The Cargo workspace members — the engine, the wire protocol, the daemon, the t
 * [wowdps-extract](extract.md) - DB2/CASC extractor generating wowdps game-data tables from a local WoW install.
 * [wowdps-gui-logic](gui-logic.md) - The GUI's framework-free half — config, Hyprland IPC, the keymap, history pages, the art-cache readers and fonts (wave A), then every model, word and geometry of the overlay, the window, the inspector, the rail, Home, the palette and the talent viewer (wave B) — moved out of the iced GUI, never copied, while it and its GPUI successor coexisted.
 * [wowdps-gui-new](gui-new.md) _(deprecated)_ - Deprecated: the name the GPUI GUI was built under (crates/gui-new, binary wowdps-gui-new) beside the iced wowdps-gui; at the cutover it became crates/gui and took the wowdps-gui name, so its record is wowdps-gui.
-* [wowdps-gui](gui.md) - The wowdps GUI on Zed's GPUI through GPUI Kit — the meter window and the wlr-layer-shell overlay, a pure client of model, proto and gui-logic; built as crates/gui-new beside the iced GUI, it took this crate's place at the cutover.
+* [wowdps-gui](gui.md) - The wowdps GUI on Zed's GPUI through GPUI Kit — the meter window and the overlay (a wlr-layer-shell surface on Linux, a floating panel on macOS), a pure client of model, proto and gui-logic; built as crates/gui-new beside the iced GUI, it took this crate's place at the cutover.
 * [wowdps-history](history.md) - wowdps-history binary: ad hoc SQL over the history store's lake (DuckDB).
 * [wowdps-mcp](mcp.md) - wowdps-mcp binary: MCP server exposing fight data to LLM harnesses.
 * [wowdps-model](model.md) - Zero-dependency domain types for the wowdps combat-log meter.
