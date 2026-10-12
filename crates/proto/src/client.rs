@@ -56,12 +56,22 @@ pub fn prepare_socket_dir() -> io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Our uid, without libc: `/proc/self` is owned by the process's uid.
-/// Linux-only, like the rest of the daemon.
+/// Our uid, without libc: on Linux, `/proc/self` is owned by the
+/// process's uid; elsewhere a throwaway file we just created is ours by
+/// definition. Unwritable temp leaves 0, which fails ownership checks
+/// closed — a foreign dir is refused, never adopted.
 fn uid() -> u32 {
-    std::fs::metadata("/proc/self")
-        .map(|m| m.uid())
-        .unwrap_or(0)
+    if let Ok(meta) = std::fs::metadata("/proc/self") {
+        return meta.uid();
+    }
+    let probe = std::env::temp_dir().join(format!(".wowdps-uid-{}", std::process::id()));
+    let Ok(file) = std::fs::File::create(&probe) else {
+        return 0;
+    };
+    let uid = file.metadata().map(|m| m.uid()).unwrap_or(0);
+    drop(file);
+    let _ = std::fs::remove_file(&probe);
+    uid
 }
 
 /// The source a client forwards when it has to spawn the daemon itself.
@@ -355,6 +365,13 @@ impl DaemonClient {
 }
 
 /// Hello → HelloAck (bounded wait), then the reader thread takes the stream.
+#[cfg(target_os = "macos")]
+macro_rules! dbg_pipe {
+    ($what:expr, $e:expr) => {{
+        eprintln!("handshake {} failed: {:?} raw={:?}", $what, $e, $e.raw_os_error());
+        $e
+    }};
+}
 fn handshake(stream: &UnixStream, kind: ClientKind) -> io::Result<Arc<Mutex<Inbox>>> {
     let mut writer = stream.try_clone()?;
     writer.write_all(
@@ -364,11 +381,15 @@ fn handshake(stream: &UnixStream, kind: ClientKind) -> io::Result<Arc<Mutex<Inbo
             pid: std::process::id(),
         }
         .encode(),
-    )?;
+    )
+    .map_err(|e| dbg_pipe!("write hello", e))?;
 
     let mut reader = stream.try_clone()?;
-    reader.set_read_timeout(Some(Duration::from_secs(5)))?;
-    let (tag, body) = wire::read_frame(&mut reader)?;
+    reader
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| dbg_pipe!("set timeout", e))?;
+    let (tag, body) = wire::read_frame(&mut reader)
+        .map_err(|e| dbg_pipe!("read ack", e))?;
     match DaemonMsg::decode(tag, &body) {
         Ok(DaemonMsg::HelloAck { proto, .. }) if proto == PROTO_VERSION => {}
         other => {
@@ -378,7 +399,10 @@ fn handshake(stream: &UnixStream, kind: ClientKind) -> io::Result<Arc<Mutex<Inbo
             ));
         }
     }
-    reader.set_read_timeout(None)?;
+    // Clearing SO_RCVTIMEO fails with EINVAL on darwin once the peer has
+    // closed the socket; there the reader thread hits EOF immediately
+    // anyway, so the reset failure cannot change the outcome.
+    let _ = reader.set_read_timeout(None);
 
     let inbox = Arc::new(Mutex::new(Inbox::default()));
     let inbox_for_reader = Arc::clone(&inbox);
