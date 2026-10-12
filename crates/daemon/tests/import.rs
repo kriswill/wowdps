@@ -738,6 +738,8 @@ struct Flaky {
     fail_removes_in: std::cell::Cell<Option<&'static str>>,
     /// Single files (`dir/name`) whose removal fails.
     fail_remove_files: std::cell::RefCell<Vec<String>>,
+    /// A directory whose writes succeed this many more times, then fail.
+    writes_left_in: std::cell::Cell<Option<(&'static str, u32)>>,
 }
 
 impl Flaky {
@@ -748,6 +750,7 @@ impl Flaky {
             fail_reads_in: std::cell::Cell::new(None),
             fail_removes_in: std::cell::Cell::new(None),
             fail_remove_files: std::cell::RefCell::new(Vec::new()),
+            writes_left_in: std::cell::Cell::new(None),
         }
     }
 }
@@ -774,6 +777,14 @@ impl Backend for Flaky {
     fn write(&mut self, dir: &str, name: &str, bytes: &[u8]) -> std::io::Result<()> {
         if self.fail_writes_in.get() == Some(dir) {
             return Err(std::io::Error::other(format!("{dir} writes fail")));
+        }
+        if let Some((d, left)) = self.writes_left_in.get()
+            && d == dir
+        {
+            if left == 0 {
+                return Err(std::io::Error::other(format!("{dir} writes run out")));
+            }
+            self.writes_left_in.set(Some((d, left - 1)));
         }
         self.inner.write(dir, name, bytes)
     }
@@ -908,9 +919,10 @@ fn a_moved_import_whose_old_card_stays_says_so() {
         .import_replay(&imported(1_000_000, false, 15), &bytes)
         .unwrap();
     store.backend().fail_removes_in.set(Some("fights"));
-    let (new, _) = store
+    let (new, replaced) = store
         .import_replay(&imported(1_005_000, false, 15), &bytes)
         .unwrap();
+    assert!(!replaced, "the earlier import is kept, not replaced");
     assert!(store.card(&old).is_some() && store.card(&new).is_some());
     assert!(store.has_replay(&old), "kept whole, its replay too");
     let said = store.last_error.clone().unwrap_or_default();
@@ -1160,4 +1172,122 @@ fn an_undo_that_fails_makes_the_copy_the_carry() {
         .unwrap();
     assert!(store.card(&old).is_none());
     assert_eq!(notes(&store, &new).as_deref(), Some(&b"{\"note\":1}\n"[..]));
+}
+
+/// The old annotation file is removed after the copy and BEFORE the card:
+/// when that removal alone fails the copy is undone and the old import is
+/// kept whole — card, replay and its own notes — and a retry retires it,
+/// carrying the notes once.
+#[test]
+fn a_failed_old_notes_removal_keeps_the_old_import_whole() {
+    let bytes = replay_bytes();
+    let mut first = mem(Retention::default());
+    let (old, _) = first
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let mut backend = copied(first.backend());
+    backend
+        .write("annotations", &format!("{old}.ndjson"), b"{\"note\":1}\n")
+        .unwrap();
+    let mut store = Store::open(Flaky::over(backend), Retention::default());
+    store
+        .backend()
+        .fail_remove_files
+        .replace(vec![format!("annotations/{old}.ndjson")]);
+    let (new, replaced) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert!(!replaced);
+    let inner =
+        |store: &Store<Flaky>, dir: &str, name: String| store.backend().inner.read(dir, &name);
+    assert!(store.card(&old).is_some() && store.has_replay(&old));
+    assert!(inner(&store, "fights", format!("{old}.json")).is_some());
+    assert_eq!(
+        inner(&store, "annotations", format!("{old}.ndjson")).as_deref(),
+        Some(&b"{\"note\":1}\n"[..])
+    );
+    assert_eq!(
+        inner(&store, "annotations", format!("{new}.ndjson")),
+        None,
+        "the copy undone"
+    );
+
+    store.backend().fail_remove_files.replace(Vec::new());
+    let (_, replaced) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert!(replaced);
+    assert!(store.card(&old).is_none());
+    assert_eq!(inner(&store, "annotations", format!("{old}.ndjson")), None);
+    assert_eq!(
+        inner(&store, "annotations", format!("{new}.ndjson")).as_deref(),
+        Some(&b"{\"note\":1}\n"[..])
+    );
+}
+
+/// A retired import's replay file that cannot be removed stays listed —
+/// answered, as the file is there — until retention removes it, so a
+/// restart shows nothing the index did not.
+#[test]
+fn a_replay_file_that_will_not_go_stays_listed_until_it_does() {
+    let tmp = Temp::new("replay-stays");
+    let path = log_of(&tmp, &[(30, false, 15)]);
+    let facts = LogFacts::read(&path);
+    let bytes = replay_bytes();
+    let mut store = Store::open(Flaky::over(MemBackend::new()), Retention::default());
+    let (old, _) = store
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    store
+        .backend()
+        .fail_remove_files
+        .replace(vec![format!("replay/{old}.bin")]);
+    let (new, replaced) = store
+        .import_replay(&imported(1_005_000, false, 15), &bytes)
+        .unwrap();
+    assert!(replaced, "the card is gone");
+    assert!(store.card(&old).is_none() && store.card(&new).is_some());
+    assert!(store.has_replay(&old), "listed while its file is there");
+    assert!(store.replay_file(&old).is_some());
+    let said = store.last_error.clone().unwrap_or_default();
+    assert!(said.contains(&format!("{old}.bin")), "{said}");
+
+    // Retention tries it again once it can go.
+    store.backend().fail_remove_files.replace(Vec::new());
+    store.store(&closed_fights(&path)[0], facts).unwrap();
+    assert!(!store.has_replay(&old));
+    assert!(
+        !store
+            .backend()
+            .inner
+            .exists("replay", &format!("{old}.bin"))
+    );
+}
+
+/// When the card's write fails AND the old replay cannot be written back,
+/// the answer and `last_error` say both: the write that failed, and that
+/// the old card is left without its replay.
+#[test]
+fn a_failed_restore_is_said_beside_the_failed_write() {
+    let bytes = replay_bytes();
+    let mut store = Store::open(Flaky::over(MemBackend::new()), Retention::default());
+    let (id, _) = store
+        .import_replay(&imported(1_000_000, false, 15), &bytes)
+        .unwrap();
+    let card = store.card(&id).unwrap().clone();
+    // The new replay's write goes through, the card's fails, and so does
+    // the old replay's write back.
+    store.backend().fail_writes_in.set(Some("fights"));
+    store.backend().writes_left_in.set(Some(("replay", 1)));
+    let err = store
+        .import_replay(&imported(1_000_000, true, 15), &bytes)
+        .unwrap_err();
+    assert!(err.contains("fights writes fail"), "{err}");
+    assert!(err.contains("left without one"), "{err}");
+    assert_eq!(store.last_error.as_deref(), Some(err.as_str()));
+    assert_eq!(store.card(&id), Some(&card), "the old card stands");
+    assert!(
+        store.replay_file(&id).is_none(),
+        "without a replay, as said"
+    );
 }

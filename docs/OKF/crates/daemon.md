@@ -125,10 +125,12 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   (`Origin::Imported`, `imported_id`, log 0) and keeps the replay through
   `store_replay`, nothing else, so a stored fight answers the card alone
   (tier 1). The same source replaces it, pin carried; a moved id is retired
-  (`retire_import`: its annotations carried over, then its card file
-  removed, and only then its replay and index entry; when a step fails the
-  old import is kept whole, as the files hold it, and `last_error` says
-  why). A
+  (`retire_import`: its annotations moved over — copied, the old file
+  removed — then its card file removed, and only then its replay and index
+  entry; when any one step fails `undo_carry` undoes what was done, the old
+  import is kept whole, as the files hold it, `replaced` says false, and
+  `last_error` says why). A replay file that cannot be removed keeps its
+  index entry (`drop_replay`) and retention tries it again. A
   failed write leaves the store as it was: a re-import's old replay goes
   back under its old card (`restore_replay`; an unreadable one refuses the
   re-import first), and the size cap trims only once the card is in

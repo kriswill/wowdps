@@ -1908,6 +1908,15 @@ impl From<&HistoryOptions> for Retention {
 /// format its head names, its size) — to be put back by a failed re-import.
 type HeldReplay = (Vec<u8>, (Option<u8>, u64));
 
+/// v46: annotations carried from a retired import to the id that replaced
+/// it, held to be undone: the new id's file name, what it held before (if
+/// anything), and the text carried.
+struct Carried {
+    name: String,
+    before: Option<Vec<u8>>,
+    text: Vec<u8>,
+}
+
 /// The files plus their in-memory index. Generic over the backend so
 /// `daemon::mock` drives it synchronously in memory.
 pub struct Store<B: Backend> {
@@ -2321,7 +2330,7 @@ impl<B: Backend> Store<B> {
             .filter(|c| c.origin == card.origin && c.id != id)
             .map(|c| c.id.clone())
             .collect();
-        let replaced = previous.is_some() || !moved.is_empty();
+        let mut replaced = previous.is_some();
         card.pinned = previous
             .as_ref()
             .or_else(|| moved.first().and_then(|m| self.card(m)))
@@ -2361,15 +2370,17 @@ impl<B: Backend> Store<B> {
                 )
                 .map_err(|e| format!("history write failed: {e}"))
         };
-        if let Err(why) = written {
+        if let Err(mut why) = written {
             // Back as it was: the fight imported before stays, over its own
             // replay; a first import leaves nothing behind.
             self.cards.retain(|c| c.id != id);
             match previous {
                 Some(p) => {
                     self.insert_card(p);
-                    if kept {
-                        self.restore_replay(&id, old_replay);
+                    if kept && let Some(lost) = self.restore_replay(&id, old_replay) {
+                        // Both said: the card write that failed, and that
+                        // the old card is left without its replay.
+                        why.push_str(&format!("; {lost}"));
                     }
                 }
                 None => {
@@ -2381,7 +2392,8 @@ impl<B: Backend> Store<B> {
             return Err(why);
         }
         for old in &moved {
-            self.retire_import(old, &id);
+            // Replaced only when the earlier import is gone, not kept beside.
+            replaced |= self.retire_import(old, &id);
         }
         self.trim_replays(&protected);
         Ok((id, replaced))
@@ -2390,38 +2402,45 @@ impl<B: Backend> Store<B> {
     /// Put back the replay a failed re-import overwrote: its bytes and its
     /// entry, or — when it cannot be written back, or there was none — no
     /// replay at all, never the new import's under the old card.
-    fn restore_replay(&mut self, id: &str, old: Option<HeldReplay>) {
+    /// What could not be put back, if anything: the caller says it beside
+    /// its own failure.
+    fn restore_replay(&mut self, id: &str, old: Option<HeldReplay>) -> Option<String> {
         let name = format!("{id}.bin");
         match old {
             Some((bytes, entry)) => match self.backend.write("replay", &name, &bytes) {
                 Ok(()) => {
                     self.replays.insert(id.to_string(), entry);
+                    None
                 }
                 Err(e) => {
                     self.drop_replay(id);
-                    self.last_error = Some(format!("history write failed: {e}"));
+                    Some(format!(
+                        "its old replay could not be put back ({e}): {id} is left without one"
+                    ))
                 }
             },
-            None => self.drop_replay(id),
+            None => {
+                self.drop_replay(id);
+                None
+            }
         }
     }
 
     /// An import replaced under a new id (its start moved): its
-    /// annotations carried to the id that replaced it, then its card file
-    /// removed, and only then its replay and its place in the index. When
-    /// a step fails the old import stays whole — the index keeps what the
+    /// annotations MOVED to the id that replaced it (copied, then the old
+    /// file removed), then its card file removed, and only then its replay
+    /// and its place in the index. When any one step fails what was done is
+    /// undone and the old import stays whole — the index keeps what the
     /// files hold, so a restart brings back nothing it does not show, and
     /// the next import of the source retires it again — and `last_error`
-    /// says why.
-    fn retire_import(&mut self, old: &str, new: &str) {
+    /// says why. Whether it was retired.
+    fn retire_import(&mut self, old: &str, new: &str) -> bool {
         let keep = |store: &mut Self, why: String| {
             store.last_error = Some(format!("{why} ({old} is kept beside {new})"));
+            false
         };
-        // The annotations are COPIED to the new id first and the old file
-        // removed only once the card is gone, so a step that fails leaves
-        // them as they were: never lost, never carried twice on a retry.
         let notes = format!("{old}.ndjson");
-        let mut carried: Option<(String, Option<Vec<u8>>)> = None;
+        let mut carried: Option<Carried> = None;
         if self.backend.exists("annotations", &notes) {
             let Some(text) = self.backend.read("annotations", &notes) else {
                 return keep(self, "history read failed: its annotations".to_string());
@@ -2439,30 +2458,63 @@ impl<B: Backend> Store<B> {
             if let Err(e) = self.backend.write("annotations", &name, &merged) {
                 return keep(self, format!("history write failed: {e}"));
             }
-            carried = Some((name, before));
+            let carry = Carried { name, before, text };
+            if let Err(e) = self.backend.remove("annotations", &notes) {
+                // The old file is still there: only the copy to undo.
+                let why = format!("history remove failed: {e}");
+                let why = self.undo_carry(&notes, carry, false, why);
+                return keep(self, why);
+            }
+            carried = Some(carry);
         }
         if let Err(e) = self.backend.remove("fights", &format!("{old}.json")) {
-            // The copy undone: the new id's annotations back as they were.
-            // An undo that fails leaves the copy as the carry instead (the
-            // old file goes), so a retry never carries them twice.
             let mut why = format!("history remove failed: {e}");
-            if let Some((name, before)) = carried {
-                let undone = match before {
-                    Some(bytes) => self.backend.write("annotations", &name, &bytes),
-                    None => self.backend.remove("annotations", &name),
-                };
-                if let Err(u) = undone {
-                    let _ = self.backend.remove("annotations", &notes);
-                    why.push_str(&format!("; its annotations are {new}'s now ({u})"));
-                }
+            if let Some(carry) = carried {
+                why = self.undo_carry(&notes, carry, true, why);
             }
             return keep(self, why);
         }
-        if carried.is_some() {
-            let _ = self.backend.remove("annotations", &notes);
-        }
         self.cards.retain(|c| c.id != old);
         self.drop_replay(old);
+        true
+    }
+
+    /// Undo a carry of annotations to another id: the old file's text
+    /// written back first when it was removed (`restore_old`), then the new
+    /// id's file put back as it was. When the old text cannot be written
+    /// back the copy stays (the annotations live on, under the new id).
+    /// When the new id's file cannot be put back after the old text was,
+    /// the old file goes again and the copy is the carry, so a retry never
+    /// carries them twice; only when that fails too do they stand under
+    /// both. `why` with what went wrong.
+    fn undo_carry(
+        &mut self,
+        notes: &str,
+        carry: Carried,
+        restore_old: bool,
+        why: String,
+    ) -> String {
+        let mut why = why;
+        let Carried { name, before, text } = carry;
+        let new = name.strip_suffix(".ndjson").unwrap_or(&name).to_string();
+        if restore_old && let Err(e) = self.backend.write("annotations", notes, &text) {
+            why.push_str(&format!("; its annotations are {new}'s now ({e})"));
+            return why;
+        }
+        let undone = match before {
+            Some(bytes) => self.backend.write("annotations", &name, &bytes),
+            None => self.backend.remove("annotations", &name),
+        };
+        if let Err(e) = undone {
+            if restore_old && self.backend.remove("annotations", notes).is_ok() {
+                why.push_str(&format!("; its annotations are {new}'s now ({e})"));
+            } else {
+                why.push_str(&format!(
+                    "; its annotations stand under both ids until it is retired ({e})"
+                ));
+            }
+        }
+        why
     }
 
     /// A card into the index, which is sorted by start.
@@ -2500,9 +2552,18 @@ impl<B: Backend> Store<B> {
     }
 
     /// v45: remove a fight's replay tier, if it has one.
+    /// The index entry goes only with the file: one that cannot be removed
+    /// stays listed (and answered), and retention tries it again, so a
+    /// restart shows nothing the index did not.
     fn drop_replay(&mut self, id: &str) {
-        if self.replays.remove(id).is_some() {
-            let _ = self.backend.remove("replay", &format!("{id}.bin"));
+        if !self.replays.contains_key(id) {
+            return;
+        }
+        match self.backend.remove("replay", &format!("{id}.bin")) {
+            Ok(()) => {
+                self.replays.remove(id);
+            }
+            Err(e) => self.last_error = Some(format!("history remove failed: {e} ({id}.bin)")),
         }
     }
 

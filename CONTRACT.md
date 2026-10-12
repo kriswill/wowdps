@@ -874,7 +874,7 @@ raid bosses, arena matches, keyed runs' Σ (their member bosses — any boss at 
 plain visits' Σ; Trash only under the switch; noise never. Retention per
 (kind, encounter | map, difficulty), oldest first, never the protected set
 (pinned, annotated, (v46) imported (the imported fights paragraph below), the fastest kill, the owner's best per_sec per spec for
-damage and healing, and — 1a step 2b — a Tank spec's best `mitigated_pct` on kills; a measure of 0 or an aborted fight protects nothing; v42 every boss kill and timed key, kept whole; and (v45) every PROGRESSION wipe — a boss pull lost, not aborted, at an (encounter id, difficulty) no stored card has killed, kept whole as a kill is, details, series and replay alike, whatever its length, until the first kill there lands and the wipes before it answer to the caps again; `history_keep_progression_whole`, on by default; a Heroic kill says nothing of a Mythic wipe). (v45, R29) Every boss pull and keystone run is also cut into the REPLAY tier, `replay/<id>.bin` (`proto::replay`): from its log, beside the meter on import and regrade, as a cut alone after a live close once the thread is idle, and by the rewrite queue for a fight whose slot lacks a current file; a fight keeps it while protected, else among the newest `history_keep_details_per_encounter` of its group, and past `history_replay_mb` (default 4096) the oldest unprotected go — never a protected one. `GetReplay` answers the file; `HistoryStatus` counts the tier and the kept-whole set by why. "Me" is `history_characters`, else (v31) a character the
+damage and healing, and — 1a step 2b — a Tank spec's best `mitigated_pct` on kills; a measure of 0 or an aborted fight protects nothing; v42 every boss kill and timed key, kept whole; and (v45) every PROGRESSION wipe — a boss pull lost, not aborted, at an (encounter id, difficulty) no stored card has killed, kept whole as a kill is, details, series and replay alike, whatever its length, until the first kill there lands and the wipes before it answer to the caps again; `history_keep_progression_whole`, on by default; a Heroic kill says nothing of a Mythic wipe). (v45, R29) Every boss pull and keystone run is also cut into the REPLAY tier, `replay/<id>.bin` (`proto::replay`): from its log, beside the meter on import and regrade, as a cut alone after a live close once the thread is idle, and by the rewrite queue for a fight whose slot lacks a current file; a fight keeps it while protected, else among the newest `history_keep_details_per_encounter` of its group, and past `history_replay_mb` (default 4096) the oldest unprotected go — never a protected one (v46: a replay file that cannot be removed stays listed, and answered, until retention removes it). `GetReplay` answers the file; `HistoryStatus` counts the tier and the kept-whole set by why. "Me" is `history_characters`, else (v31) a character the
 wowdps addon marked as the account's own on the newest card, else the one guid every
 stored log's COMBATANT_INFO named. `Status` carries a `HistoryStatus` (v20).
 Whose rows are the READER'S (v35, `daemon::mine::Mine`) is wider than "me": every
@@ -901,10 +901,11 @@ id a local card holds; it keeps the replay, its "you" the import's owner. A requ
 never takes (the store off, its queue full) is answered `Refused` too, saying why, and a busy
 refusal is no write lost (`HistoryStatus::dropped` does not tick). The id is
 `imported_id(source, start_utc_ms)`; the same source again replaces the card and replay (the
-same id, or the old id retired when the start moved, its annotations carried to the new id —
-an old import whose annotations cannot be carried or whose card file cannot be removed is kept
+same id, or the old id retired when the start moved: its annotations moved to the new id,
+then its card file removed, and when any one step fails it is undone and the old import kept
 whole beside the new one, the index holding what the files do), the pin carried, and says so
-(`replaced`); a failed write leaves the store as it was — a re-import's old replay put back
+(`replaced`, true only when the earlier import is gone); a failed write leaves the store as
+it was — a re-import's old replay put back
 under its old card (one it cannot read refuses the re-import first), and the size cap trims
 for an import only once its card is in. Imported fights are PROTECTED like pins —
 never evicted, demoted or trimmed by the caps or `history_replay_mb`, counted apart as
