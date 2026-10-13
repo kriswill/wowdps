@@ -202,13 +202,17 @@ pub struct Map {
     pub glow: BTreeMap<String, Glow>,
     /// The world box the render covers, `[x0, y0, x1, y1]` with `x0 < x1`
     /// and `y0 < y1`: where the heuristic frames the wrong thing and a
-    /// stencil is more than wanted. Unsaid, the renderer's own framing.
+    /// stencil is more than wanted. With a stencil too, the two meet.
+    /// Unsaid, the renderer's own framing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<[f32; 4]>,
-    /// WMO group uids drawn although a rule would leave them out.
+    /// WMO group uids drawn although a rule would leave them out: another
+    /// floor's group of the floor's own building, faces over the ceiling
+    /// or over a terrain level's ground. An exclusion still wins.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_groups: Vec<u32>,
-    /// Model FileDataIDs drawn although a rule would leave them out.
+    /// Model FileDataIDs drawn although a rule would leave them out (as
+    /// `include_groups`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_models: Vec<u32>,
     /// Pieces drawn see-through rather than left out: a roof over the
@@ -216,12 +220,16 @@ pub struct Map {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fade: BTreeMap<String, Fade>,
     /// What the ceiling is measured from on a terrain level: the terrain
-    /// under each point, the ground the players walked, or a height.
-    /// Unsaid, the renderer's own reading. Its type is `Datum`, as
+    /// under each point, the ground the players walked (every stored
+    /// keystone run's posts on the level), or a height. Unsaid, the
+    /// renderer's own reading. An arena does not read it: it is cut at one
+    /// level, its `level` where it says one. Its type is `Datum`, as
     /// `Ground` is what a fight leaves on the floor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ground: Option<Datum>,
-    /// Times the graded look's brightness (`light = "graded"`); unsaid, 1.
+    /// Times the graded look's brightness (`light = "graded"`, and every
+    /// surface that gives no light of its own): gen-floors' `--exposure`
+    /// default times this; an `--exposure` given outright wins. Unsaid, 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exposure: Option<f32>,
     /// The places of the floor the camera knows: a boss's court, a hall,
@@ -477,15 +485,19 @@ impl Travel {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Transition {
-    /// Seconds without a post before a unit is quiet.
+    /// Seconds without a post before a unit is quiet; unsaid, the
+    /// replay's 3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<f32>,
     /// What a quiet unit does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<UnitQuiet>,
-    /// How a jump between two posts further than `port_yd` is drawn.
+    /// How a port lands: a jump faster than `port_yd`, or to another floor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<Port>,
+    /// Yards a second past which a jump is a port: further than this for
+    /// each second between its two posts, a second at least. Unsaid, the
+    /// replay's 60.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port_yd: Option<f32>,
     /// What the camera does as the party moves from one area to another.
@@ -720,7 +732,21 @@ impl Map {
             .reduce(f32::max)
             .unwrap_or(f32::MAX)
     }
+
+    /// How much of a world point the stencil keeps, 0 to 1: all of it
+    /// half `STENCIL_FEATHER` inside the edge and deeper, none half of it
+    /// outside and further, fading between; all of it with no stencil.
+    /// What gen-floors cuts a render with, and the replay an older render
+    /// cut to fewer shapes.
+    pub fn stencil_keep(&self, p: [f32; 2]) -> f32 {
+        (self.stencil_depth(p) / STENCIL_FEATHER + 0.5).clamp(0.0, 1.0)
+    }
 }
+
+/// How soft a stencil's edge is, in yards: a render reaches this far past
+/// the stencil's bounds, and what lies within it of the edge fades
+/// (`Map::stencil_keep`).
+pub const STENCIL_FEATHER: f32 = 1.0;
 
 /// Shapes' world bounds joined, `[x0, y0, x1, y1]`: `None` with no shape
 /// that is one.

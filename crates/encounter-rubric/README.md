@@ -868,22 +868,28 @@ map reads. The season's speeds are a `[defaults.travel]` table beside
 What the replay does while the log is quiet about a unit, and as the party
 moves from one area to another, is the map's `transition`:
 
-- `after`: seconds without a post before a unit is quiet.
+- `after`: seconds without a post before a unit is quiet. Unsaid, 3: out
+  of combat the log posts a player every 2 s or so, and a shorter wait
+  would ghost a unit at every such gap.
 - `unit`: what a quiet unit does. `hold`: it stays where it was last
   posted, today's behavior. `fade`: a ghost of it stays at its last post.
   `travel`: a solver routes it along the floor's paths (its areas and the
   ways between them, a graph) from its last post to its next, timed to
   arrive as the next post does, and draws it as a ghost on the way.
-- `port`, `port_yd`: a jump between two posts further than `port_yd`
-  yards apart (a portal, a teleport) is a port. `cut`: the unit is drawn
-  at its new post at once. `flash`: a flash where it left and where it
-  landed.
+- `port`, `port_yd`: a jump faster than anyone goes (a portal, a
+  teleport) is a port. `port_yd` is that speed in yards a second: a jump
+  between two posts further than `port_yd` yards for each second between
+  them (a second at least) is one, and so is a move to another floor.
+  Unsaid, 60 yd a second. `port` is how it lands. `cut`: the unit is
+  drawn at its new post at once. `flash`: a flash where it left and where
+  it landed.
 - `camera`: what the camera does as the party moves to another area.
   `hold`: it stays. `glide`: it eases over to the new area's `home`.
   `cut`: it jumps there.
 
-Unsaid, each is today's: every unit held at its last post, the camera
-held.
+Unsaid, `unit`, `port` and `camera` are today's: every unit held at its
+last post until its next, the camera held. `after` unsaid is 3 s and
+`port_yd` 60 yd a second, the replay's own readings of a quiet leg.
 
 ## Who reads what
 
@@ -896,9 +902,24 @@ held.
   stencil makes the render cover its shapes alone, clear outside them past
   a yard's fade, with no minimap backdrop and `stencil = <shapes>` in the
   sidecar. Entombed Sentinels' went from 10082×10008 px to 1312×1232.
-  A level's `[map]` is read the same way, and the map's `crop`,
-  `include_groups`, `include_models`, `fade`, `ground`, `exposure` and an
-  area's `ceiling` are how a render frames and draws a floor.
+  The map's `crop` is the world box the render covers (met with the
+  stencil where there is one too; a room off the arena reads none),
+  `include_groups` and `include_models` are drawn where a rule of the
+  render's own would leave them out (another floor's group of the
+  floor's building, faces over the ceiling or a terrain level's ground,
+  with a group's split children and its props; an exclusion still wins),
+  a `fade` draws its piece see-through over what lies under it (a
+  group's split children and its props with it), and `exposure` times
+  the tool's graded exposure (`--exposure` given outright wins). A
+  level's `[map]` is read for what it leaves out, includes and fades, its
+  crop and exposure, and its `ground`: `"walked"`, every stored keystone
+  run's posts on the level (what every season dungeon's terrain level
+  says); a height; else its terrain. A level of buildings is cut by its
+  own groups and reads no `ground`; nor does an arena (it is cut at one
+  level, its `level` where it says one). Each of these joins a render's
+  `params` hash where it is said (`Map::params_hash`, `Map::level_params`;
+  a room's hash leaves the crop out), and `gen-floors --stale` renders
+  what the rubric has moved since. An area's `ceiling` is not read yet.
 - **The map editor** (private, later) writes a level's and an arena's
   `[map]`: its areas, paths and transition, and the render's tweaks.
   Today they are written by hand.

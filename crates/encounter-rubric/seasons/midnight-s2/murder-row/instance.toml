@@ -4,3 +4,16 @@ name = "Murder Row"
 kind = "dungeon"
 journal = 1304
 map = 2813
+
+# The dungeon's terrain levels, by UiMap id, part of the base: each one's
+# render is cut over the ground its parties walked (every stored keystone
+# run's posts on it), as gen-floors drew them from a level posts file. Its
+# other levels are buildings, cut by their own groups.
+
+[level.2433.map]
+floor = "murder-row-L1"
+ground = "walked"
+
+[level.2434.map]
+floor = "murder-row-L2"
+ground = "walked"

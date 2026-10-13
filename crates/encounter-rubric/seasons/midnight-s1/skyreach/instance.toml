@@ -4,3 +4,12 @@ name = "Skyreach"
 kind = "dungeon"
 journal = 476
 map = 1209
+
+# The dungeon's terrain level, by UiMap id, part of the base: its render
+# is cut over the ground its parties walked (every stored keystone run's
+# posts on it), as gen-floors drew it from a level posts file. Its
+# other levels are buildings, cut by their own groups.
+
+[level.601.map]
+floor = "skyreach-L1"
+ground = "walked"
