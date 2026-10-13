@@ -2,6 +2,14 @@
 
 ## 2026-10-12
 
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the render
+  keys read — a sidecar's `params` and `made` (`Params`, `RenderOptions`),
+  `Map::params_hash`, `Map::level_params`, `Encounter::floor_params`,
+  `Floors::stale`; a dungeon level's sidecars (`Floors::levels`,
+  `level_renders`); `Map::stencil_keep` and `STENCIL_FEATHER`; every
+  season dungeon's terrain level says `ground = "walked"`; `write::ORDER`
+  is public.
+
 - **Update** — [wowdps-encounter-rubric](encounter-rubric.md): after review
   — `Area::altitudes`, `travel` in `INSTANCE_TABLES`,
   `fixtures/resolved-levels.txt`; a set may amend an arena's map, never a

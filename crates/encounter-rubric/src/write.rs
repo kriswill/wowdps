@@ -15,7 +15,8 @@ use crate::Encounter;
 
 /// The schema's keys in the order a file lists them: every key it writes
 /// (a test holds it). A key not here would come after, alphabetically.
-const ORDER: &[&str] = &[
+/// The map editor puts a key it adds to an instance file where this does.
+pub const ORDER: &[&str] = &[
     "schema",
     "encounter",
     "enabled",

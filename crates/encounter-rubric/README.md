@@ -896,9 +896,24 @@ held.
   stencil makes the render cover its shapes alone, clear outside them past
   a yard's fade, with no minimap backdrop and `stencil = <shapes>` in the
   sidecar. Entombed Sentinels' went from 10082×10008 px to 1312×1232.
-  A level's `[map]` is read the same way, and the map's `crop`,
-  `include_groups`, `include_models`, `fade`, `ground`, `exposure` and an
-  area's `ceiling` are how a render frames and draws a floor.
+  The map's `crop` is the world box the render covers (met with the
+  stencil where there is one too; a room off the arena reads none),
+  `include_groups` and `include_models` are drawn where a rule of the
+  render's own would leave them out (another floor's group of the
+  floor's building, faces over the ceiling or a terrain level's ground,
+  with a group's split children and its props; an exclusion still wins),
+  a `fade` draws its piece see-through over what lies under it (a
+  group's split children and its props with it), and `exposure` times
+  the tool's graded exposure (`--exposure` given outright wins). A
+  level's `[map]` is read for what it leaves out, includes and fades, its
+  crop and exposure, and its `ground`: `"walked"`, every stored keystone
+  run's posts on the level (what every season dungeon's terrain level
+  says); a height; else its terrain. A level of buildings is cut by its
+  own groups and reads no `ground`; nor does an arena (it is cut at one
+  level, its `level` where it says one). Each of these joins a render's
+  `params` hash where it is said (`Map::params_hash`, `Map::level_params`;
+  a room's hash leaves the crop out), and `gen-floors --stale` renders
+  what the rubric has moved since. An area's `ceiling` is not read yet.
 - **The map editor** (private, later) writes a level's and an arena's
   `[map]`: its areas, paths and transition, and the render's tweaks.
   Today they are written by hand.
