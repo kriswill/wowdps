@@ -868,22 +868,28 @@ map reads. The season's speeds are a `[defaults.travel]` table beside
 What the replay does while the log is quiet about a unit, and as the party
 moves from one area to another, is the map's `transition`:
 
-- `after`: seconds without a post before a unit is quiet.
+- `after`: seconds without a post before a unit is quiet. Unsaid, 3: out
+  of combat the log posts a player every 2 s or so, and a shorter wait
+  would ghost a unit at every such gap.
 - `unit`: what a quiet unit does. `hold`: it stays where it was last
   posted, today's behavior. `fade`: a ghost of it stays at its last post.
   `travel`: a solver routes it along the floor's paths (its areas and the
   ways between them, a graph) from its last post to its next, timed to
   arrive as the next post does, and draws it as a ghost on the way.
-- `port`, `port_yd`: a jump between two posts further than `port_yd`
-  yards apart (a portal, a teleport) is a port. `cut`: the unit is drawn
-  at its new post at once. `flash`: a flash where it left and where it
-  landed.
+- `port`, `port_yd`: a jump faster than anyone goes (a portal, a
+  teleport) is a port. `port_yd` is that speed in yards a second: a jump
+  between two posts further than `port_yd` yards for each second between
+  them (a second at least) is one, and so is a move to another floor.
+  Unsaid, 60 yd a second. `port` is how it lands. `cut`: the unit is
+  drawn at its new post at once. `flash`: a flash where it left and where
+  it landed.
 - `camera`: what the camera does as the party moves to another area.
   `hold`: it stays. `glide`: it eases over to the new area's `home`.
   `cut`: it jumps there.
 
-Unsaid, each is today's: every unit held at its last post, the camera
-held.
+Unsaid, `unit`, `port` and `camera` are today's: every unit held at its
+last post until its next, the camera held. `after` unsaid is 3 s and
+`port_yd` 60 yd a second, the replay's own readings of a quiet leg.
 
 ## Who reads what
 

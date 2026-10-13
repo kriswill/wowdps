@@ -485,15 +485,19 @@ impl Travel {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Transition {
-    /// Seconds without a post before a unit is quiet.
+    /// Seconds without a post before a unit is quiet; unsaid, the
+    /// replay's 3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<f32>,
     /// What a quiet unit does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<UnitQuiet>,
-    /// How a jump between two posts further than `port_yd` is drawn.
+    /// How a port lands: a jump faster than `port_yd`, or to another floor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<Port>,
+    /// Yards a second past which a jump is a port: further than this for
+    /// each second between its two posts, a second at least. Unsaid, the
+    /// replay's 60.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port_yd: Option<f32>,
     /// What the camera does as the party moves from one area to another.
