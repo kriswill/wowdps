@@ -4,3 +4,11 @@ name = "Seat of the Triumvirate"
 kind = "dungeon"
 journal = 945
 map = 1753
+
+# The dungeon's terrain level, by UiMap id, part of the base: its render
+# is cut over the ground its parties walked (every stored keystone run's
+# posts on it), as gen-floors drew it from a level posts file.
+
+[level.903.map]
+floor = "seat-of-the-triumvirate-L1"
+ground = "walked"

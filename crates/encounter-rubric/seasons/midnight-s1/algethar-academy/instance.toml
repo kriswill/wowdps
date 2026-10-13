@@ -13,7 +13,10 @@ map = 2526
 # party's middle every 10 s between two bosses, thinned by hand, its mode
 # read from its pace. The other places are where the party stood as it came
 # onto or left a level. The radii of the places that are no court, the
-# names and the modes are guesses for the map editor to refine.
+# names and the modes are guesses for the map editor to refine. Both levels
+# are terrain, each render cut over the ground its parties walked
+# (`ground = "walked"`, every stored keystone run's posts on it); the third
+# (UiMap 2099) is buildings in none of the map's tiles, and draws nothing.
 
 # The Academy's grounds (the floors cache's level 1). The run begins at the
 # entrance; the Overgrown Ancient, Vexamus and Echo of Doragosa are fought
@@ -21,6 +24,7 @@ map = 2526
 # back at its arrival, carried from Crawth's court.
 [level.2097.map]
 floor = "algethar-academy-L1"
+ground = "walked"
 
 [level.2097.map.area.entrance]
 shape = [{ center = [1410, -2772], radius = 15 }]
@@ -88,6 +92,7 @@ points = [
 # second), posted on this level until it is set down on the grounds.
 [level.2098.map]
 floor = "algethar-academy-L2"
+ground = "walked"
 
 [level.2098.map.area.arrival]
 name = "From the grounds"

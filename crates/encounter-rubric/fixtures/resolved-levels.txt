@@ -25,7 +25,9 @@ Level {
         include_groups: [],
         include_models: [],
         fade: {},
-        ground: None,
+        ground: Some(
+            Walked,
+        ),
         exposure: None,
         area: {
             "departure": Area {
@@ -217,7 +219,9 @@ Level {
         include_groups: [],
         include_models: [],
         fade: {},
-        ground: None,
+        ground: Some(
+            Walked,
+        ),
         exposure: None,
         area: {
             "arrival": Area {
@@ -548,6 +552,222 @@ Level {
         vehicle: None,
     },
 }
+== 2513 midnight-s2/den-of-nalorakk
+Level {
+    ui_map: 2513,
+    instance: "den-of-nalorakk",
+    map: Map {
+        ui_map: Some(
+            2513,
+        ),
+        floor: Some(
+            "den-of-nalorakk-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2514 midnight-s2/den-of-nalorakk
+Level {
+    ui_map: 2514,
+    instance: "den-of-nalorakk",
+    map: Map {
+        ui_map: Some(
+            2514,
+        ),
+        floor: Some(
+            "den-of-nalorakk-L2",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2433 midnight-s2/murder-row
+Level {
+    ui_map: 2433,
+    instance: "murder-row",
+    map: Map {
+        ui_map: Some(
+            2433,
+        ),
+        floor: Some(
+            "murder-row-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2434 midnight-s2/murder-row
+Level {
+    ui_map: 2434,
+    instance: "murder-row",
+    map: Map {
+        ui_map: Some(
+            2434,
+        ),
+        floor: Some(
+            "murder-row-L2",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
 == 2094 midnight-s2/ruby-life-pools
 Level {
     ui_map: 2094,
@@ -575,7 +795,9 @@ Level {
         include_groups: [],
         include_models: [],
         fade: {},
-        ground: None,
+        ground: Some(
+            Walked,
+        ),
         exposure: None,
         area: {
             "arrival": Area {
@@ -914,6 +1136,276 @@ Level {
         vehicle: None,
     },
 }
+== 1038 midnight-s2/temple-of-sethraliss
+Level {
+    ui_map: 1038,
+    instance: "temple-of-sethraliss",
+    map: Map {
+        ui_map: Some(
+            1038,
+        ),
+        floor: Some(
+            "temple-of-sethraliss-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 1043 midnight-s2/temple-of-sethraliss
+Level {
+    ui_map: 1043,
+    instance: "temple-of-sethraliss",
+    map: Map {
+        ui_map: Some(
+            1043,
+        ),
+        floor: Some(
+            "temple-of-sethraliss-L2",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2500 midnight-s2/the-blinding-vale
+Level {
+    ui_map: 2500,
+    instance: "the-blinding-vale",
+    map: Map {
+        ui_map: Some(
+            2500,
+        ),
+        floor: Some(
+            "the-blinding-vale-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2572 midnight-s2/voidscar-arena
+Level {
+    ui_map: 2572,
+    instance: "voidscar-arena",
+    map: Map {
+        ui_map: Some(
+            2572,
+        ),
+        floor: Some(
+            "voidscar-arena-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2573 midnight-s2/voidscar-arena
+Level {
+    ui_map: 2573,
+    instance: "voidscar-arena",
+    map: Map {
+        ui_map: Some(
+            2573,
+        ),
+        floor: Some(
+            "voidscar-arena-L2",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
 == 2097 midnight-s1/algethar-academy
 Level {
     ui_map: 2097,
@@ -941,7 +1433,9 @@ Level {
         include_groups: [],
         include_models: [],
         fade: {},
-        ground: None,
+        ground: Some(
+            Walked,
+        ),
         exposure: None,
         area: {
             "arrival": Area {
@@ -1293,7 +1787,9 @@ Level {
         include_groups: [],
         include_models: [],
         fade: {},
-        ground: None,
+        ground: Some(
+            Walked,
+        ),
         exposure: None,
         area: {
             "arrival": Area {
@@ -1447,6 +1943,330 @@ Level {
                 ],
             },
         },
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2511 midnight-s1/magisters-terrace
+Level {
+    ui_map: 2511,
+    instance: "magisters-terrace",
+    map: Map {
+        ui_map: Some(
+            2511,
+        ),
+        floor: Some(
+            "magisters-terrace-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2501 midnight-s1/maisara-caverns
+Level {
+    ui_map: 2501,
+    instance: "maisara-caverns",
+    map: Map {
+        ui_map: Some(
+            2501,
+        ),
+        floor: Some(
+            "maisara-caverns-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 2556 midnight-s1/nexus-point-xenas
+Level {
+    ui_map: 2556,
+    instance: "nexus-point-xenas",
+    map: Map {
+        ui_map: Some(
+            2556,
+        ),
+        floor: Some(
+            "nexus-point-xenas-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 184 midnight-s1/pit-of-saron
+Level {
+    ui_map: 184,
+    instance: "pit-of-saron",
+    map: Map {
+        ui_map: Some(
+            184,
+        ),
+        floor: Some(
+            "pit-of-saron-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 903 midnight-s1/seat-of-the-triumvirate
+Level {
+    ui_map: 903,
+    instance: "seat-of-the-triumvirate",
+    map: Map {
+        ui_map: Some(
+            903,
+        ),
+        floor: Some(
+            "seat-of-the-triumvirate-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
+        transition: None,
+    },
+    view: View {
+        turn: None,
+        zoom: Some(
+            1.15,
+        ),
+        zoom_max: None,
+        center: None,
+        arena: None,
+    },
+    travel: Travel {
+        run: Some(
+            7.0,
+        ),
+        mount: Some(
+            14.0,
+        ),
+        vehicle: None,
+    },
+}
+== 601 midnight-s1/skyreach
+Level {
+    ui_map: 601,
+    instance: "skyreach",
+    map: Map {
+        ui_map: Some(
+            601,
+        ),
+        floor: Some(
+            "skyreach-L1",
+        ),
+        level: None,
+        ceiling: Some(
+            25.0,
+        ),
+        light: None,
+        exclude_groups: [],
+        exclude_models: [],
+        exclude_textures: [],
+        layer: {},
+        stencil: [],
+        ppy: None,
+        glow: {},
+        crop: None,
+        include_groups: [],
+        include_models: [],
+        fade: {},
+        ground: Some(
+            Walked,
+        ),
+        exposure: None,
+        area: {},
+        path: {},
         transition: None,
     },
     view: View {
