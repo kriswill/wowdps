@@ -2359,6 +2359,41 @@ fn a_tree_on_disk_sits_under_the_bundles_and_a_second_takes_its_place() {
 }
 
 #[test]
+fn a_tree_on_disk_that_takes_away_what_a_bundle_leans_on_is_refused() {
+    // The embedded tuned file gives the place "pool" its kind and spot, and
+    // a bundle over it only sizes the place. A tree with no file for the
+    // encounter takes the kind and spot away under the bundle, and a place
+    // with neither does not read: refused, naming the tree, though the tree
+    // itself holds nothing. One holding the file is laid.
+    const LEANS: &str = "schema = 1\n\n[place.pool]\nradius = 5\n";
+    let leaning = || {
+        Rubric::from_files(files(&[]))
+            .unwrap()
+            .with_curated("leans", owned(&[("s/raid/3492-ulatek.toml", LEANS)]))
+            .unwrap()
+    };
+    let empty = tree_on_disk("leans-empty", &[]);
+    let errs = leaning().with_curated_dir("bare", &empty).unwrap_err();
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("curated \"bare\"") && e.contains("3492") && e.contains("pool")),
+        "{errs:?}"
+    );
+    let whole = tree_on_disk("leans-whole", &owned(&[("s/raid/3492-ulatek.toml", TUNED)]));
+    let r = leaning().with_curated_dir("whole", &whole).unwrap();
+    assert_eq!(
+        r.layers_of(3492),
+        [
+            Source::Season,
+            Source::Instance,
+            Source::Draft,
+            dir_source("whole"),
+            bundle("leans"),
+        ]
+    );
+}
+
+#[test]
 fn a_bad_tree_on_disk_is_refused_whole_naming_its_files_by_their_place() {
     let base = || Rubric::from_files(files(&[])).unwrap();
     let missing = std::env::temp_dir().join("wowdps-encounter-rubric-tree-not-there");

@@ -150,7 +150,7 @@ impl Rubric {
         // laid there before.
         let first =
             |s: &Set| matches!(s.source, Source::Curated(Origin::Embedded | Origin::Dir(_)));
-        let (at, replaced) = match self.sets.iter().position(first) {
+        let (at, mut replaced) = match self.sets.iter().position(first) {
             Some(at) => (at, Some(self.sets.remove(at))),
             None => (0, None),
         };
@@ -165,11 +165,26 @@ impl Rubric {
         if !errs.is_empty() {
             return Err(errs);
         }
+        // What the replaced files tuned reads otherwise without them (a
+        // bundle over them may lean on what they gave), so it is checked
+        // too: every encounter of theirs that stays (`kept_of`).
+        if let Some(old) = &replaced {
+            touched.extend(self.kept_of(old));
+        }
         let broken = self.failing(&touched, Tier::Curated);
         if !broken.is_empty() {
-            // Only what reads under the set and not over it is the set's.
+            // Only what reads under the set and not over it is the set's:
+            // the readings as they were, the replaced files back in place.
             let set = self.sets.remove(at);
-            let before = self.failing(&touched, Tier::Curated);
+            let before = match replaced.take() {
+                Some(old) => {
+                    self.sets.insert(at, old);
+                    let before = self.failing(&touched, Tier::Curated);
+                    replaced = Some(self.sets.remove(at));
+                    before
+                }
+                None => self.failing(&touched, Tier::Curated),
+            };
             errs = blame(&source.to_string(), broken, &before);
             if !errs.is_empty() {
                 return Err(errs);
@@ -191,24 +206,46 @@ impl Rubric {
         Ok(self)
     }
 
+    /// Whether an encounter a set taken off the stack held stays readable
+    /// without it: a draft of the base's, or a set left holding its file.
+    fn survives(&self, season: &str, instance: &str, id: u32) -> bool {
+        let drafted = self
+            .seasons
+            .iter()
+            .find(|x| x.id == season)
+            .and_then(|x| x.instances.get(instance))
+            .and_then(|x| x.encounters.get(&id))
+            .is_some_and(|l| l.draft.is_some());
+        drafted
+            || self
+                .sets
+                .iter()
+                .any(|set| set.has_encounter(season, instance, id))
+    }
+
+    /// The encounters a set taken off the stack held that stay
+    /// (`survives`): what reads otherwise without it.
+    fn kept_of(&self, gone: &Set) -> BTreeSet<u32> {
+        let mut kept = BTreeSet::new();
+        for (season, s) in &gone.seasons {
+            for (instance, i) in &s.instances {
+                for &id in i.encounters.keys() {
+                    if self.survives(season, instance, id) {
+                        kept.insert(id);
+                    }
+                }
+            }
+        }
+        kept
+    }
+
     /// Take out each encounter a set taken off the stack brought alone: no
     /// draft of the base's, and no set left holding its file.
     fn forget_brought(&mut self, gone: &Set) {
         for (season, s) in &gone.seasons {
             for (instance, i) in &s.instances {
                 for &id in i.encounters.keys() {
-                    let drafted = self
-                        .seasons
-                        .iter()
-                        .find(|x| &x.id == season)
-                        .and_then(|x| x.instances.get(instance))
-                        .and_then(|x| x.encounters.get(&id))
-                        .is_some_and(|l| l.draft.is_some());
-                    let held = self
-                        .sets
-                        .iter()
-                        .any(|set| set.has_encounter(season, instance, id));
-                    if !drafted && !held {
+                    if !self.survives(season, instance, id) {
                         self.forget_encounter(season, instance, id);
                     }
                 }
