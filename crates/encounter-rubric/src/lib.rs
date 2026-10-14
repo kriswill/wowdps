@@ -21,7 +21,8 @@
 //! gives them (`[encounter.<id>]`: its `map` and `view`, what changes the
 //! map: its `room`s, `place`s and the `event`s they key on, and an `npc`
 //! the draft lacks or has wrong); then every curated file set in the order
-//! it was laid (a tuned file embedded beside its draft, then each bundle
+//! it was laid (a tuned file embedded beside its draft, or a tree on disk's
+//! in its place, `Rubric::with_curated_dir`; then each bundle
 //! `Rubric::with_curated` lays in); then the user's own files
 //! (`Rubric::with_user`, `with_user_dir`). Last come the difficulty
 //! overrides the difficulty's fallback chain names, the most general
@@ -46,7 +47,8 @@
 //! - CURATED: what the fight does in the room, found by investigating it.
 //!   The public repository carries the base alone; a tuned file beside its
 //!   draft still reads as curated, so a tree that holds them works
-//!   unchanged, and a curated set ships apart from the base as a bundle.
+//!   unchanged, a checkout's tree on disk is read in their place at
+//!   runtime, and a curated set ships apart from the base as a bundle.
 //! - USER: the files on this machine, laid last, so a user can override
 //!   anything for themselves.
 //!
@@ -175,8 +177,8 @@ pub struct Rubric {
     /// The sidecars `with_texts` found and could not read.
     text_errors: Vec<String>,
     /// The file sets laid over the base, in the stack's order: the
-    /// curated in the order laid (the embedded tuned files first), then
-    /// the user's.
+    /// curated in the order laid (the embedded tuned files first, or a
+    /// tree on disk's in their place), then the user's.
     sets: Vec<Set>,
     /// The user's files `with_user` and `with_user_dir` could not lay.
     user_errors: Vec<String>,

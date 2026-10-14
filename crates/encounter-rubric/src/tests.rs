@@ -2172,6 +2172,383 @@ fn the_user_directory_is_read_whole_and_its_bad_files_named_by_their_place() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A `seasons/` tree on disk under the system's temp directory, by `name`
+/// and this process: each file at its path under it, the tree made anew.
+fn tree_on_disk(name: &str, files: &[(String, String)]) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "wowdps-encounter-rubric-tree-{name}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    for (rel, text) in files {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    root
+}
+
+fn dir_source(name: &str) -> Source {
+    Source::Curated(Origin::Dir(name.into()))
+}
+
+/// The tree's own tuned file: the turn again and a Heroic override, none
+/// of the embedded file's entries.
+const TREE_TUNED: &str = r#"
+schema = 1
+
+[view]
+turn = 45
+
+[difficulty.heroic.ability.bite]
+shape = { length = 41 }
+"#;
+
+#[test]
+fn a_tree_on_disk_lays_its_tuned_files_in_the_embedded_ones_place() {
+    // The tree's base files say otherwise than the build's and are not
+    // read: a season and an instance file a set could not give, a draft.
+    let tree = tree_on_disk(
+        "lays",
+        &owned(&[
+            ("s/season.toml", &SEASON.replace("zoom = 1.15", "zoom = 9")),
+            (
+                "s/raid/instance.toml",
+                &format!("{INSTANCE}\n[encounter.3492.view]\nzoom = 8\n"),
+            ),
+            (
+                "s/raid/3492-ulatek.draft.toml",
+                &DRAFT.replace("name = \"Ula'tek\"\norder", "name = \"Not Read\"\norder"),
+            ),
+            ("s/raid/3492-ulatek.toml", TREE_TUNED),
+            ("s/raid/notes.txt", "not a rubric file\n"),
+        ]),
+    );
+    let embedded = || Rubric::from_files(files(&[])).unwrap();
+    let r = embedded().with_curated_dir("tree", &tree).unwrap();
+    // The same as a build whose tuned file was the tree's.
+    let mut built = base_files();
+    built.push(("s/raid/3492-ulatek.toml".into(), TREE_TUNED.into()));
+    let built = Rubric::from_files(built).unwrap();
+    for tier in Tier::ALL {
+        for d in [None, Some(14), Some(15), Some(16), Some(8)] {
+            assert_eq!(
+                r.encounter_at(3492, d, tier),
+                built.encounter_at(3492, d, tier),
+                "{} {d:?}",
+                tier.name()
+            );
+        }
+    }
+    let e = r
+        .encounter_at(3492, Some(15), Tier::Curated)
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.name, "Ula'tek");
+    assert_eq!(e.view.zoom, Some(1.15));
+    assert_eq!(e.view.turn, Some(45.0));
+    assert_eq!(bite(&e).1, 41.0);
+    // The embedded file's entries are gone with it.
+    assert!(e.place.is_empty() && e.map.layer.is_empty(), "{e:?}");
+    assert_eq!(
+        r.layers_of(3492),
+        [
+            Source::Season,
+            Source::Instance,
+            Source::Draft,
+            dir_source("tree")
+        ]
+    );
+    assert!(r.has_curated(3492));
+    let (_, p) = r
+        .encounter_traced(3492, None, Tier::Curated)
+        .unwrap()
+        .unwrap();
+    assert_eq!(p.source_of("view.turn").unwrap().source, dir_source("tree"));
+    // Read again unchanged, the same version; a file changed, another.
+    let again = embedded().with_curated_dir("tree", &tree).unwrap();
+    assert_eq!(again.version(), r.version());
+    assert_ne!(r.version(), embedded().version());
+    std::fs::write(
+        tree.join("s/raid/3492-ulatek.toml"),
+        TREE_TUNED.replace("45", "46"),
+    )
+    .unwrap();
+    let changed = embedded().with_curated_dir("tree", &tree).unwrap();
+    assert_ne!(changed.version(), r.version());
+    assert_eq!(
+        changed
+            .encounter_at(3492, None, Tier::Curated)
+            .unwrap()
+            .unwrap()
+            .view
+            .turn,
+        Some(46.0)
+    );
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+#[test]
+fn a_tree_on_disk_sits_under_the_bundles_and_a_second_takes_its_place() {
+    let tree = tree_on_disk("order", &owned(&[("s/raid/3492-ulatek.toml", TREE_TUNED)]));
+    let empty = tree_on_disk("order-empty", &[]);
+    let r = Rubric::from_files(files(&[]))
+        .unwrap()
+        .with_curated("alpha", owned(&[("s/raid/3492-ulatek.toml", ALPHA)]))
+        .unwrap()
+        .with_curated_dir("first", &empty)
+        .unwrap()
+        .with_curated_dir("tree", &tree)
+        .unwrap()
+        .with_user(owned(&[("s/raid/3492-ulatek.toml", MINE)]));
+    assert_eq!(
+        r.layers_of(3492),
+        [
+            Source::Season,
+            Source::Instance,
+            Source::Draft,
+            dir_source("tree"),
+            bundle("alpha"),
+            Source::User
+        ]
+    );
+    // The bundle's turn over the tree's.
+    let curated = r.encounter_at(3492, None, Tier::Curated).unwrap().unwrap();
+    assert_eq!(curated.view.turn, Some(30.0));
+    // A tree with no tuned file leaves the curated tier reading the base;
+    // over a base with none, the version as it was.
+    let none = Rubric::from_files(files(&[]))
+        .unwrap()
+        .with_curated_dir("empty", &empty)
+        .unwrap();
+    assert!(!none.has_curated(3492));
+    assert_eq!(
+        none.encounter_at(3492, None, Tier::Curated),
+        none.encounter_at(3492, None, Tier::Base)
+    );
+    let base = Rubric::from_files(base_files()).unwrap();
+    assert_eq!(
+        base.clone()
+            .with_curated_dir("empty", &empty)
+            .unwrap()
+            .version(),
+        base.version()
+    );
+    // An encounter only the embedded files brought goes with them, and
+    // stays where the tree holds its file too.
+    const NEW: &str = "schema = 1\nencounter = 3501\nname = \"New\"\n";
+    let brought = || Rubric::from_files(files(&[("s/raid/3501-new.toml", NEW)])).unwrap();
+    assert!(brought().encounters().iter().any(|(id, _, _)| *id == 3501));
+    let gone = brought().with_curated_dir("empty", &empty).unwrap();
+    assert!(gone.encounters().iter().all(|(id, _, _)| *id != 3501));
+    assert!(gone.layers_of(3501).is_empty());
+    let kept_tree = tree_on_disk("order-kept", &owned(&[("s/raid/3501-new.toml", NEW)]));
+    let kept = brought().with_curated_dir("kept", &kept_tree).unwrap();
+    assert_eq!(
+        kept.encounter_at(3501, None, Tier::Curated)
+            .unwrap()
+            .unwrap()
+            .name,
+        "New"
+    );
+    assert!(kept.encounter_at(3501, None, Tier::Base).is_none());
+    let _ = std::fs::remove_dir_all(&tree);
+    let _ = std::fs::remove_dir_all(&empty);
+    let _ = std::fs::remove_dir_all(&kept_tree);
+}
+
+#[test]
+fn a_tree_on_disk_that_takes_away_what_a_bundle_leans_on_is_refused() {
+    // The embedded tuned file gives the place "pool" its kind and spot, and
+    // a bundle over it only sizes the place. A tree with no file for the
+    // encounter takes the kind and spot away under the bundle, and a place
+    // with neither does not read: refused, naming the tree, though the tree
+    // itself holds nothing. One holding the file is laid.
+    const LEANS: &str = "schema = 1\n\n[place.pool]\nradius = 5\n";
+    let leaning = || {
+        Rubric::from_files(files(&[]))
+            .unwrap()
+            .with_curated("leans", owned(&[("s/raid/3492-ulatek.toml", LEANS)]))
+            .unwrap()
+    };
+    let empty = tree_on_disk("leans-empty", &[]);
+    let errs = leaning().with_curated_dir("bare", &empty).unwrap_err();
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("curated \"bare\"") && e.contains("3492") && e.contains("pool")),
+        "{errs:?}"
+    );
+    let whole = tree_on_disk("leans-whole", &owned(&[("s/raid/3492-ulatek.toml", TUNED)]));
+    let r = leaning().with_curated_dir("whole", &whole).unwrap();
+    assert_eq!(
+        r.layers_of(3492),
+        [
+            Source::Season,
+            Source::Instance,
+            Source::Draft,
+            dir_source("whole"),
+            bundle("leans"),
+        ]
+    );
+}
+
+#[test]
+fn a_users_file_laid_before_a_tree_is_read_again_over_it() {
+    // The user's file only sizes the place the embedded tuned file gives,
+    // and it reads as laid. A tree with no file for the encounter is laid
+    // after it and takes the place's kind and spot away: the tree is fine
+    // (the curated tier reads), the user's file is not, so it is left out
+    // and named, as it would be had it come last. A bundle laid after the
+    // user's files is read the same way.
+    const LEANS: &str = "schema = 1\n\n[place.pool]\nradius = 7\n";
+    let empty = tree_on_disk("user-first-empty", &[]);
+    let user_first = || {
+        Rubric::from_files(files(&[]))
+            .unwrap()
+            .with_user(owned(&[("s/raid/3492-ulatek.toml", LEANS)]))
+    };
+    assert!(user_first().user_errors().is_empty());
+    let r = user_first().with_curated_dir("bare", &empty).unwrap();
+    assert!(
+        r.user_errors()
+            .iter()
+            .any(|e| e.contains("s/raid/3492-ulatek.toml") && e.contains("curated \"bare\"")),
+        "{:?}",
+        r.user_errors()
+    );
+    let e = r.encounter_at(3492, None, Tier::User).unwrap().unwrap();
+    assert!(!e.place.contains_key("pool"));
+    assert!(!r.layers_of(3492).contains(&Source::User));
+    // Laid last, lay_user leaves the same file out itself.
+    let last = Rubric::from_files(files(&[]))
+        .unwrap()
+        .with_curated_dir("bare", &empty)
+        .unwrap()
+        .with_user(owned(&[("s/raid/3492-ulatek.toml", LEANS)]));
+    assert_eq!(last.user_errors().len(), 1, "{:?}", last.user_errors());
+    // A bundle that takes nothing away leaves the user's file laid.
+    let kept = user_first()
+        .with_curated("alpha", owned(&[("s/raid/3492-ulatek.toml", ALPHA)]))
+        .unwrap();
+    assert!(kept.user_errors().is_empty(), "{:?}", kept.user_errors());
+    assert!(kept.layers_of(3492).contains(&Source::User));
+}
+
+#[test]
+fn a_bad_tree_on_disk_is_refused_whole_naming_its_files_by_their_place() {
+    let base = || Rubric::from_files(files(&[])).unwrap();
+    let missing = std::env::temp_dir().join("wowdps-encounter-rubric-tree-not-there");
+    let errs = base().with_curated_dir("gone", &missing).unwrap_err();
+    assert!(errs[0].contains("not a directory"), "{errs:?}");
+    // A typo, named by the file's place on disk.
+    let typo = tree_on_disk(
+        "typo",
+        &owned(&[("s/raid/3492-ulatek.toml", "schema = 1\n[view]\nzom = 1\n")]),
+    );
+    let errs = base().with_curated_dir("typo", &typo).unwrap_err();
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("curated \"typo\"") && e.contains("zom")),
+        "{errs:?}"
+    );
+    // A file that cannot be laid, by its place on disk; and the rest of
+    // the set is not laid either.
+    let tree = tree_on_disk(
+        "slug",
+        &owned(&[
+            ("s/raid/3492-other.toml", "schema = 1\n"),
+            (
+                "s/raid/3501-new.toml",
+                "schema = 1\nencounter = 3501\nname = \"New\"\n",
+            ),
+        ]),
+    );
+    let errs = base().with_curated_dir("slug", &tree).unwrap_err();
+    let shown = tree.join("s/raid/3492-other.toml").display().to_string();
+    assert!(
+        errs.len() == 1 && errs[0].starts_with(&shown) && errs[0].contains("already has files"),
+        "{errs:?}"
+    );
+    let _ = std::fs::remove_dir_all(&typo);
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+/// The checkout's own `seasons/`, laid from disk in place of the files the
+/// crate embedded from it, resolves every encounter as the embedded rubric
+/// does, its curated layer named for the tree.
+#[test]
+fn the_checkouts_seasons_laid_from_disk_resolve_as_the_embedded() {
+    let seasons = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("seasons");
+    let embedded = Rubric::embedded().unwrap_or_else(|e| panic!("{}", e.join("\n")));
+    let disk = Rubric::embedded()
+        .unwrap()
+        .with_curated_dir("seasons", &seasons)
+        .unwrap_or_else(|e| panic!("{}", e.join("\n")));
+    let rename = |s: &Source| match s {
+        Source::Curated(Origin::Embedded) => dir_source("seasons"),
+        s => s.clone(),
+    };
+    let mut curated = 0;
+    for (id, _, _) in embedded.encounters() {
+        for d in [
+            None,
+            Some(1),
+            Some(2),
+            Some(23),
+            Some(8),
+            Some(14),
+            Some(15),
+            Some(16),
+            Some(17),
+        ] {
+            for tier in Tier::ALL {
+                assert_eq!(
+                    disk.encounter_at(id, d, tier),
+                    embedded.encounter_at(id, d, tier),
+                    "{id} {d:?} {}",
+                    tier.name()
+                );
+            }
+        }
+        let want: Vec<Source> = embedded.layers_of(id).iter().map(rename).collect();
+        assert_eq!(disk.layers_of(id), want, "{id}");
+        if embedded.has_curated(id) {
+            curated += 1;
+            assert!(disk.layers_of(id).contains(&dir_source("seasons")), "{id}");
+            assert!(
+                !disk
+                    .layers_of(id)
+                    .contains(&Source::Curated(Origin::Embedded))
+            );
+        }
+        // Every key set by the same layer, the curated one under its name.
+        let (_, a) = embedded
+            .encounter_traced(id, None, Tier::Curated)
+            .unwrap()
+            .unwrap();
+        let (_, b) = disk
+            .encounter_traced(id, None, Tier::Curated)
+            .unwrap()
+            .unwrap();
+        let a: Vec<(&str, Source)> = a.iter().map(|(k, by)| (k, rename(&by.source))).collect();
+        let b: Vec<(&str, Source)> = b.iter().map(|(k, by)| (k, by.source.clone())).collect();
+        assert_eq!(a, b, "{id}");
+    }
+    // Every tuned file the crate embeds is the tree's, laid.
+    let tuned = embedded_files()
+        .iter()
+        .filter(|(p, _)| {
+            matches!(
+                FileRole::of(p),
+                Ok(Some(FileRole::Encounter { draft: false, .. }))
+            )
+        })
+        .count();
+    assert_eq!(curated, tuned);
+    assert_eq!(disk.encounters().len(), embedded.encounters().len());
+}
+
 #[test]
 fn a_layer_file_where_no_reader_looks_is_refused() {
     // A returning dungeon: an older season holds the raid too, and the
