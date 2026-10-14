@@ -485,8 +485,8 @@ impl Travel {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Transition {
-    /// Seconds without a post before a unit is quiet; unsaid, the
-    /// replay's 3.
+    /// Seconds without a post before a unit is quiet; unsaid,
+    /// `Transition::AFTER_S`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<f32>,
     /// What a quiet unit does.
@@ -496,13 +496,26 @@ pub struct Transition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<Port>,
     /// Yards a second past which a jump is a port: further than this for
-    /// each second between its two posts, a second at least. Unsaid, the
-    /// replay's 60.
+    /// each second between its two posts, a second at least. Unsaid,
+    /// `Transition::PORT_YD`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port_yd: Option<f32>,
     /// What the camera does as the party moves from one area to another.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<CameraQuiet>,
+}
+
+impl Transition {
+    /// What `after` means where it is unsaid: 3 s without a post before a
+    /// unit is quiet. Longer than the replay holds a unit before it calls
+    /// it stale (1.5 s): out of combat the log posts a player every 2 s or
+    /// so, and a ghost at every such gap would flicker. Every reader of a
+    /// transition (the replay, the map editor beside a key it leaves
+    /// unsaid) reads it here.
+    pub const AFTER_S: f32 = 3.0;
+    /// What `port_yd` means where it is unsaid: 60 yd a second, past which
+    /// a jump between two posts is a port.
+    pub const PORT_YD: f32 = 60.0;
 }
 
 /// What a quiet unit does.

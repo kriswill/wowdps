@@ -889,7 +889,9 @@ moves from one area to another, is the map's `transition`:
 
 Unsaid, `unit`, `port` and `camera` are today's: every unit held at its
 last post until its next, the camera held. `after` unsaid is 3 s and
-`port_yd` 60 yd a second, the replay's own readings of a quiet leg.
+`port_yd` 60 yd a second, the replay's own readings of a quiet leg; the
+crate says them as `Transition::AFTER_S` and `Transition::PORT_YD`, which
+every reader of a transition takes them from.
 
 ## Who reads what
 

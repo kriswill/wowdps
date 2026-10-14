@@ -374,11 +374,20 @@ fn hash_files<'a>(mut hash: u64, files: impl IntoIterator<Item = (&'a str, &'a s
     hash
 }
 
+/// The files under the crate's `seasons/` this binary was built with, each
+/// `(path, text)`, the path relative to `seasons/` as `Rubric::from_files`
+/// takes it, in path order: what `Rubric::embedded` reads, and what a tool
+/// that edits the files (the map editor) reads where no checkout of them
+/// is at hand.
+pub fn embedded_files() -> &'static [(&'static str, &'static str)] {
+    embedded::FILES
+}
+
 impl Rubric {
     /// The rubric this binary was built with.
     pub fn embedded() -> Result<Rubric, Vec<String>> {
         Rubric::from_files(
-            embedded::FILES
+            embedded_files()
                 .iter()
                 .map(|&(p, t)| (p.to_string(), t.to_string())),
         )

@@ -402,6 +402,29 @@ fn the_version_changes_with_any_file() {
     assert!(a.version().starts_with("s+"));
 }
 
+/// The embedded files are the crate's `seasons/` as it stands, each by
+/// its path under it (`<season>/season.toml`, `<season>/<instance>/…`), in
+/// path order.
+#[test]
+fn the_embedded_files_are_the_seasons_on_disk() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("seasons");
+    let files = embedded_files();
+    assert!(!files.is_empty());
+    assert!(files.windows(2).all(|w| w[0].0 < w[1].0));
+    for (rel, text) in files {
+        let depth = rel.split('/').count();
+        assert!(
+            (depth == 2 && rel.ends_with("/season.toml")) || depth == 3,
+            "{rel}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(rel)).unwrap(),
+            *text,
+            "{rel}"
+        );
+    }
+}
+
 #[test]
 fn the_embedded_rubric_resolves_every_encounter_on_every_difficulty() {
     let r = Rubric::embedded().unwrap_or_else(|e| panic!("{}", e.join("\n")));
