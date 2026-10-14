@@ -1,6 +1,7 @@
 //! Laying file sets over the base at runtime: a curated bundle
-//! (`Rubric::with_curated`) and the user's own files (`Rubric::with_user`,
-//! `Rubric::with_user_dir`).
+//! (`Rubric::with_curated`), the tuned files of a `seasons/` tree on disk in
+//! the embedded ones' place (`Rubric::with_curated_dir`) and the user's own
+//! files (`Rubric::with_user`, `Rubric::with_user_dir`).
 //!
 //! A set is a tree shaped like `seasons/`, paths relative to it. Its files
 //! may be a `<season>/season.toml` (`[defaults]` alone), an
@@ -12,6 +13,10 @@
 //! file keeps the slug the encounter's other files have, and a draft is the
 //! base's alone. Each file still carries
 //! `schema = N`.
+//!
+//! A tree on disk gives its tuned `<id>-<slug>.toml` files alone: its
+//! drafts, `season.toml` and `instance.toml` are the base's, which stays
+//! the one the rubric was made from.
 //!
 //! A curated set is laid whole or not at all: any file it cannot lay, or
 //! any encounter it makes unreadable where the tiers under it read it, is
@@ -96,6 +101,119 @@ impl Rubric {
             self.version = self.versioned();
         }
         Ok(self)
+    }
+
+    /// The rubric with the tuned files of a `seasons/` tree on disk (a
+    /// checkout's `crates/encounter-rubric/seasons/`) as its first curated
+    /// set, named `origin` (`Source::Curated(Origin::Dir(origin))`), in
+    /// place of the tuned files it was built with (`Origin::Embedded`, or
+    /// a tree laid there before): a file saved into the tree is read by the
+    /// next rubric made, with no rebuild. Bundles laid with `with_curated`
+    /// stay over it, and the user's files over everything.
+    ///
+    /// Only the tree's tuned `<season>/<instance>/<id>-<slug>.toml` files
+    /// are read: its drafts, `season.toml` and `instance.toml` files are
+    /// the base's, and the base stays the one this rubric was made from (a
+    /// change to one of them still takes a rebuild). The tuned files are
+    /// laid as `with_curated` lays a bundle, through the same checks, and
+    /// the set is refused whole the same way: a file that cannot be read or
+    /// laid, or an encounter the set would make unreadable on any
+    /// difficulty, is an error naming its file by its place on disk, and
+    /// nothing is laid. A `dir` that is no directory is an error too; one
+    /// holding no tuned file leaves the curated tier reading the base. An
+    /// encounter only the replaced files brought (no draft) goes with them
+    /// unless the tree holds its file too.
+    pub fn with_curated_dir(
+        mut self,
+        origin: impl Into<String>,
+        dir: &Path,
+    ) -> Result<Rubric, Vec<String>> {
+        let origin = origin.into();
+        if !dir.is_dir() {
+            return Err(vec![format!("{}: not a directory", dir.display())]);
+        }
+        let shown = |p: &str| dir.join(p).display().to_string();
+        let mut errs = Vec::new();
+        let mut read = Vec::new();
+        read_tree(dir, "", 0, &mut read, &mut errs);
+        // The tuned files, and any file where no rubric file goes (named by
+        // `ordered`): every other file of the tree is the base's.
+        let tuned = read.into_iter().filter(|(p, _)| {
+            matches!(
+                FileRole::of(p),
+                Ok(Some(FileRole::Encounter { draft: false, .. })) | Err(_)
+            )
+        });
+        let files = ordered(tuned, shown, &mut errs);
+        let source = Source::Curated(Origin::Dir(origin.clone()));
+        // The first curated place: the embedded tuned files', or a tree's
+        // laid there before.
+        let first =
+            |s: &Set| matches!(s.source, Source::Curated(Origin::Embedded | Origin::Dir(_)));
+        let (at, replaced) = match self.sets.iter().position(first) {
+            Some(at) => (at, Some(self.sets.remove(at))),
+            None => (0, None),
+        };
+        self.sets.insert(at, Set::new(source.clone()));
+        let mut touched = BTreeSet::new();
+        for (path, text) in &files {
+            match self.place(at, path, &shown(path), text) {
+                Ok(placed) => touched.extend(self.touched(&placed)),
+                Err(e) => errs.extend(e),
+            }
+        }
+        if !errs.is_empty() {
+            return Err(errs);
+        }
+        let broken = self.failing(&touched, Tier::Curated);
+        if !broken.is_empty() {
+            // Only what reads under the set and not over it is the set's.
+            let set = self.sets.remove(at);
+            let before = self.failing(&touched, Tier::Curated);
+            errs = blame(&source.to_string(), broken, &before);
+            if !errs.is_empty() {
+                return Err(errs);
+            }
+            self.sets.insert(at, set);
+        }
+        if let Some(old) = &replaced {
+            self.forget_brought(old);
+        }
+        // A tree as empty as the files it replaced leaves the version.
+        if !files.is_empty() || replaced.as_ref().is_some_and(|s| !s.seasons.is_empty()) {
+            self.hash = hash_files(
+                self.hash,
+                std::iter::once(("\0curated-dir\0", origin.as_str()))
+                    .chain(files.iter().map(|(p, t)| (p.as_str(), t.as_str()))),
+            );
+            self.version = self.versioned();
+        }
+        Ok(self)
+    }
+
+    /// Take out each encounter a set taken off the stack brought alone: no
+    /// draft of the base's, and no set left holding its file.
+    fn forget_brought(&mut self, gone: &Set) {
+        for (season, s) in &gone.seasons {
+            for (instance, i) in &s.instances {
+                for &id in i.encounters.keys() {
+                    let drafted = self
+                        .seasons
+                        .iter()
+                        .find(|x| &x.id == season)
+                        .and_then(|x| x.instances.get(instance))
+                        .and_then(|x| x.encounters.get(&id))
+                        .is_some_and(|l| l.draft.is_some());
+                    let held = self
+                        .sets
+                        .iter()
+                        .any(|set| set.has_encounter(season, instance, id));
+                    if !drafted && !held {
+                        self.forget_encounter(season, instance, id);
+                    }
+                }
+            }
+        }
     }
 
     /// The rubric with the user's own files laid over everything

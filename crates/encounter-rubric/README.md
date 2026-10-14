@@ -13,7 +13,9 @@ combat log and the game's tables give for free:
 
 It is TOML, reviewed like code, kept in this crate
 (`crates/encounter-rubric`, `wowdps-encounter-rubric`) under `seasons/`,
-and embedded in the binaries at build time. A change takes a rebuild.
+and embedded in the binaries at build time. A change takes a rebuild, but
+for a tuned file, which a reader may read from a checkout at runtime
+(below).
 
 ## Files
 
@@ -85,7 +87,8 @@ the last:
 4. the encounter's map and NPCs from the instance file, `[encounter.<id>]`
    (`drawing`)
 5. each curated set, in the order it was laid (`curated`): a tuned file
-   embedded beside its draft first, then each bundle laid in at runtime
+   embedded beside its draft first (or a tree on disk's in its place),
+   then each bundle laid in at runtime
 6. the user's own files (`user`)
 7. the difficulty overrides, `[difficulty.<name>]`, in the order the
    client's fallback chain gives them, the most general first; each
@@ -134,14 +137,24 @@ or `map.stencil`, the source that last set it and the difficulty override
 it came through. An encounter whose only file is curated or the user's
 answers from that tier up, and not below.
 
-**The curated layer comes two ways.** A tuned `<id>-<slug>.toml` beside its
-draft in `seasons/` reads as curated (`embedded`). The public repository
-carries the base alone, so there are none there, but a tree that holds
-them works unchanged. And `Rubric::with_curated(origin, files)` lays a
-named bundle in at runtime: a file set in the same `seasons/`-relative
-tree, laid after any embedded tuned file and every bundle laid before it.
-A bundle is laid whole or refused whole: a file it cannot lay, or an
-encounter it would make unreadable, is an error naming it.
+**The curated layer comes three ways.** A tuned `<id>-<slug>.toml` beside
+its draft in `seasons/` reads as curated (`embedded`). The public
+repository carries the base alone, so there are none there, but a tree
+that holds them works unchanged. `Rubric::with_curated_dir(origin, dir)`
+reads the tuned files of a `seasons/` tree on disk, a checkout's, in the
+embedded ones' place (`Origin::Dir`, named `origin`): a tuned file saved
+into the checkout (as the editors save one) is read the next time a reader
+makes its rubric, with no rebuild. Only the tree's tuned files are read.
+Its drafts and its instance and season files are the base's, and the base
+stays the one the binary was built with, so a change to one of them still
+takes a rebuild. A tree that holds the same tuned files as the build
+resolves every encounter as the build does. And
+`Rubric::with_curated(origin, files)` lays a named bundle in at runtime: a
+file set in the same `seasons/`-relative tree, laid after the embedded
+tuned files (or the tree's) and every bundle laid before it. A tree and a
+bundle are laid whole or refused whole: a file it cannot lay, or an
+encounter it would make unreadable, is an error naming it (a tree's file
+by its place on disk).
 
 **The user's files** live in `$XDG_CONFIG_HOME/wowdps/rubric/` (else
 `~/.config/wowdps/rubric/`), a tree that mirrors `seasons/`:

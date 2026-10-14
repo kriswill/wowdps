@@ -48,8 +48,10 @@ difficulty at one tier, plus the replay's art formats (`floor`,
 - **Blizzard's words stay on the machine.** An ability's `text` never goes
   in a committed file; journal text lives in the per-machine sidecars under
   `$XDG_DATA_HOME/wowdps/rubric-text/`.
-- **Embedded, so a change is a rebuild** (`build.rs` walks `seasons/`).
-  Every layer's paths are `<season>/<instance>/<file>` relative to
+- **Embedded, so a change is a rebuild** (`build.rs` walks `seasons/`),
+  but for a tuned file: `with_curated_dir` reads a checkout's tuned files
+  at runtime in the embedded ones' place (`Origin::Dir`), never its base
+  files. Every layer's paths are `<season>/<instance>/<file>` relative to
   `seasons/`; user files under `$XDG_CONFIG_HOME/wowdps/rubric/` mirror it,
   and a bad one is named in `user_errors()` and left out, never fatal.
 - **One reader and writer per art format.** `floor` (a render's `.txt`

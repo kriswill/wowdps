@@ -4,8 +4,9 @@
 //! base's four (the season's defaults, the instance's, the generated
 //! draft, the instance's drawing of the encounter), then every curated
 //! file set in the order it was laid (a tuned file embedded beside its
-//! draft first, then each bundle `Rubric::with_curated` laid in), then the
-//! user's own files (`Rubric::with_user`, `with_user_dir`). Each source
+//! draft first, or a tree on disk's in its place, `Rubric::with_curated_dir`;
+//! then each bundle `Rubric::with_curated` laid in), then the user's own
+//! files (`Rubric::with_user`, `with_user_dir`). Each source
 //! names the `Tier` it belongs to, so a reader capped at a tier reads the
 //! sources up to it alone.
 //!
@@ -33,14 +34,19 @@ pub enum Origin {
     /// A tuned `<id>-<slug>.toml` beside its draft in the tree the binary
     /// was built with (`Rubric::embedded`, `Rubric::from_files`).
     Embedded,
+    /// The tuned files of a `seasons/` tree on disk (a checkout's), read at
+    /// runtime in the embedded ones' place, by the name it was laid under
+    /// (`Rubric::with_curated_dir`).
+    Dir(String),
     /// A named file set laid in at runtime (`Rubric::with_curated`).
     Bundle(String),
 }
 
 /// What laid a key of a resolved encounter: a file of the base, a curated
 /// set, or the user's own. Ordered as the stack lays them, the base's
-/// first; two bundles order by name, though the stack lays them in the
-/// order they were laid in.
+/// first (a tree on disk takes the embedded tuned files' place, so it
+/// orders after them, before every bundle); two bundles order by name,
+/// though the stack lays them in the order they were laid in.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Source {
     /// The season's `season.toml`, its `[defaults]`.
@@ -52,7 +58,8 @@ pub enum Source {
     /// The instance file's `[encounter.<id>]`: the encounter's map, its
     /// view, what changes the map and an NPC the draft lacks or has wrong.
     Drawing,
-    /// A curated file set: the embedded tuned file, or a bundle.
+    /// A curated file set: the embedded tuned file, a tree on disk's in
+    /// its place, or a bundle.
     Curated(Origin),
     /// The user's own files on this machine.
     User,
@@ -77,7 +84,9 @@ impl fmt::Display for Source {
             Source::Draft => f.write_str("draft"),
             Source::Drawing => f.write_str("drawing"),
             Source::Curated(Origin::Embedded) => f.write_str("curated"),
-            Source::Curated(Origin::Bundle(name)) => write!(f, "curated {name:?}"),
+            Source::Curated(Origin::Dir(name) | Origin::Bundle(name)) => {
+                write!(f, "curated {name:?}")
+            }
             Source::User => f.write_str("user"),
         }
     }
@@ -374,6 +383,7 @@ mod tests {
             Source::Draft,
             Source::Drawing,
             Source::Curated(Origin::Embedded),
+            Source::Curated(Origin::Dir("z".into())),
             Source::Curated(Origin::Bundle("a".into())),
             Source::User,
         ];
@@ -388,12 +398,17 @@ mod tests {
                 Tier::Base,
                 Tier::Curated,
                 Tier::Curated,
+                Tier::Curated,
                 Tier::User
             ]
         );
         assert_eq!(
             Source::Curated(Origin::Bundle("pack".into())).to_string(),
             "curated \"pack\""
+        );
+        assert_eq!(
+            Source::Curated(Origin::Dir("seasons".into())).to_string(),
+            "curated \"seasons\""
         );
     }
 }
