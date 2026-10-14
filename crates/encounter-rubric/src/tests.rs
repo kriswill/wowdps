@@ -2394,6 +2394,48 @@ fn a_tree_on_disk_that_takes_away_what_a_bundle_leans_on_is_refused() {
 }
 
 #[test]
+fn a_users_file_laid_before_a_tree_is_read_again_over_it() {
+    // The user's file only sizes the place the embedded tuned file gives,
+    // and it reads as laid. A tree with no file for the encounter is laid
+    // after it and takes the place's kind and spot away: the tree is fine
+    // (the curated tier reads), the user's file is not, so it is left out
+    // and named, as it would be had it come last. A bundle laid after the
+    // user's files is read the same way.
+    const LEANS: &str = "schema = 1\n\n[place.pool]\nradius = 7\n";
+    let empty = tree_on_disk("user-first-empty", &[]);
+    let user_first = || {
+        Rubric::from_files(files(&[]))
+            .unwrap()
+            .with_user(owned(&[("s/raid/3492-ulatek.toml", LEANS)]))
+    };
+    assert!(user_first().user_errors().is_empty());
+    let r = user_first().with_curated_dir("bare", &empty).unwrap();
+    assert!(
+        r.user_errors()
+            .iter()
+            .any(|e| e.contains("s/raid/3492-ulatek.toml") && e.contains("curated \"bare\"")),
+        "{:?}",
+        r.user_errors()
+    );
+    let e = r.encounter_at(3492, None, Tier::User).unwrap().unwrap();
+    assert!(!e.place.contains_key("pool"));
+    assert!(!r.layers_of(3492).contains(&Source::User));
+    // Laid last, lay_user leaves the same file out itself.
+    let last = Rubric::from_files(files(&[]))
+        .unwrap()
+        .with_curated_dir("bare", &empty)
+        .unwrap()
+        .with_user(owned(&[("s/raid/3492-ulatek.toml", LEANS)]));
+    assert_eq!(last.user_errors().len(), 1, "{:?}", last.user_errors());
+    // A bundle that takes nothing away leaves the user's file laid.
+    let kept = user_first()
+        .with_curated("alpha", owned(&[("s/raid/3492-ulatek.toml", ALPHA)]))
+        .unwrap();
+    assert!(kept.user_errors().is_empty(), "{:?}", kept.user_errors());
+    assert!(kept.layers_of(3492).contains(&Source::User));
+}
+
+#[test]
 fn a_bad_tree_on_disk_is_refused_whole_naming_its_files_by_their_place() {
     let base = || Rubric::from_files(files(&[])).unwrap();
     let missing = std::env::temp_dir().join("wowdps-encounter-rubric-tree-not-there");

@@ -91,6 +91,7 @@ impl Rubric {
             }
             self.sets.insert(at, set);
         }
+        self.relay_user_over(&touched, &source.to_string());
         // A set that lays nothing leaves the version as it was.
         if !files.is_empty() {
             self.hash = hash_files(
@@ -194,6 +195,7 @@ impl Rubric {
         if let Some(old) = &replaced {
             self.forget_brought(old);
         }
+        self.relay_user_over(&touched, &source.to_string());
         // A tree as empty as the files it replaced leaves the version.
         if !files.is_empty() || replaced.as_ref().is_some_and(|s| !s.seasons.is_empty()) {
             self.hash = hash_files(
@@ -204,6 +206,64 @@ impl Rubric {
             self.version = self.versioned();
         }
         Ok(self)
+    }
+
+    /// The user's files, where they were laid before a curated set `who`
+    /// was laid or replaced, read again over it: a user file was checked
+    /// against the curated tier as it stood then, and cannot know what a
+    /// set laid after it gives or takes away. An encounter of `touched`
+    /// that reads at the curated tier but not at the user's has its user
+    /// file at fault: it is taken out and named in `user_errors`, as
+    /// `lay_user` leaves one out. (A user season or instance file is never
+    /// taken out here: it holds defaults alone.)
+    fn relay_user_over(&mut self, touched: &BTreeSet<u32>, who: &str) {
+        let Some(user_at) = self
+            .sets
+            .iter()
+            .position(|s| matches!(s.source, Source::User))
+        else {
+            return;
+        };
+        let mut out = Vec::new();
+        for ((id, d), e) in self.failing(touched, Tier::User) {
+            if out.iter().any(|(i, _)| *i == id) {
+                continue;
+            }
+            // Broken under the user's file too: not the file's.
+            if self
+                .answer(id, d, Tier::Curated, None)
+                .is_some_and(|r| r.is_err())
+            {
+                continue;
+            }
+            let Some((season, inst, layers)) = self.find(id) else {
+                continue;
+            };
+            let (season, instance, stem) =
+                (season.id.clone(), inst.slug.clone(), layers.stem.clone());
+            let held = self
+                .sets
+                .get(user_at)
+                .is_some_and(|u| u.has_encounter(&season, &instance, id));
+            if !held {
+                continue;
+            }
+            if let Some(u) = self.sets.get_mut(user_at) {
+                u.instance_mut(&season, &instance).encounters.remove(&id);
+            }
+            out.push((
+                id,
+                format!("{season}/{instance}/{stem}.toml: left out over {who}: {e}"),
+            ));
+        }
+        if !out.is_empty() {
+            self.hash = hash_files(
+                self.hash,
+                out.iter().map(|(_, e)| ("\0user-left-out\0", e.as_str())),
+            );
+            self.version = self.versioned();
+            self.user_errors.extend(out.into_iter().map(|(_, e)| e));
+        }
     }
 
     /// Whether an encounter a set taken off the stack held stays readable
