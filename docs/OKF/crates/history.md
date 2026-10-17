@@ -41,7 +41,8 @@ The views over the lake's JSON files:
   `NOT imported`, as the daemon's fixed answers and the mcp grader do
   ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
 - `fights.affixes` (v47): a keystone run's affix ids, the card's
-  `key.affixes`; NULL off a key and on a card written before v47. The
+  `key.affixes`; NULL off a key, for a key the log joined mid-run (its END
+  names none) and on a card written before v47. The
   column exists on every lake: its probe reads the field's type, so a lake
   whose every `key` is null (typed JSON) or that names no affixes reads
   NULL ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).

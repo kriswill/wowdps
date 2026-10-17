@@ -66,8 +66,8 @@ first, on its own.
   rewrite queue recut every older file from its log.
 - **Readers expose them, nothing reads them yet.** The mcp card's
   `instance.affixes` and the lake's `fights.affixes` (probe-typed, NULL off
-  a key and on an older card). No grade, comparison or rubric uses them;
-  that is the scaling step's design.
+  a key, for a key joined mid-run and on an older card). No grade,
+  comparison or rubric uses them; that is the scaling step's design.
 
 ## Consequences
 
@@ -77,6 +77,14 @@ first, on its own.
   --kind key` (a recut writes the replay alone, never the card). Both work
   only while the run's log survives; a key whose log is gone keeps a card
   and replay without affixes, read as none.
+- **Every older replay is recut, keyless ones too.** Format 6 changes only
+  a head that names a key, so a raid pull's format-5 file is format 6's
+  bytes but for its number. The queue recuts it anyway rather than
+  re-stamp it: the queue knows a file by its number alone, a recut reads
+  only the fight's own lines (its log's index comes from the cache), and
+  the last bump, format 4 to 5 over 595 files, took about three minutes of
+  idle time. A re-stamp would be a second write path into the tier to save
+  that once; the churn is accepted.
 - **An import must be cut again.** The store takes an import in this
   build's replay format only, so a client that converts fights is rebuilt
   from this tree.
