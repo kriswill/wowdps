@@ -2,6 +2,11 @@
 
 ## 2026-10-16
 
+- **Update** — [wowdps-daemon](daemon.md): every way out of `hub::run`
+  terminates the overlay the daemon spawned (`Supervisor::shutdown`). A
+  `wowdps stop` used to drop the supervisor and orphan its child, whose
+  reconnect respawned a daemon that spawned a second overlay.
+
 - **Update** — [wowdps-gui-logic](gui-logic.md): `single::claim_overlay`
   exits an evicted overlay itself, and its notice cannot panic. An
   `eprintln!` into a spawned overlay's stderr, a pipe whose reader (the

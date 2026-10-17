@@ -135,6 +135,9 @@ pub fn run(
             break;
         }
     }
+    // Every way out takes down the overlay this daemon spawned: an orphan's
+    // reconnect respawns a daemon, and that daemon spawns another overlay.
+    supervisor.shutdown();
     // Dropping the sessions' senders lets every writer thread run down,
     // which shuts each stream and unblocks its reader.
 }
@@ -1186,6 +1189,54 @@ mod tests {
         // A message from a session that never connected is dropped.
         hub.client(99, ClientMsg::GetStatus { req_id: 1 });
         assert!(drain(&tui).is_empty());
+    }
+
+    /// Every way out of `run` takes down the overlay the daemon spawned: a
+    /// `Shutdown`, and every sender hanging up. Left running, the orphan's
+    /// reconnect respawns a daemon, which spawns another overlay.
+    #[test]
+    fn leaving_run_terminates_the_spawned_overlay() {
+        use std::sync::atomic::Ordering;
+        for shutdown in [true, false] {
+            let (supervisor, probes) =
+                crate::overlay::tests::supervisor(Duration::from_secs(3600), None);
+            let (tx, rx) = channel();
+            let (loader, _loader_rx) = fake_loader();
+            let (done_tx, done_rx) = channel();
+            std::thread::spawn(move || {
+                run(
+                    rx,
+                    loader,
+                    supervisor,
+                    hub_opts(),
+                    HistoryLink::disabled("test"),
+                );
+                let _ = done_tx.send(());
+            });
+            tx.send(HubMsg::Game(true)).unwrap();
+            if shutdown {
+                tx.send(HubMsg::Client {
+                    id: 1,
+                    msg: ClientMsg::Shutdown,
+                })
+                .unwrap();
+            } else {
+                drop(tx);
+            }
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("run returned");
+            assert_eq!(
+                probes.spawns.load(Ordering::SeqCst),
+                1,
+                "the game spawned it"
+            );
+            assert_eq!(
+                probes.terminated.load(Ordering::SeqCst),
+                1,
+                "shutdown {shutdown}: the spawned overlay outlived the daemon"
+            );
+        }
     }
 
     /// v19: a warm segment answers `GetLoadout` inline; a cold one parks the
