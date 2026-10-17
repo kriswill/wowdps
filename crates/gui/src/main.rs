@@ -115,10 +115,7 @@ fn main() -> ExitCode {
         // Replace any running overlay, of either GUI, before touching the
         // daemon: the takeover socket is unversioned and shared, so two
         // surfaces never stand at once.
-        wowdps_gui_logic::single::claim_overlay(|| {
-            eprintln!("wowdps-gui: replaced by a newer overlay, exiting");
-            std::process::exit(0);
-        });
+        wowdps_gui_logic::single::claim_overlay();
     }
     // The link is made before the app starts, as the iced GUI's is:
     // `connect` may spawn a daemon and wait for it, a wait the UI thread
