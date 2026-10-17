@@ -77,7 +77,11 @@ check.awk as its other tables are.
   takes Thorn Rake.
 - [R10 Visits](../rulings/r10.md): the run's CHALLENGE_MODE_START opens its
   keyed visit, whose Σ is what the cut takes; its trash and its boss are
-  ordinary segments, so the meter's rows stay check.awk's.
+  ordinary segments, so the meter's rows stay check.awk's. Format 6: the
+  START lists `[10,9,147]`, which the run's cut and the boss pull inside it
+  carry in their heads (`replay_affixes` 3, `replay_affix_sum` 166); every
+  other cut of every gated fixture reads 0 and 0
+  ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
 
 ## Gating
 

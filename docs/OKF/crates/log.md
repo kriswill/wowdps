@@ -1,5 +1,14 @@
 # Log
 
+## 2026-10-17
+
+- **Update** — [wowdps-core](core.md), [wowdps-model](model.md),
+  [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
+  [wowdps-mcp](mcp.md), [wowdps-history](history.md): v47 and replay
+  format 6 — a key's affixes from its CHALLENGE_MODE_START on the visit,
+  the card's `key`, the replay head and `pull.txt`, the mcp card's
+  `instance` and the lake's `fights.affixes`.
+
 ## 2026-10-12
 
 - **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the render

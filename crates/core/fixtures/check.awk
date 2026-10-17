@@ -474,7 +474,9 @@ function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
 # each ENCOUNTER_START and ENCOUNTER_END the cut holds; format 3's aura rows,
 # `r_aura`), the placed rows by kind, the world markers (those standing on
 # the cut's instance map at its start, then each placement there and each removal)
-# and the units the rows number. Written from the ruling's words, never the
+# and the units the rows number; (format 6) the affixes of the key the cut is
+# inside — the open CHALLENGE_MODE_START's bracket list, its count and its ids
+# summed (`r_affixes`). Written from the ruling's words, never the
 # Rust: the advanced block starts at off12 on a spell-shaped line (SPELL_,
 # RANGE_, DAMAGE_SHIELD, DAMAGE_SPLIT, every _SUPPORT), else at off9;
 # hostility is learned from the lines the parser models alone. A cut is a
@@ -492,6 +494,22 @@ function r_block(pk) {
     return 1
 }
 function r_ours(g) { return g ~ /^(Player|Pet)-/ }
+# A CHALLENGE_MODE_START's affix list — `[10,9,147]` from field 6 on, which the
+# comma split leaves as `[10`, `9`, `147]` — into kAffN / kAffS for key `k`: its
+# count and its ids summed; `[]`, or a list that does not read, holds none.
+function r_affixes(k,   i, list, n, ids) {
+    kAffN[k] = 0; kAffS[k] = 0; list = ""
+    for (i = 6; i <= NF; i++) list = list (i > 6 ? "," : "") $i
+    sub(/\r$/, "", list)
+    if (list !~ /^\[[0-9]+(,[0-9]+)*\]$/) return
+    gsub(/[][]/, "", list)
+    n = split(list, ids, ",")
+    for (i = 1; i <= n; i++) { kAffN[k]++; kAffS[k] += ids[i] }
+}
+# The affixes of key `k` on cut `s` (a run's own, or a pull's inside it).
+function r_key_affixes(s, k) {
+    rv[s SUBSEP "replay_affixes"] = kAffN[k]; rv[s SUBSEP "replay_affix_sum"] = kAffS[k]
+}
 # A hit's source is anything but one of ours: a player or a pet, or a unit one
 # of ours SUMMONED (R22's chain — a totem's last lines carry a neutral NPC's
 # 0xa28, so no flag tells it); never the nil unit, whatever flags it wears.
@@ -870,6 +888,7 @@ ev == "CHALLENGE_MODE_START" {
     nk++; kc = "K" nk
     kName[kc] = strip($2) " +" ($5 + 0); kStart[kc] = now
     rMap[kc] = $3 + 0; rFl[kc] = r_floor(kvote, nk)
+    r_affixes(kc); r_key_affixes(kc, kc)
     for (k in mOn) { split(k, kk, SUBSEP); if (kk[1] + 0 == rMap[kc]) r_count(kc, "markers") }
     next
 }
@@ -887,7 +906,7 @@ ev == "ENCOUNTER_START" {
     rk2++; rEnc[cur] = 1; rMap[cur] = $6 + 0; rFl[cur] = r_floor(rvote, rk2)
     for (k in mOn) { split(k, kk, SUBSEP); if (kk[1] + 0 == rMap[cur]) r_count(cur, "markers") }
     r_count(cur, "boss_engaged")
-    if (kc != "") r_count(kc, "boss_engaged")
+    if (kc != "") { r_count(kc, "boss_engaged"); r_key_affixes(cur, kc) }
     encStart = now
     next
 }
@@ -1343,7 +1362,7 @@ END {
     # R29: each closed boss pull's replay cut, then each finished keystone
     # run's ("K<n>", kind Key, its name and level, timed or over, its START to
     # its END) — `r_emit`'s rows.
-    split("units posts absorb pools pool_sum floor hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped buff_applied buff_removed buff_dose placed_cast placed_summon placed_touch placed_gone markers", rnames, " ")
+    split("units posts absorb pools pool_sum floor affixes affix_sum hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped buff_applied buff_removed buff_dose placed_cast placed_summon placed_touch placed_gone markers", rnames, " ")
     for (s = 1; s <= nseg; s++) {
         if (!(s in rEnc) || segEnd[s] == "") continue
         dur = segEnd[s] - segStart[s]

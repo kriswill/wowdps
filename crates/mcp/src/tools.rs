@@ -282,7 +282,11 @@ pub fn catalog() -> Vec<Tool> {
                           back. `players: all` rows also carry the same scalars, but of \
                           the R17 tank split only taken and dtps: mitigated, prevented, \
                           reduced and mitigated_pct ride me/peer alone (as do tank_pair \
-                          and healers).",
+                          and healers). A keystone run's `instance` names key_level, \
+                          completed and (v47) affixes: the affix ids its \
+                          CHALLENGE_MODE_START listed, in that order — empty for a run \
+                          the log joined mid-way, and on a card stored before v47 until \
+                          regrade_fights rewrites it.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -814,7 +818,9 @@ pub fn catalog() -> Vec<Tool> {
                           pinned, players[], and v46 imported: true for a fight imported \
                           from outside this machine's logs, whose players carry no \
                           numbers — add `AND NOT imported` to any question about the \
-                          user's own history: averages, kills, bests, ranks), players (one \
+                          user's own history: averages, kills, bests, ranks — and v47 \
+                          affixes: a keystone run's affix ids as a list, NULL off a key \
+                          and on a card stored before v47), players (one \
                           row per player per fight: fight_id, imported, encounter_id, \
                           difficulty, guid, name, class, spec, role \
                           (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
@@ -2454,6 +2460,10 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
             },
             "key_level": k.level.map_or(Json::Null, |l| Json::u64(u64::from(l))),
             "completed": k.completed.map_or(Json::Null, Json::Bool),
+            // v47: the key's affix ids as its START listed them; empty on
+            // an unkeyed instance, a run joined mid-way and a card stored
+            // before v47 (regrade_fights fills it from the log).
+            "affixes": Json::Arr(k.affixes.iter().map(|&a| Json::u64(u64::from(a))).collect()),
         }),
         "date": Json::str(utc_datetime(c.start_utc_ms)),
         "start_utc_ms": Json::num(c.start_utc_ms as f64),
@@ -5510,6 +5520,40 @@ mod tests {
         );
     }
 
+    /// v47: a keystone card's instance names its affixes in the START's
+    /// order; an instance with none (an unkeyed visit, a run joined
+    /// mid-way, a card stored before v47) names an empty list.
+    #[test]
+    fn a_keys_instance_names_its_affixes() {
+        use wowdps_proto::history::KeyInfo;
+        let keyed = |affixes: Vec<u32>| FightCard {
+            key: Some(KeyInfo {
+                map_id: 2521,
+                difficulty: 8,
+                level: Some(14),
+                completed: Some(true),
+                affixes,
+            }),
+            ..card(60_000, Vec::new())
+        };
+        let affixes = |c: &FightCard| {
+            card_json(c)
+                .get("instance")
+                .and_then(|i| i.get("affixes"))
+                .map(Json::to_line)
+        };
+        assert_eq!(
+            affixes(&keyed(vec![10, 9, 147])).as_deref(),
+            Some("[10,9,147]")
+        );
+        assert_eq!(affixes(&keyed(Vec::new())).as_deref(), Some("[]"));
+        assert_eq!(
+            card_json(&card(60_000, Vec::new())).get("instance"),
+            Some(&Json::Null),
+            "no instance, no affixes"
+        );
+    }
+
     #[test]
     fn argument_errors_never_reach_the_daemon() {
         let mut bridge = Bridge::lazy();
@@ -5577,6 +5621,7 @@ mod tests {
                 difficulty: 8,
                 level: Some(11),
                 completed,
+                ..KeyInfo::default()
             }),
             ..FightCard::default()
         };

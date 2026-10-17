@@ -25,7 +25,9 @@ share), so `Post` is `Clone`, no longer `Copy`; the buff rows (`buff_applied`,
 player's debuffs on NPCs. Format 4 bounds the pools (`POOL_KINDS` 64, no
 power type at or above it; `MAX_POOLS` 8 kinds a post) and tidies a
 hand-built track: `next_pools` (what the tier writes for any post) and
-`fill_pools` (a track whose posts fill `power` alone).
+`fill_pools` (a track whose posts fill `power` alone). Format 6: the head's
+`KeyHead` carries the key's `affixes` beside its name and level
+([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
 
 ## Source
 

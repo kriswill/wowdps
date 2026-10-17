@@ -38,7 +38,12 @@ and the wire. This is a map of where each lives, not a restatement.
   the ability tree ([R26](../rulings/r26.md)), energize
   ([R27](../rulings/r27.md)) and the power series ([R28](../rulings/r28.md)).
   Passive events (auras, casts, energize, resurrects, power reports) go
-  through the passive gate and never open or extend a segment.
+  through the passive gate and never open or extend a segment. A keyed
+  `Visit` keeps the affix ids its CHALLENGE_MODE_START lists (v47,
+  `Visit::affixes`; the parser reads the trailing `[…]` the comma split
+  shreds, none when it does not read); the scan keeps no copy, since they
+  move no number, and a lazy Σ reads them off its own first line
+  ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
 - `index.rs` — the structural scan: segment boundaries and byte ranges with
   no per-event parsing, so a 300 MB+ log lists its segments in under a
   second. A segment is parsed only when opened (`load_segment_text` +
@@ -112,7 +117,9 @@ shards, a paladin's holy power) by the gain in the block's units
 (`display_mod`: tenths for rage, runic power, shards, astral power;
 hundredths for insanity); an energize starts only a counted pool (its
 max below 100, `COUNTED_POOL_MAX`: shards, holy power, combo points), never
-a continuous one no block named. Gated by
+a continuous one no block named. Format 6 puts the key's affixes in the
+head (`KeyHead::affixes`, the START's; none for a run joined mid-way), a
+pull inside a key carrying them as the run does. Gated by
 [replay.txt](../fixtures/replay.md) (its keystone run too) and every
 fixture's R29 rows.
 
