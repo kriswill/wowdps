@@ -447,6 +447,21 @@ as cancels on the spell's row.
   its start.
 - `ENCOUNTER_START` — `id, "name", difficultyID, groupSize, instanceID`
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
+- `CHALLENGE_MODE_START` — `"dungeon name", mapID, challengeModeID, keystoneLevel,
+  [affixID,…]` (R10). `mapID` is the one ZONE_CHANGE names for the dungeon;
+  `challengeModeID` the MapChallengeMode row, the par timers' key
+  (`keystone_timers.rs`). The bracket is the line's last field and the only
+  place the log names the key's affixes, in its own order; a comma split
+  shreds it (`[10`, `147`, `9`, `152]`), so the parser reads from the field
+  that opens it to the one that closes it, each id trimmed (v47); `[]` holds
+  none, and a list that never closes or holds anything but a u32 reads as
+  none. A name holding a comma is quoted and stays one field:
+  `CHALLENGE_MODE_START,"Ara-Kara, City of Echoes",2660,503,10,[10,147,9,152]`.
+- `CHALLENGE_MODE_END` — `mapID, success(1/0), keystoneLevel, totalMs, …` (R10):
+  `totalMs` the game's own run time, death penalties included; two trailing
+  numbers the parser ignores. A zeroed form (`…,0,0,0,0.000000,0.000000`)
+  fires on entry and before every START as the dungeon's reset; it names no
+  affixes, so a key the log joined mid-run, keyed by its END, keeps none.
 - `COMBATANT_INFO` — `guid, faction, <22 stat scalars>, currentSpecID(field 25),
   [(traitNodeID,traitNodeEntryID,rank),…], (pvpTalents…), [(itemID,ilvl,
   (enchantIDs),(bonusIDs),(gemID,gemIlvl,…)),…], [(auras…)], …`. The gem
