@@ -264,6 +264,17 @@ impl Supervisor {
         Vec::new()
     }
 
+    /// The daemon is exiting: take down the overlay it spawned. Left
+    /// running, that orphan's reconnect respawns a daemon, which spawns a
+    /// second overlay. A user-launched overlay is only a session, not a
+    /// child, and is left alone.
+    pub fn shutdown(&mut self) {
+        self.grace_until = None;
+        if let Some(mut child) = self.child.take() {
+            child.terminate();
+        }
+    }
+
     /// The supervisor holds the daemon open while an overlay child lives or
     /// its exit grace is still counting down.
     pub fn holds_daemon_open(&self) -> bool {
@@ -287,7 +298,7 @@ impl Supervisor {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -332,13 +343,14 @@ mod tests {
         }
     }
 
-    struct Probes {
-        spawns: Arc<AtomicUsize>,
-        terminated: Arc<AtomicUsize>,
+    pub(crate) struct Probes {
+        pub(crate) spawns: Arc<AtomicUsize>,
+        pub(crate) terminated: Arc<AtomicUsize>,
         alive: Arc<Mutex<bool>>,
     }
 
-    fn supervisor(grace: Duration, fail_with: Option<String>) -> (Supervisor, Probes) {
+    /// An auto supervisor over a stub spawner; the hub's tests use it too.
+    pub(crate) fn supervisor(grace: Duration, fail_with: Option<String>) -> (Supervisor, Probes) {
         let probes = Probes {
             spawns: Arc::new(AtomicUsize::new(0)),
             terminated: Arc::new(AtomicUsize::new(0)),
@@ -406,6 +418,38 @@ mod tests {
         sup.on_tick();
         assert_eq!(probes.terminated.load(Ordering::SeqCst), 1);
         assert!(!sup.holds_daemon_open(), "grace over: free to idle-exit");
+    }
+
+    /// The daemon's exit takes down the overlay it spawned, mid-game or
+    /// mid-grace, and only once. A user-launched overlay is a session, not
+    /// a child: nothing is terminated for it.
+    #[test]
+    fn shutdown_terminates_the_spawned_overlay_only() {
+        let (mut sup, probes) = supervisor(GRACE, None);
+        sup.on_game(true);
+        sup.shutdown();
+        assert_eq!(probes.terminated.load(Ordering::SeqCst), 1);
+        assert!(!sup.holds_daemon_open());
+        sup.shutdown();
+        assert_eq!(probes.terminated.load(Ordering::SeqCst), 1, "once");
+
+        // Mid-grace: the grace goes with the child.
+        let (mut sup, probes) = supervisor(GRACE, None);
+        sup.on_game(true);
+        sup.on_overlay_connected(1);
+        sup.on_game(false);
+        assert!(sup.holds_daemon_open(), "mid-grace");
+        sup.shutdown();
+        assert_eq!(probes.terminated.load(Ordering::SeqCst), 1);
+        assert!(!sup.holds_daemon_open());
+
+        // Only a session, never spawned: nothing to terminate.
+        let (mut sup, probes) = supervisor(GRACE, None);
+        sup.on_overlay_connected(7);
+        sup.on_game(true);
+        sup.shutdown();
+        assert_eq!(probes.spawns.load(Ordering::SeqCst), 0);
+        assert_eq!(probes.terminated.load(Ordering::SeqCst), 0);
     }
 
     #[test]
