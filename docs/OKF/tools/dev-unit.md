@@ -25,8 +25,12 @@ dev machine's live daemon is always this unit, never a hand-run one.
   changed. A debug build never bounces a release daemon, and a build of
   the GUI the daemon does not spawn bounces nothing. A
   `systemctl --user stop wowdps-dev` stays stopped through rebuilds.
-- **Winning the socket.** The unit asks any running daemon to stop
-  before it starts, so a self-spawned one cannot hold the socket.
+- **Winning the socket.** Before it starts, and again as its stop, the
+  unit takes down orphan overlays, then stops any daemon that answers
+  until the lock frees, so a self-spawned one cannot hold the socket. The
+  overlays go first: one left running through the wait respawned a daemon
+  each time the last one stopped, and every systemd retry orphaned one
+  more.
 - **Leaving it alone in experiments.** Anything that needs a second
   daemon ([overlay-replay](overlay-replay.md)) isolates it by directory and
   stops only the processes it started: the unit's daemon has the same
