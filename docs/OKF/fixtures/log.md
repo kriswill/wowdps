@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-17
+
+- **Update** — [replay.txt](replay.md): format 6 — the keystone run's
+  affixes in its cut's head and its boss pull's (`replay_affixes`,
+  `replay_affix_sum`, two rows more in every gated fixture's TSV per cut).
+- **Update** — [instance.txt](instance.md): the key's affixes on its visit,
+  lazy equal to full.
+
 ## 2026-10-11
 
 - **Update** — [replay.txt](replay.md): format 5's cases — the boss's Spit

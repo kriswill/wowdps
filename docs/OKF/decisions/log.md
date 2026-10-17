@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-17
+
+- **Creation** — [Keep A Keystone Run's Affixes](keep-keystone-affixes.md):
+  v47 and replay format 6 — the affix ids a CHALLENGE_MODE_START lists are
+  parsed onto the keyed visit and kept on the card, the replay head, the
+  mcp card and the lake, landed early so a regrade and the recut queue
+  backfill every stored key while its log survives.
+
 ## 2026-10-12
 
 - **Update** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):

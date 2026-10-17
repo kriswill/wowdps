@@ -5753,3 +5753,68 @@ fn the_addons_creatures_land_beside_the_lake_and_stats_counts_them() {
         "{c:?}"
     );
 }
+
+/// v47: `fights.affixes` is a keystone run's affix ids, the card's
+/// `key.affixes` — NULL off a key and on a card written before v47 — and
+/// the column exists on every lake: one whose cards name no affixes, and
+/// one whose every `key` is null (DuckDB types that JSON, which a field
+/// reference would answer with more JSON).
+#[test]
+fn a_keys_affixes_are_a_column_on_every_lake() {
+    use wowdps_proto::history::KeyInfo;
+    // A player each: a lake needs one to type its `players` view.
+    let one = || vec![player("Player-1-A", Spec::FrostMage, 1000.0, 0.0)];
+    let key = |id: &'static str, affixes: Vec<u32>| {
+        let mut c = card(id, one());
+        c.kind = FightKind::Key;
+        c.key = Some(KeyInfo {
+            map_id: 2521,
+            difficulty: 8,
+            level: Some(14),
+            completed: Some(true),
+            affixes,
+        });
+        (id, c.to_json().to_line())
+    };
+    let plain = |id: &'static str| (id, card(id, one()).to_json().to_line());
+    let affixes = |lake: &Lake| {
+        lake.sql("SELECT id, affixes FROM fights ORDER BY id")
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| (cell_str(&r[0]), r[1].to_line()))
+            .collect::<Vec<_>>()
+    };
+    let (a, b, c) = (key("a", vec![10, 9, 147]), key("b", Vec::new()), plain("c"));
+    let (_t, lake) = lake_of("affixes", &[a, b.clone(), c.clone()]);
+    assert_eq!(
+        affixes(&lake),
+        [
+            ("a".to_string(), "[10,9,147]".to_string()),
+            ("b".to_string(), "null".to_string()),
+            ("c".to_string(), "null".to_string()),
+        ]
+    );
+    let nine = lake
+        .sql("SELECT id FROM fights WHERE list_contains(affixes, 9)")
+        .unwrap();
+    assert_eq!(nine.rows.len(), 1);
+    assert_eq!(cell_str(&nine.rows[0][0]), "a");
+
+    let (_t, lake) = lake_of("affixes-none", &[b, c.clone()]);
+    assert_eq!(
+        affixes(&lake),
+        [
+            ("b".to_string(), "null".to_string()),
+            ("c".to_string(), "null".to_string()),
+        ]
+    );
+    let (_t, lake) = lake_of("affixes-no-key", &[c, plain("d")]);
+    assert_eq!(
+        affixes(&lake),
+        [
+            ("c".to_string(), "null".to_string()),
+            ("d".to_string(), "null".to_string()),
+        ]
+    );
+}

@@ -103,6 +103,8 @@ fn card() -> FightCard {
             difficulty: 23,
             level: Some(10),
             completed: Some(true),
+            // v47: none, so the golden stays byte for byte the v46 one.
+            affixes: Vec::new(),
         }),
         start_local_ms: 1_722_000_000_123,
         tz_min: Some(-240),
@@ -2111,4 +2113,54 @@ fn the_origin_is_written_only_for_an_import() {
     let null = local.replacen("{", r#"{"origin":null,"#, 1);
     let back = FightCard::from_json(&json::parse(&null).unwrap()).unwrap();
     assert_eq!(back.origin, Origin::Local);
+}
+
+// ---- v47: a key's affixes -------------------------------------------------------
+
+/// A key's affixes are written last in its `key` object, and only when it
+/// names some: a card without them (an older card, an unkeyed visit, a run
+/// joined mid-way) is byte for byte what it was, and reads them as none.
+/// What does not read as a list of u32s reads as none, never an error.
+#[test]
+fn a_keys_affixes_are_written_only_when_it_names_some() {
+    let none = card().to_json().to_line();
+    assert_eq!(none, CARD_GOLDEN, "no affixes: the v46 document");
+    assert!(!none.contains("affixes"), "{none}");
+    let back = FightCard::from_json(&json::parse(&none).unwrap()).unwrap();
+    assert_eq!(back.key.map(|k| k.affixes), Some(Vec::new()));
+
+    let mut c = card();
+    if let Some(k) = c.key.as_mut() {
+        k.affixes = vec![10, 9, 147];
+    }
+    let line = c.to_json().to_line();
+    assert_eq!(
+        line,
+        CARD_GOLDEN.replace(
+            r#""completed":true}"#,
+            r#""completed":true,"affixes":[10,9,147]}"#
+        )
+    );
+    let back = FightCard::from_json(&json::parse(&line).unwrap()).unwrap();
+    assert_eq!(back, c);
+
+    for odd in [
+        r#""affixes":null"#,
+        r#""affixes":"10,9""#,
+        r#""affixes":{"a":1}"#,
+    ] {
+        let doc = CARD_GOLDEN.replace(
+            r#""completed":true}"#,
+            &format!(r#""completed":true,{odd}}}"#),
+        );
+        let back = FightCard::from_json(&json::parse(&doc).unwrap()).unwrap();
+        assert_eq!(back.key.map(|k| k.affixes), Some(Vec::new()), "{odd}");
+    }
+    // A number past u32 or not a whole number is dropped alone.
+    let doc = CARD_GOLDEN.replace(
+        r#""completed":true}"#,
+        r#""completed":true,"affixes":[10,4294967296,-1,1.5,"x",9]}"#,
+    );
+    let back = FightCard::from_json(&json::parse(&doc).unwrap()).unwrap();
+    assert_eq!(back.key.map(|k| k.affixes), Some(vec![10, 9]));
 }

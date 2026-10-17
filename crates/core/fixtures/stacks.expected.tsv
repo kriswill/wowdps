@@ -446,6 +446,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	*	replay_pools	38
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	*	replay_pool_sum	3040
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	*	replay_floor	2287
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	*	replay_affixes	0
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	*	replay_affix_sum	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	*	replay_hit	19
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	*	replay_cast_start	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	*	replay_cast_success	0

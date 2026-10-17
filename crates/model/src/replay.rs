@@ -463,11 +463,16 @@ pub struct EncounterHead {
     pub size: u32,
 }
 
-/// The keystone the cut is inside: its dungeon's name and level.
+/// The keystone the cut is inside: its dungeon's name and level, and
+/// (replay format 6) its affixes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct KeyHead {
     pub name: String,
     pub level: u32,
+    /// The affix ids its CHALLENGE_MODE_START listed, in the line's order;
+    /// empty for a run the log joined mid-way (its END names none) and in
+    /// a file older than format 6.
+    pub affixes: Vec<u32>,
 }
 
 /// What `pull.txt` says of the cut, as the log said it.

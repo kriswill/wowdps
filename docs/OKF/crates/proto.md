@@ -45,6 +45,10 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
   document is byte for byte the older one; `ImportedCard` is what an import
   knows and `ImportedCard::card` the card the store keeps, its id
   `imported_id` ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
+  A card's `KeyInfo::affixes` (v47) is written the same way: last in its
+  `key`, only when the key names some; on the wire the key carries the
+  list always, embedded
+  ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
   The daemon writes them and every reader parses
   them here; `addon_table` reads the wowdps addon's `WOWDPS_DATA` once and
   `Affiliation::from_addon_table` turns its players into records.
@@ -81,11 +85,15 @@ replay reads; `GetReplay` / `Replay` carry it
 through one crate-private `varint` module (varints, zigzag, strings, the
 bounds-checked cursor), so the two decoders share their refusals.
 
-The file is `WDRP` | format 5 | a section index | strings, head, units,
+The file is `WDRP` | format 6 | a section index | strings, head, units,
 posts, events, placed, markers, spells, maps, absorb, pools (`encode`,
 `decode`, `format_of`; decode never panics, and allocates in proportion to
 the bytes: no power type at or above `POOL_KINDS`, no pools list past
-`MAX_POOLS`). Format 5 is format 4's codec but the head's number, moved
+`MAX_POOLS`, no affix count past the head's bytes). Format 6 is format 5's
+sections but the head, whose key adds its affixes after its level (a
+count, then each id), so the rewrite queue recuts every older file from
+its log; an older file reads with none, and `pull.txt` says `affixes = …`
+when the key names some. Format 5 is format 4's codec but the head's number, moved
 with the cut's pool readings (a cast's after its cost, an energize's gain on
 the pool it fills: the pools section lists the posts an energize set as it
 lists a cast's second pool) so the rewrite queue recuts every older file,

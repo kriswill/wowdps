@@ -545,7 +545,8 @@ fn a_keys_run_keeps_every_floor_and_its_bosses() {
         c.head.key,
         Some(KeyHead {
             name: "Ruby Dungeon".into(),
-            level: 14
+            level: 14,
+            affixes: vec![10, 9],
         })
     );
     let bosses: Vec<(u32, EventKind, Option<UnitId>, u32, &str)> = c

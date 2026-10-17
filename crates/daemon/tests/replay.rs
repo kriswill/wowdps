@@ -116,6 +116,50 @@ fn cut_into(store: &mut Store<MemBackend>, path: &Path, id: &str) -> bool {
     store.store_replay(id, cut_text(&text, None))
 }
 
+const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
+
+/// v47 (replay format 6): a keystone run's replay names its affixes in its
+/// head, as its card's key does — the cut and the card read the one START —
+/// and its `pull.txt` says them.
+#[test]
+fn a_key_runs_replay_names_its_affixes() {
+    let path = Path::new(INSTANCE);
+    let fights = closed_fights(path);
+    let mut store = Store::open(MemBackend::new(), Retention::default());
+    let ids: Vec<String> = fights
+        .iter()
+        .filter_map(|f| store.store(f, LogFacts::read(path)))
+        .collect();
+    let card = ids
+        .iter()
+        .filter_map(|id| store.card(id))
+        .find(|c| c.kind == FightKind::Key)
+        .cloned()
+        .expect("the key's card");
+    assert_eq!(
+        card.key.as_ref().map(|k| k.affixes.clone()),
+        Some(vec![9, 10])
+    );
+    let mut file = std::fs::File::open(path).unwrap();
+    let idx = index::scan(&mut file);
+    let meta = idx
+        .overalls
+        .iter()
+        .find(|m| m.start_ms == card.start_local_ms)
+        .unwrap();
+    let text = load_segment_text(path, meta).unwrap();
+    assert!(store.store_replay(&card.id, cut_text(&text, None)));
+    let bytes = store.replay_file(&card.id).unwrap();
+    assert_eq!(replay::format_of(&bytes), Some(6));
+    let cut = replay::decode(&bytes).unwrap();
+    assert_eq!(
+        cut.head.key.as_ref().map(|k| (k.level, k.affixes.clone())),
+        Some((12, vec![9, 10]))
+    );
+    let facts = replay::csv::PullFacts::default();
+    assert!(replay::csv::pull_txt(&cut, &facts).contains("\naffixes = 9,10\n"));
+}
+
 fn cfg(f: impl FnOnce(&mut Retention)) -> Retention {
     let mut r = Retention::default();
     f(&mut r);
@@ -580,17 +624,27 @@ const FORMAT3: &str = "57445250032a0000000b01006302631b037e130491014105d2013d068
 /// golden; format 5's codec).
 const FORMAT4: &str = "57445250042a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
 
-/// A format-1, 2, 3 or 4 replay still answers, and is OLDER than this
-/// build's: the rewrite queue recuts it from its log as format 5 (every
-/// floor, the boss rows, each post's shields and pools, the buff rows and the
-/// players' debuffs on NPCs, an aura up before the cut opened at its start, a
-/// pool read after a cast's cost and raised by its energizes), as the series
-/// tier's were at v42 — formats 3 and 4 too, whose codec is format 5's but
-/// whose cut rules are not. A later build's format is left alone and answers
-/// nothing.
+/// The same file as a format-5 build wrote it (`proto::replay`'s own
+/// format-5 golden; format 6's codec on a head with no key).
+const FORMAT5: &str = "57445250052a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
+
+/// A format-1 to 5 replay still answers, and is OLDER than this build's:
+/// the rewrite queue recuts it from its log as format 6 (every floor, the
+/// boss rows, each post's shields and pools, the buff rows and the players'
+/// debuffs on NPCs, an aura up before the cut opened at its start, a pool
+/// read after a cast's cost and raised by its energizes, a key's affixes),
+/// as the series tier's were at v42 — formats 3 to 5 too, whose codec is
+/// format 6's but whose cut rules or head are not. A later build's format
+/// is left alone and answers nothing.
 #[test]
-fn an_older_replay_is_recut_as_format_5() {
-    for (bytes, format) in [(FORMAT1, 1), (FORMAT2, 2), (FORMAT3, 3), (FORMAT4, 4)] {
+fn an_older_replay_is_recut_as_format_6() {
+    for (bytes, format) in [
+        (FORMAT1, 1),
+        (FORMAT2, 2),
+        (FORMAT3, 3),
+        (FORMAT4, 4),
+        (FORMAT5, 5),
+    ] {
         let tmp = Temp::new(&format!("format{format}"));
         let (path, fights) = log_of(&tmp, &[(90, true, 15)]);
         let facts = LogFacts::read(&path);
@@ -616,7 +670,7 @@ fn an_older_replay_is_recut_as_format_5() {
         assert!(cut_into(&mut store, &path, &id));
         let bytes = store.replay_file(&id).unwrap();
         assert_eq!(replay::format_of(&bytes), Some(replay::FORMAT));
-        assert_eq!(replay::FORMAT, 5);
+        assert_eq!(replay::FORMAT, 6);
         let cut = replay::decode(&bytes).unwrap();
         let boss: Vec<replay_kind::EventKind> = cut
             .events

@@ -112,8 +112,13 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   a slot lacking a current file — missing, or an older format (format 1,
   the head's floor alone; format 2, no shields, no second pool, no buff
   rows; format 3, the old aura rules; format 4, a cast's pool from before
-  it paid and no energize — each recut as format 5; the format 4 store of
-  595 files took about three minutes). A replay is kept while protected, else
+  it paid and no energize; format 5, a key's head without its affixes —
+  each recut as format 6; the format 4 store of
+  595 files took about three minutes). A recut writes the replay alone:
+  a stored key's card gets its affixes (v47) from `wowdps history regrade
+  --kind key`, the card writer copying the visit's
+  ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
+  A replay is kept while protected, else
   among the newest `history_keep_details_per_encounter` of its group
   (`Store::replay_slots`); past `history_replay_mb` (default 4096) the
   oldest unprotected goes first, and at the cap the rewrite queue cuts only

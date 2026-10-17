@@ -524,6 +524,7 @@ fn a_keys_run_names_its_dungeon_and_level() {
     cut.head.key = Some(KeyHead {
         name: "Kings' Rest".into(),
         level: 15,
+        affixes: vec![10, 9, 147],
     });
     cut.head.fight_ms = Some(1_603_290);
     let text = csv::pull_txt(&cut, &PullFacts::default());
@@ -534,6 +535,16 @@ fn a_keys_run_names_its_dungeon_and_level() {
         "{text}"
     );
     assert!(!text.contains("encounter_id"));
+    // Format 6: the key's affixes, in the START's order, before the map.
+    assert!(
+        text.contains("\nkind = dungeon\naffixes = 10,9,147\nmap = 3004\n"),
+        "{text}"
+    );
+    // A key that names none (a run joined mid-way) writes no line.
+    if let Some(k) = cut.head.key.as_mut() {
+        k.affixes.clear();
+    }
+    assert!(!csv::pull_txt(&cut, &PullFacts::default()).contains("affixes"));
 }
 
 #[test]
@@ -784,35 +795,138 @@ const FORMAT3: &str = "57445250032a0000000b01006302631b037e130491014105d2013d068
 /// (a cast's before its cost, no energize), the same codec as format 5's.
 const FORMAT4: &str = "57445250042a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
 
-/// `small_auras()` as this build writes it: format 4's bytes but the head's
-/// number.
+/// `small_auras()` as a format-5 build wrote it: format 4's bytes but the
+/// head's number.
 const FORMAT5: &str = "57445250052a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
 
-/// A format-3 or format-4 file still reads, the codec being format 5's.
+/// `small_auras()` as this build writes it: format 5's bytes but the head's
+/// number (the cut is a boss pull outside any key, so its head names no
+/// key and no affixes).
+const FORMAT6: &str = "57445250062a0000000b01006302631b037e130491014105d2013d068f020d079c020908a5021309b8020c0ac402090bcd020b09125468652056656e6f6d6f757320416279737307556c612774656b0d54616e6b2d5265616c6d2d55530a506c617965722d312d41000556656e6f6d0b536869656c642057616c6c0a54686f726e2052616b650f44656d6f6e696320476174657761798213bc17000201b0ea01c0f7a797a368ea0f0a0701b817011014000200020306fa01010004010104000000f40301ffe80792a812bb05b0ea01880e010664c8013fe807960164d00fc7013fe807d79912f823fff901c7010fe807d89912f723ff8827b0b71200f0ea03880e0103643208000d000020d00f0000010ba8a912d704017890031000020200c801120002060002e0120701030200c8651100020200a01f0a000400f0a8020e00002001d00f00030005a09c01c0b80201000101d08c01cf0f06b81701d83605e70606a1380700049be9060802821383130100020201010001000201904e028f4e0101010002031964040105";
+
+/// A format-3, 4 or 5 file still reads, the codec being format 6's.
 #[test]
-fn a_format_3_or_4_file_reads_as_format_5() {
-    for (hex, format) in [(FORMAT3, 3), (FORMAT4, 4)] {
+fn a_format_3_to_5_file_reads_as_format_6() {
+    for (hex, format) in [(FORMAT3, 3), (FORMAT4, 4), (FORMAT5, 5)] {
         let bytes = unhex(hex);
         assert_eq!(format_of(&bytes), Some(format));
         assert_eq!(decode(&bytes), Some(small_auras()), "format {format}");
     }
 }
 
-/// Format 5's golden bytes: a diff here is a format change, never a
+/// Format 6's golden bytes: a diff here is a format change, never a
 /// fixture to refresh.
 #[test]
-fn format_5_reads_and_writes_its_golden_bytes() {
+fn format_6_reads_and_writes_its_golden_bytes() {
     let cut = small_auras();
     let bytes = encode(&cut);
-    assert_eq!(hex(&bytes), FORMAT5);
-    assert_eq!(format_of(&bytes), Some(5));
-    assert_eq!(decode(&unhex(FORMAT5)), Some(cut));
-    for older in [FORMAT3, FORMAT4] {
+    assert_eq!(hex(&bytes), FORMAT6);
+    assert_eq!(format_of(&bytes), Some(6));
+    assert_eq!(decode(&unhex(FORMAT6)), Some(cut));
+    for older in [FORMAT3, FORMAT4, FORMAT5] {
         assert_eq!(
             &bytes[5..],
             &unhex(older)[5..],
-            "format 3's and 4's codec, byte for byte"
+            "format 3's to 5's codec, byte for byte, on a head with no key"
         );
+    }
+}
+
+// ---- format 6: a key's affixes --------------------------------------------------
+
+/// `small_auras()` inside a key: The Glass Hollow +14, affixes 10, 9, 147.
+fn keyed() -> Cut {
+    let mut cut = small_auras();
+    cut.head.key = Some(KeyHead {
+        name: "The Glass Hollow".into(),
+        level: 14,
+        affixes: vec![10, 9, 147],
+    });
+    cut
+}
+
+/// The head section's key, by hand: present, the name's string index, the
+/// level, the count, then each affix a varint (147 takes two bytes).
+#[test]
+fn a_keys_affixes_ride_its_head() {
+    let cut = keyed();
+    let bytes = encode(&cut);
+    let (from, len) = section_at(&bytes, HEAD);
+    let head = &bytes[from..from + len];
+    let strs = read_strs(&mut Cur::new(&{
+        let (f, l) = section_at(&bytes, STRS);
+        bytes[f..f + l].to_vec()
+    }))
+    .unwrap();
+    let name = strs.iter().position(|s| s == "The Glass Hollow").unwrap() as u8;
+    assert_eq!(
+        &head[head.len() - 8..],
+        &[1, name, 14, 3, 10, 9, 0x93, 0x01]
+    );
+    assert_eq!(decode(&bytes), Some(cut.clone()));
+    // No affixes: one byte, the count.
+    let mut none = cut;
+    if let Some(k) = none.head.key.as_mut() {
+        k.affixes.clear();
+    }
+    let bytes = encode(&none);
+    let (from, len) = section_at(&bytes, HEAD);
+    assert_eq!(&bytes[from + len - 4..from + len], &[1, name, 14, 0]);
+    assert_eq!(decode(&bytes), Some(none));
+}
+
+/// `keyed()`'s file with its head as a format-5 build wrote it: the key
+/// stops at its level.
+fn keyed_format5() -> Vec<u8> {
+    let bytes = encode(&keyed());
+    let (from, len) = section_at(&bytes, HEAD);
+    let head = &bytes[from..from + len - 5];
+    let mut old = with_section(&bytes, HEAD, head);
+    old[4] = 5;
+    old
+}
+
+/// A key in a format-5 file still reads, with no affixes — what the
+/// rewrite queue recuts — and the same head under format 6 is refused: its
+/// count is missing.
+#[test]
+fn an_older_keys_head_reads_with_no_affixes() {
+    let old = keyed_format5();
+    assert_eq!(format_of(&old), Some(5));
+    let mut want = keyed();
+    if let Some(k) = want.head.key.as_mut() {
+        k.affixes.clear();
+    }
+    assert_eq!(decode(&old), Some(want));
+    let mut short = old;
+    short[4] = 6;
+    assert_eq!(decode(&short), None);
+}
+
+/// A count past the head's bytes, an affix past u32, a truncated list:
+/// `None`, before anything is allocated for them; never a panic.
+#[test]
+fn format_6_affix_lies_are_refused() {
+    let bytes = encode(&keyed());
+    let (from, len) = section_at(&bytes, HEAD);
+    let head = bytes[from..from + len].to_vec();
+    let base = &head[..head.len() - 5];
+    let lie = |tail: &[u8]| decode(&with_section(&bytes, HEAD, &[base, tail].concat()));
+    assert!(lie(&[3, 10, 9, 0x93, 0x01]).is_some(), "the honest tail");
+    assert_eq!(lie(&[4, 10, 9, 0x93, 0x01]), None, "one more than it holds");
+    assert_eq!(lie(&[0xff, 0xff, 0xff, 0xff, 0x0f]), None, "a huge count");
+    assert_eq!(lie(&[1, 0x80, 0x80, 0x80, 0x80, 0x10]), None, "past u32");
+    assert_eq!(lie(&[3, 10, 9]), None, "a truncated list");
+    assert_eq!(lie(&[3, 10, 9, 0x93, 0x01, 0]), None, "a byte left over");
+    for n in 0..bytes.len() {
+        assert_eq!(decode(&bytes[..n]), None, "cut at {n}");
+    }
+    for i in 0..bytes.len() {
+        for flip in [0xff, 0x01, 0x80, 0x20] {
+            let mut b = bytes.clone();
+            b[i] ^= flip;
+            let _ = decode(&b);
+        }
     }
 }
 
