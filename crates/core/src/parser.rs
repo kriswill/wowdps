@@ -2004,6 +2004,18 @@ mod tests {
                 affixes: vec![10, 9, 147],
             }
         );
+        // The real shape of a name with a comma in it: quoted, so the comma
+        // split keeps it whole and every field after it stands where it is.
+        assert_eq!(
+            parse(r#"CHALLENGE_MODE_START,"Ara-Kara, City of Echoes",2660,503,10,[10,147,9,152]"#),
+            Event::ChallengeModeStart {
+                map_id: 2660,
+                challenge_id: 503,
+                key_level: 10,
+                name: "Ara-Kara, City of Echoes".into(),
+                affixes: vec![10, 147, 9, 152],
+            }
+        );
         let affixes = |body: &str| match parse(body) {
             Event::ChallengeModeStart { affixes, .. } => affixes,
             other => panic!("not a START: {other:?}"),
