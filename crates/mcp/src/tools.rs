@@ -603,7 +603,12 @@ pub fn catalog() -> Vec<Tool> {
                           where no line reported it; a pet's pool is never the player's). \
                           ASK THIS for a healer's mana curve: when they ran dry, how long \
                           they sat full. Absent below the details tier and on a record \
-                          written before it until regrade_fights.",
+                          written before it until regrade_fights. The `fight` object is \
+                          the stored card: on a keystone run its `instance` names \
+                          key_level, completed and (v47) affixes, the affix ids its \
+                          CHALLENGE_MODE_START listed, in that order — empty for a run \
+                          the log joined mid-way, and on a card stored before v47 until \
+                          regrade_fights rewrites it.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -819,8 +824,9 @@ pub fn catalog() -> Vec<Tool> {
                           from outside this machine's logs, whose players carry no \
                           numbers — add `AND NOT imported` to any question about the \
                           user's own history: averages, kills, bests, ranks — and v47 \
-                          affixes: a keystone run's affix ids as a list, NULL off a key \
-                          and on a card stored before v47), players (one \
+                          affixes: a keystone run's affix ids as a list, NULL off a key, \
+                          for a key the log joined mid-run (its END names none) and on a \
+                          card stored before v47), players (one \
                           row per player per fight: fight_id, imported, encounter_id, \
                           difficulty, guid, name, class, spec, role \
                           (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
