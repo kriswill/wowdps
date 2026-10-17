@@ -7,6 +7,10 @@
   `replay_affix_sum`, two rows more in every gated fixture's TSV per cut).
 - **Update** — [instance.txt](instance.md): the key's affixes on its visit,
   lazy equal to full.
+- **Update** — [replay.txt](replay.md): the description names format 6;
+  check.awk's affix reader stops at the field that closes the list and
+  trims each id, as the parser does; FORMAT-NOTES gains the
+  CHALLENGE_MODE_START and _END lines.
 
 ## 2026-10-11
 

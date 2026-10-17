@@ -495,16 +495,28 @@ function r_block(pk) {
 }
 function r_ours(g) { return g ~ /^(Player|Pet)-/ }
 # A CHALLENGE_MODE_START's affix list — `[10,9,147]` from field 6 on, which the
-# comma split leaves as `[10`, `9`, `147]` — into kAffN / kAffS for key `k`: its
-# count and its ids summed; `[]`, or a list that does not read, holds none.
-function r_affixes(k,   i, list, n, ids) {
+# comma split leaves as `[10`, `9`, `147]` — read up to the first field that
+# closes it (a field after the list is none of it), each item trimmed, into
+# kAffN / kAffS for key `k`: its count and its ids summed. `[]`, or a list that
+# never closes or holds anything but a u32, holds none (R10).
+function r_affixes(k,   i, f, list, n, ids, item, sum) {
     kAffN[k] = 0; kAffS[k] = 0; list = ""
-    for (i = 6; i <= NF; i++) list = list (i > 6 ? "," : "") $i
-    sub(/\r$/, "", list)
-    if (list !~ /^\[[0-9]+(,[0-9]+)*\]$/) return
-    gsub(/[][]/, "", list)
-    n = split(list, ids, ",")
-    for (i = 1; i <= n; i++) { kAffN[k]++; kAffS[k] += ids[i] }
+    for (i = 6; i <= NF; i++) {
+        f = $i; sub(/\r$/, "", f)
+        list = list (i > 6 ? "," : "") f
+        if (f ~ /\][ \t]*$/) break
+    }
+    if (i > NF) return
+    if (!sub(/^[ \t]*\[/, "", list)) return
+    sub(/\][ \t]*$/, "", list)
+    if (list ~ /^[ \t]*$/) return
+    n = split(list, ids, ","); sum = 0
+    for (i = 1; i <= n; i++) {
+        item = ids[i]; gsub(/^[ \t]+|[ \t]+$/, "", item)
+        if (item !~ /^[0-9]+$/ || item + 0 > 4294967295) return
+        sum += item
+    }
+    kAffN[k] = n; kAffS[k] = sum
 }
 # The affixes of key `k` on cut `s` (a run's own, or a pull's inside it).
 function r_key_affixes(s, k) {
