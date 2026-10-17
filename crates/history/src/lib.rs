@@ -349,8 +349,9 @@ impl Lake {
             // field exists once ONE card carries it, and its type is read
             // rather than its presence: a lake whose every key is null types
             // `key` as JSON, which answers `key.affixes` with more JSON. A
-            // lake without one reads NULL everywhere (off a key, and on a
-            // card written before v47), so the column always exists.
+            // lake without one reads NULL everywhere (off a key, for a key
+            // joined mid-run, and on a card written before v47), so the
+            // column always exists.
             let fights_have_affixes = self
                 .sql("DESCRIBE SELECT key.affixes AS affixes FROM fights")
                 .map(|t| {

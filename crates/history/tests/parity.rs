@@ -5755,7 +5755,8 @@ fn the_addons_creatures_land_beside_the_lake_and_stats_counts_them() {
 }
 
 /// v47: `fights.affixes` is a keystone run's affix ids, the card's
-/// `key.affixes` — NULL off a key and on a card written before v47 — and
+/// `key.affixes` — NULL off a key, for a key joined mid-run (its card names
+/// none, as `b` below) and on a card written before v47 — and
 /// the column exists on every lake: one whose cards name no affixes, and
 /// one whose every `key` is null (DuckDB types that JSON, which a field
 /// reference would answer with more JSON).
