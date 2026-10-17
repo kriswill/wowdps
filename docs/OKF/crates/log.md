@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-16
+
+- **Update** — [wowdps-gui-logic](gui-logic.md): `single::claim_overlay`
+  exits an evicted overlay itself, and its notice cannot panic. An
+  `eprintln!` into a spawned overlay's stderr, a pipe whose reader (the
+  daemon) had exited, panicked the acceptor thread before its exit and
+  left evicted overlays stacked on the game.
+
 ## 2026-10-12
 
 - **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the render
