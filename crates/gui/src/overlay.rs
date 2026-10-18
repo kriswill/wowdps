@@ -7,6 +7,8 @@
 //! the edge strip (`strip.rs`), where a drag moves the content and never
 //! the surface.
 
+use std::io::Write as _;
+
 use gpui_kit::App;
 use wowdps_gui_logic::config::Config;
 use wowdps_proto::DaemonClient;
@@ -105,7 +107,10 @@ fn surface(
 
     let display_id = output.and_then(|name| display_named(cx, name));
     if let (Some(name), None) = (output, display_id) {
-        eprintln!("wowdps-gui: no output named {name}; the compositor chooses");
+        let _ = writeln!(
+            std::io::stderr(),
+            "wowdps-gui: no output named {name}; the compositor chooses"
+        );
     }
     // WOWDPS_OVERLAY_AUTOVIEW: start on that view, before the first Watch.
     let mut state = wowdps_proto::ClientState::new();
@@ -128,7 +133,12 @@ fn surface(
                     let _ = old.update(cx, |_, window, _| window.remove_window());
                 }
             }
-            Err(e) => eprintln!("wowdps-gui: the overlay cannot move edge: {e}"),
+            Err(e) => {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "wowdps-gui: the overlay cannot move edge: {e}"
+                );
+            }
         }
     })
     .detach();
