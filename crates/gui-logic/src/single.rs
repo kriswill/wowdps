@@ -80,10 +80,28 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("wowdps-single-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("test dir");
-        dir.join("overlay.sock")
+    /// A test's scratch directory, removed as it goes out of scope, a
+    /// failed assertion's unwinding too.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("wowdps-single-{}-{name}", std::process::id()));
+            std::fs::create_dir_all(&dir).expect("test dir");
+            Self(dir)
+        }
+
+        /// Where the test claims.
+        fn sock(&self) -> PathBuf {
+            self.0.join("overlay.sock")
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn wait_for(flag: &AtomicBool) {
@@ -96,7 +114,8 @@ mod tests {
 
     #[test]
     fn a_new_claim_evicts_the_incumbent() {
-        let path = scratch("evict");
+        let dir = Scratch::new("evict");
+        let path = dir.sock();
         let evicted = Arc::new(AtomicBool::new(false));
         let flag = evicted.clone();
         claim_at(&path, move || flag.store(true, Ordering::SeqCst));
@@ -106,7 +125,8 @@ mod tests {
 
     #[test]
     fn a_stale_socket_file_does_not_block_the_claim() {
-        let path = scratch("stale");
+        let dir = Scratch::new("stale");
+        let path = dir.sock();
         // A crashed overlay's leftover: the file exists, nobody listens.
         drop(UnixListener::bind(&path).expect("stale bind"));
         let evicted = Arc::new(AtomicBool::new(false));
@@ -127,7 +147,8 @@ mod tests {
         path.with_extension("ready")
     }
 
-    /// Fail the test without leaving the child overlay running.
+    /// Fail the test without leaving the child overlay running. The
+    /// scratch directory goes with the unwinding.
     fn fail(child: &mut Child, why: &str) -> ! {
         let _ = child.kill();
         let _ = child.wait();
@@ -139,7 +160,10 @@ mod tests {
     /// is gone. It must still exit, and cleanly.
     #[test]
     fn an_evicted_overlay_exits_with_no_reader_on_its_stderr() {
-        let path = scratch("orphan");
+        // Removed on every way out, a failure's unwinding included; `fail`
+        // kills and reaps the child before it panics.
+        let dir = Scratch::new("orphan");
+        let path = dir.sock();
         let ready = ready_marker(&path);
         let _ = std::fs::remove_file(&ready);
         let mut child = Command::new(std::env::current_exe().expect("the test binary"))
@@ -188,9 +212,6 @@ mod tests {
             }
         };
         assert!(status.success(), "the evicted overlay exited with {status}");
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::remove_dir_all(dir);
-        }
     }
 
     /// The overlay half of the test above, in its own process: it claims
