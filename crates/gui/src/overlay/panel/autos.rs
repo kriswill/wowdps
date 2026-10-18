@@ -14,6 +14,7 @@
 //!   top one (the badged-but-waiting meter).
 //! - `AUTOTOGGLE=1` flips the panel once, about two seconds in.
 
+use std::io::Write as _;
 use std::time::{Duration, Instant};
 
 use gpui_kit::Context;
@@ -52,7 +53,8 @@ pub fn debug() -> bool {
 /// One trace line, stamped with the milliseconds since `since`.
 pub fn trace(since: Instant, what: std::fmt::Arguments) {
     if debug() {
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr(),
             "overlay: [{:>8.1}ms] {what}",
             since.elapsed().as_secs_f64() * 1000.0
         );

@@ -71,6 +71,11 @@ Read before the work it covers:
 - It has no keyboard: every gesture is a click, a right press or a wheel.
 - It is single-instance: a new `--overlay` launch evicts the running one.
   Never kill an overlay by a PID from earlier output.
+- **Nothing it prints may panic.** A spawned overlay's stderr is a pipe to
+  the daemon that spawned it, and `eprintln!` panics once that daemon is
+  gone. Runtime notices use `writeln!(std::io::stderr(), …)` and drop the
+  result; only `main.rs`'s answers to arguments the daemon never passes
+  print with the macros.
 - Debug aids: the `WOWDPS_OVERLAY_*` variables (`overlay/panel/autos.rs`,
   `docs/tracing.md`).
 - **The render guard.** Before merging anything that touches the overlay

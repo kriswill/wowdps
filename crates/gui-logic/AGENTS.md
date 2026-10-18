@@ -36,10 +36,10 @@ serde/toml, no UI framework. Module list: `docs/OKF/crates/gui-logic.md`.
   untransliterated on purpose.
 - **`single.rs`'s takeover socket is unversioned** on purpose: a new
   overlay evicts any running one, whatever build either is.
-- **The eviction notice never panics.** `single.rs` writes it with
+- **Notices never panic.** `single.rs` and `config.rs` write theirs with
   `writeln!`, never `eprintln!`: a spawned overlay's stderr is a pipe to
-  the daemon that spawned it, and once that daemon is gone the panic would
-  keep the evicted overlay running.
+  the daemon that spawned it, and once that daemon is gone `eprintln!`
+  panics. In the eviction, that panic kept the evicted overlay running.
 - **The overlay's models** (`graph`, `drill`, `surface`, `output`,
   `timeline`, the overlay tokens) are held by the overlay render guard: run
   it before merging a change to them (`crates/gui/AGENTS.md`).
