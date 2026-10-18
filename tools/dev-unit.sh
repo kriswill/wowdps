@@ -83,11 +83,16 @@ daemon_running() {
   WOWDPS_NO_BUILD=1 "$1" status >/dev/null 2>&1
 }
 
-# Ask any running daemon (unit's or self-spawned) to stop, then wait for it
-# to RELEASE THE LOCK — `stop` is async, the socket vanishes before the
-# process does, and the daemon holds an flock on wowdps-v<N>.lock until it
-# exits. Then take down orphan overlays: a tick-driven client with no daemon
-# spawns one on its own, and it beat the unit's daemon to the lock once.
+# Take down orphan overlays FIRST, then stop any running daemon (unit's or
+# self-spawned) and wait for it to RELEASE THE LOCK — `stop` is async, the
+# socket vanishes before the process does, and the daemon holds an flock on
+# wowdps-v<N>.lock until it exits. A tick-driven client with no daemon
+# spawns one on its own: an overlay left running through the wait held the
+# lock with a fresh daemon each time the last one stopped, so the unit
+# failed, and systemd's retry stopped that daemon and orphaned one more
+# overlay per round. Another client may still respawn one, so the wait
+# stops any daemon that answers until the lock frees; a last sweep then
+# takes any overlay such a daemon left behind.
 lock_free() {
   local f
   for f in "$run_dir"/wowdps-v*.lock; do
@@ -98,18 +103,19 @@ lock_free() {
 
 stop_daemon() {
   local bin="$1"
-  if [ -x "$bin" ] && daemon_running "$bin"; then
-    WOWDPS_NO_BUILD=1 "$bin" stop >/dev/null 2>&1 || true
-  fi
+  # The GUI's overlay: one a reconnecting client keeps alive is an orphan.
+  pkill -f 'wowdps-gui --overlay$' 2>/dev/null || true
   for _ in $(seq 1 30); do
     lock_free && break
+    if [ -x "$bin" ] && daemon_running "$bin"; then
+      WOWDPS_NO_BUILD=1 "$bin" stop >/dev/null 2>&1 || true
+    fi
     sleep 0.5
   done
   if ! lock_free; then
     echo "dev-unit: a daemon still holds the lock after 15 s" >&2
     return 1
   fi
-  # The GUI's overlay: one a reconnecting client keeps alive is an orphan.
   pkill -f 'wowdps-gui --overlay$' 2>/dev/null || true
 }
 

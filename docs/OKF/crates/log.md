@@ -2,12 +2,30 @@
 
 ## 2026-10-17
 
+- **Update** — [wowdps-daemon](daemon.md): `Supervisor`'s `Drop` runs
+  `shutdown`, so a panic unwinding out of `hub::run`, which skips the
+  explicit call, still terminates the overlay the daemon spawned. A second
+  shutdown is a no-op.
+
 - **Update** — [wowdps-core](core.md), [wowdps-model](model.md),
   [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
   [wowdps-mcp](mcp.md), [wowdps-history](history.md): v47 and replay
   format 6 — a key's affixes from its CHALLENGE_MODE_START on the visit,
   the card's `key`, the replay head and `pull.txt`, the mcp card's
   `instance` and the lake's `fights.affixes`.
+
+## 2026-10-16
+
+- **Update** — [wowdps-daemon](daemon.md): every way out of `hub::run`
+  terminates the overlay the daemon spawned (`Supervisor::shutdown`). A
+  `wowdps stop` used to drop the supervisor and orphan its child, whose
+  reconnect respawned a daemon that spawned a second overlay.
+
+- **Update** — [wowdps-gui-logic](gui-logic.md): `single::claim_overlay`
+  exits an evicted overlay itself, and its notice cannot panic. An
+  `eprintln!` into a spawned overlay's stderr, a pipe whose reader (the
+  daemon) had exited, panicked the acceptor thread before its exit and
+  left evicted overlays stacked on the game.
 
 ## 2026-10-12
 

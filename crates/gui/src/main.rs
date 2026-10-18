@@ -29,6 +29,7 @@ mod theme;
 mod window;
 
 use std::cell::RefCell;
+use std::io::Write as _;
 use std::process::ExitCode;
 use std::rc::Rc;
 
@@ -75,6 +76,11 @@ your own (`base = \"onyx\"` to start from one); --print-theme shows them all.";
 
 fn main() -> ExitCode {
     let mut overlay = false;
+    // The answers to `--help`, `--print-theme` and an unknown argument print
+    // with the panicking macros: the daemon spawns `--overlay` alone, its
+    // stdout on /dev/null, so none of them runs in a spawned overlay. Every
+    // notice after this loop can meet a stderr pipe whose reader, the
+    // daemon, is gone, so it goes through `writeln!` and drops the failure.
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -96,7 +102,8 @@ fn main() -> ExitCode {
     // said once, here, and otherwise left out.
     let themes = cfg.themes();
     for warning in &themes.warnings {
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr(),
             "wowdps-gui: {}: {warning}",
             config::Config::path().display()
         );
@@ -115,10 +122,7 @@ fn main() -> ExitCode {
         // Replace any running overlay, of either GUI, before touching the
         // daemon: the takeover socket is unversioned and shared, so two
         // surfaces never stand at once.
-        wowdps_gui_logic::single::claim_overlay(|| {
-            eprintln!("wowdps-gui: replaced by a newer overlay, exiting");
-            std::process::exit(0);
-        });
+        wowdps_gui_logic::single::claim_overlay();
     }
     // The link is made before the app starts, as the iced GUI's is:
     // `connect` may spawn a daemon and wait for it, a wait the UI thread
@@ -131,7 +135,10 @@ fn main() -> ExitCode {
     let client = match DaemonClient::connect(&daemon_bin(), None, kind) {
         Ok(client) => client,
         Err(e) => {
-            eprintln!("wowdps-gui: cannot reach the daemon: {e}");
+            let _ = writeln!(
+                std::io::stderr(),
+                "wowdps-gui: cannot reach the daemon: {e}"
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -158,7 +165,7 @@ fn main() -> ExitCode {
     });
     match failure.take() {
         Some(e) => {
-            eprintln!("wowdps-gui: {e}");
+            let _ = writeln!(std::io::stderr(), "wowdps-gui: {e}");
             ExitCode::FAILURE
         }
         None => ExitCode::SUCCESS,
@@ -174,7 +181,10 @@ fn fonts(cx: &mut gpui_kit::App) {
         .map(|bytes| std::borrow::Cow::Borrowed(*bytes))
         .collect();
     if let Err(e) = cx.text_system().add_fonts(faces) {
-        eprintln!("wowdps-gui: the bundled fonts did not load: {e}");
+        let _ = writeln!(
+            std::io::stderr(),
+            "wowdps-gui: the bundled fonts did not load: {e}"
+        );
     }
 }
 

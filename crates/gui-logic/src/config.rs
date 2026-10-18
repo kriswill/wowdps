@@ -3,8 +3,12 @@
 //! Written back whenever the user changes something durable — dragging the
 //! overlay tab, zooming — so the next launch picks up where they left off.
 //! A missing or unparsable file falls back to defaults; saving is best-effort
-//! (a read-only config dir must never crash a damage meter mid-raid).
+//! (a read-only config dir must never crash a damage meter mid-raid). Its
+//! notices go through `writeln!` and drop a failure: a spawned overlay's
+//! stderr is a pipe to the daemon, and `eprintln!` panics once that reader
+//! is gone.
 
+use std::io::Write as _;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -252,7 +256,8 @@ impl Config {
     fn load_from(path: &std::path::Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-                eprintln!(
+                let _ = writeln!(
+                    std::io::stderr(),
                     "wowdps: {}: {e}; using defaults (and not saving over it)",
                     path.display()
                 );
@@ -345,7 +350,8 @@ impl Config {
 
     fn save_to(&self, path: &std::path::Path) {
         if self.load_failed {
-            eprintln!(
+            let _ = writeln!(
+                std::io::stderr(),
                 "wowdps: not saving {}: it did not parse on load and a save would drop its other keys",
                 path.display()
             );
@@ -362,7 +368,11 @@ impl Config {
             write_atomic(path, &text)
         };
         if let Err(e) = write() {
-            eprintln!("wowdps: could not save {}: {e}", path.display());
+            let _ = writeln!(
+                std::io::stderr(),
+                "wowdps: could not save {}: {e}",
+                path.display()
+            );
         }
     }
 }

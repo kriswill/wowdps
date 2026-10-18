@@ -62,6 +62,10 @@ tier: `docs/OKF/crates/daemon.md`. Operations: `docs/tracing.md`.
   spawn's error does.
 - A killed overlay is not respawned. Relaunch `wowdps-gui --overlay`; it is
   single-instance, so a new launch evicts an old one.
+- The daemon's exit, by any way out of `hub::run`, terminates the overlay
+  it spawned (`Supervisor::shutdown`, which `Drop` also runs, so a panic
+  unwinding out of `run` is covered): an orphaned overlay's reconnect
+  respawns daemons. A user-launched overlay is only a session; it stays.
 
 ## The addon (`addon/`)
 
