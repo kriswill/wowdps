@@ -353,6 +353,12 @@ pub struct KeyInfo {
     pub level: Option<u32>,
     /// CHALLENGE_MODE_END's success flag (the game's, not the timed verdict).
     pub completed: Option<bool>,
+    /// v47: the key's affix ids, as its CHALLENGE_MODE_START listed them.
+    /// Empty on an unkeyed visit, on a key the log joined mid-run (its END
+    /// names none) and on a card written before v47 (regrade to fill it).
+    /// Written to the document only when there are some, so a card without
+    /// them stays byte for byte what it was.
+    pub affixes: Vec<u32>,
 }
 
 /// One player's line on a card: enough for every trend / best-per-player
@@ -619,12 +625,7 @@ impl FightCard {
             "kind": Json::str(self.kind.as_str()),
             "name": Json::str(&*self.name),
             "encounter": self.encounter.map_or(Json::Null, encounter_json),
-            "key": self.key.as_ref().map_or(Json::Null, |k| obj! {
-                "map_id": Json::num(k.map_id),
-                "difficulty": Json::num(k.difficulty),
-                "level": opt_num(k.level.map(u64::from)),
-                "completed": opt_bool(k.completed),
-            }),
+            "key": self.key.as_ref().map_or(Json::Null, key_json),
             "start_local_ms": Json::num(self.start_local_ms as f64),
             "tz_min": self.tz_min.map_or(Json::Null, Json::num),
             "start_utc_ms": Json::num(self.start_utc_ms as f64),
@@ -674,6 +675,8 @@ impl FightCard {
                     difficulty: u32_of(k, "difficulty").unwrap_or(0),
                     level: u32_of(k, "level"),
                     completed: bool_of(k, "completed"),
+                    // v47: absent on every older card, and on one with none.
+                    affixes: u32s_from(k.get("affixes")),
                 })
             }),
             start_local_ms: i64_of(v, "start_local_ms").unwrap_or(0),
@@ -710,6 +713,23 @@ impl FightCard {
             origin: origin_from(v.get("origin")),
         })
     }
+}
+
+/// A card's `key` object. v47: `affixes` last, and only when the key names
+/// some — every card without them is byte for byte what it was.
+fn key_json(k: &KeyInfo) -> Json {
+    let mut doc = obj! {
+        "map_id": Json::num(k.map_id),
+        "difficulty": Json::num(k.difficulty),
+        "level": opt_num(k.level.map(u64::from)),
+        "completed": opt_bool(k.completed),
+    };
+    if let Json::Obj(fields) = &mut doc
+        && !k.affixes.is_empty()
+    {
+        fields.push(("affixes".to_string(), u32s_json(&k.affixes)));
+    }
+    doc
 }
 
 /// v46: a card's origin. Absent or `null` is `Local`; any object is an

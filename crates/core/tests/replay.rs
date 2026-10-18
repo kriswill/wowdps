@@ -82,6 +82,15 @@ fn counts(seg: &str, c: &Cut, out: &mut Golden) {
         posts().flat_map(|p| &p.pools).map(|w| w.current).sum(),
     );
     put("*", "floor", u64::from(c.floor));
+    // Format 6: the affixes of the key the cut is inside — a run's own, a
+    // pull's inside one — counted and their ids summed.
+    let affixes = c.head.key.as_ref().map_or(&[][..], |k| &k.affixes[..]);
+    put("*", "affixes", affixes.len() as u64);
+    put(
+        "*",
+        "affix_sum",
+        affixes.iter().map(|&a| u64::from(a)).sum(),
+    );
     for k in EventKind::ALL {
         let n = c.events.iter().filter(|e| e.kind == k).count();
         put("*", k.word(), n as u64);

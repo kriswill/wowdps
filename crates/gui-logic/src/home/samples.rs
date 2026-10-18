@@ -126,6 +126,7 @@ pub fn key(
             difficulty: 8,
             level: Some(14),
             completed: success,
+            ..KeyInfo::default()
         }),
         pars_ms: Some((1_800_000, 1_440_000, 1_080_000)),
         official_ms: Some(clock),

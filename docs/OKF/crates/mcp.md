@@ -69,6 +69,10 @@ through `cargo run`.
     ([R28](../rulings/r28.md)).
   - `role_night { encounter, difficulty, night | date }` — one night's
     roster by role: tanks side by side, healers and DPS ranked.
+  - A card's `instance` names a key's `key_level`, `completed` and (v47)
+    `affixes`, the START's ids in order: an empty list for a run joined
+    mid-way, an unkeyed instance and a card stored before v47
+    ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
   - A card's `origin` (v46) is null for this machine's own fights and
     `{kind: "imported", source}` for one imported from outside its logs.
     `history` and the others list this machine's own alone (they ask
