@@ -27,7 +27,9 @@
 //! paid), and a pool an energize filled — a warlock's soul shards, a
 //! paladin's holy power, a rogue's combo points — raised by its gain in the
 //! block's units (a shard's `1.0000` is 10 of `power_max` 50), at most its
-//! max.
+//! max. From format 6, `pull.txt` says the key's affixes
+//! (`affixes = 10,9,147`, its CHALLENGE_MODE_START's ids in its order) when
+//! the cut is inside a key whose START the log holds.
 
 use std::fmt::Write as _;
 use std::io;
@@ -267,10 +269,11 @@ pub struct PullFacts<'a> {
 }
 
 /// `pull.txt`: the header's words (`title`, `detail`, `outcome`,
-/// `instance`, `kind`, `encounter_id`, `map`, `date`), then the pull's
-/// identity (`log`, `start`, `owner`) and its `order`. A keystone run's
-/// (a cut with no encounter at its head) says its dungeon and level, timed
-/// or over, and names no encounter.
+/// `instance`, `kind`, `encounter_id`, `affixes`, `map`, `date`), then the
+/// pull's identity (`log`, `start`, `owner`) and its `order`. A keystone
+/// run's (a cut with no encounter at its head) says its dungeon and level,
+/// timed or over, and names no encounter. `affixes` is written only for a
+/// key that names some.
 pub fn pull_txt(cut: &Cut, facts: &PullFacts<'_>) -> String {
     let h = &cut.head;
     let players = cut
@@ -330,6 +333,10 @@ pub fn pull_txt(cut: &Cut, facts: &PullFacts<'_>) -> String {
                 facts.instance.unwrap_or(&h.zone),
             );
         }
+    }
+    if let Some(k) = h.key.as_ref().filter(|k| !k.affixes.is_empty()) {
+        let ids: Vec<String> = k.affixes.iter().map(u32::to_string).collect();
+        let _ = writeln!(out, "affixes = {}", ids.join(","));
     }
     let (y, m, d) = h.date;
     let _ = write!(

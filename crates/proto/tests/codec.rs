@@ -459,6 +459,7 @@ fn card() -> FightCard {
             difficulty: 23,
             level: Some(10),
             completed: Some(false),
+            affixes: vec![10, 9, 147],
         }),
         start_local_ms: 1_722_000_000_123,
         tz_min: Some(-240),
@@ -1211,7 +1212,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 46, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 47, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1796,6 +1797,39 @@ fn golden_bytes_pin_the_encoding() {
         hex(&imported[imported.len() - 10..]),
         "01010000007301000000"
     );
+    // v47: a card's key gained a trailing Vec<u32> `affixes`, embedded (the
+    // card's fields follow it), so its count is always written: a key with
+    // none ends `00000000` after `completed`, and each affix adds its u32.
+    let keyed = |affixes: Vec<u32>| {
+        DaemonMsg::History {
+            req_id: 1,
+            answer: HistoryAnswer::Fights {
+                cards: vec![FightCard {
+                    key: Some(KeyInfo {
+                        map_id: 0x0102_0304,
+                        difficulty: 8,
+                        level: Some(14),
+                        completed: Some(true),
+                        affixes,
+                    }),
+                    ..FightCard::default()
+                }],
+                total: 1,
+            },
+        }
+        .encode()
+    };
+    let none = hex(&keyed(Vec::new()));
+    let three = hex(&keyed(vec![10, 9, 147]));
+    // present | map_id | difficulty | level Some(14) | completed Some(true)
+    // | the affixes' count, then each.
+    let key = "01 04030201 08000000 01 0e000000 01 01".replace(' ', "");
+    assert!(none.contains(&format!("{key}00000000")), "{none}");
+    assert!(
+        three.contains(&format!("{key}03000000 0a000000 09000000 93000000").replace(' ', "")),
+        "{three}"
+    );
+    assert_eq!(three.len(), none.len() + 2 * 12, "three u32s more");
     let imported = DaemonMsg::History {
         req_id: 7,
         answer: HistoryAnswer::Imported { queued: 9 },

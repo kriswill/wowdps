@@ -4561,6 +4561,8 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             difficulty: v.difficulty,
             level: v.key_level,
             completed: v.completed,
+            // v47: the START's affixes (none on a run joined mid-way).
+            affixes: v.affixes.clone(),
         }),
         start_local_ms: seg.start_ms,
         tz_min: tz,

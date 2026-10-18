@@ -69,10 +69,12 @@ fn visits_and_segment_tags_follow_the_zone_rules() {
     assert_eq!(visits.len(), 3);
     assert_eq!(visits[0].name, "Algeth'ar Academy");
     assert_eq!(visits[0].key_level, None, "the zone-in visit is pre-key");
+    assert_eq!(visits[0].affixes, [0u32; 0], "and names no affixes");
     assert_eq!(visits[0].completed, None, "the zeroed reset END is ignored");
     assert!(visits[0].end_ms.is_some(), "closed when the key started");
     assert_eq!(visits[1].name, "Algeth'ar Academy");
     assert_eq!(visits[1].key_level, Some(12));
+    assert_eq!(visits[1].affixes, [9, 10], "the START's list, in its order");
     assert_eq!(visits[1].completed, Some(true), "the key timed");
     // R10: a finished key is terminal — the visit closes at its own
     // CHALLENGE_MODE_END, not at the next instance. The Guardian trash
@@ -278,6 +280,15 @@ fn a_lazily_loaded_overall_matches_the_full_replay() {
             meta.name
         );
         assert_eq!(got.name, want.name);
+        // The visit a stored card is written from (an import parses the
+        // Σ lazily, a live close reads the full meter's): its key facts,
+        // the affixes among them, agree.
+        let facts = |m: &Meter| {
+            m.visits()
+                .get(ordinal as usize)
+                .map(|v| (v.key_level, v.affixes.clone()))
+        };
+        assert_eq!(facts(&lazy), facts(&meter), "{}", meta.name);
     }
 }
 
@@ -587,6 +598,7 @@ fn a_key_joined_mid_run_is_keyed_by_its_end() {
     let key = &visits[0];
     assert!(key.keyed);
     assert_eq!(key.key_level, Some(12));
+    assert_eq!(key.affixes, [0u32; 0], "an END names no affixes");
     assert_eq!(key.display_name(), "Ruby Life Pools +12");
     assert_eq!(key.completed, Some(true));
     assert_eq!(key.official_ms, Some(1_404_488));
