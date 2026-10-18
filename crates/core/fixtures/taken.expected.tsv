@@ -446,6 +446,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	*	replay_pools	14
 1	Encounter	Taken Test Boss	kill	60000	3145	16	*	replay_pool_sum	750940
 1	Encounter	Taken Test Boss	kill	60000	3145	16	*	replay_floor	2287
+1	Encounter	Taken Test Boss	kill	60000	3145	16	*	replay_affixes	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	*	replay_affix_sum	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	*	replay_hit	9
 1	Encounter	Taken Test Boss	kill	60000	3145	16	*	replay_cast_start	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	*	replay_cast_success	0
