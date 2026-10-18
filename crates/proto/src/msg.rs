@@ -21,7 +21,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 46;
+pub const PROTO_VERSION: u16 = 47;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -1991,6 +1991,9 @@ fn put_card(buf: &mut Vec<u8>, c: &FightCard) {
         wire::put_u32(b, k.difficulty);
         put_opt_u32(b, k.level);
         wire::put_opt(b, k.completed.as_ref(), |b, v| wire::put_bool(b, *v));
+        // v47: the key's affixes, embedded (the card's fields follow), so
+        // the count is always written: four zero bytes for none.
+        wire::put_vec(b, &k.affixes, |b, a| wire::put_u32(b, *a));
     });
     wire::put_i64(buf, c.start_local_ms);
     wire::put_opt(buf, c.tz_min.as_ref(), |b, m| wire::put_u16(b, *m as u16));
@@ -2133,6 +2136,7 @@ fn get_card(rd: &mut Reader) -> Result<FightCard> {
                 difficulty: r.u32()?,
                 level: r.opt(|r| r.u32())?,
                 completed: r.opt(|r| r.bool())?,
+                affixes: r.vec(|r| r.u32())?,
             })
         })?,
         start_local_ms: rd.i64()?,

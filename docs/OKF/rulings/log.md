@@ -1,5 +1,14 @@
 # Log
 
+## 2026-10-17
+
+- **Update** — [R10 Visits & Overall](r10.md): a key's affixes are kept
+  from its CHALLENGE_MODE_START on its visit (none for a key joined
+  mid-run), and the card and the replay head carry them on (v47).
+- **Update** — [R29 The replay cut](r29.md): tier format 6 — the head's key
+  adds its affixes; `pull.txt` says them; the fixtures' `replay_affixes`
+  and `replay_affix_sum` rows.
+
 ## 2026-10-11
 
 - **Update** — [R29 The replay cut](r29.md): tier format 5 — a cast's pools

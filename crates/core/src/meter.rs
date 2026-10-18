@@ -591,6 +591,10 @@ pub struct Visit {
     /// Keystone runs: the dungeon's (par, +2, +3) timers from the generated
     /// MapChallengeMode table; `None` when the challengeID is unknown.
     pub pars_ms: Option<(i64, i64, i64)>,
+    /// Keystone runs: the key's affix ids as its CHALLENGE_MODE_START
+    /// listed them. Empty on an unkeyed visit and on a key joined mid-run,
+    /// whose END names no affixes.
+    pub affixes: Vec<u32>,
 }
 
 /// The in-game key timer starts when the activation countdown ends, ~10s
@@ -668,6 +672,7 @@ impl Visit {
             completed: None,
             official_ms: None,
             pars_ms: None,
+            affixes: Vec::new(),
         }
     }
 
@@ -6913,6 +6918,7 @@ impl Meter {
                 challenge_id,
                 key_level,
                 name: start_name,
+                affixes,
             } => {
                 let standing = self
                     .current_visit
@@ -6941,6 +6947,7 @@ impl Meter {
                     completed: None,
                     official_ms: None,
                     pars_ms: crate::keystone_timers::pars_ms(*challenge_id),
+                    affixes: affixes.clone(),
                 });
                 self.current_visit = Some(self.visits.len() as u32 - 1);
                 self.zoned_in = true;
@@ -10134,6 +10141,7 @@ mod tests {
             completed: None,
             official_ms: None,
             pars_ms: par_ms.map(|p| (p, p * 4 / 5, p * 3 / 5)),
+            affixes: vec![10, 9],
         }
     }
 

@@ -320,6 +320,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	*	replay_pools	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_pool_sum	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_floor	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_affixes	0
+1	Encounter	Relog Test A		9000	3140	15	*	replay_affix_sum	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_hit	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_cast_start	0
 1	Encounter	Relog Test A		9000	3140	15	*	replay_cast_success	0
@@ -351,6 +353,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_pools	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_pool_sum	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_floor	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_affixes	0
+3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_affix_sum	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_hit	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_cast_start	0
 3	Encounter	Relog Test B	kill	10000	3141	15	*	replay_cast_success	0

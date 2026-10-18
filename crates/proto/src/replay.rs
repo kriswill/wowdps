@@ -19,7 +19,8 @@
 //!            | opt(varint fight_ms) | zz start_utc_ms
 //!            | varint year | u8 month | u8 day
 //!            | opt(varint id | varint name | varint difficulty | varint size)
-//!            | opt(varint name | varint level)               (the key)
+//!            | opt(varint name | varint level | varint n | varint affix*)
+//!            (the key; its n affixes from format 6 on)
 //! units 3 := varint n | (u8 kind | varint name | varint guid | u8 class
 //!            | varint spec | u8 you | varint npc | varint posts)*
 //! posts 4 := every unit's posts in unit order, each against the unit's
@@ -108,6 +109,11 @@
 //!   and an energize's gain on the pool it names, so a warlock's shards and
 //!   a paladin's holy power move between spenders. Every stored file's
 //!   `pools` and `power` change, so the rewrite queue recuts every older one.
+//! - 6: the key's affixes (its CHALLENGE_MODE_START's list, in its order)
+//!   after its level, in the head; every other section format 5's, byte for
+//!   byte. An older file still reads, its key with no affixes; the rewrite
+//!   queue recuts every one from its log, so a run stored before the parser
+//!   kept them gets them back while its log survives.
 
 use std::collections::HashMap;
 
@@ -123,7 +129,7 @@ pub mod csv;
 /// The file's first four bytes.
 pub const MAGIC: &[u8; 4] = b"WDRP";
 /// The layout above, as this build writes it.
-pub const FORMAT: u8 = 5;
+pub const FORMAT: u8 = 6;
 /// The oldest layout a reader takes.
 pub const OLDEST: u8 = 1;
 /// The fixed head: magic, format, the index's length.
@@ -247,7 +253,7 @@ pub fn decode(bytes: &[u8]) -> Option<Cut> {
     let section = |tag: u8| sections.get(&tag).map(|b| Cur::new(b));
     let strs = read_strs(&mut section(STRS)?)?;
     let spells = read_spells(&mut section(SPELLS)?, &strs)?;
-    let (head, floor) = read_head(&mut section(HEAD)?, &strs)?;
+    let (head, floor) = read_head(&mut section(HEAD)?, &strs, format)?;
     let (mut units, counts) = read_units(&mut section(UNITS)?, &strs)?;
     // Every post on the head's floor — format 1 kept no other — until the
     // maps section moves a track's stretches to theirs.
@@ -256,7 +262,7 @@ pub fn decode(bytes: &[u8]) -> Option<Cut> {
         read_maps(&mut section(MAPS)?, &mut units)?;
     }
     // Each post's pools from its own and its last's, every format alike;
-    // format 3's (and 4's and 5's, the same codec) shields, and the posts
+    // format 3's (and every later one's, the same codec) shields, and the posts
     // whose pools a cast's lists or an energize made.
     let mut lists = HashMap::new();
     if format >= 3 {
@@ -364,6 +370,10 @@ impl Writer {
                 let name = self.s(&k.name);
                 put_varint(&mut out, name);
                 put_varint(&mut out, u64::from(k.level));
+                put_varint(&mut out, k.affixes.len() as u64);
+                for &affix in &k.affixes {
+                    put_varint(&mut out, u64::from(affix));
+                }
             }
             None => out.push(0),
         }
@@ -748,7 +758,7 @@ fn read_spells(c: &mut Cur, strs: &[String]) -> Option<Vec<(u32, String)>> {
     c.done().then_some(out)
 }
 
-fn read_head(c: &mut Cur, strs: &[String]) -> Option<(Head, u32)> {
+fn read_head(c: &mut Cur, strs: &[String], format: u8) -> Option<(Head, u32)> {
     let floor = c.u32()?;
     let map = c.u32()?;
     let zone = c.name(strs)?;
@@ -781,6 +791,13 @@ fn read_head(c: &mut Cur, strs: &[String]) -> Option<(Head, u32)> {
         1 => Some(KeyHead {
             name: c.name(strs)?,
             level: c.u32()?,
+            // Format 6 on: the affixes, each a varint (a byte at least).
+            affixes: if format >= 6 {
+                let n = c.count(1)?;
+                (0..n).map(|_| c.u32()).collect::<Option<_>>()?
+            } else {
+                Vec::new()
+            },
         }),
         _ => return None,
     };
