@@ -54,7 +54,7 @@ jobs:
         with:
           determinate: true
           summarize: false
-      - uses: DeterminateSystems/flakehub-cache-action@0975873945367f5239ebb5f49c133bf3543a08f6 # v3.23.1
+      - uses: DeterminateSystems/flakehub-cache-action@1e32af7023570b86600346bf88feacc99b18ceca # v3.23.2
       - name: Install devenv
         run: nix profile add --inputs-from . nixpkgs#devenv
       - name: Expose the Actions cache service to sccache
