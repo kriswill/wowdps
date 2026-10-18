@@ -76,7 +76,9 @@ cutover changed none of them but their doc comments.
 - `simc` — the SimulationCraft addon export's parser, and the raw paste
   persisted per "Name-Realm" under `$XDG_DATA_HOME/wowdps/simc/`.
 - `single` — the overlay's takeover socket. It is unversioned, so a new
-  overlay evicts a running one whatever build either is.
+  overlay evicts a running one whatever build either is. The evicted one
+  exits from `single` itself, through a notice that cannot panic: a
+  spawned overlay's stderr can be a pipe nobody reads.
 - `table` — what a column means: `Col`'s heading, cell text and sort key,
   `sorted`, `figure`, `overheal_pct`, and `split_pet` for an ability's
   "Ability (Pet)" label; the GUI's `window/table.rs` gives a column its

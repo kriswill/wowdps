@@ -1,5 +1,12 @@
 # Log
 
+## 2026-10-16
+
+- **Update** — [dev-unit](dev-unit.md): stopping a daemon takes down orphan
+  overlays first and re-sends `stop` to any daemon that answers while it
+  waits for the lock, so a reconnecting overlay no longer holds the lock
+  with a fresh daemon through the wait.
+
 ## 2026-10-04
 
 - **Creation** — [gen-open-world-maps](gen-open-world-maps.md): Map.db2's
