@@ -29,7 +29,8 @@ The wowdps daemon: one process owns tail → index → parse → meter → snaps
   game start, `SetVisible` on exit, exit-grace termination, manual-hide
   stickiness, spawn stderr surfaced in `Status`. The daemon's exit
   terminates the overlay it spawned (`Supervisor::shutdown`), because an
-  orphaned overlay's reconnect respawns daemons.
+  orphaned overlay's reconnect respawns daemons. `Drop` runs the same
+  shutdown, so a panic unwinding out of `hub::run` takes the child down too.
 - `cache.rs` — index checkpoints under `$XDG_CACHE_HOME/wowdps/index`, never
   parsed meters; `write_atomic` is the daemon's one durability primitive.
 - `addon.rs` — the wowdps addon's life on disk (v31): `product_dir` derives

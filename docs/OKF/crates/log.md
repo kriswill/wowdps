@@ -2,6 +2,11 @@
 
 ## 2026-10-17
 
+- **Update** — [wowdps-daemon](daemon.md): `Supervisor`'s `Drop` runs
+  `shutdown`, so a panic unwinding out of `hub::run`, which skips the
+  explicit call, still terminates the overlay the daemon spawned. A second
+  shutdown is a no-op.
+
 - **Update** — [wowdps-core](core.md), [wowdps-model](model.md),
   [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
   [wowdps-mcp](mcp.md), [wowdps-history](history.md): v47 and replay

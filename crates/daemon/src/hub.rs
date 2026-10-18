@@ -137,6 +137,8 @@ pub fn run(
     }
     // Every way out takes down the overlay this daemon spawned: an orphan's
     // reconnect respawns a daemon, and that daemon spawns another overlay.
+    // A panic unwinding out of here skips this line; the supervisor's `Drop`
+    // does the same then.
     supervisor.shutdown();
     // Dropping the sessions' senders lets every writer thread run down,
     // which shuts each stream and unblocks its reader.
