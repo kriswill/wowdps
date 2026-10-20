@@ -430,6 +430,20 @@ fn imported_card() -> ImportedCard {
                 name: "Ana-Realm".to_string(),
                 class: Some(Class::Mage),
                 spec: Some(Spec::FrostMage),
+                // v48: the meter and its curves, every number distinct.
+                damage: 1_000_000_007,
+                healing: 2_000_011,
+                overheal: 13,
+                absorbed: 17,
+                heal_absorbed: 19,
+                taken: 23,
+                deaths: 2,
+                support_given: 29,
+                support_received: 31,
+                healed_received: 37,
+                self_healed: 41,
+                damage_curve: vec![1_000_000_000, 0, 7],
+                heal_curve: vec![2_000_011],
             },
             ImportedPlayer::default(),
         ],
@@ -1212,7 +1226,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 47, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 48, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1629,6 +1643,7 @@ fn golden_bytes_pin_the_encoding() {
     );
     // v46: ImportReplay 0x0E — req_id | the import's card | the replay's
     // u32-length bytes; a card with every option empty and one player.
+    // v48: the player's meter and curves after their spec.
     let import_replay = ClientMsg::ImportReplay {
         req_id: 2,
         card: Box::new(ImportedCard {
@@ -1646,6 +1661,19 @@ fn golden_bytes_pin_the_encoding() {
                 name: "N".to_string(),
                 class: Some(Class::Mage),
                 spec: Some(Spec::FrostMage),
+                damage: 10,
+                healing: 20,
+                overheal: 3,
+                absorbed: 4,
+                heal_absorbed: 5,
+                taken: 6,
+                deaths: 7,
+                support_given: 8,
+                support_received: 9,
+                healed_received: 11,
+                self_healed: 12,
+                damage_curve: vec![4, 6],
+                heal_curve: vec![20],
             }],
             owner: None,
             source: "s".to_string(),
@@ -1657,7 +1685,7 @@ fn golden_bytes_pin_the_encoding() {
     assert_eq!(
         hex(&import_replay.encode()),
         concat!(
-            "4a000000",
+            "be000000",
             "0e",
             "02000000",
             // name "B" | encounter 00 | kind 00 (Encounter) | start_utc 1
@@ -1677,6 +1705,26 @@ fn golden_bytes_pin_the_encoding() {
             "010000004e",
             "0107",
             "4000",
+            // v48: damage 10 | healing 20 | overheal 3 | absorbed 4 |
+            // heal_absorbed 5 | taken 6 | deaths 7 (u32) | support_given 8 |
+            // support_received 9 | healed_received 11 | self_healed 12
+            "0a00000000000000",
+            "1400000000000000",
+            "0300000000000000",
+            "0400000000000000",
+            "0500000000000000",
+            "0600000000000000",
+            "07000000",
+            "0800000000000000",
+            "0900000000000000",
+            "0b00000000000000",
+            "0c00000000000000",
+            // damage_curve [4, 6] | heal_curve [20]
+            "02000000",
+            "0400000000000000",
+            "0600000000000000",
+            "01000000",
+            "1400000000000000",
             // owner 00 | source "s" | build 12.0.7 | log_version 22
             "00",
             "0100000073",

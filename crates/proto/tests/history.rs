@@ -2016,12 +2016,14 @@ fn imported() -> ImportedCard {
                 name: "Ana-Realm".to_string(),
                 class: Some(Class::Mage),
                 spec: Some(Spec::FrostMage),
+                ..ImportedPlayer::default()
             },
             ImportedPlayer {
                 guid: "Player-1-B".to_string(),
                 name: "Bo-Realm".to_string(),
                 class: None,
                 spec: None,
+                ..ImportedPlayer::default()
             },
         ],
         owner: Some("Player-1-A".to_string()),
@@ -2050,7 +2052,8 @@ fn an_imported_card_is_made_from_the_facts_alone() {
     assert_eq!(c.log, 0);
     assert_eq!(c.byte_range, None);
     assert!(!c.aborted && !c.pinned);
-    assert_eq!(c.combat_ms, None);
+    // v48: a boss pull's combat clock is its START..END.
+    assert_eq!(c.combat_ms, Some(301_500));
     assert_eq!(c.start_local_ms, 1_722_014_400_000 - 240 * 60_000);
     assert_eq!(c.success, Some(true));
     assert_eq!(c.best_pct, Some(0));
@@ -2079,6 +2082,123 @@ fn an_imported_card_is_made_from_the_facts_alone() {
     .card();
     assert_eq!(c.start_local_ms, 5);
     assert_eq!(c.owner, None);
+}
+
+/// v48: an import with its meter — one player's totals, and their curves.
+fn metered() -> ImportedCard {
+    let mut c = imported();
+    let Some(ana) = c.players.first_mut() else {
+        return c;
+    };
+    ana.damage = 9_045_000;
+    ana.healing = 30_150;
+    ana.overheal = 1_000;
+    ana.absorbed = 150;
+    ana.heal_absorbed = 50;
+    ana.taken = 603_000;
+    ana.deaths = 1;
+    ana.support_given = 0;
+    ana.support_received = 45_000;
+    ana.healed_received = 20_000;
+    ana.self_healed = 30_000;
+    // 301.5 s: buckets 0..=301, the END's half second in the last.
+    ana.damage_curve = vec![30_000; 301];
+    ana.damage_curve.push(9_045_000 - 301 * 30_000);
+    ana.heal_curve = vec![0, 30_150];
+    c
+}
+
+/// The card keeps the import's totals and derives the rates over its
+/// combat clock — the duration, an encounter's START..END — with the
+/// model's arithmetic, so an import ranks beside a local kill; what no
+/// import carries stays unknown; the card reads back whole.
+#[test]
+fn an_imported_card_carries_its_players_meter() {
+    let c = metered().card();
+    assert_eq!(c.rate_ms(), 301_500);
+    let ana = &c.players[0];
+    assert_eq!(
+        (ana.damage, ana.healing, ana.taken, ana.deaths),
+        (9_045_000, 30_150, 603_000, 1)
+    );
+    assert_eq!(ana.dps, wowdps_model::rate(9_045_000, 301_500));
+    assert_eq!(ana.dps, 30_000.0);
+    assert_eq!(ana.hps, 100.0);
+    assert_eq!(ana.dtps, 2_000.0);
+    assert_eq!(
+        (ana.overheal, ana.absorbed, ana.heal_absorbed),
+        (1_000, 150, 50)
+    );
+    assert_eq!((ana.support_given, ana.support_received), (0, 45_000));
+    assert_eq!((ana.healed_received, ana.self_healed), (20_000, 30_000));
+    assert_eq!(
+        ana.effective(),
+        9_000_000,
+        "R19: damage less what was received"
+    );
+    // Never carried: the loadout, the R17 split, the R18 spans, R20's ledger.
+    assert!(!ana.logged && ana.loadout.is_none());
+    assert_eq!((ana.mitigated, ana.prevented, ana.reduced), (0, 0, 0));
+    assert_eq!((ana.am_uptime_ms, ana.externals_given_ms), (0, 0));
+    assert_eq!((ana.absorb_wasted, ana.shields_unknown), (None, 0));
+    let bo = &c.players[1];
+    assert_eq!((bo.damage, bo.dps, bo.hps), (0, 0.0, 0.0));
+    let line = c.to_json().to_line();
+    assert_eq!(
+        FightCard::from_json(&json::parse(&line).unwrap()).unwrap(),
+        c
+    );
+}
+
+/// The details tier an import makes: one entry per player with a curve,
+/// their curves as the 1 s damage and healing timelines and nothing else,
+/// filed under the card's id; none without a curve.
+#[test]
+fn an_imports_curves_make_its_details_tier() {
+    let m = metered();
+    let id = m.card().id;
+    let d = m.details(&id).unwrap();
+    assert_eq!(d.id, id);
+    assert_eq!(d.players.len(), 1, "Bo has no curve");
+    let p = &d.players[0];
+    assert_eq!(p.guid, "Player-1-A");
+    assert_eq!(p.damage_timeline.bucket_ms, 1000);
+    assert_eq!(p.damage_timeline.buckets, m.players[0].damage_curve);
+    assert_eq!(p.heal_timeline.buckets, [0, 30_150]);
+    assert!(p.damage_timeline.marks.is_empty());
+    assert!(p.damage_spells.is_empty() && p.heal_targets.is_empty());
+    assert!(p.counts.is_empty() && p.energize.is_empty() && p.power.is_empty());
+    let line = d.to_json().to_line();
+    assert_eq!(
+        FightDetails::from_json(&json::parse(&line).unwrap()).unwrap(),
+        d
+    );
+    assert_eq!(imported().details(&id), None);
+}
+
+/// A curve agrees with its total or the import is refused: it sums to
+/// the player's damage (healing) exactly and holds no second past the
+/// fight's end; an empty curve is no curve.
+#[test]
+fn an_imports_curves_agree_with_its_totals() {
+    assert_eq!(metered().check_curves(), Ok(()));
+    assert_eq!(imported().check_curves(), Ok(()));
+    let mut short = metered();
+    short.players[0].damage_curve[0] -= 1;
+    let err = short.check_curves().unwrap_err();
+    assert!(
+        err.contains("Player-1-A's damage curve sums to 9044999, not their damage 9045000"),
+        "{err}"
+    );
+    let mut long = metered();
+    long.players[0].heal_curve = vec![0; 302];
+    long.players[0].heal_curve.push(30_150);
+    let err = long.check_curves().unwrap_err();
+    assert!(err.contains("healing curve runs 303 s"), "{err}");
+    let mut wraps = metered();
+    wraps.players[0].heal_curve = vec![u64::MAX, 1];
+    let err = wraps.check_curves().unwrap_err();
+    assert!(err.contains("more than a u64"), "{err}");
 }
 
 /// The origin is written only off this machine's own fights: a local

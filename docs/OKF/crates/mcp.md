@@ -76,9 +76,14 @@ through `cargo run`.
   - A card's `origin` (v46) is null for this machine's own fights and
     `{kind: "imported", source}` for one imported from outside its logs.
     `history` and the others list this machine's own alone (they ask
-    `OriginFilter::Local`); `stored_fight` names an import by id and says it
-    keeps a card and a replay only
+    `OriginFilter::Local`); `stored_fight` names an import by id
     ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
+    v48: it answers an import's card, tier `card` — `fight.players`
+    carries each player's meter, no view rows, a `note` saying so — where
+    it used to refuse, and a drill or a zoom window of one is an error
+    saying the import keeps no rows to break down or window (never the
+    whole fight's totals in place of the stretch asked for)
+    ([An Import Carries Its Meter](../decisions/an-import-carries-its-meter.md)).
 - Talent tools — `talent_tree`, `decode_talents`, `encode_talents` —
   answered from the per-machine talent dataset ([R14](../rulings/r14.md)),
   never the daemon.

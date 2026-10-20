@@ -5568,13 +5568,16 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
             start_utc_ms,
             duration_ms: kill.duration_ms / 2,
             success: Some(true),
-            // A specced player, so the grader would rank them were the
-            // import not left out.
+            // A specced player with a meter (v48), so the grader would
+            // rank them were the import not left out.
             players: vec![ImportedPlayer {
                 guid: "Player-9-Z".to_string(),
                 name: "Zed-Elsewhere".to_string(),
                 class: Some(wowdps_model::Class::Mage),
                 spec: Some(Spec::FrostMage),
+                damage: 500_000,
+                damage_curve: vec![500_000],
+                ..ImportedPlayer::default()
             }],
             source: "import:test-1".to_string(),
             ..ImportedCard::default()
@@ -5610,8 +5613,17 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
         .sql("SELECT id FROM fights WHERE NOT imported")
         .unwrap();
     assert_eq!(local.rows.len(), 2);
-    let players = lake.sql("SELECT guid FROM players WHERE imported").unwrap();
+    let players = lake
+        .sql("SELECT guid, damage, dps FROM players WHERE imported")
+        .unwrap();
     assert_eq!(players.rows.len(), 1);
+    // v48: the import's meter, rated over its combat clock.
+    assert_eq!(players.rows[0][1].as_u64(), Some(500_000));
+    let dps = players.rows[0][2].as_f64().unwrap();
+    assert!(
+        (dps - wowdps_model::rate(500_000, kill.duration_ms / 2)).abs() < 1e-6,
+        "{dps}"
+    );
     // The grader in SQL ranks this machine's own fights alone.
     let ranked = lake
         .sql_with(
@@ -5698,12 +5710,20 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
         "the import is no kill of ours"
     );
     assert_eq!(num(&["replay", "files"]), Some(3));
+    // v48: its files, its raid series from the details tier its curve made.
     let out = tmp.0.join("export");
     let said = wowdps_history::replay_export(&hist, &id, &out).unwrap();
-    assert!(said.contains("no details tier"), "{said}");
+    assert!(!said.contains("no details tier"), "{said}");
     for f in wowdps_proto::replay::csv::FILES {
         assert!(out.join(f).is_file(), "{f}");
     }
+    let raid = std::fs::read_to_string(out.join("raid.csv")).unwrap();
+    let total: u64 = raid
+        .lines()
+        .skip(1)
+        .filter_map(|l| l.split(',').nth(1)?.parse::<u64>().ok())
+        .sum();
+    assert_eq!(total, 500_000, "{raid}");
 }
 
 /// The addon's creatures, end to end: a real daemon inside a fake install
