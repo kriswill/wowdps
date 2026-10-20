@@ -1,5 +1,14 @@
 # Log
 
+## 2026-10-19
+
+- **Update** — [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
+  [wowdps-mcp](mcp.md), [wowdps-history](history.md): v48, an import's
+  meter — `ImportedPlayer`'s totals and curves, the card's derived rates,
+  `ImportedCard::details` written as the details tier by
+  `Store::import_replay`, `stored_fight` answering an import's card, the
+  lake's `players` rows for an import filled.
+
 ## 2026-10-17
 
 - **Update** — [wowdps-daemon](daemon.md): `Supervisor`'s `Drop` runs
