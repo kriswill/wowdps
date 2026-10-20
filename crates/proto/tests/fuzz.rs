@@ -247,7 +247,8 @@ fn client_msgs() -> Vec<ClientMsg> {
             },
         },
         // v46: an import — its card's options, its players' class and spec
-        // codes and the replay's length prefix all under mutation.
+        // codes and the replay's length prefix all under mutation; v48: and
+        // the curves' counts.
         ClientMsg::ImportReplay {
             req_id: 4,
             card: Box::new(wowdps_proto::history::ImportedCard {
@@ -266,6 +267,11 @@ fn client_msgs() -> Vec<ClientMsg> {
                     name: "Ana".to_string(),
                     class: Some(Class::Evoker),
                     spec: Some(Spec::FrostMage),
+                    damage: u64::MAX,
+                    deaths: u32::MAX,
+                    damage_curve: vec![u64::MAX, 0],
+                    heal_curve: vec![1],
+                    ..wowdps_proto::history::ImportedPlayer::default()
                 }],
                 owner: Some("Player-1-A".to_string()),
                 source: "import:test-1".to_string(),

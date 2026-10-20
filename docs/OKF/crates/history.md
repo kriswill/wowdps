@@ -40,6 +40,10 @@ The views over the lake's JSON files:
   `progression`, `trend`, `role-night` and the `role_ranks` view count
   `NOT imported`, as the daemon's fixed answers and the mcp grader do
   ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
+  Since v48 an import's `players` rows carry its meter (`damage`, `dps`,
+  `healing`, …, the fields every card writes) and `replay-export` writes
+  its `raid.csv` from the details tier its curves made; no view needed a
+  change ([An Import Carries Its Meter](../decisions/an-import-carries-its-meter.md)).
 - `fights.affixes` (v47): a keystone run's affix ids, the card's
   `key.affixes`; NULL off a key, for a key the log joined mid-run (its END
   names none) and on a card written before v47. The

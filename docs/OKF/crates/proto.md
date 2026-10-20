@@ -45,6 +45,12 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
   document is byte for byte the older one; `ImportedCard` is what an import
   knows and `ImportedCard::card` the card the store keeps, its id
   `imported_id` ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
+  v48: each `ImportedPlayer` carries the totals the importer reckoned and
+  its 1 s damage and healing curves; `card` derives the rates with
+  `wowdps_model::rate` over the duration (the card's `combat_ms`),
+  `details` makes the details tier from the curves, and `check_curves`
+  is the store's refusal when a curve does not sum to its total or runs
+  past the fight ([An Import Carries Its Meter](../decisions/an-import-carries-its-meter.md)).
   A card's `KeyInfo::affixes` (v47) is written the same way: last in its
   `key`, only when the key names some; on the wire the key carries the
   list always, embedded

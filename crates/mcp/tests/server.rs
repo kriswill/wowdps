@@ -1464,6 +1464,137 @@ fn history_tools_answer_empty_without_a_store() {
     );
 }
 
+/// v48: an imported fight's meter is its card. `stored_fight` answers it
+/// whole — tier card, every player's totals and rates on `fight.players`,
+/// no view rows — where it once refused, and a drill says what an import
+/// keeps and that there is no breakdown.
+#[test]
+fn an_imported_fight_answers_its_card_meter() {
+    use wowdps_proto::history::{ImportedCard, ImportedPlayer, imported_id};
+    use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg, HistoryAnswer};
+
+    let tmp = Temp::new("imported");
+    let opts = history_opts(&tmp);
+    let socket = start_daemon_with(&tmp, FIXTURE, |o| o.history = Some(opts));
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    wait_for_store(&mut bridge, 2);
+    // A replay this build cut: the kill's, once the store has it.
+    let dir = tmp.0.join("history").join("replay");
+    let deadline = Instant::now() + DEADLINE;
+    let bytes = loop {
+        let file = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .find(|e| e.file_name().to_string_lossy().ends_with(".bin"));
+        if let Some(f) = file {
+            break std::fs::read(f.path()).expect("replay");
+        }
+        assert!(Instant::now() < deadline, "no replay landed");
+        thread::sleep(Duration::from_millis(20));
+    };
+    let mut client = DaemonClient::over(
+        UnixStream::connect(&socket).expect("connect"),
+        ClientKind::Mcp,
+    )
+    .expect("client");
+    client.send(&ClientMsg::ImportReplay {
+        req_id: 1,
+        card: Box::new(ImportedCard {
+            name: "The Ashen Warden".to_string(),
+            encounter: Some(wowdps_model::Encounter {
+                id: 3130,
+                difficulty: 15,
+                group_size: 20,
+            }),
+            start_utc_ms: 1_722_014_400_000,
+            duration_ms: 50_000,
+            success: Some(true),
+            players: vec![ImportedPlayer {
+                guid: "Player-9-Z".to_string(),
+                name: "Zed-Elsewhere".to_string(),
+                damage: 100_000,
+                healing: 5_000,
+                deaths: 1,
+                damage_curve: vec![2_000; 50],
+                ..ImportedPlayer::default()
+            }],
+            source: "import:test-1".to_string(),
+            ..ImportedCard::default()
+        }),
+        replay: bytes,
+    });
+    let id = imported_id("import:test-1", 1_722_014_400_000);
+    let deadline = Instant::now() + DEADLINE;
+    'answered: loop {
+        assert!(Instant::now() < deadline, "the import was never answered");
+        for m in client.poll() {
+            if let DaemonMsg::History { req_id: 1, answer } = m {
+                assert_eq!(
+                    answer,
+                    HistoryAnswer::ImportedReplay {
+                        fight_id: id.clone(),
+                        replaced: false,
+                    }
+                );
+                break 'answered;
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(2, "stored_fight", &format!(r#"{{"fight_id":"{id}"}}"#)),
+            &call_line(
+                3,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{id}","player":"Zed"}}"#),
+            ),
+            &call_line(
+                4,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{id}","player":"Zed","from_secs":10,"to_secs":20}}"#),
+            ),
+        ],
+    );
+    let doc = tool_doc(&reply[0]);
+    assert_eq!(str_of(&doc, "tier"), "card");
+    assert!(matches!(doc.get("available_views"), Some(Json::Arr(a)) if a.is_empty()));
+    assert!(matches!(doc.get("rows"), Some(Json::Arr(r)) if r.is_empty()));
+    assert!(str_of(&doc, "note").contains("imported fight"));
+    let fight = doc.get("fight").cloned().expect("fight");
+    assert_eq!(
+        fight
+            .get("origin")
+            .and_then(|o| o.get("source"))
+            .and_then(Json::as_str),
+        Some("import:test-1")
+    );
+    assert_eq!(num_of(&fight, "combat_ms"), 50_000.0);
+    let players = match fight.get("players") {
+        Some(Json::Arr(p)) => p.clone(),
+        other => panic!("players: {other:?}"),
+    };
+    assert_eq!(players.len(), 1);
+    assert_eq!(num_of(&players[0], "damage"), 100_000.0);
+    assert_eq!(num_of(&players[0], "dps"), 2_000.0);
+    assert_eq!(num_of(&players[0], "hps"), 100.0);
+    assert_eq!(num_of(&players[0], "deaths"), 1.0);
+    let err = error_text(&reply[1]);
+    assert!(
+        err.contains("an imported fight") && err.contains("no breakdown"),
+        "{err}"
+    );
+    // A window is refused, never answered with the whole fight's totals.
+    let err = error_text(&reply[2]);
+    assert!(
+        err.contains("an imported fight") && err.contains("nothing to window"),
+        "{err}"
+    );
+}
+
 /// Retest 35 over a stored key: the card says its par and the margin against
 /// it, a roster row reads its rate as `per_sec` too, and pinning one of the
 /// key's member bosses by id is an error that names the key to pin instead.
