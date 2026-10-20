@@ -129,18 +129,26 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   answers it.
 - **Imported fights** (v46). `ImportReplay` lands on the history thread:
   `Store::import_replay` validates the replay (this build's format only,
-  a whole decode) and the facts, makes `ImportedCard::card`
-  (`Origin::Imported`, `imported_id`, log 0) and keeps the replay through
-  `store_replay`, nothing else, so a stored fight answers the card alone
-  (tier 1). The same source replaces it, pin carried; a moved id is retired
+  a whole decode) and the facts, and (v48) that every curve agrees with its
+  total (`ImportedCard::check_curves`); makes `ImportedCard::card`
+  (`Origin::Imported`, `imported_id`, log 0, each player's totals with
+  their rates derived over `combat_ms` = the duration) and keeps the replay
+  through `store_replay` and the details tier `ImportedCard::details`
+  makes (`put_details`: written, or an earlier import's removed when this
+  one brings no curves), no rows or series, so a stored fight answers the
+  card alone (tier 1), its meter on it
+  ([An Import Carries Its Meter](../decisions/an-import-carries-its-meter.md)).
+  The same source replaces it, pin carried; a moved id is retired
   (`retire_import`: its annotations moved over — copied, the old file
-  removed — then its card file removed, and only then its replay and index
-  entry; when any one step fails `undo_carry` undoes what was done, the old
+  removed — then its card file removed, and only then its replay, details
+  and index entry; when any step up to the card's removal fails
+  `undo_carry` undoes what was done, the old
   import is kept whole, as the files hold it, `replaced` says false, and
   `last_error` says why). A replay file that cannot be removed keeps its
   index entry (`drop_replay`) and retention tries it again. A
-  failed write leaves the store as it was: a re-import's old replay goes
-  back under its old card (`restore_replay`; an unreadable one refuses the
+  failed write leaves the store as it was: a re-import's old replay and
+  details go back under its old card (`restore_replay`, `restore_details`,
+  only for a details step that went through; an unreadable one refuses the
   re-import first), and the size cap trims only once the card is in
   (`write_replay` is `store_replay` without its trim).
   A queue too full for it answers `Refused` (busy) and counts it as a

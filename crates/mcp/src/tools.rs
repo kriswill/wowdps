@@ -608,7 +608,15 @@ pub fn catalog() -> Vec<Tool> {
                           key_level, completed and (v47) affixes, the affix ids its \
                           CHALLENGE_MODE_START listed, in that order — empty for a run \
                           the log joined mid-way, and on a card stored before v47 until \
-                          regrade_fights rewrites it.",
+                          regrade_fights rewrites it. An IMPORTED fight (`fight.origin` \
+                          names its source; `history` never lists one) answers its card \
+                          alone, tier card: since v48 its `fight.players` carry each \
+                          player's meter as the source gave it under the same rulings \
+                          (damage/dps, healing/hps, overheal, absorbed, heal_absorbed, \
+                          deaths, taken/dtps, support_given/support_received, \
+                          healed_received, self_healed, rated over combat_ms; the \
+                          mitigation split, aura spans and shields stay 0), with no view \
+                          rows, and a drill or a from_secs/to_secs window is an error.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -821,9 +829,10 @@ pub fn catalog() -> Vec<Tool> {
                           id, kind, name, encounter{id,difficulty,group_size}, key, \
                           start_utc_ms, duration_ms, success, aborted, build, owner, \
                           pinned, players[], and v46 imported: true for a fight imported \
-                          from outside this machine's logs, whose players carry no \
-                          numbers — add `AND NOT imported` to any question about the \
-                          user's own history: averages, kills, bests, ranks — and v47 \
+                          from outside this machine's logs, whose players carry (since \
+                          v48) the meter the importer reckoned, rated over combat_ms, and \
+                          before v48 no numbers — add `AND NOT imported` to any question \
+                          about the user's own history: averages, kills, bests, ranks — and v47 \
                           affixes: a keystone run's affix ids as a list, NULL off a key, \
                           for a key the log joined mid-run (its END names none) and on a \
                           card stored before v47), players (one \
@@ -845,7 +854,9 @@ pub fn catalog() -> Vec<Tool> {
                           median within fight and role, the DPS role by effective_dps; \
                           imported fights left out), rows (the \
                           seven views' meter rows + death recaps), details (breakdowns + timelines \
-                          for kills, bests, pins and longer wipes), loadouts, annotations, and \
+                          for kills, bests, pins and longer wipes, and since v48 an imported \
+                          fight's 1 s damage and healing curves, its lists empty), loadouts, \
+                          annotations, and \
                           the probed views taken, mitigation, taken_spells, taken_sources, \
                           support, support_targets, uptime (v25: fight × target guid × \
                           spell_id, label, kind by name, src = the caster, count, total_ms — \
@@ -1687,17 +1698,42 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             "damage+player, healing+player (by_ability, by_target, timeline)",
         ));
     }
-    if f.tier < 2 {
-        // v46: an imported fight never had more than its card and replay.
-        return Err(if f.card.is_imported() {
-            format!(
-                "{fight_id}: an imported fight — the store keeps its card and replay only, no rows to answer from"
-            )
-        } else {
-            format!(
-                "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
-            )
+    // v46: an imported fight keeps no rows tier. v48: its card is its
+    // meter — every player's totals and rates — so it answers the card
+    // alone, and a window or a drill says what it lacks: never whole-fight
+    // totals in place of the stretch asked for.
+    if f.tier < 2 && f.card.is_imported() {
+        if window.is_some() {
+            return Err(format!(
+                "{fight_id}: an imported fight — the store keeps its card (each player's \
+                 whole-fight totals and rates, in `fight.players`) but no rows or series: there \
+                 is nothing to window; ask without from_secs/to_secs"
+            ));
+        }
+        if drill.is_some() {
+            return Err(format!(
+                "{fight_id}: an imported fight — the store keeps its card (each player's totals \
+                 and rates, in `fight.players`), its replay and its players' 1 s damage and \
+                 healing curves, but no rows: there is no breakdown to drill into"
+            ));
+        }
+        return Ok(obj! {
+            "fight": card_json(&f.card),
+            "tier": Json::str(tier_name),
+            "available_views": Json::Arr(Vec::new()),
+            "view": Json::str(view_name(view)),
+            "rows": Json::Arr(Vec::new()),
+            "note": Json::str(
+                "an imported fight: its meter is the card — fight.players carries each \
+                 player's totals and rates as the source gave them — and there are no view \
+                 rows or drills",
+            ),
         });
+    }
+    if f.tier < 2 {
+        return Err(format!(
+            "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
+        ));
     }
     if let Some(guid) = &drill
         && f.breakdown.is_none()

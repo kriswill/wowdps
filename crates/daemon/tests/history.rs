@@ -1780,9 +1780,12 @@ fn an_import_over_the_socket_lands_in_the_store() {
         start_utc_ms: 1_722_014_400_000,
         duration_ms: 90_000,
         success: Some(true),
+        // v48: with a meter, its curve the details tier's.
         players: vec![ImportedPlayer {
             guid: "Player-9-Z".to_string(),
             name: "Zed-Elsewhere".to_string(),
+            damage: 90_000,
+            damage_curve: vec![1_000; 90],
             ..ImportedPlayer::default()
         }],
         owner: Some("Player-9-Z".to_string()),
@@ -1837,11 +1840,17 @@ fn an_import_over_the_socket_lands_in_the_store() {
             replaced: false,
         })
     );
-    // The files: a card naming its origin, a replay, no other tier.
+    // The files: a card naming its origin, its meter on it (v48), a replay
+    // and the details tier its curve made, no rows or series.
     let doc = std::fs::read_to_string(hist.join("fights").join(format!("{id}.json"))).unwrap();
     assert!(
         doc.ends_with(r#","origin":{"kind":"imported","source":"import:test-1"}}"#),
         "{doc}"
+    );
+    let stored = FightCard::from_json(&wowdps_proto::json::parse(&doc).unwrap()).unwrap();
+    assert_eq!(
+        (stored.players[0].damage, stored.players[0].dps),
+        (90_000, 1_000.0)
     );
     assert!(hist.join("replay").join(format!("{id}.bin")).exists());
     assert_eq!(
@@ -1850,8 +1859,14 @@ fn an_import_over_the_socket_lands_in_the_store() {
             count(&hist, "details"),
             count(&hist, "series")
         ),
-        (0, 0, 0)
+        (0, 1, 0)
     );
+    let details = std::fs::read_to_string(hist.join("details").join(format!("{id}.json"))).unwrap();
+    let details = wowdps_proto::history::FightDetails::from_json(
+        &wowdps_proto::json::parse(&details).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(details.players[0].damage_timeline.buckets, [1_000; 90]);
 
     client.send(&ClientMsg::GetReplay {
         req_id: 8,

@@ -1,5 +1,19 @@
 # Log
 
+## 2026-10-19
+
+- **Creation** — [An Import Carries Its Meter](an-import-carries-its-meter.md):
+  v48 — an imported fight's players carry the totals the importer reckoned
+  under the rulings and their 1 s damage and healing curves; the store
+  derives the rates over the card's combat clock and keeps the curves as
+  the details tier, still no rows or series.
+
+- **Update** — [Imported Fights Live In The History Store](imported-fights-in-the-store.md):
+  its "replay tier alone" amended by v48's meter and details tier.
+
+- **Update** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
+  an import is a card, a replay and (v48) its details.
+
 ## 2026-10-17
 
 - **Update** — [Keep A Keystone Run's Affixes](keep-keystone-affixes.md):

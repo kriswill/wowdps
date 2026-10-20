@@ -597,7 +597,7 @@ the consumer replays through `Meter::seed`), then `Lines` from the index's
 `live_offset` — history is never replayed line by line. `CaughtUp` fires once
 when the backlog drains; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 47`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 48`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives
@@ -628,7 +628,7 @@ Messages (tags):
 | `Regrade` (v20: rewrite stored cards from their logs — one fight id, or a boss + difficulty — pins and annotations kept; answered `Regraded { queued }`, the rewrites ride the import queue — `wowdps history regrade`) | 0x0C | | |
 | `GetReplay` (v45, R29: one stored fight's replay tier — the `replay/<id>.bin` bytes) | 0x0D | `Fight` (answers GetFight; `None` = unknown or evicted) | 0x8C |
 | | | `HistoryChanged` (unsolicited, every session, per stored / pinned fight) | 0x8D |
-| `ImportReplay` (v46: store a fight converted from outside this machine's logs — the import's card facts and its replay tier's bytes — as an IMPORTED card; answered `History` / `ImportedReplay { fight_id, replaced }` or `Refused { reason }`) | 0x0E | `Replay` (v45: answers GetReplay — `req_id`, `fight_id`, the tier's bytes or `None`) | 0x8E |
+| `ImportReplay` (v46: store a fight converted from outside this machine's logs — the import's card facts and its replay tier's bytes — as an IMPORTED card; answered `History` / `ImportedReplay { fight_id, replaced }` or `Refused { reason }`; v48: each player + their meter's totals and 1 s damage and healing curves, which the store keeps on the card and as the fight's details tier) | 0x0E | `Replay` (v45: answers GetReplay — `req_id`, `fight_id`, the tier's bytes or `None`) | 0x8E |
 
 A `Watch` carries a `Cursor` — `List`; `Segment { SegmentRef (Live | Id), View,
 top_n, drill, spell }`; or `Compare { SegmentRef, a, b, View, range, spell }` — and
@@ -753,6 +753,7 @@ variants take the next code):
 | 45 | The replay tier (R29; the socket is renamed `wowdps-v45.sock`): `ClientMsg::GetReplay` 0x0D (u32 req_id \| string fight_id) answered by `DaemonMsg::Replay` 0x8E (u32 req_id \| string fight_id \| Option of u32-length bytes: the `replay/<id>.bin` file, `None` for a fight unknown, keeping no replay or past a frame); `HistoryStatus` + trailing u32 `replays` \| u64 `replay_bytes` \| u32 `kept_kills` \| `kept_keys` \| `kept_progression` \| `kept_pins` (the first pinned `Status` frame, 0x3e). Store (record, not wire): `replay/<id>.bin` — `WDRP` \| u8 format 1 \| u32 LE index length \| a section index (tag, offset, length) \| strings, head, units, posts, events, placed, markers, spells; varints and zigzag deltas, each post against its unit's last (`proto::replay`; ~1.6 MB for a 10-minute 26-player raid pull against its 17 MB of CSV). Replay FORMAT 2, still v45 (the wire carries the file's bytes opaquely and the decoder takes both): every floor's posts (each post's UiMap id, a `maps` section 9 coding only the tracks that leave the head's floor) and the boss rows (ENCOUNTER_START/END in the slice, kinds 13–15, `has` bit 5 for no unit); `tracks.csv` gains a trailing `map_id`. Format 1 reads (every post on its floor) and the rewrite queue recuts every format-1 file from its log while idle — no regrade. Not a field, a meaning: (v45) a wipe on a boss the store has not seen killed at its difficulty is PROGRESSION, kept whole as a kill is — details, series, replay, protected from the caps — until the first kill there (`history_keep_progression_whole`); the rewrite queue backfills what that rule and the new tier want, no regrade needed. The parser now reads `DAMAGE_SPLIT`'s advanced block (R29): a regrade picks up its power seconds and health reports, a handful per pull. Replay FORMAT 3, still v45: each post's shields (an `absorb` section 10, the changes per track) and its last reading of every pool kind (a `pools` section 11, written only at the posts where an entry of a cast's `a\|b` lists after the first set a reading the post's own pool does not — a second kind, or a new value of one already held; every format reads the rest from the posts), the buff rows that matter to the fight (kinds 16–18) and the players' debuffs on NPCs; `tracks.csv` gains trailing `absorb` and `pools`. Format 2 reads (no shields, its posts' own pools) and the rewrite queue recuts every older file from its log while idle — no regrade. Replay FORMAT 4, still v45: format 3's codec but the head's number, moved with the cut's aura rules (an aura R18 counts from the pull's start opens at t 0, and a player's debuff on an NPC alike) so the rewrite queue recuts every format-1, 2 and 3 file; a decoder refuses a power type at or above 64 and a pools list past 8, and `encode` writes tidied pools — no regrade, no wire change. Replay FORMAT 5, still v45 (2026-10-11): format 4's codec but the head's number, moved with the cut's pool readings (a cast's success read after its cost, block field 13; an energize's gain on the pool it names that its target's block does not, in the block's units) so the rewrite queue recuts every format-1 to 4 file; `tracks.csv`'s `power` and `pools` read the same way — no wire change. The same parser change moves R28's power series (a cast's second reads after its cost): a stored fight's details tier moves with `wowdps history regrade`. |
 | 46 | Imported fights (the import ruling, Daemon section; the socket is renamed `wowdps-v46.sock`): `ClientMsg::ImportReplay` 0x0E (u32 req_id \| `ImportedCard` \| u32-length bytes: the replay tier as `proto::replay::encode` writes it), the card being string name \| Option<Encounter> \| u8 kind (a `FightKind` code; the store takes `Encounter` alone) \| i64 start_utc_ms \| Option<i64> start_local_ms \| Option<u16> tz_min (as bits) \| i64 duration_ms \| Option<bool> success \| Option<u16> best_pct \| Vec<player: string guid \| string name \| Option<u8 class> \| u16 specID, 0 = none> \| Option<string> owner \| string source \| u16 ×3 build \| u32 log_version (`(0,0,0)` / 0 unknown); `HistoryAnswer` + `ImportedReplay { fight_id: string, replaced: bool }` = tag 7 and `Refused { reason: string }` = tag 8 (a write the store would not take, and why) — tag 9 is `BadTag`; `FightCard` + trailing `Origin` after `bosses` (u8 0 `Local` \| 1 `Imported` then string `source`; ≥ 2 `BadTag`), in every frame a card rides (`Fights`, `Progression.first_kill`, `StoredFight.card`); `HistoryQuery::Fights` + trailing u8 `origin` filter after `role` (0 `Local` \| 1 `Imported` \| 2 `Any`; ≥ 3 `BadTag`) — every client that predates imports asks `Local` and reads what it read before (the pinned Fights golden grew 0x13 → 0x14); `HistoryStatus` + trailing u32 `kept_imports` (the pinned `Status` frame 0x3e → 0x42; and the daemon now publishes v45's `replays` / `replay_bytes` / `kept_*` into `Status`, which v45 reckoned but never sent). Store (record, not wire): a card writes `"origin": {"kind": "imported", "source": …}` LAST and only when imported, so every local card's document is byte for byte what it was; a card without the key, or with `null`, reads `Local`, and any origin object reads as an import (its `source` when a string). An imported fight's id is `proto::history::imported_id` — `fight_id`'s `<hash>-<start>` with the hash fnv64 over `import:` + the source and the start its UTC start. The lake's `fights` and `players` views gain `imported` (`origin IS NOT NULL`, `false` on a lake without imports), and `best-kill`, `progression`, `trend` and `role-night` count `NOT imported` as the daemon does; `stats.kept` gains `imports`. |
 | 47 | A key's affixes (R10, 2026-10-17; the socket is renamed `wowdps-v47.sock`): `KeyInfo` — a card's key, in every frame a card rides (`Fights`, `Progression.first_kill`, `StoredFight.card`) — + trailing Vec<u32> `affixes` after `completed`, embedded (the card's fields follow), so its count is always written: four `00` bytes for a key with none, then a u32 per affix in the START's order (the pinned codec test reads a key ending `01 01 03000000 0a000000 09000000 93000000`). The live snapshot names no key (a Σ row's level is in its name, its timers in `pars_ms`), so no live frame moves. Store (record, not wire): the card's `key` writes `"affixes": [10, 9, 147]` LAST and only when the key names some, so every card without them — an unkeyed visit's, a run joined mid-way, every card written before v47 — is byte for byte what it was; a key without the field, or with anything but a list of numbers, reads none, and an item that is no u32 is dropped alone. `wowdps history regrade --kind key` refills a stored key's card from its log while the log survives. Replay FORMAT 6 with it (R29's TIER FORMAT 6: the head's key gains its affixes, and the rewrite queue recuts every older file from its log, no regrade; `pull.txt` gains `affixes`). The lake's `fights` view gains `affixes` (`key.affixes`; NULL off a key, for a key the log joined mid-run and on an older card, its type probed so a lake without one still has the column), and the mcp card's `instance` gains `affixes` (an empty list for none). |
+| 48 | An import's meter (the import ruling, Daemon section; the socket is renamed `wowdps-v48.sock`): `ImportedCard`'s player — inside `ClientMsg::ImportReplay` 0x0E, the one frame that carries it — + after its u16 `spec`, embedded (the next player, then the card's `owner`, follow), so every field is always written: u64 `damage` \| u64 `healing` \| u64 `overheal` \| u64 `absorbed` \| u64 `heal_absorbed` \| u64 `taken` \| u32 `deaths` \| u64 `support_given` \| u64 `support_received` \| u64 `healed_received` \| u64 `self_healed` \| Vec<u64> `damage_curve` \| Vec<u64> `heal_curve` (each a u32 count, then a u64 per second from the fight's start on the meter's 1 s grid, `series::BUCKET_MS`; four `00` bytes for none) — 92 bytes more a player without curves (the pinned ImportReplay golden, one player with curves [4, 6] and [20], grew 0x4a → 0xbe). No rate is sent: the store derives `dps`, `hps` and `dtps` (`wowdps_model::rate`) over the card's rate clock, and an imported card's `combat_ms` is now its `duration_ms` (an encounter's START..END, R7) where v46 wrote `null`. The daemon refuses (`Refused`, nothing written) an import whose curve does not sum to its player's total or runs past the fight's end (`duration_ms / 1000 + 1` seconds at most; `ImportedCard::check_curves`). No answer and no other frame moves: the cards an import makes ride `Fights` and `StoredFight` in the shape every card has, and a v46 or v47 client, an importer among them, cannot reach a v48 daemon (another socket); rebuilt, an importer that fills none of the new fields sends zeros and no curves, and stores what a v46 import stored, its `combat_ms` aside. Store (record, not wire): an imported card's players write their totals and derived rates in the fields every card has always written (a v46 import's read as it was, zeros, until it is imported again); an import that brings curves writes `details/<id>.json` — one entry per player with a curve, `damage_timeline` / `heal_timeline` at `bucket_ms` 1000 and no marks, every list empty — through `FightDetails::to_json`, the very codec a local fight's details go through, so every reader of the tier (`replay-export`'s `raid.csv`, the replay's `dps.tsv`) reads an import as a local fight; no rows or series tier is written, so `GetFight` answers an import's card alone (tier 1) as before. |
 
 ## Client state & behavior (owner: proto; keybinds owner: clients)
 
@@ -863,7 +864,8 @@ fight without support;
 list capped at 16 with the rest rolled into `other` + (v23) `support[]`: per
 supporter or supported player the given / received shares split damage /
 healing and their per-target table; `details/<id>.json` breakdowns + timelines
-for kills / bests / pins, `loadouts/<hash>.json` content-addressed,
+for kills / bests / pins (v48: and an import's curves, the imported fights
+paragraph below), `loadouts/<hash>.json` content-addressed,
 `annotations/<id>.ndjson` reserved), each written `.tmp` + rename through
 `proto::history`. The boundary: a stored record is a *derivable fight summary*
 — nothing `Meter` cannot recompute from the log, nothing keyed per event, and
@@ -896,23 +898,39 @@ marks nothing.
 **Imported fights** (v46, `ClientMsg::ImportReplay`): a fight from outside this machine's
 logs — a client converted it (a Warcraft Logs fight, say) and hands the daemon what its source
 knows of it plus its replay tier — is stored as a card whose `origin` is `Imported { source }`
-and that replay, NOTHING else: no rows, details or series tier, since the store derives those
-from a log and an import brings none (a stored fight's answer is the card alone, tier 1). It
-is the one record not derived from this machine's logs, so it is marked and kept apart. The
+and that replay, and (v48) the details tier its curves make, NOTHING else: no rows or series
+tier, since the store derives those from a log's lines and an import brings none (a stored
+fight's answer is the card alone, tier 1). v48: what the source knows of each player's meter
+rides the card, as the client reckoned it under these rulings from the source's events —
+`damage` (R1, pets folded R5, no share R19, no self-harm or friendly fire R22), `healing`
+with `overheal`, `absorbed` and `heal_absorbed` (R2, R3), `taken` (R17, Stagger's ticks out),
+`deaths` (R9, a Feign Death none), `support_given` / `support_received` (R19) and
+`healed_received` / `self_healed` (the R2 amendment) — and the store derives `dps`, `hps` and
+`dtps` over the card's rate clock with `wowdps_model::rate`, an encounter's combat clock being
+its START..END (R7: `combat_ms` = `duration_ms`), so an import ranks beside a local kill on
+equal terms; what an import never carries (a loadout, `logged`, R17's mitigation split, R18's
+spans, R20's ledger) stays at its unknown value, and a 0 is "none, or not known". Each
+player's 1 s damage and healing curves (`ImportedCard::details`, R12's grid) are the details
+tier's `damage_timeline` / `heal_timeline`, every list beside them empty, and they must agree
+with the totals: a curve sums to its total exactly and holds no second past the fight's end.
+It is the one record not derived from this machine's logs, so it is marked and kept apart. The
 daemon stays the only writer: it refuses (a `Refused { reason }` answer, nothing written) a
 replay that is not THIS build's format (an older one too: a format number names the cut's
 rules, not only the codec, and an import is never recut, so the client cuts it with the same
-build) or does not decode, an empty source, anything but a boss pull with its encounter, and an
-id a local card holds; it keeps the replay, its "you" the import's owner. A request the thread
+build) or does not decode, an empty source, anything but a boss pull with its encounter, an
+id a local card holds, and (v48) a curve that disagrees with its total; it keeps the replay,
+its "you" the import's owner. A request the thread
 never takes (the store off, its queue full) is answered `Refused` too, saying why, and a busy
 refusal is no write lost (`HistoryStatus::dropped` does not tick). The id is
-`imported_id(source, start_utc_ms)`; the same source again replaces the card and replay (the
-same id, or the old id retired when the start moved: its annotations moved to the new id,
-then its card file removed, and when any one step fails it is undone and the old import kept
+`imported_id(source, start_utc_ms)`; the same source again replaces the card, replay and
+details whole (an import without curves takes the earlier one's details away; the same id,
+or the old id retired when the start moved: its annotations moved to the new id,
+then its card file removed, then its replay and details, and when any step up to the card's
+removal fails it is undone and the old import kept
 whole beside the new one, the index holding what the files do), the pin carried, and says so
 (`replaced`, true only when the earlier import is gone); a failed write leaves the store as
-it was — a re-import's old replay put back
-under its old card (one it cannot read refuses the re-import first), and the size cap trims
+it was — a re-import's old replay and details put back
+under its old card (either one it cannot read refuses the re-import first), and the size cap trims
 for an import only once its card is in. Imported fights are PROTECTED like pins —
 never evicted, demoted or trimmed by the caps or `history_replay_mb`, counted apart as
 `kept_imports`, before every other reason (`HistoryStatus::fights` counts every card, imports
@@ -923,8 +941,10 @@ judgments never read them — the owner inference, the account's characters (`mi
 first kill (an imported kill ends no progression of ours), the fastest kill and the owner's
 personal bests, and an ownerless import is never stamped "me" when listed; regrade, the
 rewrite queue and the recut never touch them (there is no log). An imported card's `log` is 0,
-its `byte_range` none, and its players carry no numbers (`logged: false`); the lake's
-`role_ranks` leaves them out with the fixed questions.
+its `byte_range` none, and its players are `logged: false` (before v48 they carried no
+numbers, and such a card reads as it was until it is imported again); the lake's
+`role_ranks` leaves them out with the fixed questions, as it always did, now that they have
+numbers to rank.
 
 **The wowdps addon** (v31, `addon/wowdps.lua` + `wowdps.toc.in`, embedded in the daemon as
 `daemon::addon::LUA`): the combat log never names a guild, so a few lines of Lua the game runs
