@@ -58,14 +58,20 @@ pub fn prepare_socket_dir() -> io::Result<PathBuf> {
 
 /// Our uid, without libc: on Linux, `/proc/self` is owned by the
 /// process's uid; elsewhere a throwaway file we just created is ours by
-/// definition. Unwritable temp leaves 0, which fails ownership checks
+/// definition. The probe is created exclusively, so a stale or planted
+/// path (a symlink included) is never followed or truncated. Unwritable
+/// temp or an existing probe leaves 0, which fails ownership checks
 /// closed — a foreign dir is refused, never adopted.
 fn uid() -> u32 {
     if let Ok(meta) = std::fs::metadata("/proc/self") {
         return meta.uid();
     }
     let probe = std::env::temp_dir().join(format!(".wowdps-uid-{}", std::process::id()));
-    let Ok(file) = std::fs::File::create(&probe) else {
+    let Ok(file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    else {
         return 0;
     };
     let uid = file.metadata().map(|m| m.uid()).unwrap_or(0);
