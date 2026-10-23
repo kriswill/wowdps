@@ -338,13 +338,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join("Applications/World of Warcraft/Data/data")).unwrap();
         std::fs::write(home.join("Applications/World of Warcraft/.build.info"), "x").unwrap();
+        // Discovery canonicalizes what it finds, and the temp dir sits
+        // behind a symlink on macOS (/var is /private/var), so both sides
+        // are compared canonical.
+        let want = home
+            .join("Applications/World of Warcraft")
+            .canonicalize()
+            .unwrap();
         let found = discover_wow_installs(&home);
-        // A machine with the game in /Applications finds it too; only the
-        // temp install's entry is asserted.
+        // A machine with the game in /Applications finds that install too,
+        // and it also ends in "Applications/World of Warcraft": only the temp
+        // install itself proves ~/Applications was scanned.
         let mine = found
             .iter()
-            .find(|p| p.ends_with("Applications/World of Warcraft"))
-            .expect("the temp install is found");
+            .find(|p| p.canonicalize().ok().as_ref() == Some(&want))
+            .unwrap_or_else(|| panic!("{} is not in {found:?}", want.display()));
         assert!(is_wow_install(mine));
         std::fs::remove_dir_all(&home).unwrap();
     }
