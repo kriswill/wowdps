@@ -365,13 +365,6 @@ impl DaemonClient {
 }
 
 /// Hello → HelloAck (bounded wait), then the reader thread takes the stream.
-#[cfg(target_os = "macos")]
-macro_rules! dbg_pipe {
-    ($what:expr, $e:expr) => {{
-        eprintln!("handshake {} failed: {:?} raw={:?}", $what, $e, $e.raw_os_error());
-        $e
-    }};
-}
 fn handshake(stream: &UnixStream, kind: ClientKind) -> io::Result<Arc<Mutex<Inbox>>> {
     let mut writer = stream.try_clone()?;
     writer.write_all(
@@ -381,15 +374,11 @@ fn handshake(stream: &UnixStream, kind: ClientKind) -> io::Result<Arc<Mutex<Inbo
             pid: std::process::id(),
         }
         .encode(),
-    )
-    .map_err(|e| dbg_pipe!("write hello", e))?;
+    )?;
 
     let mut reader = stream.try_clone()?;
-    reader
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| dbg_pipe!("set timeout", e))?;
-    let (tag, body) = wire::read_frame(&mut reader)
-        .map_err(|e| dbg_pipe!("read ack", e))?;
+    reader.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let (tag, body) = wire::read_frame(&mut reader)?;
     match DaemonMsg::decode(tag, &body) {
         Ok(DaemonMsg::HelloAck { proto, .. }) if proto == PROTO_VERSION => {}
         other => {
