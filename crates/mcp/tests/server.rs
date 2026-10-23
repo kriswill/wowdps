@@ -121,8 +121,7 @@ fn tool_doc(reply: &Json) -> Json {
         .and_then(|b| b.get("text"))
         .and_then(Json::as_str)
         .expect("text content");
-    json::parse(text)
-        .unwrap_or_else(|e| panic!("tool output is JSON: {e}; text was: {text}"))
+    json::parse(text).unwrap_or_else(|e| panic!("tool output is JSON: {e}; text was: {text}"))
 }
 
 fn is_error(reply: &Json) -> bool {
