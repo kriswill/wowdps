@@ -4,11 +4,14 @@
 //!
 //! Named entries (`npc`, `ability`, `phase`, `place`, `ground`, `mark`,
 //! `line`, `volley`, `flash`, `range`, `apart`, `streak`, `room`, `reach`,
-//! `event`, `map.layer`, `map.glow`) are TOML tables keyed by a slug, so a
-//! later layer (the tuned file, a difficulty) changes one by naming it, and
-//! `enabled = false` drops it; all but the map's two can be kept to some
-//! difficulties by their `only`. The game's `spell` facts are keyed the
-//! same way, by spell id.
+//! `event`, `map.layer`, `map.glow`, `map.fade`, `map.area`, `map.path`)
+//! are TOML tables keyed by a slug, so a later layer (the tuned file, a
+//! difficulty) changes one by naming it, and `enabled = false` drops it;
+//! all but the map's can be kept to some difficulties by their `only`. The
+//! game's `spell` facts are keyed the same way, by spell id.
+//!
+//! A dungeon's level (`Level`) holds the same `Map` and a `View`, so a
+//! reader draws a raid's arena and a dungeon's level with one type.
 
 use std::collections::BTreeMap;
 
@@ -84,6 +87,10 @@ pub struct Encounter {
     /// than a measurement.
     #[serde(default)]
     pub spell: BTreeMap<String, Spell>,
+    /// The speeds the map's paths go at by their mode, from the season's
+    /// `[defaults.travel]`.
+    #[serde(default)]
+    pub travel: Travel,
 }
 
 /// A blank encounter in this build's format (`crate::SCHEMA`): no id, no
@@ -114,6 +121,7 @@ impl Default for Encounter {
             reach: BTreeMap::new(),
             event: BTreeMap::new(),
             spell: BTreeMap::new(),
+            travel: Travel::default(),
         }
     }
 }
@@ -192,6 +200,379 @@ pub struct Map {
     /// otherwise or not at all: a fountain's pool, the channel it runs down.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub glow: BTreeMap<String, Glow>,
+    /// The world box the render covers, `[x0, y0, x1, y1]` with `x0 < x1`
+    /// and `y0 < y1`: where the heuristic frames the wrong thing and a
+    /// stencil is more than wanted. With a stencil too, the two meet.
+    /// Unsaid, the renderer's own framing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f32; 4]>,
+    /// WMO group uids drawn although a rule would leave them out: another
+    /// floor's group of the floor's own building, faces over the ceiling
+    /// or over a terrain level's ground. An exclusion still wins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_groups: Vec<u32>,
+    /// Model FileDataIDs drawn although a rule would leave them out (as
+    /// `include_groups`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_models: Vec<u32>,
+    /// Pieces drawn see-through rather than left out: a roof over the
+    /// path, a bridge over a court.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fade: BTreeMap<String, Fade>,
+    /// What the ceiling is measured from on a terrain level: the terrain
+    /// under each point, the ground the players walked (every stored
+    /// keystone run's posts on the level), or a height. Unsaid, the
+    /// renderer's own reading. An arena does not read it: it is cut at one
+    /// level, its `level` where it says one. Its type is `Datum`, as
+    /// `Ground` is what a fight leaves on the floor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground: Option<Datum>,
+    /// Times the graded look's brightness (`light = "graded"`, and every
+    /// surface that gives no light of its own): gen-floors' `--exposure`
+    /// default times this; an `--exposure` given outright wins. Unsaid, 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<f32>,
+    /// The places of the floor the camera knows: a boss's court, a hall,
+    /// a landing. Each frames itself at its own altitudes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub area: BTreeMap<String, Area>,
+    /// The ways between two areas of this floor, and how a party goes
+    /// them: what a unit the log stops posting is routed along.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub path: BTreeMap<String, Path>,
+    /// What the replay does while the log is quiet about a unit and when a
+    /// unit or the party moves on. Unsaid, today's: every unit held where
+    /// it was last posted, the camera held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition: Option<Transition>,
+}
+
+/// A piece of the floor drawn see-through: one WMO group or one model,
+/// by exactly one of `group` and `model`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fade {
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// A WMO group uid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u32>,
+    /// A model FileDataID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<u32>,
+    /// How much of it shows, above 0 and under 1.
+    pub alpha: f32,
+}
+
+/// What a terrain level's ceiling is measured from (`map.ground`): written
+/// `"terrain"`, `"walked"` or a height in yards.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Datum {
+    /// The terrain's height under each point.
+    Terrain,
+    /// The height of the ground the players walked, near each point.
+    Walked,
+    /// One height, yards, for the whole level.
+    Height(f32),
+}
+
+impl Serialize for Datum {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Datum::Terrain => s.serialize_str("terrain"),
+            Datum::Walked => s.serialize_str("walked"),
+            Datum::Height(h) => s.serialize_f32(*h),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Datum {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Datum, D::Error> {
+        use serde::de::{self, Visitor};
+        struct WordOrHeight;
+        impl Visitor<'_> for WordOrHeight {
+            type Value = Datum;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("\"terrain\", \"walked\" or a height in yards")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Datum, E> {
+                match v {
+                    "terrain" => Ok(Datum::Terrain),
+                    "walked" => Ok(Datum::Walked),
+                    _ => Err(E::unknown_variant(v, &["terrain", "walked"])),
+                }
+            }
+            fn visit_f64<E: de::Error>(self, v: f64) -> Result<Datum, E> {
+                Ok(Datum::Height(v as f32))
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Datum, E> {
+                Ok(Datum::Height(v as f32))
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Datum, E> {
+                Ok(Datum::Height(v as f32))
+            }
+        }
+        d.deserialize_any(WordOrHeight)
+    }
+}
+
+/// A place of a floor the camera knows: a boss's court, a hall, a landing.
+/// Its altitudes are multiples of its fit, the view that shows its shapes'
+/// bounds whole: `far` the furthest the camera goes over it, `home` where
+/// it rests, `near` the closest (`far ≤ home ≤ near`). Unsaid, the floor's
+/// view's: `home` its `zoom`, `near` its `zoom_max`, `far` 1 (`altitudes`).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Area {
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Where it lies, its shapes joined in world yards (a stencil's).
+    pub shape: Vec<StencilShape>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub far: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<f32>,
+    /// Degrees clockwise on screen while the camera is over it; unsaid,
+    /// the floor's view's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<f32>,
+    /// Yards over the floor's level drawn here; unsaid, the map's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling: Option<f32>,
+    /// The boss fought here, by DungeonEncounterID: a boss's court.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encounter: Option<u32>,
+}
+
+impl Area {
+    /// `far` unsaid: the whole area.
+    pub const FAR: f32 = 1.0;
+    /// `home` unsaid with the view's `zoom` unsaid: the seasons' default.
+    pub const HOME: f32 = 1.15;
+    /// `near` unsaid with the view's `zoom_max` unsaid: the replay's closest.
+    pub const NEAR: f32 = 8.0;
+
+    /// Its altitudes, `[far, home, near]`, those unsaid filled from `view`:
+    /// `far` 1, `home` the view's `zoom` (else 1.15), `near` its `zoom_max`
+    /// (else 8). What a reader frames it with; `crate::check` holds them
+    /// above 0 and in order, so `home.clamp(far, near)` never panics.
+    pub fn altitudes(&self, view: &View) -> [f32; 3] {
+        [
+            self.far.unwrap_or(Area::FAR),
+            self.home.or(view.zoom).unwrap_or(Area::HOME),
+            self.near.or(view.zoom_max).unwrap_or(Area::NEAR),
+        ]
+    }
+
+    /// Its shapes' world bounds, `[x0, y0, x1, y1]`: its fit. `None` with
+    /// no shape that is one (`crate::check` says which).
+    pub fn bounds(&self) -> Option<[f32; 4]> {
+        union_bounds(&self.shape)
+    }
+
+    /// How far inside it a world point lies, in yards (the deepest of its
+    /// shapes): negative outside, and with no shapes.
+    pub fn depth(&self, p: [f32; 2]) -> f32 {
+        self.shape
+            .iter()
+            .map(|s| s.depth(p))
+            .reduce(f32::max)
+            .unwrap_or(f32::MIN)
+    }
+}
+
+/// A way between two areas of one floor, and how a party goes it.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Path {
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The areas it runs between, by key: two of the same floor's. It goes
+    /// both ways.
+    pub from: String,
+    pub to: String,
+    #[serde(default, skip_serializing_if = "Mode::is_run")]
+    pub mode: Mode,
+    /// Yards across; unsaid, a single file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
+    /// Yards a second, over the season's for its `mode` (`Travel`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f32>,
+    /// The spell a leap's device casts (a launcher, a jump pad); only a
+    /// leap has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spell: Option<u32>,
+    /// The way between its ends, world X and Y, `from`'s end first; unsaid,
+    /// straight.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<[f32; 2]>,
+}
+
+impl Path {
+    /// Yards a second a party goes it: its own `speed`, else the season's
+    /// for its mode. `None`: timed to the next post.
+    pub fn speed_in(&self, travel: &Travel) -> Option<f32> {
+        self.speed.or_else(|| travel.speed(self.mode))
+    }
+}
+
+/// How a party goes a path.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    /// On foot.
+    #[default]
+    Run,
+    /// On their own mounts.
+    Mount,
+    /// Carried: a flight the instance gives, a boat, a cart.
+    Vehicle,
+    /// Thrown: a launcher, a jump pad, a drop.
+    Leap,
+}
+
+impl Mode {
+    fn is_run(&self) -> bool {
+        *self == Mode::Run
+    }
+}
+
+/// The season's speeds, yards a second, a path goes at by its mode
+/// (`[defaults.travel]`): a path's `speed` overrides them.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Travel {
+    /// On foot; unsaid, 7 (`Travel::RUN`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<f32>,
+    /// Mounted; unsaid, 14 (`Travel::MOUNT`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount: Option<f32>,
+    /// Carried; unsaid, timed to the next post.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vehicle: Option<f32>,
+}
+
+impl Travel {
+    /// A run unsaid, yards a second: a player's base speed.
+    pub const RUN: f32 = 7.0;
+    /// A mount unsaid, yards a second: a ground mount's base speed.
+    pub const MOUNT: f32 = 14.0;
+
+    /// Yards a second by `mode`. `None` for a leap, and a vehicle unsaid:
+    /// those are timed to the next post.
+    pub fn speed(&self, mode: Mode) -> Option<f32> {
+        match mode {
+            Mode::Run => Some(self.run.unwrap_or(Travel::RUN)),
+            Mode::Mount => Some(self.mount.unwrap_or(Travel::MOUNT)),
+            Mode::Vehicle => self.vehicle,
+            Mode::Leap => None,
+        }
+    }
+}
+
+/// What the replay does while the log is quiet about a unit, and as a unit
+/// or the party moves on (README: Transitions).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Transition {
+    /// Seconds without a post before a unit is quiet; unsaid,
+    /// `Transition::AFTER_S`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<f32>,
+    /// What a quiet unit does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<UnitQuiet>,
+    /// How a port lands: a jump faster than `port_yd`, or to another floor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<Port>,
+    /// Yards a second past which a jump is a port: further than this for
+    /// each second between its two posts, a second at least. Unsaid,
+    /// `Transition::PORT_YD`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_yd: Option<f32>,
+    /// What the camera does as the party moves from one area to another.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<CameraQuiet>,
+}
+
+impl Transition {
+    /// What `after` means where it is unsaid: 3 s without a post before a
+    /// unit is quiet. Longer than the replay holds a unit before it calls
+    /// it stale (1.5 s): out of combat the log posts a player every 2 s or
+    /// so, and a ghost at every such gap would flicker. Every reader of a
+    /// transition (the replay, the map editor beside a key it leaves
+    /// unsaid) reads it here.
+    pub const AFTER_S: f32 = 3.0;
+    /// What `port_yd` means where it is unsaid: 60 yd a second, past which
+    /// a jump between two posts is a port.
+    pub const PORT_YD: f32 = 60.0;
+}
+
+/// What a quiet unit does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnitQuiet {
+    /// It stays where it was last posted (today's).
+    Hold,
+    /// A ghost of it stays where it was last posted.
+    Fade,
+    /// It is routed along the floor's paths to where it is posted next,
+    /// timed to get there as the post does, drawn as a ghost.
+    Travel,
+}
+
+/// How a port is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Port {
+    /// The unit is drawn at its new post at once.
+    Cut,
+    /// A flash where it left and where it lands.
+    Flash,
+}
+
+/// What the camera does as the party moves to another area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CameraQuiet {
+    /// It stays where it is.
+    Hold,
+    /// It eases over to the new area's home.
+    Glide,
+    /// It jumps to the new area's home.
+    Cut,
+}
+
+/// One level of a dungeon, `[level.<ui_map>]` in its instance file, read
+/// over the season's and the instance's `[defaults]` (their `map`, `view`
+/// and `travel`). A difficulty never applies to it. Its `map` is the same
+/// `Map` an encounter's is, so a reader draws an arena and a level alike;
+/// its `view` is what the replay shows while no area holds the party.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Level {
+    /// The UiMap id the level is: its key.
+    #[serde(skip)]
+    pub ui_map: u32,
+    /// The instance's slug (its directory).
+    #[serde(skip)]
+    pub instance: String,
+    #[serde(default)]
+    pub map: Map,
+    #[serde(default)]
+    pub view: View,
+    #[serde(default)]
+    pub travel: Travel,
 }
 
 /// One glowing liquid: where it lies, its color in the game, and when it
@@ -340,17 +721,18 @@ impl StencilShape {
 impl Map {
     /// The stencil's world bounds, `[x0, y0, x1, y1]`: `None` without one.
     pub fn stencil_bounds(&self) -> Option<[f32; 4]> {
-        self.stencil
+        union_bounds(&self.stencil)
+    }
+
+    /// The area a world point lies deepest inside, by key: `None` outside
+    /// every one.
+    pub fn area_at(&self, p: [f32; 2]) -> Option<(&str, &Area)> {
+        self.area
             .iter()
-            .filter_map(StencilShape::bounds)
-            .reduce(|a, b| {
-                [
-                    a[0].min(b[0]),
-                    a[1].min(b[1]),
-                    a[2].max(b[2]),
-                    a[3].max(b[3]),
-                ]
-            })
+            .map(|(k, a)| (k.as_str(), a, a.depth(p)))
+            .filter(|(_, _, d)| *d >= 0.0)
+            .max_by(|a, b| a.2.total_cmp(&b.2))
+            .map(|(k, a, _)| (k, a))
     }
 
     /// How far inside the stencil a world point lies, in yards (the
@@ -363,6 +745,36 @@ impl Map {
             .reduce(f32::max)
             .unwrap_or(f32::MAX)
     }
+
+    /// How much of a world point the stencil keeps, 0 to 1: all of it
+    /// half `STENCIL_FEATHER` inside the edge and deeper, none half of it
+    /// outside and further, fading between; all of it with no stencil.
+    /// What gen-floors cuts a render with, and the replay an older render
+    /// cut to fewer shapes.
+    pub fn stencil_keep(&self, p: [f32; 2]) -> f32 {
+        (self.stencil_depth(p) / STENCIL_FEATHER + 0.5).clamp(0.0, 1.0)
+    }
+}
+
+/// How soft a stencil's edge is, in yards: a render reaches this far past
+/// the stencil's bounds, and what lies within it of the edge fades
+/// (`Map::stencil_keep`).
+pub const STENCIL_FEATHER: f32 = 1.0;
+
+/// Shapes' world bounds joined, `[x0, y0, x1, y1]`: `None` with no shape
+/// that is one.
+fn union_bounds(shapes: &[StencilShape]) -> Option<[f32; 4]> {
+    shapes
+        .iter()
+        .filter_map(StencilShape::bounds)
+        .reduce(|a, b| {
+            [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]
+        })
 }
 
 /// One removable piece of the room: a building placed on the floor.
@@ -1456,6 +1868,24 @@ impl Gated for Layer {
 }
 
 impl Gated for Glow {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+impl Gated for Fade {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+impl Gated for Area {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+impl Gated for Path {
     fn enabled(&self) -> bool {
         self.enabled
     }

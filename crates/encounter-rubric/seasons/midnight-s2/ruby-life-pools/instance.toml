@@ -4,3 +4,73 @@ name = "Ruby Life Pools"
 kind = "dungeon"
 journal = 1202
 map = 2521
+
+# The dungeon's levels, by UiMap id: each one's places and the ways between
+# them, part of the base. Derived from three completed keystone runs'
+# player posts in this machine's history store: a boss's court is a circle
+# round the middle of the posts while it was engaged, its radius about
+# their 98th percentile distance from that middle; a way is the party's
+# middle every 10 s between two bosses, thinned by hand. The party walks
+# every way here (2-3 yd a second through the trash). Between the levels it
+# is carried in about 16 s, posted on no level of the dungeon's (a few posts
+# on the continent's map, 1978). The places that are no court, their radii
+# and the names are guesses for the map editor to refine. The lower pools
+# are terrain, their render cut over the ground its parties walked
+# (`ground = "walked"`, every stored keystone run's posts on it);
+# Melidrussa's level is buildings, cut by their own groups.
+
+# Melidrussa Chillworn's level (the floors cache's level 2), where the run
+# begins.
+[level.2095.map]
+floor = "ruby-life-pools-L2"
+
+[level.2095.map.area.entrance]
+shape = [{ center = [1395, -168], radius = 15 }]
+
+[level.2095.map.area.melidrussa-court]
+name = "Melidrussa Chillworn's court"
+shape = [{ center = [1550, -253], radius = 35 }]
+encounter = 2609
+
+[level.2095.map.path.entrance-to-melidrussa]
+from = "entrance"
+to = "melidrussa-court"
+points = [
+    [1395, -168], [1464, -164], [1523, -136], [1585, -142],
+    [1605, -168], [1575, -215], [1550, -253],
+]
+
+# The lower pools (the floors cache's level 1): the party comes onto it by
+# Kokia Blazehoof's court and walks a loop round the pools to her, then on
+# to Kyrakka and Erkhart Stormvein.
+[level.2094.map]
+floor = "ruby-life-pools-L1"
+ground = "walked"
+
+[level.2094.map.area.arrival]
+name = "From Melidrussa's level"
+shape = [{ center = [1646, -185], radius = 12 }]
+
+[level.2094.map.area.kokia-court]
+name = "Kokia Blazehoof's court"
+shape = [{ center = [1640, -136], radius = 40 }]
+encounter = 2606
+
+[level.2094.map.area.kyrakka-court]
+name = "Kyrakka and Erkhart Stormvein's court"
+shape = [{ center = [1770, 23], radius = 45 }]
+encounter = 2623
+
+[level.2094.map.path.arrival-to-kokia]
+from = "arrival"
+to = "kokia-court"
+points = [
+    [1646, -185], [1666, -250], [1610, -320], [1580, -338],
+    [1455, -265], [1460, -210], [1512, -136], [1575, -134],
+    [1640, -136],
+]
+
+[level.2094.map.path.kokia-to-kyrakka]
+from = "kokia-court"
+to = "kyrakka-court"
+points = [[1640, -136], [1673, -95], [1698, -63], [1730, -30], [1755, -3], [1770, 23]]

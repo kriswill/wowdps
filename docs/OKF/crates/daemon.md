@@ -30,7 +30,10 @@ The wowdps daemon: one process owns tail → index → parse → meter → snaps
   `config::default_game_process`).
 - `overlay.rs` — the supervisor (below): spawns `<gui_binary> --overlay` on
   game start, `SetVisible` on exit, exit-grace termination, manual-hide
-  stickiness, spawn stderr surfaced in `Status`.
+  stickiness, spawn stderr surfaced in `Status`. The daemon's exit
+  terminates the overlay it spawned (`Supervisor::shutdown`), because an
+  orphaned overlay's reconnect respawns daemons. `Drop` runs the same
+  shutdown, so a panic unwinding out of `hub::run` takes the child down too.
 - `cache.rs` — index checkpoints under `$XDG_CACHE_HOME/wowdps/index`, never
   parsed meters; `write_atomic` is the daemon's one durability primitive.
 - `addon.rs` — the wowdps addon's life on disk (v31): `product_dir` derives
@@ -115,8 +118,13 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   a slot lacking a current file — missing, or an older format (format 1,
   the head's floor alone; format 2, no shields, no second pool, no buff
   rows; format 3, the old aura rules; format 4, a cast's pool from before
-  it paid and no energize — each recut as format 5; the format 4 store of
-  595 files took about three minutes). A replay is kept while protected, else
+  it paid and no energize; format 5, a key's head without its affixes —
+  each recut as format 6; the format 4 store of
+  595 files took about three minutes). A recut writes the replay alone:
+  a stored key's card gets its affixes (v47) from `wowdps history regrade
+  --kind key`, the card writer copying the visit's
+  ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
+  A replay is kept while protected, else
   among the newest `history_keep_details_per_encounter` of its group
   (`Store::replay_slots`); past `history_replay_mb` (default 4096) the
   oldest unprotected goes first, and at the cap the rewrite queue cuts only
@@ -124,18 +132,26 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   answers it.
 - **Imported fights** (v46). `ImportReplay` lands on the history thread:
   `Store::import_replay` validates the replay (this build's format only,
-  a whole decode) and the facts, makes `ImportedCard::card`
-  (`Origin::Imported`, `imported_id`, log 0) and keeps the replay through
-  `store_replay`, nothing else, so a stored fight answers the card alone
-  (tier 1). The same source replaces it, pin carried; a moved id is retired
+  a whole decode) and the facts, and (v48) that every curve agrees with its
+  total (`ImportedCard::check_curves`); makes `ImportedCard::card`
+  (`Origin::Imported`, `imported_id`, log 0, each player's totals with
+  their rates derived over `combat_ms` = the duration) and keeps the replay
+  through `store_replay` and the details tier `ImportedCard::details`
+  makes (`put_details`: written, or an earlier import's removed when this
+  one brings no curves), no rows or series, so a stored fight answers the
+  card alone (tier 1), its meter on it
+  ([An Import Carries Its Meter](../decisions/an-import-carries-its-meter.md)).
+  The same source replaces it, pin carried; a moved id is retired
   (`retire_import`: its annotations moved over — copied, the old file
-  removed — then its card file removed, and only then its replay and index
-  entry; when any one step fails `undo_carry` undoes what was done, the old
+  removed — then its card file removed, and only then its replay, details
+  and index entry; when any step up to the card's removal fails
+  `undo_carry` undoes what was done, the old
   import is kept whole, as the files hold it, `replaced` says false, and
   `last_error` says why). A replay file that cannot be removed keeps its
   index entry (`drop_replay`) and retention tries it again. A
-  failed write leaves the store as it was: a re-import's old replay goes
-  back under its old card (`restore_replay`; an unreadable one refuses the
+  failed write leaves the store as it was: a re-import's old replay and
+  details go back under its old card (`restore_replay`, `restore_details`,
+  only for a details step that went through; an unreadable one refuses the
   re-import first), and the size cap trims only once the card is in
   (`write_replay` is `store_replay` without its trim).
   A queue too full for it answers `Refused` (busy) and counts it as a

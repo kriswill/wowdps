@@ -4,3 +4,15 @@ name = "Temple of Sethraliss"
 kind = "dungeon"
 journal = 1030
 map = 1877
+
+# The dungeon's terrain levels, by UiMap id, part of the base: each one's
+# render is cut over the ground its parties walked (every stored keystone
+# run's posts on it), as gen-floors drew them from a level posts file.
+
+[level.1038.map]
+floor = "temple-of-sethraliss-L1"
+ground = "walked"
+
+[level.1043.map]
+floor = "temple-of-sethraliss-L2"
+ground = "walked"

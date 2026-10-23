@@ -268,6 +268,10 @@ pub enum Event {
         /// The dungeon's name as the START line carries it — the visit's
         /// name when the door logged no visit (a ZONE_CHANGE at 0).
         name: String,
+        /// The key's affix ids, in the line's order (`[10,9,147]`): the
+        /// one place the log names them. Empty for `[]`, and for a list
+        /// that does not read (unclosed, a non-number) — never a failure.
+        affixes: Vec<u32>,
     },
     /// R10: the keystone run resolved. The game also fires a zeroed reset
     /// form on entry, before any `ChallengeModeStart` — the meter ignores
@@ -872,6 +876,37 @@ fn get<'a>(f: &'a [Cow<'_, str>], i: usize) -> Option<&'a str> {
     f.get(i).map(AsRef::as_ref)
 }
 
+/// A bracketed id list opening at field `i` — `[10,9,147]`, which the
+/// comma split leaves as `[10`, `9`, `147]` — read up to the field that
+/// closes it, so a field a later patch appends after the list is left
+/// alone. `[]` is empty, and so is a list that never closes or holds
+/// anything but a number: what does not read is no list, never a failure.
+fn id_list_at(f: &[Cow<'_, str>], i: usize) -> Vec<u32> {
+    let Some(first) = get(f, i).and_then(|s| s.trim().strip_prefix('[')) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    let mut field = first;
+    for next in f.iter().skip(i + 1).map(|s| s.as_ref()).chain([""]) {
+        let (item, closed) = match field.trim().strip_suffix(']') {
+            Some(last) => (last.trim(), true),
+            None => (field.trim(), false),
+        };
+        // `[]` alone: the one empty item a list may hold.
+        if !(closed && ids.is_empty() && item.is_empty()) {
+            match item.parse() {
+                Ok(id) => ids.push(id),
+                Err(_) => return Vec::new(),
+            }
+        }
+        if closed {
+            return ids;
+        }
+        field = next;
+    }
+    Vec::new()
+}
+
 /// Unit block: `guid, name, flags, raidFlags` at `i`.
 fn unit_at(f: &[Cow<'_, str>], i: usize) -> Unit {
     let name = get(f, i + 1).unwrap_or_default();
@@ -1369,6 +1404,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 challenge_id: parse_u32(get(f, 3).unwrap_or_default()),
                 key_level: parse_u32(get(f, 4).unwrap_or_default()),
                 name: get(f, 1).unwrap_or_default().to_string(),
+                affixes: id_list_at(f, 5),
             });
         }
         // CHALLENGE_MODE_END,mapID,success,level,totalMs,...
@@ -1953,6 +1989,57 @@ mod tests {
                 duration_ms: None
             }
         );
+    }
+
+    #[test]
+    fn parses_challenge_mode_start_with_its_affixes() {
+        let start = parse(r#"CHALLENGE_MODE_START,"The Glass Hollow",2521,399,14,[10,9,147]"#);
+        assert_eq!(
+            start,
+            Event::ChallengeModeStart {
+                map_id: 2521,
+                challenge_id: 399,
+                key_level: 14,
+                name: "The Glass Hollow".into(),
+                affixes: vec![10, 9, 147],
+            }
+        );
+        // The real shape of a name with a comma in it: quoted, so the comma
+        // split keeps it whole and every field after it stands where it is.
+        assert_eq!(
+            parse(r#"CHALLENGE_MODE_START,"Ara-Kara, City of Echoes",2660,503,10,[10,147,9,152]"#),
+            Event::ChallengeModeStart {
+                map_id: 2660,
+                challenge_id: 503,
+                key_level: 10,
+                name: "Ara-Kara, City of Echoes".into(),
+                affixes: vec![10, 147, 9, 152],
+            }
+        );
+        let affixes = |body: &str| match parse(body) {
+            Event::ChallengeModeStart { affixes, .. } => affixes,
+            other => panic!("not a START: {other:?}"),
+        };
+        // One affix, none, and a field a later patch might append after
+        // the list, which the list does not swallow.
+        assert_eq!(affixes(r#"CHALLENGE_MODE_START,"D",1,2,3,[9]"#), [9]);
+        assert_eq!(affixes(r#"CHALLENGE_MODE_START,"D",1,2,3,[]"#), [0u32; 0]);
+        assert_eq!(
+            affixes(r#"CHALLENGE_MODE_START,"D",1,2,3,[10, 9],7"#),
+            [10, 9]
+        );
+        // A list that does not read is none, and the line still parses.
+        for bad in [
+            r#"CHALLENGE_MODE_START,"D",1,2,3"#,
+            r#"CHALLENGE_MODE_START,"D",1,2,3,[10,9"#,
+            r#"CHALLENGE_MODE_START,"D",1,2,3,[10,x]"#,
+            r#"CHALLENGE_MODE_START,"D",1,2,3,[10,]"#,
+            r#"CHALLENGE_MODE_START,"D",1,2,3,10,9]"#,
+            r#"CHALLENGE_MODE_START,"D",1,2,3,[-1]"#,
+            r#"CHALLENGE_MODE_START,"D",1,2,3,[4294967296]"#,
+        ] {
+            assert_eq!(affixes(bad), [0u32; 0], "{bad}");
+        }
     }
 
     #[test]

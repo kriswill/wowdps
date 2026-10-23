@@ -100,6 +100,30 @@ zoom = 2.0
 center = [440.0, -300.0]
 arena = [351.0, -404.8, 574.5, -154.6]
 
+# The hall as the camera's one area, the worked raid example of an arena's
+# areas: its shape the stencil's, so its fit is the view's arena; its
+# altitudes the view's (home its zoom, near the default closest, far the
+# whole hall) and its turn the view's. Nothing here is new; a map editor
+# would split it into the middle chamber, the nave and the galleries.
+[encounter.3455.map.area.hall]
+name = "Vashnik's hall"
+shape = [
+    { points = [
+        [358.7, -381.8], [383.7, -338.5], [366.5, -328.4], [351.0, -287.2],
+        [370.5, -253.4], [384.8, -226.6], [377.4, -207.4], [375.9, -188.0],
+        [387.4, -168.1], [403.9, -161.5], [432.1, -154.6], [450.6, -160.7],
+        [475.1, -170.2], [528.8, -201.2], [548.2, -221.6], [565.5, -231.6],
+        [568.9, -241.7], [574.5, -260.0], [572.3, -267.9], [556.3, -295.6],
+        [541.1, -301.9], [524.7, -306.2], [507.3, -332.4], [487.8, -366.2],
+        [447.9, -375.4], [423.6, -361.5], [398.6, -404.8],
+    ] },
+]
+far = 1
+home = 2
+near = 8
+turn = 240
+encounter = 3455
+
 # The Malignant Cavity: the venom pool at the middle chamber's head.
 # Living venoms crawl to it and burst there (Malignant Burst, a stacking
 # raid DoT). None reached it on the 9/30 Heroic kill or a top guild's

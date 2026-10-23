@@ -21,7 +21,8 @@
 //! gives them (`[encounter.<id>]`: its `map` and `view`, what changes the
 //! map: its `room`s, `place`s and the `event`s they key on, and an `npc`
 //! the draft lacks or has wrong); then every curated file set in the order
-//! it was laid (a tuned file embedded beside its draft, then each bundle
+//! it was laid (a tuned file embedded beside its draft, or a tree on disk's
+//! in its place, `Rubric::with_curated_dir`; then each bundle
 //! `Rubric::with_curated` lays in); then the user's own files
 //! (`Rubric::with_user`, `with_user_dir`). Last come the difficulty
 //! overrides the difficulty's fallback chain names, the most general
@@ -46,13 +47,24 @@
 //! - CURATED: what the fight does in the room, found by investigating it.
 //!   The public repository carries the base alone; a tuned file beside its
 //!   draft still reads as curated, so a tree that holds them works
-//!   unchanged, and a curated set ships apart from the base as a bundle.
+//!   unchanged, a checkout's tree on disk is read in their place at
+//!   runtime, and a curated set ships apart from the base as a bundle.
 //! - USER: the files on this machine, laid last, so a user can override
 //!   anything for themselves.
 //!
 //! A reader asks for a tier per encounter (`encounter_at`); the rubric's
 //! own (`with_tier`, the user tier unless lowered) is the most it will
 //! answer.
+//!
+//! A dungeon's LEVELS are the instance file's `[level.<ui_map>]`
+//! (`Rubric::level`, `levels`), each read over the season's and the
+//! instance's `[defaults]` (their `map`, `view` and `travel`) and never
+//! over a difficulty or a curated or user file: a level is the base's
+//! alone, where a set may still amend an arena's map. Its `map` is the
+//! same `Map` an encounter's is, so a reader draws a raid's arena and a
+//! dungeon's level with one type, and either may name the places the
+//! camera knows (`area`), the ways between them (`path`) and what the
+//! replay does while the log is quiet (`transition`).
 //!
 //! The journal's words for each ability are not in the repository: they
 //! live in a per-machine sidecar (`text`) a reader lays over an encounter
@@ -81,7 +93,7 @@ pub mod write;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-pub use check::check;
+pub use check::{check, check_level};
 pub use layer::{Origin, Provenance, SetBy, Source};
 use layer::{Set, lay};
 use schema::Gated;
@@ -97,9 +109,15 @@ pub const SCHEMA: u32 = 1;
 
 /// What an instance file's `[encounter.<id>]` may hold: the encounter's map,
 /// how it is first shown, what changes it in the fight (rooms off it, its
-/// fixed places, and the events its layers, rooms and places key on), and
-/// its NPCs where the draft lacks one or has it wrong.
-const INSTANCE_TABLES: [&str; 6] = ["map", "view", "room", "place", "event", "npc"];
+/// fixed places, and the events its layers, rooms and places key on), its
+/// NPCs where the draft lacks one or has it wrong, and the speeds its paths
+/// go at where the season's do not fit the arena (`travel`).
+const INSTANCE_TABLES: [&str; 7] = ["map", "view", "room", "place", "event", "npc", "travel"];
+
+/// What an instance file's `[level.<ui_map>]` may hold, and what a level
+/// reads of the season's and the instance's `[defaults]`: its map, the
+/// view while no area holds the party, and its paths' speeds.
+const LEVEL_TABLES: [&str; 3] = ["map", "view", "travel"];
 
 mod embedded {
     include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
@@ -147,6 +165,9 @@ pub struct Rubric {
     /// Every encounter it answers, by id: its season's place in `seasons`
     /// and its instance's slug (`index`).
     index: BTreeMap<u32, (usize, String)>,
+    /// Every dungeon level it answers, by UiMap id, placed as `index`
+    /// places an encounter.
+    levels: BTreeMap<u32, (usize, String)>,
     /// FNV-1a over every file the rubric holds, the base's and every set
     /// laid over it alike (`version`).
     hash: u64,
@@ -156,8 +177,8 @@ pub struct Rubric {
     /// The sidecars `with_texts` found and could not read.
     text_errors: Vec<String>,
     /// The file sets laid over the base, in the stack's order: the
-    /// curated in the order laid (the embedded tuned files first), then
-    /// the user's.
+    /// curated in the order laid (the embedded tuned files first, or a
+    /// tree on disk's in their place), then the user's.
     sets: Vec<Set>,
     /// The user's files `with_user` and `with_user_dir` could not lay.
     user_errors: Vec<String>,
@@ -206,6 +227,10 @@ pub struct Instance {
     defaults: Table,
     #[serde(skip)]
     encounters: BTreeMap<u32, Layers>,
+    /// Each of a dungeon's levels as its file gives it, by UiMap id
+    /// (`[level.<ui_map>]`): `{ map = …, view = …, travel = … }`.
+    #[serde(skip)]
+    levels: BTreeMap<u32, Table>,
 }
 
 /// One encounter's base: its files' stem, its draft, and its map and NPCs
@@ -351,11 +376,20 @@ fn hash_files<'a>(mut hash: u64, files: impl IntoIterator<Item = (&'a str, &'a s
     hash
 }
 
+/// The files under the crate's `seasons/` this binary was built with, each
+/// `(path, text)`, the path relative to `seasons/` as `Rubric::from_files`
+/// takes it, in path order: what `Rubric::embedded` reads, and what a tool
+/// that edits the files (the map editor) reads where no checkout of them
+/// is at hand.
+pub fn embedded_files() -> &'static [(&'static str, &'static str)] {
+    embedded::FILES
+}
+
 impl Rubric {
     /// The rubric this binary was built with.
     pub fn embedded() -> Result<Rubric, Vec<String>> {
         Rubric::from_files(
-            embedded::FILES
+            embedded_files()
                 .iter()
                 .map(|&(p, t)| (p.to_string(), t.to_string())),
         )
@@ -426,11 +460,25 @@ impl Rubric {
                     continue;
                 }
             };
+            // A dungeon's levels, by UiMap id: each one's map, its view and
+            // its paths' speeds, the base's alone.
+            let level = match t.remove("level") {
+                Some(Value::Table(l)) => l,
+                None => Table::new(),
+                Some(_) => {
+                    errs.push(format!(
+                        "{path}: `level` is a table of a dungeon's levels, by UiMap id"
+                    ));
+                    continue;
+                }
+            };
             match typed::<Instance>(t) {
                 Ok(i) => {
                     drawings.extend(Drawing::read(path, season, instance, encounter, &mut errs));
+                    let levels = read_levels(path, level, &mut errs);
                     let slug = instance.to_string();
-                    s.instances.insert(slug.clone(), Instance { slug, ..i });
+                    s.instances
+                        .insert(slug.clone(), Instance { slug, levels, ..i });
                 }
                 Err(e) => errs.push(format!("{path}: {e}")),
             }
@@ -495,10 +543,16 @@ impl Rubric {
         }
         let mut seasons: Vec<Season> = seasons.into_values().collect();
         seasons.sort_by_key(|s| std::cmp::Reverse(s.order));
-        let index = index(&seasons)?;
+        let (index, levels) = match (index(&seasons), level_index(&seasons)) {
+            (Ok(i), Ok(l)) => (i, l),
+            (i, l) => {
+                return Err(i.err().into_iter().chain(l.err()).flatten().collect());
+            }
+        };
         let mut r = Rubric {
             seasons,
             index,
+            levels,
             hash,
             version: String::new(),
             texts: BTreeMap::new(),
@@ -676,6 +730,36 @@ impl Rubric {
             }
         }
         out
+    }
+
+    /// A dungeon level, by its UiMap id, as the newest season that has it
+    /// gives it: the season's `[defaults]`, the instance's, then the
+    /// level's own `[level.<ui_map>]`, each read for its `map`, `view` and
+    /// `travel`. No difficulty applies to a level, and it is the base's
+    /// alone: a curated or user set never reaches it. `None` when no
+    /// season has it.
+    pub fn level(&self, ui_map: u32) -> Option<Result<Level, String>> {
+        let (n, slug) = self.levels.get(&ui_map)?;
+        let season = self.seasons.get(*n)?;
+        let inst = season.instances.get(slug)?;
+        let own = inst.levels.get(&ui_map)?;
+        Some(resolve_level(season, inst, ui_map, own))
+    }
+
+    /// Every level the rubric answers, by UiMap id, with the season and
+    /// instance it answers it from: the newest season's, seasons newest
+    /// first, each id once.
+    pub fn levels(&self) -> Vec<(u32, &Season, &Instance)> {
+        let mut out: Vec<(usize, u32, &Season, &Instance)> = self
+            .levels
+            .iter()
+            .filter_map(|(&id, (n, slug))| {
+                let s = self.seasons.get(*n)?;
+                Some((*n, id, s, s.instances.get(slug)?))
+            })
+            .collect();
+        out.sort_by_key(|&(n, id, _, i)| (n, i.slug.as_str(), id));
+        out.into_iter().map(|(_, id, s, i)| (id, s, i)).collect()
     }
 
     /// An encounter's season, instance and files, as the index places it.
@@ -884,6 +968,93 @@ fn index(seasons: &[Season]) -> Result<BTreeMap<u32, (usize, String)>, Vec<Strin
     }
 }
 
+/// Every dungeon level by UiMap id, where its file is, as `index` places
+/// an encounter: the newest season's, and two instances giving one id in
+/// one season, or in two seasons of one `order`, an error naming both.
+fn level_index(seasons: &[Season]) -> Result<BTreeMap<u32, (usize, String)>, Vec<String>> {
+    let mut index: BTreeMap<u32, (usize, String)> = BTreeMap::new();
+    let mut errs = Vec::new();
+    for (n, s) in seasons.iter().enumerate() {
+        for (slug, i) in &s.instances {
+            for &id in i.levels.keys() {
+                match index.get(&id) {
+                    None => {
+                        index.insert(id, (n, slug.clone()));
+                    }
+                    Some((m, other)) => {
+                        if let Some(first) = seasons.get(*m).filter(|f| f.order == s.order) {
+                            errs.push(format!(
+                                "{}/{slug}: [level.{id}] is {}/{other}'s too; a season gives a level once",
+                                s.id, first.id
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if errs.is_empty() {
+        Ok(index)
+    } else {
+        Err(errs)
+    }
+}
+
+/// Each level an instance file's `level` table gives, by UiMap id: a key
+/// that is no UiMap id, or a level giving anything but `LEVEL_TABLES`, is
+/// an error naming the file.
+fn read_levels(path: &str, level: Table, errs: &mut Vec<String>) -> BTreeMap<u32, Table> {
+    let mut out = BTreeMap::new();
+    for (k, v) in level {
+        let Ok(id) = k.parse::<u32>() else {
+            errs.push(format!(
+                "{path}: [level.{k}]: a level is named by its UiMap id"
+            ));
+            continue;
+        };
+        match v {
+            Value::Table(t) if t.keys().all(|k| LEVEL_TABLES.contains(&k.as_str())) => {
+                out.insert(id, t);
+            }
+            _ => errs.push(format!(
+                "{path}: [level.{id}]: a level gives only its `{}`",
+                LEVEL_TABLES.join("`, `")
+            )),
+        }
+    }
+    out
+}
+
+/// A level laid over its season's and instance's `[defaults]` (their
+/// `LEVEL_TABLES` alone) and typed: its map's UiMap its own unless it says
+/// one, every entry switched off dropped.
+fn resolve_level(
+    season: &Season,
+    inst: &Instance,
+    ui_map: u32,
+    own: &Table,
+) -> Result<Level, String> {
+    let mut t = Table::new();
+    for defaults in [&season.defaults, &inst.defaults] {
+        let read: Table = defaults
+            .iter()
+            .filter(|(k, _)| LEVEL_TABLES.contains(&k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        merge(&mut t, read);
+    }
+    merge(&mut t, own.clone());
+    let mut l = Level::deserialize(Value::Table(t))
+        .map_err(|e| format!("{}/{}/level.{ui_map}: {e}", season.id, inst.slug))?;
+    l.ui_map = ui_map;
+    l.instance = inst.slug.clone();
+    if l.map.ui_map.is_none() {
+        l.map.ui_map = Some(ui_map);
+    }
+    gate_map(&mut l.map, &|g: &dyn Gated| g.enabled());
+    Ok(l)
+}
+
 fn seasons_ids(seasons: &[Season]) -> String {
     seasons
         .iter()
@@ -980,21 +1151,9 @@ fn gate(e: &mut Encounter, keep: impl Fn(&dyn Gated) -> bool) {
         order: _,
         view: _,
         spell: _,
+        travel: _,
     } = e;
-    let Map {
-        layer,
-        glow,
-        ui_map: _,
-        floor: _,
-        level: _,
-        ceiling: _,
-        light: _,
-        exclude_groups: _,
-        exclude_models: _,
-        exclude_textures: _,
-        stencil: _,
-        ppy: _,
-    } = map;
+    gate_map(map, &keep);
     retain(npc, &keep);
     retain(ability, &keep);
     retain(phase, &keep);
@@ -1010,8 +1169,44 @@ fn gate(e: &mut Encounter, keep: impl Fn(&dyn Gated) -> bool) {
     retain(room, &keep);
     retain(reach, &keep);
     retain(event, &keep);
-    retain(layer, &keep);
-    retain(glow, &keep);
+}
+
+/// Drop every named entry of a map `keep` refuses: an encounter's or a
+/// level's.
+fn gate_map(map: &mut Map, keep: &dyn Fn(&dyn Gated) -> bool) {
+    fn retain<T: Gated>(entries: &mut BTreeMap<String, T>, keep: &dyn Fn(&dyn Gated) -> bool) {
+        entries.retain(|_, entry| keep(entry));
+    }
+    // Every collection of the map's named entries, so a new one does not
+    // build here until it is gated or said not to be.
+    let Map {
+        layer,
+        glow,
+        fade,
+        area,
+        path,
+        ui_map: _,
+        floor: _,
+        level: _,
+        ceiling: _,
+        light: _,
+        exclude_groups: _,
+        exclude_models: _,
+        exclude_textures: _,
+        stencil: _,
+        ppy: _,
+        crop: _,
+        include_groups: _,
+        include_models: _,
+        ground: _,
+        exposure: _,
+        transition: _,
+    } = map;
+    retain(layer, keep);
+    retain(glow, keep);
+    retain(fade, keep);
+    retain(area, keep);
+    retain(path, keep);
 }
 
 #[cfg(test)]

@@ -402,6 +402,29 @@ fn the_version_changes_with_any_file() {
     assert!(a.version().starts_with("s+"));
 }
 
+/// The embedded files are the crate's `seasons/` as it stands, each by
+/// its path under it (`<season>/season.toml`, `<season>/<instance>/…`), in
+/// path order.
+#[test]
+fn the_embedded_files_are_the_seasons_on_disk() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("seasons");
+    let files = embedded_files();
+    assert!(!files.is_empty());
+    assert!(files.windows(2).all(|w| w[0].0 < w[1].0));
+    for (rel, text) in files {
+        let depth = rel.split('/').count();
+        assert!(
+            (depth == 2 && rel.ends_with("/season.toml")) || depth == 3,
+            "{rel}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(rel)).unwrap(),
+            *text,
+            "{rel}"
+        );
+    }
+}
+
 #[test]
 fn the_embedded_rubric_resolves_every_encounter_on_every_difficulty() {
     let r = Rubric::embedded().unwrap_or_else(|e| panic!("{}", e.join("\n")));
@@ -1013,6 +1036,7 @@ pub(crate) fn every_key() -> Encounter {
         center: None,
         radius: None,
     };
+    let circle_area = circle.clone();
     let mut e = Encounter {
         schema: crate::SCHEMA,
         encounter: 1,
@@ -1060,6 +1084,66 @@ pub(crate) fn every_key() -> Encounter {
                 },
             )]
             .into(),
+            crop: Some([0.0, 0.0, 1.0, 1.0]),
+            include_groups: vec![2],
+            include_models: vec![2],
+            fade: [(s("group"), Some(1), None), (s("model"), None, Some(1))]
+                .into_iter()
+                .map(|(k, group, model)| {
+                    let fade = Fade {
+                        enabled: false,
+                        name: Some(s("Fade")),
+                        group,
+                        model,
+                        alpha: 0.5,
+                    };
+                    (k, fade)
+                })
+                .collect(),
+            ground: Some(Datum::Height(1.0)),
+            exposure: Some(1.0),
+            area: [s("a"), s("b")]
+                .into_iter()
+                .map(|k| {
+                    let area = Area {
+                        enabled: false,
+                        name: Some(s("Area")),
+                        shape: vec![circle_area.clone()],
+                        far: Some(1.0),
+                        home: Some(1.0),
+                        near: Some(1.0),
+                        turn: Some(1.0),
+                        ceiling: Some(1.0),
+                        encounter: Some(1),
+                    };
+                    (k, area)
+                })
+                .collect(),
+            path: [Mode::Run, Mode::Mount, Mode::Vehicle, Mode::Leap]
+                .into_iter()
+                .enumerate()
+                .map(|(i, mode)| {
+                    let path = Path {
+                        enabled: false,
+                        name: Some(s("Path")),
+                        from: s("a"),
+                        to: s("b"),
+                        mode,
+                        width: Some(1.0),
+                        speed: Some(1.0),
+                        spell: (mode == Mode::Leap).then_some(1),
+                        points: vec![[0.0, 0.0], [1.0, 1.0]],
+                    };
+                    (i.to_string(), path)
+                })
+                .collect(),
+            transition: Some(Transition {
+                after: Some(1.0),
+                unit: Some(UnitQuiet::Travel),
+                port: Some(Port::Flash),
+                port_yd: Some(1.0),
+                camera: Some(CameraQuiet::Glide),
+            }),
         },
         view: View {
             turn: Some(1.0),
@@ -1328,6 +1412,11 @@ pub(crate) fn every_key() -> Encounter {
             },
         )]
         .into(),
+        travel: Travel {
+            run: Some(1.0),
+            mount: Some(1.0),
+            vehicle: Some(1.0),
+        },
     };
     e.event.insert(
         s("e2"),
@@ -1339,10 +1428,11 @@ pub(crate) fn every_key() -> Encounter {
     e
 }
 
-/// How many entries each kind of named entry holds, the map's layers and
-/// glows last. Every field is named, so a kind added to the schema does not
-/// build here until it is counted or said not to be.
-fn entries(e: &Encounter) -> [usize; 17] {
+/// How many entries each kind of named entry holds, the map's layers,
+/// glows, fades, areas and paths last. Every field is named, so a kind
+/// added to the schema does not build here until it is counted or said not
+/// to be.
+fn entries(e: &Encounter) -> [usize; 20] {
     let Encounter {
         npc,
         ability,
@@ -1367,6 +1457,7 @@ fn entries(e: &Encounter) -> [usize; 17] {
         order: _,
         view: _,
         spell: _,
+        travel: _,
     } = e;
     [
         npc.len(),
@@ -1386,13 +1477,16 @@ fn entries(e: &Encounter) -> [usize; 17] {
         event.len(),
         map.layer.len(),
         map.glow.len(),
+        map.fade.len(),
+        map.area.len(),
+        map.path.len(),
     ]
 }
 
 #[test]
 fn every_kind_of_entry_is_switched_off_and_kept_to_its_difficulties() {
     // Every entry of every kind, switched off, and switched on and kept to
-    // Normal (the map's layers and glows have no `only`).
+    // Normal (the map's entries have no `only`).
     let off = write::draft_text(&every_key(), &BTreeMap::new(), "every key").unwrap();
     let on = off.replace("enabled = false\n", "");
     assert_eq!(on.matches("enabled").count(), 0, "{on}");
@@ -1403,11 +1497,11 @@ fn every_kind_of_entry_is_switched_off_and_kept_to_its_difficulties() {
     let all = entries(&every_key());
     assert!(all.iter().all(|n| *n > 0), "{all:?}");
     for d in [None, Some(14), Some(15)] {
-        assert_eq!(resolve(&off, d), [0; 17], "{d:?}");
+        assert_eq!(resolve(&off, d), [0; 20], "{d:?}");
     }
     assert_eq!(resolve(&on, None), all);
     assert_eq!(resolve(&on, Some(14)), all);
-    let mut heroic = [0; 17];
+    let mut heroic = [0; 20];
     heroic[15..].copy_from_slice(&all[15..]);
     assert_eq!(resolve(&on, Some(15)), heroic);
 }
@@ -2078,6 +2172,383 @@ fn the_user_directory_is_read_whole_and_its_bad_files_named_by_their_place() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A `seasons/` tree on disk under the system's temp directory, by `name`
+/// and this process: each file at its path under it, the tree made anew.
+fn tree_on_disk(name: &str, files: &[(String, String)]) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "wowdps-encounter-rubric-tree-{name}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    for (rel, text) in files {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    root
+}
+
+fn dir_source(name: &str) -> Source {
+    Source::Curated(Origin::Dir(name.into()))
+}
+
+/// The tree's own tuned file: the turn again and a Heroic override, none
+/// of the embedded file's entries.
+const TREE_TUNED: &str = r#"
+schema = 1
+
+[view]
+turn = 45
+
+[difficulty.heroic.ability.bite]
+shape = { length = 41 }
+"#;
+
+#[test]
+fn a_tree_on_disk_lays_its_tuned_files_in_the_embedded_ones_place() {
+    // The tree's base files say otherwise than the build's and are not
+    // read: a season and an instance file a set could not give, a draft.
+    let tree = tree_on_disk(
+        "lays",
+        &owned(&[
+            ("s/season.toml", &SEASON.replace("zoom = 1.15", "zoom = 9")),
+            (
+                "s/raid/instance.toml",
+                &format!("{INSTANCE}\n[encounter.3492.view]\nzoom = 8\n"),
+            ),
+            (
+                "s/raid/3492-ulatek.draft.toml",
+                &DRAFT.replace("name = \"Ula'tek\"\norder", "name = \"Not Read\"\norder"),
+            ),
+            ("s/raid/3492-ulatek.toml", TREE_TUNED),
+            ("s/raid/notes.txt", "not a rubric file\n"),
+        ]),
+    );
+    let embedded = || Rubric::from_files(files(&[])).unwrap();
+    let r = embedded().with_curated_dir("tree", &tree).unwrap();
+    // The same as a build whose tuned file was the tree's.
+    let mut built = base_files();
+    built.push(("s/raid/3492-ulatek.toml".into(), TREE_TUNED.into()));
+    let built = Rubric::from_files(built).unwrap();
+    for tier in Tier::ALL {
+        for d in [None, Some(14), Some(15), Some(16), Some(8)] {
+            assert_eq!(
+                r.encounter_at(3492, d, tier),
+                built.encounter_at(3492, d, tier),
+                "{} {d:?}",
+                tier.name()
+            );
+        }
+    }
+    let e = r
+        .encounter_at(3492, Some(15), Tier::Curated)
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.name, "Ula'tek");
+    assert_eq!(e.view.zoom, Some(1.15));
+    assert_eq!(e.view.turn, Some(45.0));
+    assert_eq!(bite(&e).1, 41.0);
+    // The embedded file's entries are gone with it.
+    assert!(e.place.is_empty() && e.map.layer.is_empty(), "{e:?}");
+    assert_eq!(
+        r.layers_of(3492),
+        [
+            Source::Season,
+            Source::Instance,
+            Source::Draft,
+            dir_source("tree")
+        ]
+    );
+    assert!(r.has_curated(3492));
+    let (_, p) = r
+        .encounter_traced(3492, None, Tier::Curated)
+        .unwrap()
+        .unwrap();
+    assert_eq!(p.source_of("view.turn").unwrap().source, dir_source("tree"));
+    // Read again unchanged, the same version; a file changed, another.
+    let again = embedded().with_curated_dir("tree", &tree).unwrap();
+    assert_eq!(again.version(), r.version());
+    assert_ne!(r.version(), embedded().version());
+    std::fs::write(
+        tree.join("s/raid/3492-ulatek.toml"),
+        TREE_TUNED.replace("45", "46"),
+    )
+    .unwrap();
+    let changed = embedded().with_curated_dir("tree", &tree).unwrap();
+    assert_ne!(changed.version(), r.version());
+    assert_eq!(
+        changed
+            .encounter_at(3492, None, Tier::Curated)
+            .unwrap()
+            .unwrap()
+            .view
+            .turn,
+        Some(46.0)
+    );
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+#[test]
+fn a_tree_on_disk_sits_under_the_bundles_and_a_second_takes_its_place() {
+    let tree = tree_on_disk("order", &owned(&[("s/raid/3492-ulatek.toml", TREE_TUNED)]));
+    let empty = tree_on_disk("order-empty", &[]);
+    let r = Rubric::from_files(files(&[]))
+        .unwrap()
+        .with_curated("alpha", owned(&[("s/raid/3492-ulatek.toml", ALPHA)]))
+        .unwrap()
+        .with_curated_dir("first", &empty)
+        .unwrap()
+        .with_curated_dir("tree", &tree)
+        .unwrap()
+        .with_user(owned(&[("s/raid/3492-ulatek.toml", MINE)]));
+    assert_eq!(
+        r.layers_of(3492),
+        [
+            Source::Season,
+            Source::Instance,
+            Source::Draft,
+            dir_source("tree"),
+            bundle("alpha"),
+            Source::User
+        ]
+    );
+    // The bundle's turn over the tree's.
+    let curated = r.encounter_at(3492, None, Tier::Curated).unwrap().unwrap();
+    assert_eq!(curated.view.turn, Some(30.0));
+    // A tree with no tuned file leaves the curated tier reading the base;
+    // over a base with none, the version as it was.
+    let none = Rubric::from_files(files(&[]))
+        .unwrap()
+        .with_curated_dir("empty", &empty)
+        .unwrap();
+    assert!(!none.has_curated(3492));
+    assert_eq!(
+        none.encounter_at(3492, None, Tier::Curated),
+        none.encounter_at(3492, None, Tier::Base)
+    );
+    let base = Rubric::from_files(base_files()).unwrap();
+    assert_eq!(
+        base.clone()
+            .with_curated_dir("empty", &empty)
+            .unwrap()
+            .version(),
+        base.version()
+    );
+    // An encounter only the embedded files brought goes with them, and
+    // stays where the tree holds its file too.
+    const NEW: &str = "schema = 1\nencounter = 3501\nname = \"New\"\n";
+    let brought = || Rubric::from_files(files(&[("s/raid/3501-new.toml", NEW)])).unwrap();
+    assert!(brought().encounters().iter().any(|(id, _, _)| *id == 3501));
+    let gone = brought().with_curated_dir("empty", &empty).unwrap();
+    assert!(gone.encounters().iter().all(|(id, _, _)| *id != 3501));
+    assert!(gone.layers_of(3501).is_empty());
+    let kept_tree = tree_on_disk("order-kept", &owned(&[("s/raid/3501-new.toml", NEW)]));
+    let kept = brought().with_curated_dir("kept", &kept_tree).unwrap();
+    assert_eq!(
+        kept.encounter_at(3501, None, Tier::Curated)
+            .unwrap()
+            .unwrap()
+            .name,
+        "New"
+    );
+    assert!(kept.encounter_at(3501, None, Tier::Base).is_none());
+    let _ = std::fs::remove_dir_all(&tree);
+    let _ = std::fs::remove_dir_all(&empty);
+    let _ = std::fs::remove_dir_all(&kept_tree);
+}
+
+#[test]
+fn a_tree_on_disk_that_takes_away_what_a_bundle_leans_on_is_refused() {
+    // The embedded tuned file gives the place "pool" its kind and spot, and
+    // a bundle over it only sizes the place. A tree with no file for the
+    // encounter takes the kind and spot away under the bundle, and a place
+    // with neither does not read: refused, naming the tree, though the tree
+    // itself holds nothing. One holding the file is laid.
+    const LEANS: &str = "schema = 1\n\n[place.pool]\nradius = 5\n";
+    let leaning = || {
+        Rubric::from_files(files(&[]))
+            .unwrap()
+            .with_curated("leans", owned(&[("s/raid/3492-ulatek.toml", LEANS)]))
+            .unwrap()
+    };
+    let empty = tree_on_disk("leans-empty", &[]);
+    let errs = leaning().with_curated_dir("bare", &empty).unwrap_err();
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("curated \"bare\"") && e.contains("3492") && e.contains("pool")),
+        "{errs:?}"
+    );
+    let whole = tree_on_disk("leans-whole", &owned(&[("s/raid/3492-ulatek.toml", TUNED)]));
+    let r = leaning().with_curated_dir("whole", &whole).unwrap();
+    assert_eq!(
+        r.layers_of(3492),
+        [
+            Source::Season,
+            Source::Instance,
+            Source::Draft,
+            dir_source("whole"),
+            bundle("leans"),
+        ]
+    );
+}
+
+#[test]
+fn a_users_file_laid_before_a_tree_is_read_again_over_it() {
+    // The user's file only sizes the place the embedded tuned file gives,
+    // and it reads as laid. A tree with no file for the encounter is laid
+    // after it and takes the place's kind and spot away: the tree is fine
+    // (the curated tier reads), the user's file is not, so it is left out
+    // and named, as it would be had it come last. A bundle laid after the
+    // user's files is read the same way.
+    const LEANS: &str = "schema = 1\n\n[place.pool]\nradius = 7\n";
+    let empty = tree_on_disk("user-first-empty", &[]);
+    let user_first = || {
+        Rubric::from_files(files(&[]))
+            .unwrap()
+            .with_user(owned(&[("s/raid/3492-ulatek.toml", LEANS)]))
+    };
+    assert!(user_first().user_errors().is_empty());
+    let r = user_first().with_curated_dir("bare", &empty).unwrap();
+    assert!(
+        r.user_errors()
+            .iter()
+            .any(|e| e.contains("s/raid/3492-ulatek.toml") && e.contains("curated \"bare\"")),
+        "{:?}",
+        r.user_errors()
+    );
+    let e = r.encounter_at(3492, None, Tier::User).unwrap().unwrap();
+    assert!(!e.place.contains_key("pool"));
+    assert!(!r.layers_of(3492).contains(&Source::User));
+    // Laid last, lay_user leaves the same file out itself.
+    let last = Rubric::from_files(files(&[]))
+        .unwrap()
+        .with_curated_dir("bare", &empty)
+        .unwrap()
+        .with_user(owned(&[("s/raid/3492-ulatek.toml", LEANS)]));
+    assert_eq!(last.user_errors().len(), 1, "{:?}", last.user_errors());
+    // A bundle that takes nothing away leaves the user's file laid.
+    let kept = user_first()
+        .with_curated("alpha", owned(&[("s/raid/3492-ulatek.toml", ALPHA)]))
+        .unwrap();
+    assert!(kept.user_errors().is_empty(), "{:?}", kept.user_errors());
+    assert!(kept.layers_of(3492).contains(&Source::User));
+}
+
+#[test]
+fn a_bad_tree_on_disk_is_refused_whole_naming_its_files_by_their_place() {
+    let base = || Rubric::from_files(files(&[])).unwrap();
+    let missing = std::env::temp_dir().join("wowdps-encounter-rubric-tree-not-there");
+    let errs = base().with_curated_dir("gone", &missing).unwrap_err();
+    assert!(errs[0].contains("not a directory"), "{errs:?}");
+    // A typo, named by the file's place on disk.
+    let typo = tree_on_disk(
+        "typo",
+        &owned(&[("s/raid/3492-ulatek.toml", "schema = 1\n[view]\nzom = 1\n")]),
+    );
+    let errs = base().with_curated_dir("typo", &typo).unwrap_err();
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("curated \"typo\"") && e.contains("zom")),
+        "{errs:?}"
+    );
+    // A file that cannot be laid, by its place on disk; and the rest of
+    // the set is not laid either.
+    let tree = tree_on_disk(
+        "slug",
+        &owned(&[
+            ("s/raid/3492-other.toml", "schema = 1\n"),
+            (
+                "s/raid/3501-new.toml",
+                "schema = 1\nencounter = 3501\nname = \"New\"\n",
+            ),
+        ]),
+    );
+    let errs = base().with_curated_dir("slug", &tree).unwrap_err();
+    let shown = tree.join("s/raid/3492-other.toml").display().to_string();
+    assert!(
+        errs.len() == 1 && errs[0].starts_with(&shown) && errs[0].contains("already has files"),
+        "{errs:?}"
+    );
+    let _ = std::fs::remove_dir_all(&typo);
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+/// The checkout's own `seasons/`, laid from disk in place of the files the
+/// crate embedded from it, resolves every encounter as the embedded rubric
+/// does, its curated layer named for the tree.
+#[test]
+fn the_checkouts_seasons_laid_from_disk_resolve_as_the_embedded() {
+    let seasons = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("seasons");
+    let embedded = Rubric::embedded().unwrap_or_else(|e| panic!("{}", e.join("\n")));
+    let disk = Rubric::embedded()
+        .unwrap()
+        .with_curated_dir("seasons", &seasons)
+        .unwrap_or_else(|e| panic!("{}", e.join("\n")));
+    let rename = |s: &Source| match s {
+        Source::Curated(Origin::Embedded) => dir_source("seasons"),
+        s => s.clone(),
+    };
+    let mut curated = 0;
+    for (id, _, _) in embedded.encounters() {
+        for d in [
+            None,
+            Some(1),
+            Some(2),
+            Some(23),
+            Some(8),
+            Some(14),
+            Some(15),
+            Some(16),
+            Some(17),
+        ] {
+            for tier in Tier::ALL {
+                assert_eq!(
+                    disk.encounter_at(id, d, tier),
+                    embedded.encounter_at(id, d, tier),
+                    "{id} {d:?} {}",
+                    tier.name()
+                );
+            }
+        }
+        let want: Vec<Source> = embedded.layers_of(id).iter().map(rename).collect();
+        assert_eq!(disk.layers_of(id), want, "{id}");
+        if embedded.has_curated(id) {
+            curated += 1;
+            assert!(disk.layers_of(id).contains(&dir_source("seasons")), "{id}");
+            assert!(
+                !disk
+                    .layers_of(id)
+                    .contains(&Source::Curated(Origin::Embedded))
+            );
+        }
+        // Every key set by the same layer, the curated one under its name.
+        let (_, a) = embedded
+            .encounter_traced(id, None, Tier::Curated)
+            .unwrap()
+            .unwrap();
+        let (_, b) = disk
+            .encounter_traced(id, None, Tier::Curated)
+            .unwrap()
+            .unwrap();
+        let a: Vec<(&str, Source)> = a.iter().map(|(k, by)| (k, rename(&by.source))).collect();
+        let b: Vec<(&str, Source)> = b.iter().map(|(k, by)| (k, by.source.clone())).collect();
+        assert_eq!(a, b, "{id}");
+    }
+    // Every tuned file the crate embeds is the tree's, laid.
+    let tuned = embedded_files()
+        .iter()
+        .filter(|(p, _)| {
+            matches!(
+                FileRole::of(p),
+                Ok(Some(FileRole::Encounter { draft: false, .. }))
+            )
+        })
+        .count();
+    assert_eq!(curated, tuned);
+    assert_eq!(disk.encounters().len(), embedded.encounters().len());
+}
+
 #[test]
 fn a_layer_file_where_no_reader_looks_is_refused() {
     // A returning dungeon: an older season holds the raid too, and the
@@ -2128,4 +2599,578 @@ fn a_layer_file_where_no_reader_looks_is_refused() {
         )
         .unwrap_err();
     assert!(errs[0].contains("answered from s/raid"), "{errs:?}");
+}
+
+// ---- the map's vocabulary: levels, areas, paths ------------------------------
+
+/// Every encounter's map and view, on every difficulty at every tier, as
+/// they resolved before the map vocabulary (crop, include, fade, ground,
+/// exposure, area, path, transition, a level) was added: the fixture is
+/// their Debug then, one line per encounter (`*`: every reading alike).
+/// The map is written here in its shape then, and its new keys are held
+/// apart: default, but for the areas an instance file has since given.
+#[test]
+fn every_map_and_view_resolves_as_before_the_map_vocabulary() {
+    use std::fmt;
+    /// A map as its Debug read before: its keys then, in their order.
+    struct Before<'a>(&'a Map);
+    impl fmt::Debug for Before<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let m = self.0;
+            f.debug_struct("Map")
+                .field("ui_map", &m.ui_map)
+                .field("floor", &m.floor)
+                .field("level", &m.level)
+                .field("ceiling", &m.ceiling)
+                .field("light", &m.light)
+                .field("exclude_groups", &m.exclude_groups)
+                .field("exclude_models", &m.exclude_models)
+                .field("exclude_textures", &m.exclude_textures)
+                .field("layer", &m.layer)
+                .field("stencil", &m.stencil)
+                .field("ppy", &m.ppy)
+                .field("glow", &m.glow)
+                .finish()
+        }
+    }
+    // The encounters whose maps gained areas since, by their keys.
+    let gained: BTreeMap<u32, Vec<&str>> = [(3455, vec!["hall"])].into();
+    let r = Rubric::embedded().unwrap_or_else(|e| panic!("{}", e.join("\n")));
+    let mut out = String::new();
+    for (id, _, _) in r.encounters() {
+        let mut seen: Vec<(String, Vec<String>)> = Vec::new();
+        for tier in Tier::ALL {
+            for d in std::iter::once(None).chain(difficulty::probes().map(Some)) {
+                let e = r.encounter_at(id, d, tier).unwrap().unwrap();
+                let areas: Vec<&str> = e.map.area.keys().map(String::as_str).collect();
+                assert_eq!(areas, gained.get(&id).cloned().unwrap_or_default(), "{id}");
+                let m = &e.map;
+                let then = Map {
+                    ui_map: m.ui_map,
+                    floor: m.floor.clone(),
+                    level: m.level,
+                    ceiling: m.ceiling,
+                    light: m.light,
+                    exclude_groups: m.exclude_groups.clone(),
+                    exclude_models: m.exclude_models.clone(),
+                    exclude_textures: m.exclude_textures.clone(),
+                    layer: m.layer.clone(),
+                    stencil: m.stencil.clone(),
+                    ppy: m.ppy,
+                    glow: m.glow.clone(),
+                    ..Map::default()
+                };
+                let no_areas = Map {
+                    area: BTreeMap::new(),
+                    ..m.clone()
+                };
+                assert_eq!(no_areas, then, "{id}: a new key besides its areas");
+                let dbg = format!("{:?} {:?}", Before(m), e.view);
+                let label = format!(
+                    "{}/{}",
+                    tier.name(),
+                    d.map_or("-".to_string(), |d| d.to_string())
+                );
+                match seen.iter_mut().find(|(k, _)| *k == dbg) {
+                    Some((_, v)) => v.push(label),
+                    None => seen.push((dbg, vec![label])),
+                }
+            }
+        }
+        let every = seen.len() == 1;
+        for (dbg, labels) in seen {
+            let labels = if every {
+                "*".to_string()
+            } else {
+                labels.join(",")
+            };
+            out.push_str(&format!("{id} {labels} {dbg}\n"));
+        }
+    }
+    let want = include_str!("../fixtures/resolved-maps.txt");
+    for (n, (w, g)) in want.lines().zip(out.lines()).enumerate() {
+        assert_eq!(w, g, "fixtures/resolved-maps.txt line {}", n + 1);
+    }
+    assert_eq!(want.lines().count(), out.lines().count());
+}
+
+/// The test raid's season with travel speeds, and an instance giving two
+/// levels: the first with every kind of the map's new entry.
+fn leveled(levels: &str) -> Vec<(String, String)> {
+    let mut f = files(&[]);
+    f[0].1 = format!("{SEASON}\n[defaults.travel]\nrun = 7.0\nmount = 14.0\n");
+    f[1].1 = format!("{INSTANCE}\n{levels}");
+    f
+}
+
+const LEVELS: &str = r#"
+[defaults.view]
+zoom_max = 6
+
+[level.2097.map]
+floor = "academy-L1"
+crop = [1400, -3250, 2000, -2750]
+ground = "terrain"
+include_groups = [5]
+transition = { after = 3, unit = "travel", port = "flash", port_yd = 40, camera = "glide" }
+
+[level.2097.map.fade.roof]
+group = 6
+alpha = 0.3
+
+[level.2097.map.area.entrance]
+shape = [{ center = [1410, -2772], radius = 15 }]
+
+[level.2097.map.area.court]
+name = "A boss's court"
+shape = [{ points = [[1740, -3110], [1785, -3110], [1785, -3060], [1740, -3060]] }]
+far = 1
+home = 1.5
+near = 6
+turn = 90
+encounter = 3492
+
+[level.2097.map.area.gone]
+enabled = false
+shape = [{ center = [0, 0], radius = 1 }]
+
+[level.2097.map.path.in]
+from = "entrance"
+to = "court"
+points = [[1410, -2772], [1600, -2900], [1760, -3085]]
+
+[level.2097.map.path.flight]
+from = "court"
+to = "entrance"
+mode = "vehicle"
+
+[level.2097.view]
+zoom = 1.3
+
+[level.2098.map]
+ground = 512.5
+
+[level.2098.travel]
+run = 8
+"#;
+
+#[test]
+fn a_level_reads_the_defaults_then_its_own_table() {
+    let r = Rubric::from_files(leveled(LEVELS)).unwrap_or_else(|e| panic!("{e:?}"));
+    let listed: Vec<(u32, &str, &str)> = r
+        .levels()
+        .into_iter()
+        .map(|(id, s, i)| (id, s.id.as_str(), i.slug.as_str()))
+        .collect();
+    assert_eq!(listed, [(2097, "s", "raid"), (2098, "s", "raid")]);
+    let l = r.level(2097).unwrap().unwrap();
+    assert!(check_level(&l).is_empty(), "{:?}", check_level(&l));
+    assert_eq!((l.ui_map, l.instance.as_str()), (2097, "raid"));
+    // Its map: its own UiMap, the season's ceiling, its own keys; the
+    // area switched off is gone.
+    assert_eq!(l.map.ui_map, Some(2097));
+    assert_eq!(l.map.ceiling, Some(25.0));
+    assert_eq!(l.map.floor.as_deref(), Some("academy-L1"));
+    assert_eq!(l.map.ground, Some(Datum::Terrain));
+    assert_eq!(l.map.crop, Some([1400.0, -3250.0, 2000.0, -2750.0]));
+    assert_eq!(l.map.fade["roof"].group, Some(6));
+    let keys: Vec<&str> = l.map.area.keys().map(String::as_str).collect();
+    assert_eq!(keys, ["court", "entrance"]);
+    let court = &l.map.area["court"];
+    assert_eq!(
+        (court.far, court.home, court.near, court.encounter),
+        (Some(1.0), Some(1.5), Some(6.0), Some(3492))
+    );
+    assert_eq!(court.bounds(), Some([1740.0, -3110.0, 1785.0, -3060.0]));
+    assert_eq!(
+        l.map.area_at([1760.0, -3085.0]).map(|(k, _)| k),
+        Some("court")
+    );
+    assert_eq!(
+        l.map.area_at([1410.0, -2770.0]).map(|(k, _)| k),
+        Some("entrance")
+    );
+    assert!(l.map.area_at([0.0, 0.0]).is_none());
+    // Its view: the season's zoom under its own, the instance's zoom_max.
+    assert_eq!((l.view.zoom, l.view.zoom_max), (Some(1.3), Some(6.0)));
+    // Its paths' speeds: the season's by mode, a vehicle timed to the
+    // next post; and the transition as written.
+    let (walk, flight) = (&l.map.path["in"], &l.map.path["flight"]);
+    assert_eq!((walk.mode, flight.mode), (Mode::Run, Mode::Vehicle));
+    assert_eq!(walk.speed_in(&l.travel), Some(7.0));
+    assert_eq!(flight.speed_in(&l.travel), None);
+    let t = l.map.transition.as_ref().unwrap();
+    assert_eq!(
+        (t.after, t.unit, t.port, t.port_yd, t.camera),
+        (
+            Some(3.0),
+            Some(UnitQuiet::Travel),
+            Some(Port::Flash),
+            Some(40.0),
+            Some(CameraQuiet::Glide)
+        )
+    );
+    // The other level: a height for its ground, its own run.
+    let l = r.level(2098).unwrap().unwrap();
+    assert_eq!(l.map.ground, Some(Datum::Height(512.5)));
+    assert_eq!(l.travel.speed(Mode::Run), Some(8.0));
+    assert_eq!(l.travel.speed(Mode::Mount), Some(14.0));
+    assert_eq!(l.travel.speed(Mode::Leap), None);
+    assert!(r.level(1).is_none());
+    // An encounter reads the season's travel too, and an area may share a
+    // key with a level's: they are different tables.
+    let mut f = leveled(LEVELS);
+    f[1].1
+        .push_str("\n[encounter.3492.map.area.court]\nshape = [{ center = [0, 0], radius = 5 }]\n");
+    let r = Rubric::from_files(f).unwrap();
+    let e = r.encounter(3492, None).unwrap().unwrap();
+    assert_eq!(e.travel.mount, Some(14.0));
+    assert!(e.map.area.contains_key("court") && check(&e).is_empty());
+    assert_eq!(r.level(2097).unwrap().unwrap().map.area.len(), 2);
+}
+
+#[test]
+fn a_level_is_named_by_its_ui_map_and_gives_only_its_map_view_and_travel() {
+    let refused = |levels: &str| Rubric::from_files(leveled(levels)).unwrap_err();
+    let errs = refused("[level.academy.map]\nfloor = \"x\"\n");
+    assert!(
+        errs.iter().any(|e| e.contains("named by its UiMap id")),
+        "{errs:?}"
+    );
+    let errs = refused("[level.2097.npc.x]\nname = \"X\"\n");
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("[level.2097]") && e.contains("`map`, `view`, `travel`")),
+        "{errs:?}"
+    );
+    let errs = refused("level = 3\n");
+    assert!(
+        errs.iter().any(|e| e.contains("`level` is a table")),
+        "{errs:?}"
+    );
+    // A typo is the level's error, naming the key.
+    let r = Rubric::from_files(leveled("[level.2097.map.area.a]\nshape = []\nhoem = 2\n")).unwrap();
+    let e = r.level(2097).unwrap().unwrap_err();
+    assert!(e.contains("hoem") && e.contains("s/raid/level.2097"), "{e}");
+    // A ground is a word or a height.
+    let r = Rubric::from_files(leveled("[level.2097.map]\nground = \"grass\"\n")).unwrap();
+    let e = r.level(2097).unwrap().unwrap_err();
+    assert!(e.contains("grass"), "{e}");
+    // A season gives a level once; a newer season's is the one read.
+    let mut twice = leveled("[level.2097.map]\nfloor = \"a\"\n");
+    twice.push((
+        "s/other/instance.toml".into(),
+        format!("{INSTANCE}\n[level.2097.map]\nfloor = \"b\"\n"),
+    ));
+    let errs = Rubric::from_files(twice).unwrap_err();
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("[level.2097]") && e.contains("a season gives a level once")),
+        "{errs:?}"
+    );
+    let mut returning = leveled("[level.2097.map]\nfloor = \"new\"\n");
+    returning.push((
+        "old/season.toml".into(),
+        "schema = 1\nname = \"Old\"\norder = 1\n".into(),
+    ));
+    returning.push((
+        "old/raid/instance.toml".into(),
+        format!(
+            "{INSTANCE}\n[level.2097.map]\nfloor = \"old\"\n[level.2099.map]\nfloor = \"older\"\n"
+        ),
+    ));
+    let r = Rubric::from_files(returning).unwrap();
+    let floor = |id| r.level(id).unwrap().unwrap().map.floor;
+    assert_eq!(
+        (floor(2097), floor(2099)),
+        (Some("new".into()), Some("older".into()))
+    );
+    let listed: Vec<(u32, &str)> = r
+        .levels()
+        .into_iter()
+        .map(|(id, s, _)| (id, s.id.as_str()))
+        .collect();
+    assert_eq!(listed, [(2097, "s"), (2099, "old")]);
+}
+
+#[test]
+fn a_level_is_the_bases_alone() {
+    let r = Rubric::from_files(leveled(LEVELS)).unwrap();
+    // A layer's instance file giving a level is refused, the user's named
+    // and left out, a curated set's refused whole.
+    let file = || {
+        owned(&[(
+            "s/raid/instance.toml",
+            "schema = 1\n[level.2097.view]\nturn = 9\n",
+        )])
+    };
+    let user = r.clone().with_user(file());
+    let errs = user.user_errors();
+    assert!(
+        errs.len() == 1 && errs[0].contains("a level is the base's alone"),
+        "{errs:?}"
+    );
+    let errs = r.clone().with_curated("pack", file()).unwrap_err();
+    assert!(errs[0].contains("a level is the base's alone"), "{errs:?}");
+    // A set may still amend an arena, as the layer stack lets it amend
+    // anything: a user's season defaults and their drawing of an
+    // encounter reach its arena, never a level, even one with an area of
+    // the same key.
+    let user = r.with_user(owned(&[
+        ("s/season.toml", "schema = 1\n[defaults.view]\nturn = 9\n"),
+        (
+            "s/raid/instance.toml",
+            "schema = 1\n[encounter.3492.map.area.court]\nshape = [{ center = [1, 1], radius = 9 }]\n",
+        ),
+    ]));
+    assert!(user.user_errors().is_empty(), "{:?}", user.user_errors());
+    let arena = user.encounter(3492, None).unwrap().unwrap();
+    assert_eq!(arena.view.turn, Some(9.0));
+    assert_eq!(arena.map.area["court"].shape[0].radius, Some(9.0));
+    let level = user.level(2097).unwrap().unwrap();
+    assert_eq!(level.view.turn, None);
+    assert_eq!(level.map.area["court"].shape[0].radius, None);
+}
+
+#[test]
+fn a_bad_area_path_fade_or_crop_is_found() {
+    let bad = r#"
+[level.2097.map]
+ui_map = 2098
+crop = [5, 2, 1, 6]
+include_groups = [4]
+exclude_groups = [4, 1]
+exposure = 0
+transition = { after = -1, port_yd = 0 }
+
+[level.2097.map.fade.both]
+group = 1
+model = 2
+alpha = 0.5
+
+[level.2097.map.fade.opaque]
+model = 2
+alpha = 1
+
+[level.2097.map.area.empty]
+shape = []
+
+[level.2097.map.area.upside-down]
+shape = [{ center = [0, 0], radius = 5 }]
+far = 2
+home = 1.5
+near = 0
+
+[level.2097.map.area.too-high]
+shape = [{ center = [0, 0], radius = 5 }]
+home = 10
+encounter = 7
+
+[level.2097.map.area.too-near]
+shape = [{ center = [0, 0], radius = 5 }]
+near = 0.8
+encounter = 7
+
+[level.2097.map.path.astray]
+from = "nowhere"
+to = "nowhere"
+speed = 0
+spell = 5
+points = [[0, nan]]
+
+[level.2097.map.glow.lit]
+color = [1, 2, 3]
+area = [{ center = [0, 0], radius = 1 }]
+on = { event = "erupts" }
+
+[level.2097.travel]
+mount = -14
+"#;
+    let r = Rubric::from_files(leveled(bad)).unwrap_or_else(|e| panic!("{e:?}"));
+    let problems = check_level(&r.level(2097).unwrap().unwrap());
+    for want in [
+        "map.ui_map names UiMap 2098, not the level's own 2097",
+        "travel has a speed that is not above 0",
+        "map.glow.lit names event \"erupts\", which the level does not have",
+        "map.crop is no box: [x0, y0, x1, y1] needs x0 < x1 and y0 < y1",
+        "map: group 4 is both included and excluded",
+        "map.exposure is not above 0",
+        "map.fade.both names both of `group` and `model`",
+        "map.fade.both fades group 1, which the map leaves out",
+        "map.fade.opaque has an alpha of 1, not above 0 and under 1",
+        "map.fade.opaque fades model 2, which map.fade.both fades too",
+        "map.area.empty has no shape",
+        "map.area.upside-down has an altitude that is not above 0",
+        // Unsaid altitudes are the view's, and checked so: the season's
+        // zoom 1.15, the closest 8, the furthest 1.
+        "map.area.too-high's altitudes are out of order: far 1 ≤ home 10 ≤ near 8",
+        "map.area.too-near's altitudes are out of order: far 1 ≤ home 1.15 ≤ near 0.8",
+        "map.area.too-near is encounter 7's court, as map.area.too-high is",
+        "map.path.astray names area \"nowhere\", which the map does not have",
+        "map.path.astray runs from area \"nowhere\" to itself",
+        "map.path.astray has a width or a speed not above 0",
+        "map.path.astray has a point that is not a number",
+        "map.path.astray names a spell, but only a leap's device casts one",
+        "map.transition's `after` is not 0 or more seconds",
+        "map.transition's `port_yd` is not above 0",
+    ] {
+        assert!(
+            problems.iter().any(|p| p.starts_with(want)),
+            "{want}: {problems:#?}"
+        );
+    }
+    // Each path end is found missing once, and nothing else is said.
+    assert_eq!(problems.len(), 23, "{problems:#?}");
+    // A reader's altitudes: the area's own, else the view's, else 1, 1.15
+    // and 8.
+    let l = r.level(2097).unwrap().unwrap();
+    let view = View {
+        zoom: Some(2.0),
+        zoom_max: Some(6.0),
+        ..View::default()
+    };
+    assert_eq!(l.map.area["too-high"].altitudes(&view), [1.0, 10.0, 6.0]);
+    assert_eq!(l.map.area["empty"].altitudes(&view), [1.0, 2.0, 6.0]);
+    assert_eq!(
+        l.map.area["empty"].altitudes(&View::default()),
+        [Area::FAR, Area::HOME, Area::NEAR]
+    );
+    // A fade with neither, and a ground that is no number.
+    let r = Rubric::from_files(leveled(
+        "[level.2097.map]\nground = nan\n[level.2097.map.fade.none]\nalpha = 0.5\n",
+    ))
+    .unwrap();
+    let problems = check_level(&r.level(2097).unwrap().unwrap());
+    assert_eq!(problems.len(), 2, "{problems:#?}");
+    assert!(
+        problems.iter().any(|p| p.contains("neither")),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_ground_is_written_as_a_word_or_a_height() {
+    for (d, text) in [
+        (Datum::Terrain, "\"terrain\""),
+        (Datum::Walked, "\"walked\""),
+        (Datum::Height(390.25), "390.25"),
+    ] {
+        let m = Map {
+            ground: Some(d),
+            ..Map::default()
+        };
+        let written = toml::to_string(&m).unwrap();
+        assert_eq!(written.trim(), format!("ground = {text}"));
+        assert_eq!(toml::from_str::<Map>(&written).unwrap(), m);
+    }
+    assert_eq!(
+        toml::from_str::<Map>("ground = 12").unwrap().ground,
+        Some(Datum::Height(12.0))
+    );
+}
+
+#[test]
+fn the_embedded_rubric_resolves_and_checks_every_level() {
+    let r = Rubric::embedded().unwrap_or_else(|e| panic!("{}", e.join("\n")));
+    let mut problems = Vec::new();
+    let encounters: BTreeMap<u32, (String, String)> = r
+        .encounters()
+        .into_iter()
+        .map(|(id, s, i)| (id, (s.id.clone(), i.slug.clone())))
+        .collect();
+    // An area's encounter is one of its instance's: a level's, and an
+    // encounter's own map's.
+    let owned_by = |what: String, season: &str, inst: &str, map: &Map| -> Vec<String> {
+        map.area
+            .iter()
+            .filter_map(|(k, a)| {
+                let id = a.encounter?;
+                (encounters.get(&id) != Some(&(season.to_string(), inst.to_string())))
+                    .then(|| format!("{what}: area {k} names encounter {id}, not one of {inst}'s"))
+            })
+            .collect()
+    };
+    // A court's encounter is posted on its level: its map's UiMap is the
+    // level's key. The exceptions, each the level the log posts the fight
+    // on where the encounter's map says another:
+    // - Echo of Doragosa (2565): its draft says UiMap 2099 (the floors
+    //   cache's Algeth'ar level 3, whose box holds the court too), but
+    //   every player post of the fight on both stored runs (6,001 and
+    //   6,731) is on 2097, none on 2099.
+    let posted_elsewhere: [(u32, u32); 1] = [(2565, 2097)];
+    let levels = r.levels();
+    assert!(levels.len() >= 7, "{} levels", levels.len());
+    for (ui_map, s, i) in levels {
+        match r.level(ui_map) {
+            Some(Ok(l)) => {
+                problems.extend(
+                    check_level(&l)
+                        .into_iter()
+                        .map(|p| format!("level {ui_map}: {p}")),
+                );
+                problems.extend(owned_by(format!("level {ui_map}"), &s.id, &i.slug, &l.map));
+                for (k, a) in &l.map.area {
+                    let Some(id) = a.encounter else { continue };
+                    let on = r
+                        .encounter_at(id, None, Tier::Base)
+                        .and_then(Result::ok)
+                        .and_then(|e| e.map.ui_map);
+                    let excepted = posted_elsewhere.contains(&(id, ui_map));
+                    if (on == Some(ui_map)) == excepted {
+                        problems.push(format!(
+                            "level {ui_map}: area {k}'s encounter {id} is on UiMap {on:?}{}",
+                            if excepted {
+                                ", so its exception is stale"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
+                }
+            }
+            Some(Err(e)) => problems.push(e),
+            None => problems.push(format!("level {ui_map} is listed and not answered")),
+        }
+    }
+    for (id, s, i) in r.encounters() {
+        if let Some(Ok(e)) = r.encounter_at(id, None, Tier::Base) {
+            problems.extend(owned_by(format!("encounter {id}"), &s.id, &i.slug, &e.map));
+            for a in e.map.area.values() {
+                if a.encounter.is_some_and(|n| n != id) {
+                    problems.push(format!("encounter {id}: an area names another encounter"));
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// Every embedded level as it resolves, written out whole: a later
+/// `[defaults.travel]`, a season's `[defaults.map]` or `[defaults.view]`,
+/// or an edit to a level shows here, line by line. `WOWDPS_BLESS=1`
+/// writes the fixture anew from this build.
+#[test]
+fn every_level_resolves_as_its_fixture_says() {
+    let r = Rubric::embedded().unwrap_or_else(|e| panic!("{}", e.join("\n")));
+    let mut out = String::new();
+    for (ui_map, s, i) in r.levels() {
+        let l = r.level(ui_map).unwrap().unwrap();
+        out.push_str(&format!("== {ui_map} {}/{}\n{l:#?}\n", s.id, i.slug));
+    }
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/resolved-levels.txt");
+    if std::env::var_os("WOWDPS_BLESS").is_some() {
+        std::fs::write(path, &out).unwrap();
+        return;
+    }
+    let want = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("{path}: {e}; run with WOWDPS_BLESS=1"));
+    for (n, (w, g)) in want.lines().zip(out.lines()).enumerate() {
+        assert_eq!(
+            w,
+            g,
+            "fixtures/resolved-levels.txt line {}; if the change is meant, run with WOWDPS_BLESS=1",
+            n + 1
+        );
+    }
+    assert_eq!(want.lines().count(), out.lines().count());
 }

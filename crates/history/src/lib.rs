@@ -245,10 +245,11 @@ impl Lake {
         // Offline by construction: nothing auto-installs or auto-loads, an
         // explicit INSTALL can only look in a repository that does not
         // exist (never the network, never ~/.duckdb), and LOAD can only find
-        // what sits in the lake's own (empty) extension directory. JSON and
-        // Parquet are statically linked in the nixpkgs build, and on macOS
-        // in the bundled one via crate features (icu is nixpkgs-only), so
-        // nothing here needs an extension anyway.
+        // what sits in the lake's own (empty) extension directory. The
+        // bundled build compiles autoinstall and autoload ON by default, so
+        // these SETs are the only guard (tests/parity.rs holds them). JSON
+        // and Parquet come in statically through the crate's bundled
+        // features, so nothing here needs an extension anyway.
         let quoted = |p: PathBuf| p.display().to_string().replace('\'', "''");
         conn.execute_batch(&format!(
             "SET autoinstall_known_extensions = false;\n\
@@ -345,9 +346,33 @@ impl Lake {
             } else {
                 "false"
             };
+            // v47: `affixes` — a keystone run's affix ids, the card's
+            // `key.affixes`, written only when the key names some. The
+            // field exists once ONE card carries it, and its type is read
+            // rather than its presence: a lake whose every key is null types
+            // `key` as JSON, which answers `key.affixes` with more JSON. A
+            // lake without one reads NULL everywhere (off a key, for a key
+            // joined mid-run, and on a card written before v47), so the
+            // column always exists.
+            let fights_have_affixes = self
+                .sql("DESCRIBE SELECT key.affixes AS affixes FROM fights")
+                .map(|t| {
+                    t.rows.iter().any(|r| {
+                        r.get(1)
+                            .and_then(Json::as_str)
+                            .is_some_and(|ty| ty.ends_with("[]") && !ty.starts_with("JSON"))
+                    })
+                })
+                .unwrap_or(false);
+            let affixes = if fights_have_affixes {
+                "key.affixes"
+            } else {
+                "CAST(NULL AS BIGINT[])"
+            };
             self.conn
                 .execute_batch(&format!(
-                    "CREATE OR REPLACE VIEW fights AS SELECT *, {imported} AS imported \
+                    "CREATE OR REPLACE VIEW fights AS SELECT *, {imported} AS imported, \
+                     {affixes} AS affixes \
                      FROM read_json({}, format = 'auto', union_by_name = true);",
                     glob("fights", "json")
                 ))

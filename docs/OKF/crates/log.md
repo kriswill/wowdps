@@ -1,10 +1,72 @@
 # Log
 
+## 2026-10-23
+
+- **Update** — [wowdps-history](history.md): DuckDB is bundled from the
+  crate's own source (`=1.10506.1`, JSON and Parquet features, no ICU)
+  instead of system-linked to nixpkgs' libduckdb; `tests/duckdb_version.rs`,
+  which held the pin to the library, is removed, and `network_access_is_off`
+  now holds the autoinstall / autoload `SET`s the bundled build's
+  compiled-in defaults leave as the only guard
+  ([decision](../decisions/duckdb-is-bundled-not-system-linked.md)).
+- **Update** — [wowdps-mcp](mcp.md): `history_sql`'s description says there
+  are no time zone functions (no ICU) and how to read local time instead.
+
+## 2026-10-19
+
+- **Update** — [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
+  [wowdps-mcp](mcp.md), [wowdps-history](history.md): v48, an import's
+  meter — `ImportedPlayer`'s totals and curves, the card's derived rates,
+  `ImportedCard::details` written as the details tier by
+  `Store::import_replay`, `stored_fight` answering an import's card, the
+  lake's `players` rows for an import filled.
+
+## 2026-10-17
+
+- **Update** — [wowdps-daemon](daemon.md): `Supervisor`'s `Drop` runs
+  `shutdown`, so a panic unwinding out of `hub::run`, which skips the
+  explicit call, still terminates the overlay the daemon spawned. A second
+  shutdown is a no-op.
+
+- **Update** — [wowdps-core](core.md), [wowdps-model](model.md),
+  [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
+  [wowdps-mcp](mcp.md), [wowdps-history](history.md): v47 and replay
+  format 6 — a key's affixes from its CHALLENGE_MODE_START on the visit,
+  the card's `key`, the replay head and `pull.txt`, the mcp card's
+  `instance` and the lake's `fights.affixes`.
+
+## 2026-10-16
+
+- **Update** — [wowdps-daemon](daemon.md): every way out of `hub::run`
+  terminates the overlay the daemon spawned (`Supervisor::shutdown`). A
+  `wowdps stop` used to drop the supervisor and orphan its child, whose
+  reconnect respawned a daemon that spawned a second overlay.
+
+- **Update** — [wowdps-gui-logic](gui-logic.md): `single::claim_overlay`
+  exits an evicted overlay itself, and its notice cannot panic. An
+  `eprintln!` into a spawned overlay's stderr, a pipe whose reader (the
+  daemon) had exited, panicked the acceptor thread before its exit and
+  left evicted overlays stacked on the game.
+
 ## 2026-10-12
 
-- **Update** — [wowdps-history](history.md): DuckDB is `bundled` on macOS
-  (no nix there); Linux stays system-linked, and the version test guards
-  the Linux pair.
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the render
+  keys read — a sidecar's `params` and `made` (`Params`, `RenderOptions`),
+  `Map::params_hash`, `Map::level_params`, `Encounter::floor_params`,
+  `Floors::stale`; a dungeon level's sidecars (`Floors::levels`,
+  `level_renders`); `Map::stencil_keep` and `STENCIL_FEATHER`; every
+  season dungeon's terrain level says `ground = "walked"`; `write::ORDER`
+  is public.
+
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): after review
+  — `Area::altitudes`, `travel` in `INSTANCE_TABLES`,
+  `fixtures/resolved-levels.txt`; a set may amend an arena's map, never a
+  level's.
+
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): a dungeon's
+  levels (`[level.<ui_map>]`, `Level`, `Rubric::level`, `levels`,
+  `check_level`) and the map's areas, paths, transition and render tweaks;
+  `gate_map`; `fixtures/resolved-maps.txt`.
 
 ## 2026-10-11
 

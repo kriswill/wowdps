@@ -4,3 +4,16 @@ name = "Voidscar Arena"
 kind = "dungeon"
 journal = 1313
 map = 2923
+
+# The dungeon's terrain levels, by UiMap id, part of the base: each one's
+# render is cut over the ground its parties walked (every stored keystone
+# run's posts on it), as gen-floors drew them from a level posts file. Its
+# other levels are buildings, cut by their own groups.
+
+[level.2572.map]
+floor = "voidscar-arena-L1"
+ground = "walked"
+
+[level.2573.map]
+floor = "voidscar-arena-L2"
+ground = "walked"

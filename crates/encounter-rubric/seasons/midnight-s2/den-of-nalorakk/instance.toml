@@ -4,3 +4,16 @@ name = "Den of Nalorakk"
 kind = "dungeon"
 journal = 1311
 map = 2825
+
+# The dungeon's terrain levels, by UiMap id, part of the base: each one's
+# render is cut over the ground its parties walked (every stored keystone
+# run's posts on it), as gen-floors drew them from a level posts file. Its
+# other levels are buildings, cut by their own groups.
+
+[level.2513.map]
+floor = "den-of-nalorakk-L1"
+ground = "walked"
+
+[level.2514.map]
+floor = "den-of-nalorakk-L2"
+ground = "walked"

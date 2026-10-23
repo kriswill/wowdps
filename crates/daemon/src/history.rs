@@ -2278,14 +2278,18 @@ impl<B: Backend> Store<B> {
 
     /// v46: store a fight from outside this machine's logs — `imported`'s
     /// card ([`ImportedCard::card`], `Origin::Imported`) and `replay` as its
-    /// replay tier, nothing else (no rows, details or series: the store
-    /// derives those from a log, and an import has none). The replay must
-    /// be this build's format and decode whole; it is kept with the card's
-    /// owner as its "you". Imported fights are protected (never trimmed by
-    /// the caps or the replay size cap), so one always earns its replay
-    /// slot. A second import of the same source replaces the first — card,
-    /// replay and id — pin carried. A failed write leaves the store as it
-    /// was. `(id, replaced)`, or why the import was refused.
+    /// replay tier, and (v48) the details tier its players' curves make
+    /// ([`ImportedCard::details`]), nothing else (no rows or series: the
+    /// store derives those from a log's lines, and an import brings none).
+    /// The replay must be this build's format and decode whole, and the
+    /// curves must agree with the totals ([`ImportedCard::check_curves`]);
+    /// the replay is kept with the card's owner as its "you". Imported
+    /// fights are protected (never trimmed by the caps or the replay size
+    /// cap, never demoted), so one always earns its replay slot and keeps
+    /// its details. A second import of the same source replaces the first
+    /// — card, replay, details and id — pin carried. A failed write leaves
+    /// the store as it was. `(id, replaced)`, or why the import was
+    /// refused.
     pub fn import_replay(
         &mut self,
         imported: &ImportedCard,
@@ -2316,8 +2320,10 @@ impl<B: Backend> Store<B> {
             ));
         }
         let cut = replay_tier::decode(replay).ok_or("the replay does not decode")?;
+        imported.check_curves()?;
         let mut card = imported.card();
         let id = card.id.clone();
+        let details = imported.details(&id);
         if self.card(&id).is_some_and(|c| !c.is_imported()) {
             return Err(format!("{id} is a local fight's id; the import is refused"));
         }
@@ -2349,42 +2355,71 @@ impl<B: Backend> Store<B> {
                 "the replay {id} would replace cannot be read; the import is refused"
             ));
         }
+        // v48: and its details, the same way: held to be put back, and a
+        // file that is there but cannot be read refuses the re-import.
+        let details_name = format!("{id}.json");
+        let old_details = previous
+            .as_ref()
+            .and_then(|_| self.backend.read("details", &details_name));
+        if previous.is_some()
+            && old_details.is_none()
+            && self.backend.exists("details", &details_name)
+        {
+            return Err(format!(
+                "the details {id} would replace cannot be read; the import is refused"
+            ));
+        }
         // In the index first (the replay's slot is the card's), the replay,
-        // then the card's file last: its presence is what makes the fight
-        // exist. The size cap trims only once it is in.
+        // the details (v48), then the card's file last: its presence is
+        // what makes the fight exist. The size cap trims only once it is in.
         self.cards.retain(|c| c.id != id);
         self.insert_card(card.clone());
         let protected = self.protected();
         let kept = self.write_replay(&id, cut, &protected);
+        let mut details_put = false;
         let written = if !kept {
             Err(self
                 .last_error
                 .clone()
                 .unwrap_or_else(|| "the replay was not kept".to_string()))
         } else {
-            self.backend
-                .write(
-                    "fights",
-                    &format!("{id}.json"),
-                    card.to_json().to_line().as_bytes(),
-                )
-                .map_err(|e| format!("history write failed: {e}"))
+            // A details step that fails changes no file (a write is atomic,
+            // a removal that fails leaves the file): only one that went
+            // through is undone below.
+            match self.put_details(&details_name, details.as_ref()) {
+                Ok(()) => {
+                    details_put = true;
+                    self.backend.write(
+                        "fights",
+                        &format!("{id}.json"),
+                        card.to_json().to_line().as_bytes(),
+                    )
+                }
+                Err(e) => Err(e),
+            }
+            .map_err(|e| format!("history write failed: {e}"))
         };
         if let Err(mut why) = written {
             // Back as it was: the fight imported before stays, over its own
-            // replay; a first import leaves nothing behind.
+            // replay and details; a first import leaves nothing behind.
             self.cards.retain(|c| c.id != id);
             match previous {
                 Some(p) => {
                     self.insert_card(p);
+                    // Both said: the write that failed, and what the old
+                    // card is left without.
+                    if details_put
+                        && let Some(lost) = self.restore_details(&details_name, old_details)
+                    {
+                        why.push_str(&format!("; {lost}"));
+                    }
                     if kept && let Some(lost) = self.restore_replay(&id, old_replay) {
-                        // Both said: the card write that failed, and that
-                        // the old card is left without its replay.
                         why.push_str(&format!("; {lost}"));
                     }
                 }
                 None => {
                     self.drop_replay(&id);
+                    let _ = self.backend.remove("details", &details_name);
                     let _ = self.backend.remove("fights", &format!("{id}.json"));
                 }
             }
@@ -2397,6 +2432,51 @@ impl<B: Backend> Store<B> {
         }
         self.trim_replays(&protected);
         Ok((id, replaced))
+    }
+
+    /// v48: an import's details step — its details tier written, or, when
+    /// it brings none, an earlier import's removed: a re-import replaces
+    /// the fight whole.
+    fn put_details(&mut self, name: &str, details: Option<&FightDetails>) -> io::Result<()> {
+        match details {
+            Some(d) => self
+                .backend
+                .write("details", name, d.to_json().to_line().as_bytes()),
+            None if self.backend.exists("details", name) => self.backend.remove("details", name),
+            None => Ok(()),
+        }
+    }
+
+    /// v48: put back the details a failed re-import overwrote (or removed),
+    /// or — when they cannot be written back, or there were none — no
+    /// details at all, never the refused import's under the old card. What
+    /// could not be put back, if anything.
+    fn restore_details(&mut self, name: &str, old: Option<Vec<u8>>) -> Option<String> {
+        let id = name.strip_suffix(".json").unwrap_or(name);
+        let cleared = |store: &mut Self| {
+            if store.backend.exists("details", name) {
+                store.backend.remove("details", name).err()
+            } else {
+                None
+            }
+        };
+        match old {
+            Some(bytes) => match self.backend.write("details", name, &bytes) {
+                Ok(()) => None,
+                Err(e) => Some(match cleared(self) {
+                    None => format!(
+                        "its old details could not be put back ({e}): {id} is left without them"
+                    ),
+                    Some(r) => format!(
+                        "its old details could not be put back ({e}), nor the new ones \
+                         removed ({r}): {id} shows the refused import's curves"
+                    ),
+                }),
+            },
+            None => cleared(self).map(|r| {
+                format!("the refused import's details could not be removed from {id} ({r})")
+            }),
+        }
     }
 
     /// Put back the replay a failed re-import overwrote: its bytes and its
@@ -2476,6 +2556,9 @@ impl<B: Backend> Store<B> {
         }
         self.cards.retain(|c| c.id != old);
         self.drop_replay(old);
+        // v48: and its details, as an eviction takes them: a file no card
+        // names is never read.
+        let _ = self.backend.remove("details", &format!("{old}.json"));
         true
     }
 
@@ -2797,8 +2880,8 @@ impl<B: Backend> Store<B> {
         let Some(card) = self.card(id) else {
             return false;
         };
-        // v46: an imported fight keeps its card and replay alone, and has
-        // no log to be rewritten from.
+        // v46: an imported fight keeps what it was imported with (its
+        // card, replay and v48 details), and has no log to be rewritten from.
         if card.is_imported() || !self.earns_details(card) {
             return false;
         }
@@ -4561,6 +4644,8 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             difficulty: v.difficulty,
             level: v.key_level,
             completed: v.completed,
+            // v47: the START's affixes (none on a run joined mid-way).
+            affixes: v.affixes.clone(),
         }),
         start_local_ms: seg.start_ms,
         tz_min: tz,

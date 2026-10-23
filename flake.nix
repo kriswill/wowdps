@@ -66,27 +66,30 @@
       # shell adds only what it alone plumbs (its toolchain, and the CLIs it
       # reaches through its own inputs: okf, coderabbit).
       devShellFor = pkgs: import ./nix/dev { inherit pkgs; };
-      # The two DUCKDB_* variables the history reader's sys crate needs — the
-      # PACKAGE build wants them too, and a package is not a shell.
-      duckdbEnv = pkgs: (devShellFor pkgs).duckdbEnv;
     in
     {
       # The daemon + TUI binary (`wowdps`) plus its siblings — the MCP server
       # (`wowdps-mcp`, reached as `wowdps mcp`) and the history reader
-      # (`wowdps-history`, `wowdps history`): pure Rust except libduckdb,
-      # which the history binary finds through its rpath. `wowdps-gui` is
-      # its own package with its own dependency layer (GPUI is most of the
-      # compile and the daemon never needs it): the binary is wrapped so the
-      # libraries GPUI dlopens (wayland-client, vulkan-loader, EGL/GL) sit
-      # on LD_LIBRARY_PATH, and both modules put it on the daemon's PATH by
-      # default, which is how the overlay supervisor finds it.
+      # (`wowdps-history`, `wowdps history`): pure Rust except the history
+      # binary's DuckDB, which it bundles (compiled from the duckdb crate's
+      # own C++ source by stdenv's compiler in the dependency layer below,
+      # and linked in statically), so no native library ships beside them.
+      # `wowdps-gui` is its own package with its own dependency layer (GPUI
+      # is most of the compile and the daemon never needs it): the binary is
+      # wrapped so the libraries GPUI dlopens (wayland-client,
+      # vulkan-loader, EGL/GL) sit on LD_LIBRARY_PATH, and both modules put
+      # it on the daemon's PATH by default, which is how the overlay
+      # supervisor finds it.
       #
       # Built with crane in two derivations so CI never recompiles the
       # dependency tree: `wowdps-deps` compiles every dependency crate
       # against a source with the workspace's own crates stubbed out (its
       # hash depends on the Cargo manifests + lockfile only, so it is a
       # binary-cache download on every PR that leaves Cargo.lock alone),
-      # and `wowdps` builds and tests just the workspace crates on top.
+      # and `wowdps` builds and tests just the workspace crates on top. The
+      # dependency layer carries the bundled DuckDB's C++ compile (~350
+      # units, no sccache in the sandbox), so any Cargo.lock change pays it
+      # again.
       packages = forAllSystems (
         pkgs:
         let
@@ -124,13 +127,7 @@
             strictDeps = true;
             # Only the three shipped binaries.
             cargoExtraArgs = "-p wowdps-tui -p wowdps-mcp -p wowdps-history";
-            nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-            buildInputs = [ (lib.getLib pkgs.duckdb) ];
-            # The one native library in the closure, on the one binary
-            # that needs it; the tests need it on the load path too.
-            LD_LIBRARY_PATH = "${lib.getLib pkgs.duckdb}/lib";
-          }
-          // duckdbEnv pkgs;
+          };
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
           # The GUI: GPUI Kit over model + proto + gui-logic. It LINKS
           # libxkbcommon(-x11), libxcb and fontconfig (font-kit's pkg-config

@@ -333,6 +333,22 @@ fn instance_fixture_stores_the_keyed_overall_not_its_members() {
         (k.map_id, k.level, k.completed),
         (2526, Some(12), Some(true))
     );
+    // v47: the START's affixes, written last in the card's key — and only
+    // there: the unkeyed visits' Σ cards name none, byte for byte as before.
+    assert_eq!(k.affixes, [9, 10]);
+    let doc = key.to_json().to_line();
+    assert!(
+        doc.contains(r#""completed":true,"affixes":[9,10]}"#),
+        "{doc}"
+    );
+    for c in store.cards().iter().filter(|c| c.kind != FightKind::Key) {
+        assert!(
+            c.key.as_ref().is_none_or(|k| k.affixes.is_empty()),
+            "{}",
+            c.name
+        );
+        assert!(!c.to_json().to_line().contains("affixes"), "{}", c.name);
+    }
     assert!(key.pars_ms.is_some() || key.official_ms.is_some());
     // Vexamus was pulled inside the key: no card of his own.
     assert!(
@@ -1769,9 +1785,12 @@ fn an_import_over_the_socket_lands_in_the_store() {
         start_utc_ms: 1_722_014_400_000,
         duration_ms: 90_000,
         success: Some(true),
+        // v48: with a meter, its curve the details tier's.
         players: vec![ImportedPlayer {
             guid: "Player-9-Z".to_string(),
             name: "Zed-Elsewhere".to_string(),
+            damage: 90_000,
+            damage_curve: vec![1_000; 90],
             ..ImportedPlayer::default()
         }],
         owner: Some("Player-9-Z".to_string()),
@@ -1826,11 +1845,17 @@ fn an_import_over_the_socket_lands_in_the_store() {
             replaced: false,
         })
     );
-    // The files: a card naming its origin, a replay, no other tier.
+    // The files: a card naming its origin, its meter on it (v48), a replay
+    // and the details tier its curve made, no rows or series.
     let doc = std::fs::read_to_string(hist.join("fights").join(format!("{id}.json"))).unwrap();
     assert!(
         doc.ends_with(r#","origin":{"kind":"imported","source":"import:test-1"}}"#),
         "{doc}"
+    );
+    let stored = FightCard::from_json(&wowdps_proto::json::parse(&doc).unwrap()).unwrap();
+    assert_eq!(
+        (stored.players[0].damage, stored.players[0].dps),
+        (90_000, 1_000.0)
     );
     assert!(hist.join("replay").join(format!("{id}.bin")).exists());
     assert_eq!(
@@ -1839,8 +1864,14 @@ fn an_import_over_the_socket_lands_in_the_store() {
             count(&hist, "details"),
             count(&hist, "series")
         ),
-        (0, 0, 0)
+        (0, 1, 0)
     );
+    let details = std::fs::read_to_string(hist.join("details").join(format!("{id}.json"))).unwrap();
+    let details = wowdps_proto::history::FightDetails::from_json(
+        &wowdps_proto::json::parse(&details).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(details.players[0].damage_timeline.buckets, [1_000; 90]);
 
     client.send(&ClientMsg::GetReplay {
         req_id: 8,
@@ -2750,6 +2781,78 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
     assert!(card.pinned, "the pin survived the rewrite");
 }
 
+/// v47: a key stored before its affixes were kept (its card's `key` without
+/// them, as a v46 build wrote it) gets them back from its log on a regrade.
+#[test]
+fn a_regrade_brings_a_keys_affixes_back_from_its_log() {
+    use wowdps_proto::HistoryAnswer;
+    let tmp = Temp::new("regrade-affixes");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let log = logs.join("WoWCombatLog-080126.txt");
+    std::fs::write(&log, std::fs::read_to_string(INSTANCE).unwrap()).unwrap();
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs), hist.clone()));
+    // Ranjit, the key's Σ and the pre-key plain Σ (the tailed log's
+    // Skyreach visit is still open).
+    wait_for_fights(&d.socket, 3);
+    let key = Store::open(
+        wowdps_daemon::history::DirBackend::new(hist.clone()),
+        Retention::default(),
+    )
+    .cards()
+    .iter()
+    .find(|c| c.kind == FightKind::Key)
+    .cloned()
+    .expect("the key's card");
+    let card_path = hist.join("fights").join(format!("{}.json", key.id));
+    let v46 = std::fs::read_to_string(&card_path)
+        .unwrap()
+        .replace(r#","affixes":[9,10]"#, "");
+    assert!(!v46.contains("affixes"), "{v46}");
+    std::fs::write(&card_path, &v46).unwrap();
+    // The rows tier is rewritten with the card: its return is the regrade.
+    std::fs::remove_file(hist.join("rows").join(format!("{}.json", key.id))).unwrap();
+
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    client.send(&ClientMsg::Regrade {
+        req_id: 1,
+        fight_id: None,
+        encounter: None,
+        difficulty: None,
+        kind: Some(FightKind::Key),
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let mut queued = None;
+    while queued.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                answer: HistoryAnswer::Regraded { queued: n },
+                ..
+            } = msg
+            {
+                queued = Some(n);
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(queued, Some(1));
+    let rows = hist.join("rows").join(format!("{}.json", key.id));
+    let deadline = Instant::now() + DEADLINE;
+    while !rows.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(rows.exists(), "the key was rewritten");
+    wait_for_fights(&d.socket, 3);
+    stop(d);
+    let card = std::fs::read_to_string(&card_path).unwrap();
+    assert!(
+        card.contains(r#""completed":true,"affixes":[9,10]}"#),
+        "{card}"
+    );
+}
+
 /// `Regrade { kind }` over many cards: every pick is queued and rewritten,
 /// pulls out of two logs and Σ cards out of one — the daemon scans each
 /// log once for the whole selection, so the cards sharing one must each
@@ -2889,6 +2992,11 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
     }
     let key = key.expect("the key's card");
     assert_eq!(key.name, "Algeth'ar Academy +12");
+    // v47: the affixes cross the wire on the card's key.
+    assert_eq!(
+        key.key.as_ref().map(|k| k.affixes.clone()),
+        Some(vec![9, 10])
+    );
     assert_eq!(
         key.bosses
             .iter()

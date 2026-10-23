@@ -22,3 +22,10 @@ zoom = 1.15
 
 [defaults.map]
 ceiling = 25
+
+# The yards a second a map's paths go at, by their mode, unless a path says
+# its own: a player's and a ground mount's base speeds. A vehicle's, unsaid,
+# is timed to its next post.
+[defaults.travel]
+run = 7.0
+mount = 14.0

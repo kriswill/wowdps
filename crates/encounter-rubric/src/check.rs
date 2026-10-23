@@ -1,17 +1,23 @@
-//! What a resolved encounter says that cannot hold: a name it uses but
-//! does not have, a size that is no size, a difficulty that is none.
+//! What a resolved encounter or dungeon level says that cannot hold: a
+//! name it uses but does not have, a size that is no size, a difficulty
+//! that is none, a way to a place the map lacks.
 
 use std::collections::BTreeMap;
 
 use crate::schema::Gated;
-use crate::{Breaks, Encounter, StencilShape, Trigger, difficulty};
+use crate::{Breaks, Datum, Encounter, Level, Mode, StencilShape, Travel, Trigger, difficulty};
 
 /// What an encounter names that it does not have (an ability's NPC, a
 /// pet's owner, a trigger's NPC, phase or event), and what it says that
 /// cannot be (a shape that is none, a time under 0, an `only` naming no
 /// difficulty). Empty when it is whole.
 pub fn check(e: &Encounter) -> Vec<String> {
-    let mut c = Check { e, out: Vec::new() };
+    let mut c = Check {
+        e,
+        whole: "encounter",
+        out: Vec::new(),
+    };
+    c.travel(&e.travel);
     c.npcs();
     c.abilities();
     c.phases();
@@ -27,6 +33,37 @@ pub fn check(e: &Encounter) -> Vec<String> {
     c.events();
     c.map();
     c.only();
+    c.out
+}
+
+/// What a dungeon level says that cannot be: its map's, as an encounter's
+/// is checked (a layer or a glow naming a phase or an event is one the
+/// level does not have), a map naming another UiMap than the level's, and
+/// its speeds. Empty when it is whole.
+pub fn check_level(l: &Level) -> Vec<String> {
+    // The level's map as an encounter's with nothing else in it, so a
+    // name it uses is found missing.
+    let e = Encounter {
+        map: l.map.clone(),
+        view: l.view.clone(),
+        travel: l.travel.clone(),
+        ..Encounter::default()
+    };
+    let mut c = Check {
+        e: &e,
+        whole: "level",
+        out: Vec::new(),
+    };
+    if let Some(m) = l.map.ui_map
+        && m != l.ui_map
+    {
+        c.out.push(format!(
+            "map.ui_map names UiMap {m}, not the level's own {}",
+            l.ui_map
+        ));
+    }
+    c.travel(&l.travel);
+    c.map();
     c.out
 }
 
@@ -54,7 +91,14 @@ impl Kind {
 
 struct Check<'a> {
     e: &'a Encounter,
+    /// What is checked: "encounter" or "level".
+    whole: &'static str,
     out: Vec<String>,
+}
+
+/// Whether a number is finite and above 0.
+fn positive(v: f32) -> bool {
+    v.is_finite() && v > 0.0
 }
 
 impl Check<'_> {
@@ -74,8 +118,9 @@ impl Check<'_> {
     fn names(&mut self, what: &str, how: &str, kind: Kind, name: &str) {
         if !self.has(kind, name) {
             self.out.push(format!(
-                "{what} {how} {} {name:?}, which the encounter does not have",
-                kind.word()
+                "{what} {how} {} {name:?}, which the {} does not have",
+                kind.word(),
+                self.whole
             ));
         }
     }
@@ -440,6 +485,148 @@ impl Check<'_> {
                 Breaks::Occupancy | Breaks::Never => {}
             }
         }
+        if let Some([x0, y0, x1, y1]) = map.crop
+            && !([x0, y0, x1, y1].iter().all(|v| v.is_finite()) && x0 < x1 && y0 < y1)
+        {
+            self.out
+                .push("map.crop is no box: [x0, y0, x1, y1] needs x0 < x1 and y0 < y1".into());
+        }
+        for (what, kept, left) in [
+            ("group", &map.include_groups, &map.exclude_groups),
+            ("model", &map.include_models, &map.exclude_models),
+        ] {
+            if let Some(id) = kept.iter().find(|id| left.contains(id)) {
+                self.out
+                    .push(format!("map: {what} {id} is both included and excluded"));
+            }
+        }
+        if let Some(Datum::Height(h)) = map.ground
+            && !h.is_finite()
+        {
+            self.out
+                .push("map.ground is a height that is not a number".into());
+        }
+        if map.exposure.is_some_and(|x| !positive(x)) {
+            self.out.push("map.exposure is not above 0".into());
+        }
+        // Which fade names each group and model, the first by key.
+        let mut faded: BTreeMap<(&str, u32), &str> = BTreeMap::new();
+        for (k, f) in &map.fade {
+            let what = format!("map.fade.{k}");
+            if f.group.is_some() == f.model.is_some() {
+                self.out.push(format!(
+                    "{what} names {} of `group` and `model`; it fades exactly one",
+                    if f.group.is_some() { "both" } else { "neither" }
+                ));
+            }
+            if !(f.alpha.is_finite() && f.alpha > 0.0 && f.alpha < 1.0) {
+                self.out.push(format!(
+                    "{what} has an alpha of {}, not above 0 and under 1",
+                    f.alpha
+                ));
+            }
+            for (word, id, left) in [
+                ("group", f.group, &map.exclude_groups),
+                ("model", f.model, &map.exclude_models),
+            ] {
+                let Some(id) = id else { continue };
+                if left.contains(&id) {
+                    self.out.push(format!(
+                        "{what} fades {word} {id}, which the map leaves out"
+                    ));
+                }
+                if let Some(other) = faded.insert((word, id), k) {
+                    self.out.push(format!(
+                        "{what} fades {word} {id}, which map.fade.{other} fades too"
+                    ));
+                }
+            }
+        }
+        // Which area is each boss's court, the first by key.
+        let mut courts: BTreeMap<u32, &str> = BTreeMap::new();
+        for (k, a) in &map.area {
+            let what = format!("map.area.{k}");
+            if a.shape.is_empty() {
+                self.out.push(format!("{what} has no shape"));
+            }
+            for (i, s) in a.shape.iter().enumerate() {
+                self.shape(format!("{what}.shape[{i}]"), s);
+            }
+            // Every altitude, the unsaid ones as a reader fills them.
+            let [far, home, near] = a.altitudes(&self.e.view);
+            if [far, home, near].iter().any(|v| !positive(*v)) {
+                self.out
+                    .push(format!("{what} has an altitude that is not above 0"));
+            } else if !(far <= home && home <= near) {
+                self.out.push(format!(
+                    "{what}'s altitudes are out of order: far {far} ≤ home {home} ≤ near {near} does not hold (unsaid ones are the view's)"
+                ));
+            }
+            if a.turn.is_some_and(|t| !t.is_finite()) {
+                self.out
+                    .push(format!("{what} turns by an angle that is not a number"));
+            }
+            if a.ceiling.is_some_and(|c| !positive(c)) {
+                self.out
+                    .push(format!("{what} has a ceiling that is not above 0"));
+            }
+            if let Some(id) = a.encounter
+                && let Some(other) = courts.insert(id, k)
+            {
+                self.out.push(format!(
+                    "{what} is encounter {id}'s court, as map.area.{other} is"
+                ));
+            }
+        }
+        for (k, p) in &map.path {
+            let what = format!("map.path.{k}");
+            for end in [&p.from, &p.to] {
+                if !map.area.contains_key(end) {
+                    self.out.push(format!(
+                        "{what} names area {end:?}, which the map does not have"
+                    ));
+                }
+            }
+            if p.from == p.to {
+                self.out
+                    .push(format!("{what} runs from area {:?} to itself", p.from));
+            }
+            if [p.width, p.speed].iter().flatten().any(|v| !positive(*v)) {
+                self.out
+                    .push(format!("{what} has a width or a speed not above 0"));
+            }
+            if p.points.iter().flatten().any(|v| !v.is_finite()) {
+                self.out
+                    .push(format!("{what} has a point that is not a number"));
+            }
+            if p.spell.is_some() && p.mode != Mode::Leap {
+                self.out.push(format!(
+                    "{what} names a spell, but only a leap's device casts one"
+                ));
+            }
+        }
+        if let Some(t) = &map.transition {
+            if t.after.is_some_and(|a| !(a.is_finite() && a >= 0.0)) {
+                self.out
+                    .push("map.transition's `after` is not 0 or more seconds".into());
+            }
+            if t.port_yd.is_some_and(|y| !positive(y)) {
+                self.out
+                    .push("map.transition's `port_yd` is not above 0".into());
+            }
+        }
+    }
+
+    /// The paths' speeds: each above 0.
+    fn travel(&mut self, t: &Travel) {
+        if [t.run, t.mount, t.vehicle]
+            .iter()
+            .flatten()
+            .any(|v| !positive(*v))
+        {
+            self.out
+                .push("travel has a speed that is not above 0".into());
+        }
     }
 
     /// Every entry's `only`, which names difficulties: one that names none
@@ -471,6 +658,7 @@ impl Check<'_> {
             map: _,
             view: _,
             spell: _,
+            travel: _,
         } = self.e;
         self.only_in("npc", npc);
         self.only_in("ability", ability);

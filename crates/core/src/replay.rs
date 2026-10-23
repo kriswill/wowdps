@@ -480,12 +480,14 @@ impl Cutter {
                 map_id,
                 key_level,
                 name,
+                affixes,
                 ..
             } => {
                 self.key = Some((
                     KeyHead {
                         name: name.clone(),
                         level: *key_level,
+                        affixes: affixes.clone(),
                     },
                     *map_id,
                 ));
@@ -651,11 +653,12 @@ impl Cutter {
                 self.head.success = Some(*success);
                 self.head.fight_ms = u64::try_from(*total_ms).ok().filter(|ms| *ms > 0);
                 // A run the log joined mid-way never saw its START: its END
-                // names the level (R10).
+                // names the level (R10), and no affixes.
                 if self.head.key.is_none() && *key_level > 0 {
                     self.head.key = Some(KeyHead {
                         name: self.head.zone.clone(),
                         level: *key_level,
+                        affixes: Vec::new(),
                     });
                 }
             }

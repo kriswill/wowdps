@@ -166,12 +166,7 @@ fn start_over_with(
         let _ = tx.send(run(opts));
     });
     let deadline = Instant::now() + DEADLINE;
-    loop {
-        // The socket's vnode appears at bind(); listen() follows. A connect
-        // in that gap is refused, so readiness is a connect, not exists().
-        if UnixStream::connect(&socket).is_ok() {
-            break;
-        }
+    while !socket.exists() {
         assert!(Instant::now() < deadline, "daemon never bound");
         thread::sleep(Duration::from_millis(5));
     }
@@ -719,24 +714,46 @@ fn network_access_is_off() {
         lake.sql("SET custom_extension_repository = 'http://x'")
             .is_err()
     );
-    // The statically linked extensions are all a lake ever needs. icu
-    // rides the nixpkgs build but not the bundled one — taking it would
-    // mean duckdb-rs' cmake path, a full duckdb-rs checkout — and no
-    // query uses it, so only json and parquet are pinned on macOS.
-    let (names, count) = if cfg!(target_os = "macos") {
-        ("('json', 'parquet')", 2)
-    } else {
-        ("('json', 'parquet', 'icu')", 3)
-    };
+    // The bundled cc build compiles DUCKDB_EXTENSION_AUTOINSTALL_DEFAULT=1
+    // and DUCKDB_EXTENSION_AUTOLOAD_DEFAULT=1 in (nixpkgs' CMake build left
+    // both off), so the SETs at open are the only guard: both read false.
     let t = lake
         .sql(
-            &format!(
-                "SELECT extension_name FROM duckdb_extensions() WHERE loaded AND \
-                 extension_name IN {names} ORDER BY 1"
-            ),
+            "SELECT current_setting('autoinstall_known_extensions'), \
+             current_setting('autoload_known_extensions')",
         )
         .unwrap();
-    assert_eq!(t.rows.len(), count, "{t:?}");
+    assert_eq!(t.rows[0][0].as_bool(), Some(false), "{t:?}");
+    assert_eq!(t.rows[0][1].as_bool(), Some(false), "{t:?}");
+    // A query that needs ICU (not in the bundled build) binds DuckDB's
+    // extension stub, which tries a load whatever the autoload setting says.
+    // On a reading lake and on the writable one alike it must fail (nothing
+    // is installed, the lake's extension directory is empty) and leave ICU
+    // unloaded.
+    let writable = Lake::open_writable(&tmp.0).unwrap();
+    for l in [&lake, &writable] {
+        let err = l
+            .sql("SELECT TIMESTAMP '2026-01-01 00:00:00' AT TIME ZONE 'UTC'")
+            .unwrap_err();
+        assert!(err.contains("icu"), "{err}");
+        let t = l
+            .sql(
+                "SELECT count(*) FROM duckdb_extensions() WHERE loaded AND \
+                 extension_name = 'icu'",
+            )
+            .unwrap();
+        assert_eq!(t.rows[0][0].as_i64(), Some(0), "{t:?}");
+    }
+    // The statically linked extensions are all a lake ever needs: JSON and
+    // Parquet, the crate's bundled features. ICU is not in the bundled cc
+    // build, and no query uses it.
+    let t = lake
+        .sql(
+            "SELECT extension_name FROM duckdb_extensions() WHERE loaded AND \
+             extension_name IN ('json', 'parquet') ORDER BY 1",
+        )
+        .unwrap();
+    assert_eq!(t.rows.len(), 2, "{t:?}");
 }
 
 #[test]
@@ -5583,13 +5600,16 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
             start_utc_ms,
             duration_ms: kill.duration_ms / 2,
             success: Some(true),
-            // A specced player, so the grader would rank them were the
-            // import not left out.
+            // A specced player with a meter (v48), so the grader would
+            // rank them were the import not left out.
             players: vec![ImportedPlayer {
                 guid: "Player-9-Z".to_string(),
                 name: "Zed-Elsewhere".to_string(),
                 class: Some(wowdps_model::Class::Mage),
                 spec: Some(Spec::FrostMage),
+                damage: 500_000,
+                damage_curve: vec![500_000],
+                ..ImportedPlayer::default()
             }],
             source: "import:test-1".to_string(),
             ..ImportedCard::default()
@@ -5625,8 +5645,17 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
         .sql("SELECT id FROM fights WHERE NOT imported")
         .unwrap();
     assert_eq!(local.rows.len(), 2);
-    let players = lake.sql("SELECT guid FROM players WHERE imported").unwrap();
+    let players = lake
+        .sql("SELECT guid, damage, dps FROM players WHERE imported")
+        .unwrap();
     assert_eq!(players.rows.len(), 1);
+    // v48: the import's meter, rated over its combat clock.
+    assert_eq!(players.rows[0][1].as_u64(), Some(500_000));
+    let dps = players.rows[0][2].as_f64().unwrap();
+    assert!(
+        (dps - wowdps_model::rate(500_000, kill.duration_ms / 2)).abs() < 1e-6,
+        "{dps}"
+    );
     // The grader in SQL ranks this machine's own fights alone.
     let ranked = lake
         .sql_with(
@@ -5713,12 +5742,20 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
         "the import is no kill of ours"
     );
     assert_eq!(num(&["replay", "files"]), Some(3));
+    // v48: its files, its raid series from the details tier its curve made.
     let out = tmp.0.join("export");
     let said = wowdps_history::replay_export(&hist, &id, &out).unwrap();
-    assert!(said.contains("no details tier"), "{said}");
+    assert!(!said.contains("no details tier"), "{said}");
     for f in wowdps_proto::replay::csv::FILES {
         assert!(out.join(f).is_file(), "{f}");
     }
+    let raid = std::fs::read_to_string(out.join("raid.csv")).unwrap();
+    let total: u64 = raid
+        .lines()
+        .skip(1)
+        .filter_map(|l| l.split(',').nth(1)?.parse::<u64>().ok())
+        .sum();
+    assert_eq!(total, 500_000, "{raid}");
 }
 
 /// The addon's creatures, end to end: a real daemon inside a fake install
@@ -5766,5 +5803,71 @@ fn the_addons_creatures_land_beside_the_lake_and_stats_counts_them() {
             .and_then(Json::as_str)
             .is_some_and(|e| e.contains("format 9")),
         "{c:?}"
+    );
+}
+
+/// v47: `fights.affixes` is a keystone run's affix ids, the card's
+/// `key.affixes` — NULL off a key, for a key joined mid-run (its card names
+/// none, as `b` below) and on a card written before v47 — and
+/// the column exists on every lake: one whose cards name no affixes, and
+/// one whose every `key` is null (DuckDB types that JSON, which a field
+/// reference would answer with more JSON).
+#[test]
+fn a_keys_affixes_are_a_column_on_every_lake() {
+    use wowdps_proto::history::KeyInfo;
+    // A player each: a lake needs one to type its `players` view.
+    let one = || vec![player("Player-1-A", Spec::FrostMage, 1000.0, 0.0)];
+    let key = |id: &'static str, affixes: Vec<u32>| {
+        let mut c = card(id, one());
+        c.kind = FightKind::Key;
+        c.key = Some(KeyInfo {
+            map_id: 2521,
+            difficulty: 8,
+            level: Some(14),
+            completed: Some(true),
+            affixes,
+        });
+        (id, c.to_json().to_line())
+    };
+    let plain = |id: &'static str| (id, card(id, one()).to_json().to_line());
+    let affixes = |lake: &Lake| {
+        lake.sql("SELECT id, affixes FROM fights ORDER BY id")
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| (cell_str(&r[0]), r[1].to_line()))
+            .collect::<Vec<_>>()
+    };
+    let (a, b, c) = (key("a", vec![10, 9, 147]), key("b", Vec::new()), plain("c"));
+    let (_t, lake) = lake_of("affixes", &[a, b.clone(), c.clone()]);
+    assert_eq!(
+        affixes(&lake),
+        [
+            ("a".to_string(), "[10,9,147]".to_string()),
+            ("b".to_string(), "null".to_string()),
+            ("c".to_string(), "null".to_string()),
+        ]
+    );
+    let nine = lake
+        .sql("SELECT id FROM fights WHERE list_contains(affixes, 9)")
+        .unwrap();
+    assert_eq!(nine.rows.len(), 1);
+    assert_eq!(cell_str(&nine.rows[0][0]), "a");
+
+    let (_t, lake) = lake_of("affixes-none", &[b, c.clone()]);
+    assert_eq!(
+        affixes(&lake),
+        [
+            ("b".to_string(), "null".to_string()),
+            ("c".to_string(), "null".to_string()),
+        ]
+    );
+    let (_t, lake) = lake_of("affixes-no-key", &[c, plain("d")]);
+    assert_eq!(
+        affixes(&lake),
+        [
+            ("c".to_string(), "null".to_string()),
+            ("d".to_string(), "null".to_string()),
+        ]
     );
 }

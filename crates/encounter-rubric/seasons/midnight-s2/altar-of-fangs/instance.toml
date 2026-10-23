@@ -4,3 +4,100 @@ name = "Altar of Fangs"
 kind = "dungeon"
 journal = 1322
 map = 2993
+
+# The dungeon's levels, by UiMap id: each one's places and the ways between
+# them, part of the base. Derived from three completed keystone runs'
+# player posts in this machine's history store: a boss's court is a circle
+# round the middle of the posts while it was engaged, its radius their
+# 98th percentile distance from that middle and a little more; a way is the
+# party's middle every 10 s between two bosses, thinned by hand. The party
+# walks every way here (2-3 yd a second through the trash, 8-12 just after a
+# kill). The other places are where the party came onto or left a level.
+# Their radii and the names are guesses for the map editor to refine. The
+# first two levels are terrain, each render cut over the ground its parties
+# walked (`ground = "walked"`, every stored keystone run's posts on it); the
+# third is buildings, cut by their own groups.
+
+# The first level (the floors cache's level 1): from the entrance south
+# along the hall to Ravi.
+[level.2588.map]
+floor = "altar-of-fangs-L1"
+ground = "walked"
+
+[level.2588.map.area.entrance]
+shape = [{ center = [1870, 2105], radius = 15 }]
+
+[level.2588.map.area.ravi-court]
+name = "Ravi's court"
+shape = [{ center = [1535, 2117], radius = 32 }]
+encounter = 3456
+
+[level.2588.map.area.departure]
+name = "On to the second level"
+shape = [{ center = [1455, 2115], radius = 12 }]
+
+[level.2588.map.path.entrance-to-ravi]
+from = "entrance"
+to = "ravi-court"
+points = [
+    [1870, 2105], [1780, 2110], [1695, 2110], [1665, 2118],
+    [1600, 2118], [1535, 2117],
+]
+
+[level.2588.map.path.ravi-to-departure]
+from = "ravi-court"
+to = "departure"
+points = [[1535, 2117], [1500, 2113], [1455, 2115]]
+
+# The second level: The Writhing Coil.
+[level.2589.map]
+floor = "altar-of-fangs-L2"
+ground = "walked"
+
+[level.2589.map.area.arrival]
+name = "From the first level"
+shape = [{ center = [1435, 2114], radius = 12 }]
+
+[level.2589.map.area.writhing-coil-court]
+name = "The Writhing Coil's court"
+shape = [{ center = [1276, 1959], radius = 40 }]
+encounter = 3457
+
+[level.2589.map.area.departure]
+name = "On to the third level"
+shape = [{ center = [1196, 1962], radius = 12 }]
+
+[level.2589.map.path.arrival-to-coil]
+from = "arrival"
+to = "writhing-coil-court"
+points = [
+    [1435, 2114], [1386, 2118], [1367, 2116], [1348, 2097],
+    [1351, 2066], [1332, 2035], [1302, 2012], [1276, 1962],
+]
+
+[level.2589.map.path.coil-to-departure]
+from = "writhing-coil-court"
+to = "departure"
+points = [[1276, 1962], [1255, 1975], [1196, 1962]]
+
+# The third level: Zul'jan, reached by a loop south and back north.
+[level.2590.map]
+floor = "altar-of-fangs-L3"
+
+[level.2590.map.area.arrival]
+name = "From the second level"
+shape = [{ center = [1153, 1954], radius = 12 }]
+
+[level.2590.map.area.zuljan-court]
+name = "Zul'jan's court"
+shape = [{ center = [1419, 2112], radius = 40 }]
+encounter = 3458
+
+[level.2590.map.path.arrival-to-zuljan]
+from = "arrival"
+to = "zuljan-court"
+points = [
+    [1153, 1954], [1110, 1960], [1084, 1975], [1105, 2070],
+    [1180, 2097], [1250, 2113], [1300, 2117], [1400, 2117],
+    [1419, 2112],
+]

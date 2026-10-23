@@ -18,11 +18,14 @@ Regenerate / check:
 
 Every closed boss pull (an ENCOUNTER_START's segment closed by its END, a
 version seam or the next START) of every gated fixture ends the TSV with
-thirty `*` rows — `replay_units`, `replay_posts` (on every floor), the
+thirty-two `*` rows — `replay_units`, `replay_posts` (on every floor), the
 format 3 post sums `replay_absorb` (Σ of the posts' shields, the block's
 field 9), `replay_pools` (how many pool kinds the posts carry, each the
 unit's last reading of that kind) and `replay_pool_sum` (Σ of those
-readings' currents), `replay_floor`, the nineteen event kinds (`replay_hit`
+readings' currents), `replay_floor`, format 6's `replay_affixes` and
+`replay_affix_sum` (the affix ids the open CHALLENGE_MODE_START's bracket
+lists, counted and summed: the key the cut is inside, 0 and 0 outside one),
+the nineteen event kinds (`replay_hit`
 … `replay_rez`, then the boss rows `replay_boss_engaged`,
 `replay_boss_killed`, `replay_boss_wiped`, then format 3's buff rows
 `replay_buff_applied`, `replay_buff_removed`, `replay_buff_dose`), the four placed kinds (`replay_placed_cast` …
@@ -225,7 +228,10 @@ it hostile on the line, a cut's hostility being its own), `hit` 1,
 A ZONE_CHANGE onto 2521 at difficulty 8 (a seed), then CHALLENGE_MODE_START
 (challenge 399, whose par timers are known: the store would cut this run)
 at 20:10:01.0 — t 0 of the run's cut — to CHALLENGE_MODE_END at 20:12:00.0
-(timed, 119 000 ms).
+(timed, 119 000 ms). The START lists the affixes `[10,9,147]`: the run's
+cut and the boss pull inside it (segment 4) each carry the three in their
+head (`replay_affixes` 3, `replay_affix_sum` 166, format 6); the pulls
+outside the run, and every other gated fixture's, 0 and 0.
 
 ### Segment 3 — Trash (2 s)
 

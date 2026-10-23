@@ -20,7 +20,9 @@ use wowdps_model::{
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
 /// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
 /// it came from, so it is excluded from the Taken view and tallied apart.
-const STAGGER_TICK: u32 = 124255;
+/// Public so an importer that reckons a card from another tool's events
+/// (v48) leaves out the very ticks the meter does.
+pub const STAGGER_TICK: u32 = 124255;
 
 /// R17: the attacker label a nil-source damage event (falling, lava, an
 /// ENVIRONMENTAL_DAMAGE line) earns on the Taken drill.
@@ -67,8 +69,9 @@ fn friendly_fire(src: u32, dst: u32) -> bool {
     both & CONTROL_PLAYER != 0 && both & (REACTION_FRIENDLY | REACTION_HOSTILE) != 0
 }
 
-/// Self-absorb effects that are not healing (R2).
-pub(crate) const NON_HEALING_ABSORBS: [u32; 4] = [114556, 31850, 31230, 115069];
+/// Self-absorb effects that are not healing (R2). Public, as
+/// [`STAGGER_TICK`] is, for an importer reckoning healing by the same rule.
+pub const NON_HEALING_ABSORBS: [u32; 4] = [114556, 31850, 31230, 115069];
 
 /// Loss-of-control effects counted by the CrowdControl view. Exactness is not gated.
 pub(crate) const CC_SPELLS: &[u32] = &[
@@ -591,6 +594,10 @@ pub struct Visit {
     /// Keystone runs: the dungeon's (par, +2, +3) timers from the generated
     /// MapChallengeMode table; `None` when the challengeID is unknown.
     pub pars_ms: Option<(i64, i64, i64)>,
+    /// Keystone runs: the key's affix ids as its CHALLENGE_MODE_START
+    /// listed them. Empty on an unkeyed visit and on a key joined mid-run,
+    /// whose END names no affixes.
+    pub affixes: Vec<u32>,
 }
 
 /// The in-game key timer starts when the activation countdown ends, ~10s
@@ -668,6 +675,7 @@ impl Visit {
             completed: None,
             official_ms: None,
             pars_ms: None,
+            affixes: Vec::new(),
         }
     }
 
@@ -6913,6 +6921,7 @@ impl Meter {
                 challenge_id,
                 key_level,
                 name: start_name,
+                affixes,
             } => {
                 let standing = self
                     .current_visit
@@ -6941,6 +6950,7 @@ impl Meter {
                     completed: None,
                     official_ms: None,
                     pars_ms: crate::keystone_timers::pars_ms(*challenge_id),
+                    affixes: affixes.clone(),
                 });
                 self.current_visit = Some(self.visits.len() as u32 - 1);
                 self.zoned_in = true;
@@ -10134,6 +10144,7 @@ mod tests {
             completed: None,
             official_ms: None,
             pars_ms: par_ms.map(|p| (p, p * 4 / 5, p * 3 / 5)),
+            affixes: vec![10, 9],
         }
     }
 

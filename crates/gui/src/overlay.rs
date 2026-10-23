@@ -10,6 +10,8 @@
 //! it has no input region to keep the rest of a spanning strip
 //! click-through.
 
+use std::io::Write as _;
+
 use gpui_kit::App;
 use wowdps_gui_logic::config::Config;
 use wowdps_proto::DaemonClient;
@@ -124,7 +126,10 @@ fn surface(
 
     let display_id = output.and_then(|name| display_named(cx, name));
     if let (Some(name), None) = (output, display_id) {
-        eprintln!("wowdps-gui: no output named {name}; the system chooses");
+        let _ = writeln!(
+            std::io::stderr(),
+            "wowdps-gui: no output named {name}; the system chooses"
+        );
     }
     // WOWDPS_OVERLAY_AUTOVIEW: start on that view, before the first Watch.
     let mut state = wowdps_proto::ClientState::new();
@@ -148,7 +153,12 @@ fn surface(
                     let _ = old.update(cx, |_, window, _| window.remove_window());
                 }
             }
-            Err(e) => eprintln!("wowdps-gui: the overlay cannot re-anchor: {e}"),
+            Err(e) => {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "wowdps-gui: the overlay cannot re-anchor: {e}"
+                );
+            }
         }
     })
     .detach();

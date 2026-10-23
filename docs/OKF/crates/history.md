@@ -8,7 +8,7 @@ status: stable
 generated: { by: okflight/0.4.0, at: 2026-09-06T18:29:58-07:00 }
 ---
 
-The history store's analytical reader (roadmap item 1, spec §10): DuckDB over the lake the daemon writes under `$XDG_DATA_HOME/wowdps/history/v1/`. The daemon answers the fixed questions from its card index; this crate answers the ad hoc ones in SQL, and the parity gate in `tests/parity.rs` keeps the two readers honest against the same files. The engine opens in memory with autoinstall / autoload off and the configuration locked, so it never touches the network; `materialize` writes `cache.duckdb` beside the lake, a file only this binary ever opens (DuckDB's single-writer lock never crosses a process). DuckDB is SYSTEM-linked to nixpkgs' libduckdb on Linux and `bundled` on macOS (no nix there; the bundled core ships no extensions, so json and parquet ride along as crate features the way nixpkgs links them statically — icu remains nixpkgs-only because bundling it would need duckdb-rs' cmake path and no query uses it), and the `duckdb` crate pin encodes the library version it was written against (`=1.10505.0` is DuckDB 1.5.5); `tests/duckdb_version.rs` asks the linked library for `version()` and fails by name when the Linux pair drifts, so a dependabot bump ahead of nixpkgs, or a nixpkgs bump that leaves the pin behind, is a clear red check rather than a guess (the pin had sat at 1.5.5 over a 1.5.4 library for a month before it existed).
+The history store's analytical reader (roadmap item 1, spec §10): DuckDB over the lake the daemon writes under `$XDG_DATA_HOME/wowdps/history/v1/`. The daemon answers the fixed questions from its card index; this crate answers the ad hoc ones in SQL, and the parity gate in `tests/parity.rs` keeps the two readers honest against the same files. The engine opens in memory with autoinstall / autoload off and the configuration locked, so it never touches the network; `materialize` writes `cache.duckdb` beside the lake, a file only this binary ever opens (DuckDB's single-writer lock never crosses a process). DuckDB is BUNDLED: the `duckdb` crate (`=1.10506.1`, DuckDB 1.5.6) compiles its own copy of the DuckDB source on every platform, with JSON and Parquet linked in as features and no ICU (the `cc` bundled build compiles only `core_functions`, JSON and Parquet; ICU would need `bundled-cmake`, and no query uses it), so the library is the crate's by construction and a dependabot bump needs nothing else to move. Until 2026-10-23 it was system-linked to nixpkgs' libduckdb with the pin held to `pkgs.duckdb` by `tests/duckdb_version.rs`, removed with that coupling ([DuckDB Is Bundled, Not System-Linked](../decisions/duckdb-is-bundled-not-system-linked.md)). The bundled build is a C++ compile of about 350 units, unpacked into libduckdb-sys's OUT_DIR: sccache reuses its objects only while that OUT_DIR is unchanged, so any version change in libduckdb-sys's build-dependency closure compiles it again. Since the bundled build compiles in autoinstall and autoload ON, the `SET`s at open are the only guard, and `tests/parity.rs`' `network_access_is_off` asserts both read false.
 
 ## Views and subcommands
 
@@ -40,6 +40,16 @@ The views over the lake's JSON files:
   `progression`, `trend`, `role-night` and the `role_ranks` view count
   `NOT imported`, as the daemon's fixed answers and the mcp grader do
   ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
+  Since v48 an import's `players` rows carry its meter (`damage`, `dps`,
+  `healing`, …, the fields every card writes) and `replay-export` writes
+  its `raid.csv` from the details tier its curves made; no view needed a
+  change ([An Import Carries Its Meter](../decisions/an-import-carries-its-meter.md)).
+- `fights.affixes` (v47): a keystone run's affix ids, the card's
+  `key.affixes`; NULL off a key, for a key the log joined mid-run (its END
+  names none) and on a card written before v47. The
+  column exists on every lake: its probe reads the field's type, so a lake
+  whose every `key` is null (typed JSON) or that names no affixes reads
+  NULL ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
 
 **Probe-defined columns.** Each nested view is defined only after a probe
 proves its field exists AND is typed: DuckDB types an all-empty nested field

@@ -51,7 +51,7 @@ jobs:
         with:
           determinate: true
           summarize: false
-      - uses: DeterminateSystems/flakehub-cache-action@0975873945367f5239ebb5f49c133bf3543a08f6 # v3.23.1
+      - uses: DeterminateSystems/flakehub-cache-action@5a904648441896ace9bab97c70b321339eb127ed # v3.23.3
 
       # The devenv CLI from the flake's own pinned nixpkgs: the version that
       # wrote devenv.lock (update-locks.yml runs `devenv update` with it).
@@ -185,7 +185,7 @@ jobs:
         with:
           determinate: true
           summarize: false
-      - uses: DeterminateSystems/flakehub-cache-action@0975873945367f5239ebb5f49c133bf3543a08f6 # v3.23.1
+      - uses: DeterminateSystems/flakehub-cache-action@5a904648441896ace9bab97c70b321339eb127ed # v3.23.3
       # This job builds only the daemon/TUI package; the GUI (`.#wowdps-gui`,
       # its own dependency layer) builds and tests in the dev shell the ci
       # job runs in. Two derivations (crane):
@@ -237,10 +237,10 @@ jobs:
       # (about 0.6 GB each, crowding main's out of the 10 GB budget), and
       # main never runs this job to save one every PR could read. It
       # compiles from scratch beside the `ci` job, which takes longer.
-      # No distro libduckdb here: the history crate is the one workspace
-      # member with a native dependency, and it builds only in the flake
-      # shell (system-linked on Linux; macOS bundles its own source). The
-      # canary still covers every stdlib-only crate.
+      # The history crate is left out: it bundles DuckDB, and with no cache
+      # here its C++ compile would cost the canary several minutes for a
+      # crate the `ci` job already lints. The canary still covers every
+      # stdlib-only crate.
       - id: clippy
         run: cargo clippy --workspace --exclude wowdps-history --all-targets -- -D warnings
       - name: Job summary

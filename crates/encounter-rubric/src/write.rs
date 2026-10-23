@@ -15,7 +15,8 @@ use crate::Encounter;
 
 /// The schema's keys in the order a file lists them: every key it writes
 /// (a test holds it). A key not here would come after, alphabetically.
-const ORDER: &[&str] = &[
+/// The map editor puts a key it adds to an instance file where this does.
+pub const ORDER: &[&str] = &[
     "schema",
     "encounter",
     "enabled",
@@ -31,16 +32,19 @@ const ORDER: &[&str] = &[
     "level",
     "ceiling",
     "light",
+    "exposure",
     "scale",
     "exclude_groups",
     "exclude_models",
     "exclude_textures",
+    "include_groups",
+    "include_models",
     "layer",
     "wmo",
     "placement",
     "breaks",
+    "crop",
     "stencil",
-    "points",
     "ppy",
     "glow",
     "color",
@@ -51,12 +55,29 @@ const ORDER: &[&str] = &[
     "rise",
     "hold",
     "fade",
+    "group",
+    "model",
+    "alpha",
+    "far",
+    "home",
+    "near",
+    "path",
+    "transition",
+    "after",
+    "unit",
+    "port",
+    "port_yd",
+    "camera",
     "view",
     "turn",
     "zoom",
     "zoom_max",
     "center",
     "arena",
+    "travel",
+    "run",
+    "mount",
+    "vehicle",
     "npc",
     "creature",
     "role",
@@ -109,6 +130,7 @@ const ORDER: &[&str] = &[
     "harm",
     "line",
     "to",
+    "mode",
     "hits",
     "volley",
     "toward",
@@ -117,6 +139,7 @@ const ORDER: &[&str] = &[
     "side",
     "speed",
     "width",
+    "points",
     "front",
     "form",
     "start",
@@ -144,7 +167,6 @@ const ORDER: &[&str] = &[
     "seen",
     "event",
     "on",
-    "after",
     "cast",
     "aura_applied",
     "aura_removed",
@@ -168,7 +190,7 @@ const ORDER: &[&str] = &[
 /// Tables of named entries: each entry under them gets a header.
 const COLLECTIONS: &[&str] = &[
     "npc", "ability", "phase", "place", "ground", "mark", "line", "volley", "flash", "range",
-    "apart", "streak", "room", "reach", "event", "layer", "glow", "spell",
+    "apart", "streak", "room", "reach", "event", "layer", "glow", "fade", "area", "path", "spell",
 ];
 
 /// An encounter as a draft file's text: `header` as `#` comment lines,
@@ -544,6 +566,32 @@ mod tests {
         let back: Table = text.parse().unwrap_or_else(|err| panic!("{err}\n{text}"));
         assert_eq!(Encounter::deserialize(Value::Table(back)).unwrap(), e);
         assert!(text.contains("\n[map.glow.g]\n"), "{text}");
+        // The map's areas, paths and fades each under a header, in the
+        // schema's order; its transition on one line; the speeds a table.
+        for header in [
+            "\n[map.fade.group]\nenabled = false\nname = \"Fade\"\ngroup = 1\nalpha = 0.5\n",
+            "\n[map.area.a]\nencounter = 1\nenabled = false\nname = \"Area\"\nceiling = 1.0\n",
+            "\n[map.path.3]\nenabled = false\nname = \"Path\"\nspell = 1\nfrom = \"a\"\nto = \"b\"\nmode = \"leap\"\nspeed = 1.0\nwidth = 1.0\npoints = [[0.0, 0.0], [1.0, 1.0]]\n",
+            "\n[travel]\nrun = 1.0\nmount = 1.0\nvehicle = 1.0\n",
+        ] {
+            assert!(text.contains(header), "{header}\n{text}");
+        }
+        assert!(
+            text.contains(
+                "transition = { after = 1.0, unit = \"travel\", port = \"flash\", port_yd = 1.0, camera = \"glide\" }"
+            ),
+            "{text}"
+        );
+    }
+
+    /// An instance file is written once, its header as it always was: what
+    /// a map editor's levels and drawings are written into after.
+    #[test]
+    fn an_instance_file_is_written_with_its_header_alone() {
+        assert_eq!(
+            instance_text("written once", "The Raid", "raid", 1320, 3004),
+            "# written once\nschema = 1\nname = \"The Raid\"\nkind = \"raid\"\njournal = 1320\nmap = 3004\n"
+        );
     }
 
     #[test]

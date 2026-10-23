@@ -9,6 +9,7 @@
 //! open, whether the panel is expanded).
 
 use std::collections::HashSet;
+use std::io::Write as _;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -303,7 +304,7 @@ impl Overlay {
                     self.aux = Some(aux);
                 }
                 Err(e) => {
-                    eprintln!("wowdps-gui: split view unavailable: {e}");
+                    let _ = writeln!(std::io::stderr(), "wowdps-gui: split view unavailable: {e}");
                     self.split = false;
                     return;
                 }

@@ -10,6 +10,7 @@
 //! ```text
 //! encounter = "Ula'tek"                    the journal's name, `{:?}`
 //! dungeon_encounter = 3492                 the log's ENCOUNTER_START id
+//! map = 2521                               a dungeon level's map id
 //! ui_map = 2610
 //! room_group = 79429
 //! x_max = 1687                             pixel (0, 0) is world (x_max,
@@ -25,7 +26,49 @@
 //! stencil = 1                              shapes cut to; only when > 0
 //! glow = "x-glow-flame.png" key=flame x_max=… y_max=… width=… height=…
 //! layer = "x-layer-7549724.png" wmo=… placement=… x_max=… y_max=… width=… height=…
+//! params = 9d3e0c4a51f2b768 ppy=8 margin=20 ceiling=25 exposure=0.82 gpu=false debug=false
+//! made = 1791830400                        unix seconds
 //! ```
+//!
+//! `params` says what the render was made from: an FNV-1a hash, walked
+//! over the values themselves ([`Map::params_hash`],
+//! [`Encounter::floor_params`], [`Map::level_params`]), of what of the
+//! rubric's resolved `[map]` changes the render's pixels (for a room off
+//! the arena, the room's cut too and no crop; for a dungeon level's
+//! render, what of its level's map it draws by and the posts it was cut
+//! over) and of the gen-floors options that change pixels, which follow it
+//! as words, so a reader holding the rubric now can hash it the same way
+//! and tell a stale render ([`Floors::stale`]).
+//! `made` is when it was written. A sidecar written before either has
+//! neither; a dungeon level's minimap picture has `made` alone.
+//!
+//! A dungeon's level (`gen-floors --map`: its minimap tiles, one picture
+//! per UiMap, `<instance-slug>-L<n>-minimap.png`) names the instance as its
+//! `encounter`, its `map` and its level's `ui_map`, and no encounter id.
+//! The same level rendered from the world's geometry
+//! (`<instance-slug>-L<n>.png`, over the same world rectangle) says the
+//! same, its own placement, its walls' turn where it has walls, and a
+//! `minimap` line naming the level's minimap picture as its backdrop:
+//!
+//! ```text
+//! encounter = "Ruby Life Pools"
+//! map = 2521
+//! ui_map = 2095
+//! room_group = 0
+//! x_max = 1715                             the minimap level's x_max and
+//! y_max = 105                              y_max: the two register
+//! ppy = 8
+//! width = 4680
+//! height = 3280
+//! wall_angle = 50.5
+//! wall_share = 0.12
+//! minimap = "ruby-life-pools-L2-minimap.png" x_max=1715 y_max=105 ppy=0.96000004 width=562 height=394
+//! ```
+//!
+//! That `minimap` line is what tells a level's render from its minimap
+//! picture, whose sidecar has none: [`Floors::level`] and
+//! [`Floors::levels`] find the minimap pictures, [`Floors::level_render`]
+//! and [`Floors::level_renders`] the renders.
 //!
 //! `glow` and `layer` repeat, one line each; every other key is said at
 //! most once. A record's fields after its file are `k=v` words, and a
@@ -52,10 +95,13 @@
 //! reader; a sidecar `write_floor` wrote has none.
 //!
 //! [`Floors`] reads a floors directory's sidecars once, in file-name
-//! order, and finds an encounter's arena render or a room off it.
+//! order, and finds an encounter's arena render or a room off it, and a
+//! dungeon map's levels, from its minimap tiles or rendered.
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+use crate::{Encounter, Light, Map};
 
 /// One floor's sidecar: every line `write_floor` writes, by its key.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -66,6 +112,11 @@ pub struct Sidecar {
     /// sidecar gen-floors writes says it; one rendered before it did (the
     /// replay spike's oldest inputs) does not.
     pub dungeon_encounter: Option<u32>,
+    /// The instance's map id, on a picture of one of a dungeon's levels
+    /// (`gen-floors --map`), from its minimap tiles or rendered: its
+    /// `encounter` is then the instance's name and its `ui_map` the level;
+    /// it names no encounter and no room.
+    pub map: Option<u32>,
     pub ui_map: u32,
     pub room_group: u32,
     /// The world point pixel (0, 0) sits on, and pixels per yard.
@@ -83,7 +134,9 @@ pub struct Sidecar {
     pub wall_share: Option<f64>,
     /// The floor without its layers (`<slug>-base.png`), where it has any.
     pub base: Option<String>,
-    /// The game's minimap under the render and beyond it.
+    /// The game's minimap under the render and beyond it; on a dungeon
+    /// level's render, the level's minimap picture (the same rectangle),
+    /// which a level's minimap picture itself never has.
     pub minimap: Option<Minimap>,
     /// How many of the rubric's stencil shapes the render was cut to; 0
     /// without a stencil (no line).
@@ -92,8 +145,441 @@ pub struct Sidecar {
     pub glow: Vec<Glow>,
     /// Each piece of the room a fight can take away.
     pub layer: Vec<Layer>,
+    /// What the render was made from (`params = ...`): none on one written
+    /// before sidecars said, or a dungeon level's minimap picture.
+    pub params: Option<Params>,
+    /// When it was written, unix seconds (`made = ...`).
+    pub made: Option<u64>,
     /// Lines this build does not know: key and value, in their order.
     pub unknown: Vec<(String, String)>,
+}
+
+/// The gen-floors options that change a render's pixels, as a sidecar's
+/// `params` line gives them after its hash: pixels a yard, the margin
+/// about the room, the ceiling over the arena (yards), the ambient's
+/// exposure, the GPU path, and `--debug`'s fills.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RenderOptions {
+    pub ppy: f32,
+    pub margin: f32,
+    pub ceiling: f32,
+    pub exposure: f32,
+    pub gpu: bool,
+    pub debug: bool,
+}
+
+impl Default for RenderOptions {
+    /// What gen-floors renders with unless told (its `Options`' defaults).
+    fn default() -> RenderOptions {
+        RenderOptions {
+            ppy: 8.0,
+            margin: 20.0,
+            ceiling: 25.0,
+            exposure: 0.82,
+            gpu: false,
+            debug: false,
+        }
+    }
+}
+
+impl RenderOptions {
+    /// The options as a `params` line's words: ` ppy=8 margin=20 …`.
+    fn words(&self) -> String {
+        format!(
+            " ppy={} margin={} ceiling={} exposure={} gpu={} debug={}",
+            self.ppy, self.margin, self.ceiling, self.exposure, self.gpu, self.debug
+        )
+    }
+}
+
+/// The `params = ...` line: the hash of what a render was made from, and
+/// the options it was made with (the module's doc).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Params {
+    pub hash: u64,
+    pub options: RenderOptions,
+    /// Fields this build does not know, in their order.
+    pub unknown: Vec<(String, String)>,
+}
+
+/// FNV-1a's offset basis: an empty hash, which `fnv1a` folds bytes into.
+pub const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+/// Fold `bytes` into an FNV-1a hash.
+pub fn fnv1a(hash: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(hash, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// The params hash as it is walked: each value by its own bytes (numbers
+/// little-endian, floats by their bits, a list by its length then its
+/// items, an absent value apart from any present one), each key's name
+/// before it, so no serializer's text (and no bump of one) moves a hash.
+struct Walk(u64);
+
+impl Walk {
+    fn new() -> Walk {
+        Walk(FNV_OFFSET)
+    }
+
+    fn bytes(&mut self, b: &[u8]) {
+        self.0 = fnv1a(self.0, b);
+    }
+
+    /// A key's name, ended so no two names run together.
+    fn key(&mut self, name: &str) {
+        self.bytes(name.as_bytes());
+        self.bytes(&[0]);
+    }
+
+    fn u32(&mut self, v: u32) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    fn f32(&mut self, v: f32) {
+        self.u32(v.to_bits());
+    }
+
+    fn bool(&mut self, v: bool) {
+        self.bytes(&[u8::from(v)]);
+    }
+
+    fn len(&mut self, n: usize) {
+        self.bytes(&(n as u64).to_le_bytes());
+    }
+
+    fn str(&mut self, s: &str) {
+        self.len(s.len());
+        self.bytes(s.as_bytes());
+    }
+
+    fn opt<T: Copy>(&mut self, v: Option<T>, mut put: impl FnMut(&mut Walk, T)) {
+        match v {
+            None => self.bytes(&[0]),
+            Some(x) => {
+                self.bytes(&[1]);
+                put(self, x);
+            }
+        }
+    }
+
+    fn u32s(&mut self, v: &[u32]) {
+        self.len(v.len());
+        for &x in v {
+            self.u32(x);
+        }
+    }
+
+    fn point(&mut self, [x, y]: [f32; 2]) {
+        self.f32(x);
+        self.f32(y);
+    }
+
+    fn shapes(&mut self, shapes: &[crate::StencilShape]) {
+        self.len(shapes.len());
+        for s in shapes {
+            self.len(s.points.len());
+            for &p in &s.points {
+                self.point(p);
+            }
+            self.opt(s.center, Walk::point);
+            self.opt(s.radius, Walk::f32);
+        }
+    }
+
+    fn options(&mut self, o: &RenderOptions) {
+        self.key("options");
+        self.f32(o.ppy);
+        self.f32(o.margin);
+        self.f32(o.ceiling);
+        self.f32(o.exposure);
+        self.bool(o.gpu);
+        self.bool(o.debug);
+    }
+
+    /// The keys a render draws by that a map most often leaves unsaid,
+    /// each walked only where it is said, so a map saying none hashes as
+    /// it did before gen-floors drew by them: `crop`, `include_groups`,
+    /// `include_models`, each enabled `fade` by its key, piece and alpha
+    /// (a disabled one draws nothing), and `exposure`.
+    fn said(&mut self, map: &Map) {
+        if let Some(c) = map.crop {
+            self.key("crop");
+            for v in c {
+                self.f32(v);
+            }
+        }
+        for (name, ids) in [
+            ("include_groups", &map.include_groups),
+            ("include_models", &map.include_models),
+        ] {
+            if !ids.is_empty() {
+                self.key(name);
+                self.u32s(ids);
+            }
+        }
+        let fades: Vec<(&String, &crate::Fade)> =
+            map.fade.iter().filter(|(_, f)| f.enabled).collect();
+        if !fades.is_empty() {
+            self.key("fade");
+            self.len(fades.len());
+            for (key, f) in fades {
+                let crate::Fade {
+                    enabled: _,
+                    name: _,
+                    group,
+                    model,
+                    alpha,
+                } = f;
+                self.str(key);
+                self.opt(*group, Walk::u32);
+                self.opt(*model, Walk::u32);
+                self.f32(*alpha);
+            }
+        }
+        if let Some(x) = map.exposure {
+            self.key("exposure");
+            self.f32(x);
+        }
+    }
+}
+
+impl Map {
+    /// The hash a render's sidecar records (`params`): what of this `[map]`
+    /// changes a render's pixels, and the options that do. gen-floors draws
+    /// by `level`, `ceiling`, whether `light` is `graded` (unsaid and
+    /// `baked` draw alike), `exclude_groups`, `exclude_models`,
+    /// `exclude_textures`, `stencil`, `ppy`, and each `glow` by its key,
+    /// `color`, `hot`, `area`, `except` and `below`; and, walked only where
+    /// said (`Walk::said`), `crop`, `include_groups`, `include_models`,
+    /// each enabled `fade` and `exposure` (the options carry the exposure
+    /// the render took, `--exposure` given outright or its default times
+    /// this). It reads none of `ui_map`, `floor`, `layer`, a glow's `name`,
+    /// `on`, `rise`, `hold` and `fade`, nor `ground` (an arena is cut at
+    /// one level), `area`, `path` and `transition`, nor the encounter's
+    /// `[view]`: changing those moves no pixel and no hash. Every key is
+    /// named here, so a key added to the map is a choice: the day
+    /// gen-floors draws by one, it joins the walk. A room off the arena
+    /// adds its cut and leaves the crop out (`Encounter::floor_params`).
+    pub fn params_hash(&self, opts: &RenderOptions) -> u64 {
+        let Map {
+            ui_map: _,
+            floor: _,
+            level,
+            ceiling,
+            light,
+            exclude_groups,
+            exclude_models,
+            exclude_textures,
+            layer: _,
+            stencil,
+            ppy,
+            glow,
+            crop: _,
+            include_groups: _,
+            include_models: _,
+            fade: _,
+            ground: _,
+            exposure: _,
+            area: _,
+            path: _,
+            transition: _,
+        } = self;
+        // `crop`, `include_*`, `fade` and `exposure` go in `said`, below.
+        let mut w = Walk::new();
+        w.key("level");
+        w.opt(*level, Walk::f32);
+        w.key("ceiling");
+        w.opt(*ceiling, Walk::f32);
+        w.key("graded");
+        w.bool(*light == Some(Light::Graded));
+        w.key("exclude_groups");
+        w.u32s(exclude_groups);
+        w.key("exclude_models");
+        w.u32s(exclude_models);
+        w.key("exclude_textures");
+        w.u32s(exclude_textures);
+        w.key("stencil");
+        w.shapes(stencil);
+        w.key("ppy");
+        w.opt(*ppy, Walk::f32);
+        w.key("glow");
+        w.len(glow.len());
+        for (key, g) in glow {
+            let crate::Glow {
+                enabled: _,
+                name: _,
+                color,
+                hot,
+                area,
+                except,
+                below,
+                on: _,
+                rise: _,
+                hold: _,
+                fade: _,
+            } = g;
+            w.str(key);
+            w.bytes(color);
+            w.opt(*hot, |w, c| w.bytes(&c));
+            w.shapes(area);
+            w.shapes(except);
+            w.opt(*below, Walk::f32);
+        }
+        w.options(opts);
+        w.said(self);
+        w.0
+    }
+
+    /// The params hash of a dungeon level's render (`gen-floors --map`)
+    /// drawn by this map, the level's `[level.<ui_map>.map]`: the options,
+    /// the posts it was cut over (each track's points in order), and of
+    /// the map only what a level's render draws by, each walked where it
+    /// is said, so a level whose map says none of them hashes as
+    /// `level_params` does: `exclude_groups`, `exclude_models`,
+    /// `exclude_textures`, a `ground` that is a height (`walked` reaches
+    /// the hash as its posts, `terrain` as none), and `Walk::said`'s keys.
+    /// A level's render reads none of `level`, `ceiling`, `light`,
+    /// `stencil`, `ppy`, `glow` and `layer` (it is cut to its own heights
+    /// at the tool's density, lit as the client lights it), nor the
+    /// camera's `area`, `path` and `transition`.
+    pub fn level_params(&self, posts: &[Vec<[f32; 2]>], opts: &RenderOptions) -> u64 {
+        let Map {
+            ui_map: _,
+            floor: _,
+            level: _,
+            ceiling: _,
+            light: _,
+            exclude_groups,
+            exclude_models,
+            exclude_textures,
+            layer: _,
+            stencil: _,
+            ppy: _,
+            glow: _,
+            crop: _,
+            include_groups: _,
+            include_models: _,
+            fade: _,
+            ground,
+            exposure: _,
+            area: _,
+            path: _,
+            transition: _,
+        } = self;
+        let mut w = Walk::new();
+        w.key("level");
+        w.options(opts);
+        w.key("posts");
+        w.len(posts.len());
+        for track in posts {
+            w.len(track.len());
+            for &p in track {
+                w.point(p);
+            }
+        }
+        for (name, ids) in [
+            ("exclude_groups", exclude_groups),
+            ("exclude_models", exclude_models),
+            ("exclude_textures", exclude_textures),
+        ] {
+            if !ids.is_empty() {
+                w.key(name);
+                w.u32s(ids);
+            }
+        }
+        if let Some(crate::Datum::Height(h)) = ground {
+            w.key("ground");
+            w.f32(*h);
+        }
+        w.said(self);
+        w.0
+    }
+}
+
+/// The params hash of a dungeon level's render (`gen-floors --map`) whose
+/// map says nothing it draws by: the options, and the posts it was cut
+/// over, each track's points in order (`Map::level_params`).
+pub fn level_params(posts: &[Vec<[f32; 2]>], opts: &RenderOptions) -> u64 {
+    Map::default().level_params(posts, opts)
+}
+
+/// How gen-floors draws a room off the arena (the rubric's `[room]` with a
+/// radius): its own map floor where it has one, the level and ceiling it
+/// is drawn at, whether it is lit as the client lights it (its `light`,
+/// else the map's, is not `graded`), its middle (its own, else its
+/// `through` place's) and the radius round it, in the render's yards.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoomRender {
+    pub ui_map: Option<u32>,
+    pub level: Option<f32>,
+    pub ceiling: Option<f32>,
+    pub baked: bool,
+    pub center: [f32; 2],
+    pub radius: f32,
+}
+
+impl Encounter {
+    /// Room `key` off the arena as gen-floors draws it: `None` for no such
+    /// room, or one with no middle or no radius (not rendered).
+    pub fn room_render(&self, key: &str) -> Option<RoomRender> {
+        let r = self.room.get(key)?;
+        let center = r
+            .center
+            .or_else(|| self.place.get(r.through.as_deref()?).map(|p| p.at))?;
+        Some(RoomRender {
+            ui_map: r.ui_map,
+            level: r.level,
+            ceiling: r.ceiling,
+            baked: r.light.or(self.map.light) != Some(Light::Graded),
+            center,
+            radius: r.radius? / r.scale.unwrap_or(1.0),
+        })
+    }
+
+    /// Every room off the arena gen-floors renders, by key, in key order.
+    pub fn room_renders(&self) -> Vec<(String, RoomRender)> {
+        self.room
+            .keys()
+            .filter_map(|k| Some((k.clone(), self.room_render(k)?)))
+            .collect()
+    }
+
+    /// The params hash of a render of this encounter (resolved as gen-floors
+    /// reads it: the base, every curated set): its arena's (`room: None`,
+    /// `Map::params_hash`), or room `key`'s, its cut folded in (its own map
+    /// floor, level, ceiling, light, middle and radius; its key names its
+    /// file, not its pixels). A room is framed round its own middle, so the
+    /// arena's `crop` is no part of its hash: an edit to the crop leaves
+    /// every room as fresh as it was. `None` for a room it does not render.
+    pub fn floor_params(&self, room: Option<&str>, opts: &RenderOptions) -> Option<u64> {
+        let Some(key) = room else {
+            return Some(self.map.params_hash(opts));
+        };
+        let h = Map {
+            crop: None,
+            ..self.map.clone()
+        }
+        .params_hash(opts);
+        let RoomRender {
+            ui_map,
+            level,
+            ceiling,
+            baked,
+            center,
+            radius,
+        } = self.room_render(key)?;
+        let mut w = Walk(h);
+        w.key("room");
+        w.opt(ui_map, Walk::u32);
+        w.opt(level, Walk::f32);
+        w.opt(ceiling, Walk::f32);
+        w.bool(baked);
+        w.point(center);
+        w.f32(radius);
+        Some(w.0)
+    }
 }
 
 /// The `minimap = ...` line: the backdrop's file and its placement.
@@ -156,6 +642,7 @@ impl Sidecar {
     pub fn parse(text: &str) -> Result<Sidecar, String> {
         let mut encounter = None;
         let mut dungeon_encounter = None;
+        let mut map = None;
         let (mut ui_map, mut room_group) = (None, None);
         let (mut x_max, mut y_max, mut ppy) = (None, None, None);
         let (mut width, mut height) = (None, None);
@@ -164,6 +651,7 @@ impl Sidecar {
         let mut base = None;
         let mut minimap = None;
         let mut stencil = None;
+        let (mut params, mut made) = (None, None);
         let (mut glow, mut layer, mut unknown) = (Vec::new(), Vec::new(), Vec::new());
         for (n, line) in text.lines().enumerate() {
             if line.trim().is_empty() {
@@ -177,6 +665,7 @@ impl Sidecar {
             match key {
                 "encounter" => once(&mut encounter, key, string(value)),
                 "dungeon_encounter" => once(&mut dungeon_encounter, key, number(key, value)),
+                "map" => once(&mut map, key, number(key, value)),
                 "ui_map" => once(&mut ui_map, key, number(key, value)),
                 "room_group" => once(&mut room_group, key, number(key, value)),
                 "x_max" => once(&mut x_max, key, number(key, value)),
@@ -192,6 +681,8 @@ impl Sidecar {
                 "stencil" => once(&mut stencil, key, number(key, value)),
                 "glow" => Glow::parse(value).map(|g| glow.push(g)),
                 "layer" => Layer::parse(value).map(|l| layer.push(l)),
+                "params" => once(&mut params, key, Params::parse(value)),
+                "made" => once(&mut made, key, number(key, value)),
                 _ => {
                     unknown.push((key.to_string(), value.to_string()));
                     Ok(())
@@ -203,6 +694,7 @@ impl Sidecar {
         Ok(Sidecar {
             encounter: encounter.ok_or_else(|| need("encounter"))?,
             dungeon_encounter,
+            map,
             ui_map: ui_map.ok_or_else(|| need("ui_map"))?,
             room_group: room_group.ok_or_else(|| need("room_group"))?,
             x_max: x_max.ok_or_else(|| need("x_max"))?,
@@ -218,6 +710,8 @@ impl Sidecar {
             stencil: stencil.unwrap_or(0),
             glow,
             layer,
+            params,
+            made,
             unknown,
         })
     }
@@ -234,6 +728,9 @@ impl Sidecar {
         let mut s = format!("encounter = {:?}\n", self.encounter);
         if let Some(id) = self.dungeon_encounter {
             s.push_str(&format!("dungeon_encounter = {id}\n"));
+        }
+        if let Some(map) = self.map {
+            s.push_str(&format!("map = {map}\n"));
         }
         s.push_str(&format!(
             "ui_map = {}\nroom_group = {}\nx_max = {}\ny_max = {}\nppy = {}\nwidth = {}\nheight = {}\n",
@@ -291,6 +788,17 @@ impl Sidecar {
                 words(&l.unknown)
             ));
         }
+        if let Some(p) = &self.params {
+            s.push_str(&format!(
+                "params = {:016x}{}{}\n",
+                p.hash,
+                p.options.words(),
+                words(&p.unknown)
+            ));
+        }
+        if let Some(made) = self.made {
+            s.push_str(&format!("made = {made}\n"));
+        }
         for (k, v) in &self.unknown {
             s.push_str(&format!("{k} = {v}\n"));
         }
@@ -344,6 +852,37 @@ impl Layer {
             y_max: take(&mut f, "y_max")?,
             width: take(&mut f, "width")?,
             height: take(&mut f, "height")?,
+            unknown: f,
+        })
+    }
+}
+
+impl Params {
+    /// `<16 hex digits> ppy=… margin=… ceiling=… exposure=… gpu=… debug=…`.
+    fn parse(value: &str) -> Result<Params, String> {
+        let mut words = value.split_whitespace();
+        let hex = words.next().ok_or("no hash")?;
+        let hash = u64::from_str_radix(hex, 16)
+            .ok()
+            .filter(|_| hex.len() == 16)
+            .ok_or_else(|| format!("not a hash of 16 hex digits: {hex:?}"))?;
+        let mut f: Vec<(String, String)> = words
+            .map(|kv| {
+                kv.split_once('=')
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .ok_or_else(|| format!("not `k=v`: {kv:?}"))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Params {
+            hash,
+            options: RenderOptions {
+                ppy: take(&mut f, "ppy")?,
+                margin: take(&mut f, "margin")?,
+                ceiling: take(&mut f, "ceiling")?,
+                exposure: take(&mut f, "exposure")?,
+                gpu: take(&mut f, "gpu")?,
+                debug: take(&mut f, "debug")?,
+            },
             unknown: f,
         })
     }
@@ -513,6 +1052,60 @@ impl Floors {
             f.sidecar.dungeon_encounter == Some(id) && f.sidecar.room.as_deref() == Some(key)
         })
     }
+
+    /// Map `map`'s levels from its minimap tiles (`gen-floors --map`), in
+    /// file-name order: one a UiMap, its sidecar with no `minimap` line.
+    pub fn levels(&self, map: u32) -> Vec<&Rendered> {
+        self.of_map(map)
+            .filter(|f| f.sidecar.minimap.is_none())
+            .collect()
+    }
+
+    /// Map `map`'s level on UiMap `ui_map`, from its minimap tiles.
+    pub fn level(&self, map: u32, ui_map: u32) -> Option<&Rendered> {
+        self.levels(map)
+            .into_iter()
+            .find(|f| f.sidecar.ui_map == ui_map)
+    }
+
+    /// Map `map`'s levels rendered from the world's geometry, in file-name
+    /// order: each sidecar's `minimap` line names its level's minimap
+    /// picture, its backdrop.
+    pub fn level_renders(&self, map: u32) -> Vec<&Rendered> {
+        self.of_map(map)
+            .filter(|f| f.sidecar.minimap.is_some())
+            .collect()
+    }
+
+    /// Map `map`'s level on UiMap `ui_map`, rendered from the world's
+    /// geometry.
+    pub fn level_render(&self, map: u32, ui_map: u32) -> Option<&Rendered> {
+        self.level_renders(map)
+            .into_iter()
+            .find(|f| f.sidecar.ui_map == ui_map)
+    }
+
+    /// Whether the floor `slug` (its sidecar `<slug>.txt`) was made from
+    /// other than what hashes to `current_params_hash` now
+    /// (`Encounter::floor_params`, under the options its `params` line
+    /// gives): `None` where there is no such floor, or its sidecar says
+    /// nothing of what it was made from (one written before sidecars did).
+    pub fn stale(&self, slug: &str, current_params_hash: u64) -> Option<bool> {
+        let floor = self
+            .floors
+            .iter()
+            .find(|f| f.path.file_stem().is_some_and(|s| s == slug))?;
+        let params = floor.sidecar.params.as_ref()?;
+        Some(params.hash != current_params_hash)
+    }
+
+    /// Every sidecar of map `map`'s levels, minimap and render alike: a
+    /// map's, naming no encounter.
+    fn of_map(&self, map: u32) -> impl Iterator<Item = &Rendered> {
+        self.floors
+            .iter()
+            .filter(move |f| f.sidecar.map == Some(map) && f.sidecar.dungeon_encounter.is_none())
+    }
 }
 
 #[cfg(test)]
@@ -646,6 +1239,124 @@ mod tests {
         }
     }
 
+    /// A dungeon's level: the instance's name, its map and level, no
+    /// encounter id; it reads back as written and is found by its map
+    /// and level, never as an arena.
+    #[test]
+    fn a_dungeon_level_round_trips_and_is_found_by_its_map() {
+        let text = "encounter = \"Ruby Life Pools\"\nmap = 2521\nui_map = 2094\nroom_group = 0\nx_max = 1898.75\ny_max = 211.25\nppy = 0.96000004\nwidth = 811\nheight = 531\n";
+        let s = Sidecar::parse(text).unwrap();
+        assert_eq!(
+            (s.map, s.ui_map, s.dungeon_encounter),
+            (Some(2521), 2094, None)
+        );
+        assert_eq!(s.to_text(), text);
+        let level = |ui_map: u32, file: &str| Rendered {
+            path: PathBuf::from(file),
+            sidecar: Sidecar {
+                ui_map,
+                ..s.clone()
+            },
+        };
+        let floors = Floors {
+            floors: vec![
+                level(2094, "ruby-life-pools-L1-minimap.txt"),
+                level(2095, "ruby-life-pools-L2-minimap.txt"),
+            ],
+            skipped: Vec::new(),
+        };
+        assert_eq!(floors.levels(2521).len(), 2);
+        assert!(floors.levels(2522).is_empty());
+        assert_eq!(
+            floors.level(2521, 2095).map(Rendered::png),
+            Some(PathBuf::from("ruby-life-pools-L2-minimap.png"))
+        );
+        assert!(floors.arena(2094).is_none());
+    }
+
+    /// A level rendered from the world's geometry: the minimap level's
+    /// lines, its own placement and walls, and a `minimap` line naming the
+    /// minimap picture. `level` and `levels` keep finding the minimap
+    /// pictures, `level_render` and `level_renders` the renders, whatever
+    /// the files sort as; neither is ever an arena or a room.
+    #[test]
+    fn a_level_render_is_told_from_its_minimap_level_by_its_minimap_line() {
+        let render = "encounter = \"Ruby Life Pools\"\nmap = 2521\nui_map = 2095\nroom_group = 0\nx_max = 1715\ny_max = 105\nppy = 8\nwidth = 4680\nheight = 3280\nwall_angle = 50.5\nwall_share = 0.12\nminimap = \"ruby-life-pools-L2-minimap.png\" x_max=1715 y_max=105 ppy=0.96000004 width=562 height=394\n";
+        let s = Sidecar::parse(render).unwrap();
+        assert_eq!(s.to_text(), render);
+        assert_eq!(
+            (s.map, s.ui_map, s.dungeon_encounter),
+            (Some(2521), 2095, None)
+        );
+        let m = s.minimap.as_ref().unwrap();
+        assert_eq!(m.file, "ruby-life-pools-L2-minimap.png");
+        // The two register: the same world point at pixel (0, 0).
+        assert_eq!((m.x_max, m.y_max), (s.x_max, s.y_max));
+        assert_eq!(s.wall(), Some((50.5, 0.12)));
+        let minimap_level = |ui_map: u32| Sidecar {
+            encounter: "Ruby Life Pools".into(),
+            map: Some(2521),
+            ui_map,
+            x_max: 1715.0,
+            y_max: 105.0,
+            ppy: 0.96,
+            width: 562,
+            height: 394,
+            ..Sidecar::default()
+        };
+        let at = |file: &str, sidecar: Sidecar| Rendered {
+            path: PathBuf::from(file),
+            sidecar,
+        };
+        let floors = Floors {
+            floors: vec![
+                // File-name order: a render sorts before its minimap level.
+                at(
+                    "ruby-life-pools-L1.txt",
+                    Sidecar {
+                        ui_map: 2094,
+                        ..s.clone()
+                    },
+                ),
+                at("ruby-life-pools-L1-minimap.txt", minimap_level(2094)),
+                at("ruby-life-pools-L2.txt", s.clone()),
+                at("ruby-life-pools-L2-minimap.txt", minimap_level(2095)),
+            ],
+            skipped: Vec::new(),
+        };
+        let files = |found: Vec<&Rendered>| -> Vec<PathBuf> {
+            found.into_iter().map(Rendered::png).collect()
+        };
+        assert_eq!(
+            files(floors.levels(2521)),
+            [
+                PathBuf::from("ruby-life-pools-L1-minimap.png"),
+                PathBuf::from("ruby-life-pools-L2-minimap.png")
+            ]
+        );
+        assert_eq!(
+            files(floors.level_renders(2521)),
+            [
+                PathBuf::from("ruby-life-pools-L1.png"),
+                PathBuf::from("ruby-life-pools-L2.png")
+            ]
+        );
+        assert_eq!(
+            floors.level(2521, 2095).map(Rendered::png),
+            Some(PathBuf::from("ruby-life-pools-L2-minimap.png"))
+        );
+        let r = floors.level_render(2521, 2095).unwrap();
+        assert_eq!(r.png(), PathBuf::from("ruby-life-pools-L2.png"));
+        assert_eq!(
+            r.beside(&r.sidecar.minimap.as_ref().unwrap().file),
+            PathBuf::from("ruby-life-pools-L2-minimap.png")
+        );
+        assert!(floors.level_render(2521, 9999).is_none());
+        assert!(floors.level_render(2522, 2095).is_none());
+        assert!(floors.level_renders(2522).is_empty());
+        assert!(floors.arena(2095).is_none() && floors.arena(2521).is_none());
+    }
+
     #[test]
     fn floats_and_numbers_write_back_as_read() {
         let s = Sidecar {
@@ -776,5 +1487,293 @@ mod tests {
         assert!(floors.arena(1).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(Floors::scan(&dir).is_err());
+    }
+
+    /// A sidecar that says what it was made from and when reads back as
+    /// written, the two lines after the layers; one written before they
+    /// were reads with neither.
+    #[test]
+    fn params_and_made_round_trip_and_may_be_absent() {
+        let base = FIXTURES[0].1;
+        let text = format!(
+            "{base}params = 00c0ffee12345678 ppy=8 margin=20 ceiling=25 exposure=0.82 gpu=true debug=false\nmade = 1791830400\n"
+        );
+        let s = Sidecar::parse(&text).unwrap();
+        let p = s.params.as_ref().unwrap();
+        assert_eq!(p.hash, 0x00c0_ffee_1234_5678);
+        assert_eq!(
+            p.options,
+            RenderOptions {
+                gpu: true,
+                ..RenderOptions::default()
+            }
+        );
+        assert_eq!(s.made, Some(1_791_830_400));
+        assert_eq!(s.to_text(), text);
+        assert!(s.unknown.is_empty());
+        let old = Sidecar::parse(base).unwrap();
+        assert_eq!((old.params, old.made), (None, None));
+        // A field this build does not know is kept, after the known ones.
+        let newer = text.replace("debug=false", "debug=false tint=red");
+        assert_eq!(Sidecar::parse(&newer).unwrap().to_text(), newer);
+        for (bad, want) in [
+            ("params = c0ffee ppy=8", "16 hex digits"),
+            (
+                "params = 00c0ffee12345678 ppy=8 margin=20 ceiling=25 exposure=0.82 gpu=true",
+                "no `debug=`",
+            ),
+            ("made = soon", "`made` is not a number"),
+        ] {
+            let e = Sidecar::parse(&format!("{base}{bad}\n")).unwrap_err();
+            assert!(e.contains(want), "{e} (wanted {want})");
+        }
+    }
+
+    /// What `the_params_hash_is_fixed_for_a_fixed_map` pins.
+    const PINNED_HASH: u64 = 0x0522_f77f_e37e_db5a;
+
+    /// A map of one glow and nothing else; and with `more` TOML before it.
+    fn map_with(more: &str) -> Map {
+        let text = format!(
+            "{more}\n[glow.flame]\ncolor = [200, 40, 10]\narea = [{{ center = [1.0, 2.0], radius = 3.0 }}]\n"
+        );
+        toml::from_str(&text).unwrap_or_else(|e| panic!("{more}: {e}"))
+    }
+
+    /// The hash moves with each key gen-floors draws by and the options,
+    /// with no other key of the map, and with no view: the keys listed on
+    /// `Map::params_hash`.
+    #[test]
+    fn the_params_hash_follows_what_changes_pixels_alone() {
+        let opts = RenderOptions::default();
+        let base = map_with("");
+        let h = base.params_hash(&opts);
+        let drawn = [
+            "level = 380.5",
+            "ceiling = 12",
+            "light = \"graded\"",
+            "exclude_groups = [79429]",
+            "exclude_models = [12345]",
+            "exclude_textures = [4516750]",
+            "stencil = [{ center = [0.0, 0.0], radius = 50.0 }]",
+            "ppy = 16",
+            "crop = [0.0, 0.0, 10.0, 10.0]",
+            "include_groups = [79429]",
+            "include_models = [12345]",
+            "exposure = 1.2",
+            "[fade.roof]\ngroup = 1\nalpha = 0.5",
+            "[fade.crate]\nmodel = 12345\nalpha = 0.25",
+        ];
+        for more in drawn {
+            assert_ne!(map_with(more).params_hash(&opts), h, "{more}");
+        }
+        // Each fade by its piece and its alpha; a disabled one draws
+        // nothing.
+        let fade = |what: &str| map_with(&format!("[fade.roof]\n{what}")).params_hash(&opts);
+        assert_ne!(
+            fade("group = 1\nalpha = 0.5"),
+            fade("group = 2\nalpha = 0.5")
+        );
+        assert_ne!(
+            fade("group = 1\nalpha = 0.5"),
+            fade("group = 1\nalpha = 0.4")
+        );
+        assert_eq!(fade("group = 1\nalpha = 0.5\nenabled = false"), h);
+        let glow = |what: &str| {
+            map_with(&format!(
+                "[glow.other]\ncolor = [1, 2, 3]\narea = []\n{what}"
+            ))
+            .params_hash(&opts)
+        };
+        let other = glow("");
+        for what in [
+            "hot = [9, 9, 9]",
+            "below = 1.5",
+            "except = [{ center = [1.0, 2.0], radius = 1.0 }]",
+        ] {
+            assert_ne!(glow(what), other, "{what}");
+        }
+        let undrawn = [
+            "ui_map = 2610",
+            "floor = \"elsewhere\"",
+            "light = \"baked\"",
+            "ground = \"walked\"",
+            "ground = 120.5",
+            "transition = { after = 3.0 }",
+            "[layer.platform]\nwmo = 7549724",
+            "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]",
+            "[area.a]\nshape = []\n[area.b]\nshape = []\n[path.way]\nfrom = \"a\"\nto = \"b\"",
+        ];
+        for more in undrawn {
+            assert_eq!(map_with(more).params_hash(&opts), h, "{more}");
+        }
+        for what in [
+            "name = \"the flame\"",
+            "rise = 1.0",
+            "hold = 3.0",
+            "fade = 1.0",
+        ] {
+            assert_eq!(glow(what), other, "{what}");
+        }
+        let ppy = RenderOptions { ppy: 2.0, ..opts };
+        assert_ne!(base.params_hash(&ppy), h);
+        let gpu = RenderOptions { gpu: true, ..opts };
+        assert_ne!(base.params_hash(&gpu), h);
+        // An encounter's arena hashes its map, its view no part of it; no
+        // such room, no hash.
+        let mut e = Encounter {
+            map: base.clone(),
+            ..Encounter::default()
+        };
+        assert_eq!(e.floor_params(None, &opts), Some(h));
+        e.view.turn = Some(45.0);
+        assert_eq!(e.floor_params(None, &opts), Some(h));
+        assert_eq!(e.floor_params(Some("the-well"), &opts), None);
+    }
+
+    /// A level's render hashes its options and its posts, in order.
+    #[test]
+    fn a_levels_params_follow_its_posts() {
+        let opts = RenderOptions::default();
+        let posts = vec![vec![[1.0, 2.0], [3.0, 4.0]], vec![[5.0, 6.0]]];
+        let h = level_params(&posts, &opts);
+        assert_eq!(level_params(&posts, &opts), h);
+        assert_ne!(level_params(&posts[..1], &opts), h);
+        let moved = vec![vec![[1.0, 2.0], [3.0, 4.5]], vec![[5.0, 6.0]]];
+        assert_ne!(level_params(&moved, &opts), h);
+        let joined = vec![vec![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]];
+        assert_ne!(level_params(&joined, &opts), h);
+        assert_ne!(level_params(&posts, &RenderOptions { ppy: 2.0, ..opts }), h);
+        let none = level_params(&[], &opts);
+        assert_eq!(none, LEVEL_PINNED_HASH, "{none:016x}");
+    }
+
+    /// What `a_levels_params_follow_its_posts` pins: a level with no posts
+    /// at the default options, as every level hashed before its map was
+    /// read.
+    const LEVEL_PINNED_HASH: u64 = 0x9dcb_8c03_13d3_3c83;
+
+    /// A level's map moves its hash by what its render draws by alone,
+    /// each key only where it is said: a map saying none hashes as
+    /// `level_params`, its arena keys and its camera's are no part of it.
+    #[test]
+    fn a_levels_params_follow_what_its_map_draws_by() {
+        let opts = RenderOptions::default();
+        let posts = vec![vec![[1.0, 2.0], [3.0, 4.0]]];
+        let level =
+            |more: &str| -> Map { toml::from_str(more).unwrap_or_else(|e| panic!("{more}: {e}")) };
+        let h = level("").level_params(&posts, &opts);
+        assert_eq!(h, level_params(&posts, &opts));
+        for more in [
+            "exclude_groups = [79429]",
+            "exclude_models = [12345]",
+            "exclude_textures = [4516750]",
+            "crop = [0.0, 0.0, 10.0, 10.0]",
+            "include_groups = [79429]",
+            "include_models = [12345]",
+            "ground = 120.5",
+            "exposure = 1.2",
+            "[fade.roof]\ngroup = 1\nalpha = 0.5",
+        ] {
+            assert_ne!(level(more).level_params(&posts, &opts), h, "{more}");
+        }
+        for more in [
+            "floor = \"elsewhere\"",
+            "level = 380.5",
+            "ceiling = 12",
+            "light = \"graded\"",
+            "ppy = 16",
+            "ground = \"walked\"",
+            "ground = \"terrain\"",
+            "stencil = [{ center = [0.0, 0.0], radius = 50.0 }]",
+            "transition = { after = 3.0 }",
+            "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]",
+        ] {
+            assert_eq!(level(more).level_params(&posts, &opts), h, "{more}");
+        }
+    }
+
+    /// The hash is the walk's own: a fixed map hashes to a fixed number, so
+    /// no serializer's bump can move every floor's.
+    #[test]
+    fn the_params_hash_is_fixed_for_a_fixed_map() {
+        let h = map_with("level = 380.5\nexclude_groups = [79429, 80001]")
+            .params_hash(&RenderOptions::default());
+        assert_eq!(h, PINNED_HASH, "{h:016x}");
+    }
+
+    /// Every encounter the embedded rubric holds hashes the same both ways
+    /// it is read; Nek'zali's well is a room gen-floors renders, its hash
+    /// its arena's with its cut folded in.
+    #[test]
+    fn the_embedded_rubric_hashes_the_same_both_ways() {
+        let r = crate::Rubric::embedded().unwrap();
+        let mut n = 0;
+        for (id, _, _) in r.encounters() {
+            let Some(Ok(e)) = r.encounter(id, None) else {
+                continue;
+            };
+            // gen-floors reads the embedded rubric at its own tier; the
+            // replay spike, whose rubric carries the user's files, at the
+            // curated one: the same encounter, the same hash.
+            let curated = r.encounter_at(id, None, crate::Tier::Curated);
+            let opts = RenderOptions::default();
+            assert_eq!(
+                curated
+                    .and_then(Result::ok)
+                    .map(|c| c.floor_params(None, &opts)),
+                Some(e.floor_params(None, &opts)),
+                "{id}"
+            );
+            n += 1;
+        }
+        assert!(n > 40, "{n}");
+        let nekzali = r.encounter(3470, None).unwrap().unwrap();
+        let rooms = nekzali.room_renders();
+        assert!(rooms.iter().any(|(k, _)| k == "the-well"), "{rooms:?}");
+        let opts = RenderOptions::default();
+        let arena = nekzali.floor_params(None, &opts).unwrap();
+        let well = nekzali.floor_params(Some("the-well"), &opts).unwrap();
+        assert_ne!(arena, well);
+        // A room reads no crop: the arena's moves its arena's hash alone.
+        let cropped = crate::Encounter {
+            map: Map {
+                crop: Some([0.0, 0.0, 10.0, 10.0]),
+                ..nekzali.map.clone()
+            },
+            ..nekzali.clone()
+        };
+        assert_ne!(cropped.floor_params(None, &opts), Some(arena));
+        assert_eq!(cropped.floor_params(Some("the-well"), &opts), Some(well));
+    }
+
+    /// A floor is stale when its params differ from the hash now; one with
+    /// no params, or no such floor, says nothing.
+    #[test]
+    fn a_floor_is_stale_by_its_params() {
+        let with = |hash: Option<u64>| Sidecar {
+            params: hash.map(|hash| Params {
+                hash,
+                ..Params::default()
+            }),
+            ..Sidecar::parse(FIXTURES[1].1).unwrap()
+        };
+        let floors = Floors {
+            floors: vec![
+                Rendered {
+                    path: PathBuf::from("/x/ulatek.txt"),
+                    sidecar: with(Some(5)),
+                },
+                Rendered {
+                    path: PathBuf::from("/x/old.txt"),
+                    sidecar: with(None),
+                },
+            ],
+            skipped: Vec::new(),
+        };
+        assert_eq!(floors.stale("ulatek", 5), Some(false));
+        assert_eq!(floors.stale("ulatek", 6), Some(true));
+        assert_eq!(floors.stale("old", 6), None);
+        assert_eq!(floors.stale("nowhere", 6), None);
     }
 }

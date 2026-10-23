@@ -21,7 +21,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 46;
+pub const PROTO_VERSION: u16 = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -204,8 +204,11 @@ pub enum ClientMsg {
     /// v46: store a fight converted from outside this machine's logs — the
     /// facts its source knows (`card`) and its replay tier as
     /// `proto::replay::encode` writes it — as an IMPORTED card (`Origin::
-    /// Imported`) with that replay and no other tier. The daemon validates
-    /// the replay (a format it reads, decodable) and answers `History` /
+    /// Imported`) with that replay and (v48) the details tier its players'
+    /// curves make (`ImportedCard::details`), no rows or series. v48: the
+    /// card's players carry their totals and 1 s curves. The daemon
+    /// validates the replay (a format it reads, decodable) and the curves
+    /// (`ImportedCard::check_curves`) and answers `History` /
     /// `ImportedReplay`, or `Refused` with why; the same source again
     /// replaces it. Boxed: the card is the largest payload a client sends.
     ImportReplay {
@@ -1991,6 +1994,9 @@ fn put_card(buf: &mut Vec<u8>, c: &FightCard) {
         wire::put_u32(b, k.difficulty);
         put_opt_u32(b, k.level);
         wire::put_opt(b, k.completed.as_ref(), |b, v| wire::put_bool(b, *v));
+        // v47: the key's affixes, embedded (the card's fields follow), so
+        // the count is always written: four zero bytes for none.
+        wire::put_vec(b, &k.affixes, |b, a| wire::put_u32(b, *a));
     });
     wire::put_i64(buf, c.start_local_ms);
     wire::put_opt(buf, c.tz_min.as_ref(), |b, m| wire::put_u16(b, *m as u16));
@@ -2066,8 +2072,12 @@ fn origin_filter_from(b: u8) -> Result<OriginFilter> {
 /// v46: `ImportReplay`'s card — string name | opt Encounter | u8 kind | i64
 /// start_utc_ms | opt i64 start_local_ms | opt u16 tz_min (as bits) | i64
 /// duration_ms | opt bool success | opt u16 best_pct | vec player (string
-/// guid | string name | opt u8 class | u16 spec, 0 = none) | opt string
-/// owner | string source | u16 ×3 build | u32 log_version.
+/// guid | string name | opt u8 class | u16 spec, 0 = none | v48: u64
+/// damage | u64 healing | u64 overheal | u64 absorbed | u64 heal_absorbed |
+/// u64 taken | u32 deaths | u64 support_given | u64 support_received | u64
+/// healed_received | u64 self_healed | vec u64 damage_curve | vec u64
+/// heal_curve) | opt string owner | string source | u16 ×3 build | u32
+/// log_version.
 fn put_imported_card(buf: &mut Vec<u8>, c: &ImportedCard) {
     wire::put_str(buf, &c.name);
     wire::put_opt(buf, c.encounter.as_ref(), put_encounter);
@@ -2083,6 +2093,28 @@ fn put_imported_card(buf: &mut Vec<u8>, c: &ImportedCard) {
         wire::put_str(b, &p.name);
         wire::put_opt(b, p.class.as_ref(), |b, c| wire::put_u8(b, class_code(*c)));
         wire::put_u16(b, p.spec.map_or(0, |s| s.id() as u16));
+        // v48: the player's meter, then their curves.
+        for v in [
+            p.damage,
+            p.healing,
+            p.overheal,
+            p.absorbed,
+            p.heal_absorbed,
+            p.taken,
+        ] {
+            wire::put_u64(b, v);
+        }
+        wire::put_u32(b, p.deaths);
+        for v in [
+            p.support_given,
+            p.support_received,
+            p.healed_received,
+            p.self_healed,
+        ] {
+            wire::put_u64(b, v);
+        }
+        wire::put_vec(b, &p.damage_curve, |b, v| wire::put_u64(b, *v));
+        wire::put_vec(b, &p.heal_curve, |b, v| wire::put_u64(b, *v));
     });
     put_opt_str(buf, c.owner.as_deref());
     wire::put_str(buf, &c.source);
@@ -2109,6 +2141,19 @@ fn get_imported_card(rd: &mut Reader) -> Result<ImportedCard> {
                 name: r.string()?,
                 class: r.opt(|r| class_from(r.u8()?))?,
                 spec: Spec::from_id(r.u16()? as u32),
+                damage: r.u64()?,
+                healing: r.u64()?,
+                overheal: r.u64()?,
+                absorbed: r.u64()?,
+                heal_absorbed: r.u64()?,
+                taken: r.u64()?,
+                deaths: r.u32()?,
+                support_given: r.u64()?,
+                support_received: r.u64()?,
+                healed_received: r.u64()?,
+                self_healed: r.u64()?,
+                damage_curve: r.vec(|r| r.u64())?,
+                heal_curve: r.vec(|r| r.u64())?,
             })
         })?,
         owner: rd.opt(|r| r.string())?,
@@ -2133,6 +2178,7 @@ fn get_card(rd: &mut Reader) -> Result<FightCard> {
                 difficulty: r.u32()?,
                 level: r.opt(|r| r.u32())?,
                 completed: r.opt(|r| r.bool())?,
+                affixes: r.vec(|r| r.u32())?,
             })
         })?,
         start_local_ms: rd.i64()?,

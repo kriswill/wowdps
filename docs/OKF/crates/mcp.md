@@ -69,17 +69,29 @@ through `cargo run`.
     ([R28](../rulings/r28.md)).
   - `role_night { encounter, difficulty, night | date }` — one night's
     roster by role: tanks side by side, healers and DPS ranked.
+  - A card's `instance` names a key's `key_level`, `completed` and (v47)
+    `affixes`, the START's ids in order: an empty list for a run joined
+    mid-way, an unkeyed instance and a card stored before v47
+    ([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
   - A card's `origin` (v46) is null for this machine's own fights and
     `{kind: "imported", source}` for one imported from outside its logs.
     `history` and the others list this machine's own alone (they ask
-    `OriginFilter::Local`); `stored_fight` names an import by id and says it
-    keeps a card and a replay only
+    `OriginFilter::Local`); `stored_fight` names an import by id
     ([Imported Fights Live In The History Store](../decisions/imported-fights-in-the-store.md)).
+    v48: it answers an import's card, tier `card` — `fight.players`
+    carries each player's meter, no view rows, a `note` saying so — where
+    it used to refuse, and a drill or a zoom window of one is an error
+    saying the import keeps no rows to break down or window (never the
+    whole fight's totals in place of the stretch asked for)
+    ([An Import Carries Its Meter](../decisions/an-import-carries-its-meter.md)).
 - Talent tools — `talent_tree`, `decode_talents`, `encode_talents` —
   answered from the per-machine talent dataset ([R14](../rulings/r14.md)),
   never the daemon.
 - `history_sql` shells out to `wowdps-history` and is registered only where
-  that binary exists.
+  that binary exists. Its description says there are no time zone functions
+  (the bundled DuckDB has no ICU) and points at `start_local_ms`, or
+  `start_utc_ms + tz_min * 60000`
+  ([DuckDB Is Bundled, Not System-Linked](../decisions/duckdb-is-bundled-not-system-linked.md)).
 
 ## Source
 

@@ -21,7 +21,7 @@ directory. Use `grep -rn … docs/gpui/` or pass the path explicitly.
 crates.io's `gpui` (what <https://docs.rs/gpui/latest/gpui/> shows) is
 **0.2.2, last published 2025-10**. GPUI Kit does not use it. Kit pins
 `gpui-pre`, a crates.io publication of a recorded Zed commit whose library
-name is still `gpui`, *exactly* (`=0.3.7` for Kit 0.7.0, a new snapshot about
+name is still `gpui`, *exactly* (`=0.3.9` for Kit 0.8.0, a new snapshot about
 weekly). Every API link in Kit's own pages points at
 `docs.rs/gpui-pre/<pin>`. The two diverge in ways that matter here; the first
 item under *Findings* (layer-shell windows) does not exist in 0.2.2 at all.

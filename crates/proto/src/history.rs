@@ -200,10 +200,10 @@ impl FightKind {
 /// v46: where a stored fight came from. Every fight the daemon cut from
 /// this machine's logs is `Local`; one handed to it whole by a client
 /// (`ClientMsg::ImportReplay`, a fight converted from outside this
-/// machine's logs) is `Imported`. An imported fight is a card and a replay
-/// tier and nothing else, protected from retention like a pin, and never
-/// read by the store's judgments of its owner's history (CONTRACT.md, the
-/// import ruling).
+/// machine's logs) is `Imported`. An imported fight is a card, a replay
+/// tier and (v48) the details tier its curves make, nothing else,
+/// protected from retention like a pin, and never read by the store's
+/// judgments of its owner's history (CONTRACT.md, the import ruling).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Origin {
     #[default]
@@ -231,18 +231,64 @@ impl Origin {
 
 /// v46: one player of an imported fight, as a card keeps them (the role
 /// is the spec's, never stored).
+///
+/// v48: and the player's meter, as far as the source can say it under the
+/// meter's rulings — the totals the card keeps ([`CardPlayer`]'s fields of
+/// the same names) and the 1 s curves the details tier keeps. The rates
+/// are never sent: the store derives `dps`, `hps` and `dtps` from these
+/// over the card's rate clock (`wowdps_model::rate`), as a local card's
+/// rows were rated, so an import ranks beside a local kill on equal terms.
+/// A 0 is "none, or not known": the source cannot tell the two apart for
+/// a field it does not carry. What a card keeps that an import never
+/// carries — a loadout, `logged`, the R17 mitigation split (`mitigated`,
+/// `prevented`, `reduced`), the R18 aura spans (`am_uptime_ms`, the
+/// externals) and the R20 shield ledger (`absorb_wasted`,
+/// `shields_unknown`) — stays at its unknown value on the card.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImportedPlayer {
     pub guid: String,
     pub name: String,
     pub class: Option<Class>,
     pub spec: Option<Spec>,
+    /// R1 damage done, pets folded (R5), no Augmentation share (R19), no
+    /// self-harm or friendly fire (R22).
+    pub damage: u64,
+    /// R2 effective healing, absorbs credited to the absorber (R3) and a
+    /// heal-absorb's part kept in it, pets folded.
+    pub healing: u64,
+    /// R2's split of `healing`'s heals: the overhealing beside it, the
+    /// absorb half inside it, and the part a heal-absorb ate inside it.
+    pub overheal: u64,
+    pub absorbed: u64,
+    pub heal_absorbed: u64,
+    /// R17's Taken: damage that reached the player or their pets, absorbs
+    /// included, Stagger's ticks left out.
+    pub taken: u64,
+    /// R9: how many times they died (a Feign Death is none).
+    pub deaths: u32,
+    /// R19: the damage shares they gave as a supporter and received from
+    /// supporters.
+    pub support_given: u64,
+    pub support_received: u64,
+    /// R2 amendment: effective healing that landed on them (and their
+    /// pets) from any source, and the part of it they healed themselves.
+    pub healed_received: u64,
+    pub self_healed: u64,
+    /// R12: `damage` and `healing` second by second from the fight's start,
+    /// on the meter's 1 s grid (`wowdps_model::series::BUCKET_MS`): what
+    /// the details tier keeps of the player (`PlayerDetail::
+    /// damage_timeline` and `heal_timeline`). Empty when the source has no
+    /// curve; one that is there sums to its total exactly and holds no
+    /// second past the fight's end ([`ImportedCard::check_curves`]).
+    pub damage_curve: Vec<u64>,
+    pub heal_curve: Vec<u64>,
 }
 
 /// v46: the facts an import can know of a fight — what `ClientMsg::
 /// ImportReplay` carries beside the replay tier's bytes, and all of the
-/// card the daemon makes of it ([`ImportedCard::card`]). Unknowns stay
-/// unknown: no tz, no build, no log version, no owner.
+/// card the daemon makes of it ([`ImportedCard::card`]) and (v48) of its
+/// details tier ([`ImportedCard::details`]). Unknowns stay unknown: no tz,
+/// no build, no log version, no owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedCard {
     pub name: String,
@@ -292,16 +338,20 @@ impl Default for ImportedCard {
 
 impl ImportedCard {
     /// The card the store keeps for it: [`imported_id`], no log (`log` 0,
-    /// no byte range), never aborted, no combat clock (its rates — none —
-    /// would run on `duration_ms`), every player `logged: false` with no
-    /// numbers. The local start is the source's, else the UTC start moved
-    /// by the offset, else the UTC start (and `tz_min` stays `None`, as on
-    /// a legacy log).
+    /// no byte range), never aborted, every player `logged: false`. v48: a
+    /// boss pull's combat clock is its START..END (R7), so `combat_ms` is
+    /// the duration, and each player carries the import's totals with their
+    /// rates derived over it (`wowdps_model::rate`, the meter's own
+    /// arithmetic); what an import never carries stays unknown
+    /// ([`ImportedPlayer`]). The local start is the source's, else the UTC
+    /// start moved by the offset, else the UTC start (and `tz_min` stays
+    /// `None`, as on a legacy log).
     pub fn card(&self) -> FightCard {
         let start_local_ms = self.start_local_ms.unwrap_or_else(|| {
             self.start_utc_ms
                 .saturating_add(i64::from(self.tz_min.unwrap_or(0)).saturating_mul(60_000))
         });
+        let rate_ms = self.duration_ms;
         let players: Vec<CardPlayer> = self
             .players
             .iter()
@@ -310,6 +360,20 @@ impl ImportedCard {
                 name: p.name.clone(),
                 class: p.class,
                 spec: p.spec,
+                damage: p.damage,
+                dps: wowdps_model::rate(p.damage, rate_ms),
+                healing: p.healing,
+                hps: wowdps_model::rate(p.healing, rate_ms),
+                deaths: p.deaths,
+                taken: p.taken,
+                dtps: wowdps_model::rate(p.taken, rate_ms),
+                overheal: p.overheal,
+                absorbed: p.absorbed,
+                heal_absorbed: p.heal_absorbed,
+                support_given: p.support_given,
+                support_received: p.support_received,
+                healed_received: p.healed_received,
+                self_healed: p.self_healed,
                 ..CardPlayer::default()
             })
             .collect();
@@ -328,6 +392,7 @@ impl ImportedCard {
             tz_min: self.tz_min,
             start_utc_ms: self.start_utc_ms,
             duration_ms: self.duration_ms,
+            combat_ms: Some(rate_ms),
             success: self.success,
             aborted: false,
             build: self.build,
@@ -342,6 +407,74 @@ impl ImportedCard {
             ..FightCard::default()
         }
     }
+
+    /// v48: the details tier the store keeps for it — one entry per player
+    /// with a curve, their `damage_curve` and `heal_curve` as the 1 s
+    /// damage and healing timelines (no marks: an import carries no item
+    /// or aura), every by-spell and by-target list, ability tree, count
+    /// drill, resource and pool empty. `None` when no player has a curve:
+    /// such an import keeps no details tier. Filed under `id`, the card's.
+    pub fn details(&self, id: &str) -> Option<FightDetails> {
+        let bucket_ms = u32::try_from(wowdps_model::series::BUCKET_MS).unwrap_or(1000);
+        let timeline = |buckets: &[u64]| Timeline {
+            bucket_ms,
+            buckets: buckets.to_vec(),
+            marks: Vec::new(),
+        };
+        let players: Vec<PlayerDetail> = self
+            .players
+            .iter()
+            .filter(|p| !p.damage_curve.is_empty() || !p.heal_curve.is_empty())
+            .map(|p| PlayerDetail {
+                guid: p.guid.clone(),
+                damage_timeline: timeline(&p.damage_curve),
+                heal_timeline: timeline(&p.heal_curve),
+                ..PlayerDetail::default()
+            })
+            .collect();
+        (!players.is_empty()).then(|| FightDetails {
+            schema: HISTORY_SCHEMA,
+            id: id.to_string(),
+            players,
+        })
+    }
+
+    /// v48: whether the curves agree with the totals, as a meter's do (R12:
+    /// a graph never desyncs from its total): a curve that is there sums to
+    /// its player's `damage` or `healing` exactly and holds no second past
+    /// the fight's end (`duration_ms / 1000 + 1` buckets at most, an event
+    /// at the END itself in the last). Why not, naming the player.
+    pub fn check_curves(&self) -> Result<(), String> {
+        let bucket = wowdps_model::series::BUCKET_MS;
+        let most = usize::try_from(self.duration_ms.max(0) / bucket + 1).unwrap_or(usize::MAX);
+        for p in &self.players {
+            for (what, curve, total) in [
+                ("damage", &p.damage_curve, p.damage),
+                ("healing", &p.heal_curve, p.healing),
+            ] {
+                if curve.is_empty() {
+                    continue;
+                }
+                if curve.len() > most {
+                    return Err(format!(
+                        "{}'s {what} curve runs {} s, past the fight's {} ms",
+                        p.guid,
+                        curve.len(),
+                        self.duration_ms
+                    ));
+                }
+                let sum = curve.iter().try_fold(0u64, |a, b| a.checked_add(*b));
+                if sum != Some(total) {
+                    return Err(format!(
+                        "{}'s {what} curve sums to {}, not their {what} {total}",
+                        p.guid,
+                        sum.map_or_else(|| "more than a u64".to_string(), |s| s.to_string()),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// R10 facts of a keyed (or plain) instance visit, on `Key`/`Overall` cards.
@@ -353,6 +486,12 @@ pub struct KeyInfo {
     pub level: Option<u32>,
     /// CHALLENGE_MODE_END's success flag (the game's, not the timed verdict).
     pub completed: Option<bool>,
+    /// v47: the key's affix ids, as its CHALLENGE_MODE_START listed them.
+    /// Empty on an unkeyed visit, on a key the log joined mid-run (its END
+    /// names none) and on a card written before v47 (regrade to fill it).
+    /// Written to the document only when there are some, so a card without
+    /// them stays byte for byte what it was.
+    pub affixes: Vec<u32>,
 }
 
 /// One player's line on a card: enough for every trend / best-per-player
@@ -619,12 +758,7 @@ impl FightCard {
             "kind": Json::str(self.kind.as_str()),
             "name": Json::str(&*self.name),
             "encounter": self.encounter.map_or(Json::Null, encounter_json),
-            "key": self.key.as_ref().map_or(Json::Null, |k| obj! {
-                "map_id": Json::num(k.map_id),
-                "difficulty": Json::num(k.difficulty),
-                "level": opt_num(k.level.map(u64::from)),
-                "completed": opt_bool(k.completed),
-            }),
+            "key": self.key.as_ref().map_or(Json::Null, key_json),
             "start_local_ms": Json::num(self.start_local_ms as f64),
             "tz_min": self.tz_min.map_or(Json::Null, Json::num),
             "start_utc_ms": Json::num(self.start_utc_ms as f64),
@@ -674,6 +808,8 @@ impl FightCard {
                     difficulty: u32_of(k, "difficulty").unwrap_or(0),
                     level: u32_of(k, "level"),
                     completed: bool_of(k, "completed"),
+                    // v47: absent on every older card, and on one with none.
+                    affixes: u32s_from(k.get("affixes")),
                 })
             }),
             start_local_ms: i64_of(v, "start_local_ms").unwrap_or(0),
@@ -710,6 +846,23 @@ impl FightCard {
             origin: origin_from(v.get("origin")),
         })
     }
+}
+
+/// A card's `key` object. v47: `affixes` last, and only when the key names
+/// some — every card without them is byte for byte what it was.
+fn key_json(k: &KeyInfo) -> Json {
+    let mut doc = obj! {
+        "map_id": Json::num(k.map_id),
+        "difficulty": Json::num(k.difficulty),
+        "level": opt_num(k.level.map(u64::from)),
+        "completed": opt_bool(k.completed),
+    };
+    if let Json::Obj(fields) = &mut doc
+        && !k.affixes.is_empty()
+    {
+        fields.push(("affixes".to_string(), u32s_json(&k.affixes)));
+    }
+    doc
 }
 
 /// v46: a card's origin. Absent or `null` is `Local`; any object is an
