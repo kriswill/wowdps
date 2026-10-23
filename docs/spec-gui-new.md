@@ -58,9 +58,9 @@ What the move buys, and what this spec has to prove it keeps:
 
 ## 3. Platform: which GPUI
 
-`gpui-kit = "=0.7.0"` with its default features, `component` and `assets`
+`gpui-kit = "=0.8.0"` with its default features, `component` and `assets`
 (no `tree-sitter*`, no `decimal`, no `inspector` outside debugging). Kit
-pins `gpui-pre =0.3.7` (a crates.io publication of a recorded Zed commit;
+pins `gpui-pre =0.3.9` (a crates.io publication of a recorded Zed commit;
 the library is still named `gpui`) and brings: `gpui-pre` (the framework),
 `gpui-pre-platform` (`application()`, `headless()`,
 `current_headless_renderer()`), `gpui-pre-linux` (Wayland via
