@@ -714,14 +714,46 @@ fn network_access_is_off() {
         lake.sql("SET custom_extension_repository = 'http://x'")
             .is_err()
     );
-    // The statically linked extensions are all a lake ever needs.
+    // The bundled cc build compiles DUCKDB_EXTENSION_AUTOINSTALL_DEFAULT=1
+    // and DUCKDB_EXTENSION_AUTOLOAD_DEFAULT=1 in (nixpkgs' CMake build left
+    // both off), so the SETs at open are the only guard: both read false.
+    let t = lake
+        .sql(
+            "SELECT current_setting('autoinstall_known_extensions'), \
+             current_setting('autoload_known_extensions')",
+        )
+        .unwrap();
+    assert_eq!(t.rows[0][0].as_bool(), Some(false), "{t:?}");
+    assert_eq!(t.rows[0][1].as_bool(), Some(false), "{t:?}");
+    // A query that needs ICU (not in the bundled build) binds DuckDB's
+    // extension stub, which tries a load whatever the autoload setting says.
+    // On a reading lake and on the writable one alike it must fail (nothing
+    // is installed, the lake's extension directory is empty) and leave ICU
+    // unloaded.
+    let writable = Lake::open_writable(&tmp.0).unwrap();
+    for l in [&lake, &writable] {
+        let err = l
+            .sql("SELECT TIMESTAMP '2026-01-01 00:00:00' AT TIME ZONE 'UTC'")
+            .unwrap_err();
+        assert!(err.contains("icu"), "{err}");
+        let t = l
+            .sql(
+                "SELECT count(*) FROM duckdb_extensions() WHERE loaded AND \
+                 extension_name = 'icu'",
+            )
+            .unwrap();
+        assert_eq!(t.rows[0][0].as_i64(), Some(0), "{t:?}");
+    }
+    // The statically linked extensions are all a lake ever needs: JSON and
+    // Parquet, the crate's bundled features. ICU is not in the bundled cc
+    // build, and no query uses it.
     let t = lake
         .sql(
             "SELECT extension_name FROM duckdb_extensions() WHERE loaded AND \
-             extension_name IN ('json', 'parquet', 'icu') ORDER BY 1",
+             extension_name IN ('json', 'parquet') ORDER BY 1",
         )
         .unwrap();
-    assert_eq!(t.rows.len(), 3, "{t:?}");
+    assert_eq!(t.rows.len(), 2, "{t:?}");
 }
 
 #[test]

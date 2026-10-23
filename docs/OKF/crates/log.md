@@ -1,5 +1,17 @@
 # Log
 
+## 2026-10-23
+
+- **Update** — [wowdps-history](history.md): DuckDB is bundled from the
+  crate's own source (`=1.10506.1`, JSON and Parquet features, no ICU)
+  instead of system-linked to nixpkgs' libduckdb; `tests/duckdb_version.rs`,
+  which held the pin to the library, is removed, and `network_access_is_off`
+  now holds the autoinstall / autoload `SET`s the bundled build's
+  compiled-in defaults leave as the only guard
+  ([decision](../decisions/duckdb-is-bundled-not-system-linked.md)).
+- **Update** — [wowdps-mcp](mcp.md): `history_sql`'s description says there
+  are no time zone functions (no ICU) and how to read local time instead.
+
 ## 2026-10-19
 
 - **Update** — [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),

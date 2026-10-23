@@ -88,7 +88,10 @@ through `cargo run`.
   answered from the per-machine talent dataset ([R14](../rulings/r14.md)),
   never the daemon.
 - `history_sql` shells out to `wowdps-history` and is registered only where
-  that binary exists.
+  that binary exists. Its description says there are no time zone functions
+  (the bundled DuckDB has no ICU) and points at `start_local_ms`, or
+  `start_utc_ms + tz_min * 60000`
+  ([DuckDB Is Bundled, Not System-Linked](../decisions/duckdb-is-bundled-not-system-linked.md)).
 
 ## Source
 

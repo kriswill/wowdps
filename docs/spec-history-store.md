@@ -140,6 +140,11 @@ writable for its `ATTACH`. Queries take bound parameters (`Lake::sql_with`,
 `--params`, the tool's `params`) so a string literal never crosses a quoting
 layer. This dependency was signed off (DuckDB 1.5.4 in the flake).
 
+> **Amended 2026-10-23:** DuckDB is now bundled from the crate's own source on
+> every platform (JSON and Parquet as features, no ICU); the `DUCKDB_*` wiring
+> and the pin-to-nixpkgs rule are gone. See
+> [DuckDB Is Bundled, Not System-Linked](OKF/decisions/duckdb-is-bundled-not-system-linked.md).
+
 ## 4. Prerequisite core changes
 
 Three small changes to `crates/core`, each a CONTRACT edit with fixture
@@ -551,7 +556,8 @@ sighting.
 
 **`crates/history` → binary `wowdps-history`,** reached as `wowdps history …`
 through the existing external dispatch. model + proto + `duckdb =
-"=1.10504.0"` (system-linked to nixpkgs' 1.5.4), plus the daemon crate for
+"=1.10504.0"` (system-linked to nixpkgs' 1.5.4; bundled since 2026-10-23,
+see §3's amendment), plus the daemon crate for
 its config reader alone — `--dir`, else config `history_dir`, else the XDG
 default, so SQL always reads the lake the daemon writes (the draft's "model +
 proto only" lost that). Opens with `threads = 2`, `memory_limit = 4GB`,

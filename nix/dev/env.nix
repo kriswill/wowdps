@@ -1,33 +1,19 @@
 # The environment variables a dev shell must export, and the native libraries
-# behind them. Split out because `duckdbEnv` is not only a shell concern:
-# flake.nix's PACKAGE build needs the same two variables, and a package is not
-# a shell.
+# behind them.
 {
   pkgs,
   lib ? pkgs.lib,
 }:
 rec {
-  # The history store's analytical reader (`wowdps-history`, reached as
-  # `wowdps history`) links libduckdb from nixpkgs — SYSTEM-linked, never the
-  # crate's `bundled` build (a ~15 minute C++ compile on CI). nixpkgs ships no
-  # .pc for it, so the sys crate is pointed at the lib / dev outputs by these
-  # two variables; the crate version is pinned to the library's
-  # (crates/history/Cargo.toml).
-  duckdbEnv = {
-    DUCKDB_LIB_DIR = "${lib.getLib pkgs.duckdb}/lib";
-    DUCKDB_INCLUDE_DIR = "${lib.getDev pkgs.duckdb}/include";
-  };
-
   # Dlopened at runtime, so nothing links them and nothing on the build side
   # would notice they are missing: the GUI's GPUI reaches for wayland-client
-  # and vulkan/EGL (wgpu), libxkbcommon rides along for the binary's baked
-  # RUNPATH (crates/gui/build.rs), and `cargo test -p wowdps-history`
-  # reaches for libduckdb. On NixOS none of them are on the default search
-  # path.
-  libraries = [
-    (lib.getLib pkgs.duckdb)
-  ]
-  ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+  # and vulkan/EGL (wgpu), and libxkbcommon rides along for the binary's
+  # baked RUNPATH (crates/gui/build.rs). On NixOS none of them are on the
+  # default search path. The history store's analytical reader
+  # (`wowdps-history`) needs nothing here: it bundles DuckDB, compiled from
+  # the crate's own source with the C++ compiler the shell already provides
+  # (clang++, CXX; see the linker note below).
+  libraries = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
     pkgs.wayland
     pkgs.libxkbcommon
     pkgs.vulkan-loader
@@ -82,7 +68,8 @@ rec {
   # devenv's languages.rust links through Clang on Linux (`clangLinker`,
   # its default: it sidesteps GCC collect2's "Argument list too long" in
   # large Nix environments), and the clang it puts on PATH sets CC=clang and
-  # CXX=clang++. On x86_64-unknown-linux-gnu, where rustc links with LLD out
+  # CXX=clang++ (the compilers the cc-built crates use, DuckDB's bundled
+  # C++ among them). On x86_64-unknown-linux-gnu, where rustc links with LLD out
   # of the box and stops adding its LLD flags once a driver is named, it
   # names its `devenv-rust-linker` script, which forces ld.lld; on any other
   # target, clang itself. The flake shell mirrors all of it: it adds the
@@ -124,10 +111,14 @@ rec {
   # sysroot and misses everything), and in a checkout that cargo rebuilds
   # without rustc's inputs changing (a `cargo clean`, a branch switched away
   # and back). A second worktree misses — SCCACHE_BASEDIRS did not normalise
-  # Rust compiles (tested 2026-10-04).
+  # Rust compiles (tested 2026-10-04). cc-rs puts RUSTC_WRAPPER in front of
+  # the C/C++ compiler too, but the bundled DuckDB's ~350 C++ units are
+  # unpacked into libduckdb-sys's OUT_DIR and compiled by absolute path, so
+  # they hit only while that OUT_DIR is unchanged: any version change in
+  # libduckdb-sys's build-dependency closure moves it and recompiles them.
   rustcWrapper = "${pkgs.sccache}/bin/sccache";
 
-  env = duckdbEnv // {
+  env = {
     LD_LIBRARY_PATH = lib.makeLibraryPath libraries;
     RUSTC_WRAPPER = rustcWrapper;
   };

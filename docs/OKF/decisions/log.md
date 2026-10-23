@@ -1,5 +1,14 @@
 # Log
 
+## 2026-10-23
+
+- **Creation** — [DuckDB Is Bundled, Not System-Linked](duckdb-is-bundled-not-system-linked.md):
+  `wowdps-history` compiles DuckDB from the crate's own source on every
+  platform (JSON and Parquet, no ICU), dropping the pin to nixpkgs'
+  libduckdb that held the crate a release behind and kept three zip
+  advisories open; no DuckDB debug info in debug builds, dependabot held
+  to DuckDB 1.x.
+
 ## 2026-10-19
 
 - **Creation** — [An Import Carries Its Meter](an-import-carries-its-meter.md):
