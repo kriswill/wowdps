@@ -284,7 +284,10 @@ mod tests {
     /// advance at every weight the window uses — so a column of figures lines
     /// up whatever the theme (the bakes in `crates/gui-logic/fonts/README.md`).
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "gpui's mac platform must be created on the main thread")]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "gpui's mac platform must be created on the main thread"
+    )]
     fn every_theme_s_faces_are_bundled_and_tabular() {
         use gpui_kit::{FontWeight, font, px};
         use wowdps_gui_logic::theme::themes;
@@ -332,7 +335,10 @@ mod tests {
     /// variable font's default width, 151 units wider than A (the advances
     /// step in `crates/gui-logic/fonts/README.md`).
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "gpui's mac platform must be created on the main thread")]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "gpui's mac platform must be created on the main thread"
+    )]
     fn every_theme_s_faces_set_a_capital_s_mark_in_its_width() {
         use gpui_kit::{FontWeight, font, px};
         use wowdps_gui_logic::theme::themes;

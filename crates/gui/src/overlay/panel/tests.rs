@@ -408,7 +408,10 @@ fn a_row_opens_its_drill_and_a_badge_picks_its_player(cx: &mut TestAppContext) {
 /// window and never slides (`place`/`grip_moved`), so they are skipped
 /// there; the shared math still compiles in.
 #[gpui_kit::test]
-#[cfg_attr(target_os = "macos", ignore = "macOS re-anchors by reopening; resize and the drag slide are Linux semantics")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS re-anchors by reopening; resize and the drag slide are Linux semantics"
+)]
 fn the_header_collapses_the_panel_and_the_tab_expands_it(cx: &mut TestAppContext) {
     let rig = kill(cx);
     cx.update_window(rig.window, |_, window, cx| {
@@ -430,7 +433,10 @@ fn the_header_collapses_the_panel_and_the_tab_expands_it(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
-#[cfg_attr(target_os = "macos", ignore = "macOS re-anchors by reopening; resize and the drag slide are Linux semantics")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS re-anchors by reopening; resize and the drag slide are Linux semantics"
+)]
 fn a_drag_on_the_grip_slides_the_content_along_the_edge_and_is_remembered(cx: &mut TestAppContext) {
     let rig = kill(cx);
     let header_y = |cx: &mut TestAppContext| {
@@ -470,7 +476,10 @@ fn a_drag_on_the_grip_slides_the_content_along_the_edge_and_is_remembered(cx: &m
 }
 
 #[gpui_kit::test]
-#[cfg_attr(target_os = "macos", ignore = "macOS re-anchors by reopening; resize and the drag slide are Linux semantics")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS re-anchors by reopening; resize and the drag slide are Linux semantics"
+)]
 fn hidden_draws_nothing_and_comes_back_whole(cx: &mut TestAppContext) {
     let rig = kill(cx);
     let header = |cx: &mut TestAppContext| {
@@ -746,7 +755,10 @@ fn compared<C: AppContext>(cx: &mut C, rig: &Rig) {
 }
 
 #[gpui_kit::test]
-#[cfg_attr(target_os = "macos", ignore = "macOS re-anchors by reopening; resize and the drag slide are Linux semantics")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS re-anchors by reopening; resize and the drag slide are Linux semantics"
+)]
 fn two_picks_open_the_comparison_which_backs_out_one_level_at_a_time(cx: &mut TestAppContext) {
     let rig = kill(cx);
     let keys: Vec<String> = rig.session.read_with(cx, |s, _| {
