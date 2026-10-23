@@ -2,7 +2,8 @@
 
 Dev-time tools: the game-data generators (`gen-*.sh`) and their censuses
 (`census-*.sh`), the extractor `wowdps-extract` (`tools/extract/`), the dev
-unit, the overlay replay, the GPUI docs fetcher and the skills updater.
+unit, the overlay replay, the GPUI docs fetcher, the skills updater and the
+local CodeQL check.
 Each script's header says what it does and how to run it; each has a doc
 under `docs/OKF/tools/`, and the extractor's structure is
 `docs/OKF/crates/extract.md`.
@@ -38,6 +39,10 @@ under `docs/OKF/tools/`, and the extractor's structure is
   skills in `.claude/skills/`.
 - **`overlay-replay.sh` replays real logs:** its inputs and results hold
   real names and stay outside the checkout.
+- **`codeql.sh` mirrors GitHub's CodeQL run** (rust and actions, the
+  default suites, pinned query packs) and fails only on an alert missing
+  from `codeql-baseline.txt`, which `--accept` rewrites. Run it as
+  `wowdps-codeql`: the dev shells carry the CLI.
 
 ```sh
 tools/gen-class-spells.sh      # class_spells.rs (R8)
@@ -56,6 +61,7 @@ tools/extract/verify.sh --game "$WOW_DIR"  # tables from the install's CASC
 tools/dev-unit.sh install | status | profile debug | profile release | uninstall
 tools/fetch-gpui-docs.sh [kit-version]     # the gitignored docs/gpui mirror
 tools/skills-update.sh
+wowdps-codeql [--accept] [rust|actions]    # tools/codeql.sh, gated on codeql-baseline.txt
 ```
 
 `cargo run -q -p wowdps-extract` with no arguments prints the extractor's

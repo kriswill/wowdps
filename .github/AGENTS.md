@@ -19,3 +19,8 @@ CI and dependency automation. Rationale:
 - **Every action is pinned to a commit SHA,** its version in a trailing
   comment for Dependabot; no checkout persists its credentials.
 - **`[skip ci]`** anywhere in a head commit's message skips PR CI.
+- **CodeQL runs through the repository's default setup,** a repository
+  setting, not a workflow file: rust and actions on every PR, failing only
+  on an alert not already open on main. Its local mirror is
+  `wowdps-codeql` (`tools/codeql.sh`, with the accepted alerts in
+  `tools/codeql-baseline.txt`).

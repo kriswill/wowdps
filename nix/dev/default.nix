@@ -12,6 +12,8 @@
 #   env.nix       the dlopened libraries behind LD_LIBRARY_PATH, the pinned
 #                 PKG_CONFIG_PATH, the flake's mirror of devenv's clang and
 #                 linker, sccache
+#   codeql.nix    the CodeQL CLI (the one unfree nixpkgs package, allowed by
+#                 name) and wowdps-codeql, the local code-scanning check
 #   contract.nix  what a shell must deliver, as a runnable check
 {
   pkgs,
@@ -20,9 +22,10 @@
 let
   wrappers = import ./wrappers.nix { inherit pkgs; };
   env = import ./env.nix { inherit pkgs lib; };
+  codeql = import ./codeql.nix { inherit pkgs lib; };
   contract = import ./contract.nix {
     inherit pkgs lib;
-    commands = wrappers.names;
+    commands = wrappers.names ++ codeql.names;
     inherit (env)
       pinned
       rustcWrapper
@@ -33,7 +36,7 @@ let
 in
 {
   # Every command name the shells promise, the contract checker included.
-  commands = wrappers.names ++ [ "wowdps-dev-contract" ];
+  commands = wrappers.names ++ codeql.names ++ [ "wowdps-dev-contract" ];
 
   inherit (env) env;
 
@@ -49,6 +52,7 @@ in
   # Everything both shells install EXCEPT the Rust toolchain and okf.
   packages =
     wrappers.packages
+    ++ codeql.packages
     ++ [
       contract
       # Coverage: `cargo llvm-cov --workspace`; the llvm-cov / llvm-profdata
@@ -64,6 +68,9 @@ in
       # The compiler cache RUSTC_WRAPPER names, on PATH for its
       # `--show-stats` (see env.nix).
       pkgs.sccache
+      # jq reads wowdps-codeql's SARIF and `wowdps history sql --json`; on
+      # PATH so neither leans on the host having one.
+      pkgs.jq
     ]
     # The GUI's GPUI links libxkbcommon at build time, with libxcb for its
     # X11 backend, and fontconfig (font-kit's yeslogic-fontconfig-sys
