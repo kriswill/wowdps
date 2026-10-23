@@ -22,7 +22,7 @@ Read before the work it covers:
   Hyprland IPC, keys, models, words, geometry) belongs to
   `crates/gui-logic`, with its tests. The GUI brings a text measure and its
   paint.
-- **Stock GPUI only.** `gpui-kit` is pinned exactly (`=0.7.0`) with its
+- **Stock GPUI only.** `gpui-kit` is pinned exactly (`=0.8.0`) with its
   default features and no `tree-sitter*`; no `[patch]`, no fork. Design
   around a missing capability or contribute it upstream. A GPUI or Kit bump
   is its own change. Our code names no transitive crate except serde/toml
