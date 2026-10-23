@@ -30,8 +30,11 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
   on the old path spawned 628 daemons in half an hour and the compositor
   called it unresponsive. `DaemonClient`'s reader thread coalesces stale
   snapshots. Without `/proc` (macOS) the socket dir's ownership check
-  learns our uid from a probe file created exclusively in the temp dir; a
-  probe that cannot be created reads as uid 0 and fails the check closed.
+  learns our uid once per process, so every caller agrees on the dir, from
+  a probe file created exclusively in the temp dir under a name no other
+  try in the process takes (pid plus a counter, which steps past a crashed
+  process's leftover); a temp dir where no probe can be created reads as
+  uid 0 and fails the check closed.
   The handshake ignores only macOS's EINVAL from clearing its read timeout
   after the peer has closed.
 - `state.rs` — `ClientState`, the accessor surface renderers draw from
