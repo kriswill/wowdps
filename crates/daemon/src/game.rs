@@ -1,19 +1,20 @@
 //! Is the game running? A 3-second sweep for a case-insensitive substring
 //! of comm or cmdline — which is what finds wine's `Z:\...\Wow.exe`
-//! however Proton launches it. Linux sweeps /proc; macOS asks `pgrep`.
+//! however Proton launches it. macOS asks `pgrep`; every other system
+//! sweeps /proc, so one without it never sees the game.
 
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(not(target_os = "macos"), test))]
 use std::path::Path;
 
 use crate::hub::HubMsg;
 
 pub const POLL: Duration = Duration::from_secs(3);
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "macos"))]
 pub fn game_running(pattern: &str) -> bool {
     scan_proc(Path::new("/proc"), pattern)
 }
@@ -34,7 +35,7 @@ pub fn game_running(pattern: &str) -> bool {
 }
 
 /// Testable core: sweep `root` as if it were /proc.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(not(target_os = "macos"), test))]
 pub fn scan_proc(root: &std::path::Path, pattern: &str) -> bool {
     let Ok(entries) = std::fs::read_dir(root) else {
         return false;
@@ -56,7 +57,7 @@ pub fn scan_proc(root: &std::path::Path, pattern: &str) -> bool {
 }
 
 /// Case-insensitive substring over comm and the NUL-separated cmdline.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(not(target_os = "macos"), test))]
 pub fn matches(pattern: &str, comm: &[u8], cmdline: &[u8]) -> bool {
     if pattern.is_empty() {
         return false;
