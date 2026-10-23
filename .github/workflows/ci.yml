@@ -237,9 +237,9 @@ jobs:
       # (about 0.6 GB each, crowding main's out of the 10 GB budget), and
       # main never runs this job to save one every PR could read. It
       # compiles from scratch beside the `ci` job, which takes longer.
-      # No distro libduckdb here: the history crate is the one workspace
-      # member with a native dependency, and it builds only in the flake
-      # shell (system-linked, never bundled). The canary still covers every
+      # The history crate is left out: it bundles DuckDB, and with no cache
+      # here its C++ compile would cost the canary several minutes for a
+      # crate the `ci` job already lints. The canary still covers every
       # stdlib-only crate.
       - id: clippy
         run: cargo clippy --workspace --exclude wowdps-history --all-targets -- -D warnings

@@ -245,9 +245,11 @@ impl Lake {
         // Offline by construction: nothing auto-installs or auto-loads, an
         // explicit INSTALL can only look in a repository that does not
         // exist (never the network, never ~/.duckdb), and LOAD can only find
-        // what sits in the lake's own (empty) extension directory. JSON,
-        // Parquet and ICU are statically linked in the nixpkgs build, so
-        // nothing here needs an extension anyway.
+        // what sits in the lake's own (empty) extension directory. The
+        // bundled build compiles autoinstall and autoload ON by default, so
+        // these SETs are the only guard (tests/parity.rs holds them). JSON
+        // and Parquet come in statically through the crate's bundled
+        // features, so nothing here needs an extension anyway.
         let quoted = |p: PathBuf| p.display().to_string().replace('\'', "''");
         conn.execute_batch(&format!(
             "SET autoinstall_known_extensions = false;\n\

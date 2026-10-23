@@ -871,7 +871,10 @@ pub fn catalog() -> Vec<Tool> {
                           efficiency by boss and the per-spell shield drill — are in \
                           the repo's docs/history-queries.md; `wowdps history role-night` \
                           answers the role_night question from SQL. Read-only, offline; \
-                          returns {columns, rows}. Notes: fights.success is the kill \
+                          returns {columns, rows}. No time zone functions (the bundled \
+                          DuckDB has no ICU): for local time use start_local_ms, or \
+                          start_utc_ms + tz_min * 60000 (tz_min is minutes east of UTC, \
+                          NULL on a legacy log). Notes: fights.success is the kill \
                           flag (no result column); fights.owner is as written — the \
                           daemon resolves \"me\" at answer time, so older files read null \
                           here while history/progression name the owner; players.dps is \

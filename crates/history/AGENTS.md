@@ -8,13 +8,19 @@ subcommands: `docs/OKF/crates/history.md`. Recipes:
 ## Rules
 
 - **Offline by construction.** DuckDB opens in memory with autoinstall and
-  autoload off and its configuration locked. Never add an extension or a
+  autoload off and its configuration locked. The bundled build compiles
+  both defaults ON, so those `SET`s in `Lake::open_with` are the only
+  guard; `network_access_is_off` holds them. Never add an extension or a
   network path.
-- **DuckDB stays in this binary**, never in the daemon. It is
-  system-linked to nixpkgs' libduckdb, never `bundled`; the `duckdb` crate
-  pin encodes the library version (`=1.10505.0` is DuckDB 1.5.5), and
-  `tests/duckdb_version.rs` fails by name when they drift. Build and test
-  in the dev shell (it sets `DUCKDB_LIB_DIR`).
+- **DuckDB stays in this binary**, never in the daemon. It is `bundled`:
+  the `duckdb` crate compiles its own DuckDB source (`=1.10506.1` is DuckDB
+  1.5.6) with the `json` and `parquet` features; ICU is not in that build,
+  so no query may use it (no time zone functions). The C++ compile (about
+  a minute on 24 cores) is reused by sccache only while libduckdb-sys's
+  OUT_DIR is unchanged: any version change in its build-dependency closure
+  compiles it again. Build in the dev shell, which provides the C++
+  compiler. Stay on DuckDB 1.x (dependabot ignores `>= 1.20000.0`); 2.0 is
+  its own change.
 - **Probe before you define.** A view over a nested field is defined only
   after a probe proves the field exists and is typed: DuckDB types an
   all-empty field as JSON, which answers struct references with more JSON

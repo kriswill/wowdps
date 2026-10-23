@@ -1049,10 +1049,11 @@ resolve through; the rubric is reviewed as TOML files under the crate's own
 `seasons/` and embedded at build time, and every reader reads and writes it through this
 crate, never naming serde/toml itself — the daemon among them (v45: its replay cut reads the
 rubric's generated `placed` table through core's `replay::PlacedTable`). history: model + proto + duckdb
-(SYSTEM-linked to nixpkgs' libduckdb, the crate version pinned to the
-library's; never `bundled` — signed off 2026-09-02 for roadmap item 1, the one
-analytical engine in the tree, and it lives in the `wowdps-history` binary
-only, never in the daemon). Everything else stdlib unless justified and signed
+(`bundled`: compiled from the crate's own DuckDB source on every platform,
+with the `json` and `parquet` features and no ICU — signed off 2026-09-02 for
+roadmap item 1 and re-decided 2026-10-23 for bundling; the one analytical
+engine in the tree, and it lives in the `wowdps-history` binary only, never in
+the daemon). Everything else stdlib unless justified and signed
 off. No chrono (hand-parse the timestamp), no tokio (threads +
 channels), no serde outside the gui crates (gui, gui-logic) and
 encounter-rubric — rules for our own code; a GUI framework accepted as a unit above may pull any of

@@ -9,9 +9,9 @@
 # mirrors what devenv's languages.rust adds on its own (env.nix).
 #
 #   wrappers.nix  the commands about this repo — generators, workspace binaries
-#   env.nix       DUCKDB_*, the dlopened libraries behind LD_LIBRARY_PATH, the
-#                 pinned PKG_CONFIG_PATH, the flake's mirror of devenv's clang
-#                 and linker, sccache
+#   env.nix       the dlopened libraries behind LD_LIBRARY_PATH, the pinned
+#                 PKG_CONFIG_PATH, the flake's mirror of devenv's clang and
+#                 linker, sccache
 #   contract.nix  what a shell must deliver, as a runnable check
 {
   pkgs,
@@ -35,9 +35,6 @@ in
   # Every command name the shells promise, the contract checker included.
   commands = wrappers.names ++ [ "wowdps-dev-contract" ];
 
-  # Re-exported for flake.nix's package build, which needs the two DUCKDB_*
-  # variables without wanting a shell.
-  inherit (env) duckdbEnv;
   inherit (env) env;
 
   # Run LAST by devenv (`enterShell`): it exports the pinned PKG_CONFIG_PATH
@@ -64,8 +61,6 @@ in
       # (crates/core/fixtures/verify.sh), locally and in CI — the CI check job
       # runs inside this shell.
       pkgs.gawk
-      # libduckdb for `wowdps-history` (see env.nix).
-      pkgs.duckdb
       # The compiler cache RUSTC_WRAPPER names, on PATH for its
       # `--show-stats` (see env.nix).
       pkgs.sccache

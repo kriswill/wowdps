@@ -56,3 +56,11 @@ taffy = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 swash = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
+# The history reader's bundled DuckDB, ~350 C++ units: no debug info. Cargo
+# hands its build script DEBUG=false, so cc-rs drops -g and the build script
+# defines NDEBUG, which turns DuckDB's internal assertions off as a release
+# build does (DuckDB's own code, not ours: nothing here steps into it).
+# Measured 2026-10-23 (24 cores): OUT_DIR 1.8 GB -> 782 MB, libduckdb.a and
+# the rlib 951 -> 412 MB each, the parity test binary 594 -> 361 MB, the
+# build-script run 55.5 -> 48.9 s.
+libduckdb-sys = { debug = false }
