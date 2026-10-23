@@ -64,7 +64,7 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_SERVICE_V2', 'on');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: devenv-${{ hashFiles('flake.lock', 'devenv.lock', 'devenv.yaml', 'devenv.nix', 'nix/dev/**') }}
           cmd-format: devenv shell -- {0}
