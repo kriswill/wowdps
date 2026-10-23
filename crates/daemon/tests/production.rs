@@ -54,14 +54,20 @@ static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn the_source_comes_from_the_override_the_config_or_nowhere() {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = sandbox();
-    let cfg = Config::default();
 
-    // Nothing configured, nothing installed: a clear error, no made-up path.
-    let err = DaemonOptions::production(&cfg, None, false)
-        .err()
-        .expect("no source");
-    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
-    assert!(err.to_string().contains("no logs_dir configured"), "{err}");
+    // Nothing configured, nothing installed: a clear error, no made-up
+    // path. Off macOS only: discovery also scans /Applications, which a
+    // machine with the game installed fills (as core's cli tests note),
+    // making the error path unreachable there.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let cfg = Config::default();
+        let err = DaemonOptions::production(&cfg, None, false)
+            .err()
+            .expect("no source");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("no logs_dir configured"), "{err}");
+    }
 
     // The config's logs_dir.
     let configured = Config {
@@ -125,7 +131,12 @@ fn a_production_daemon_runs_with_the_cache_and_watcher_wired() {
 
     let daemon = thread::spawn(move || run(opts));
     let deadline = Instant::now() + DEADLINE;
-    while !socket.exists() {
+    loop {
+        // The socket's vnode appears at bind(); listen() follows. A connect
+        // in that gap is refused, so readiness is a connect, not exists().
+        if UnixStream::connect(&socket).is_ok() {
+            break;
+        }
         assert!(Instant::now() < deadline, "daemon never bound {socket:?}");
         thread::sleep(Duration::from_millis(5));
     }

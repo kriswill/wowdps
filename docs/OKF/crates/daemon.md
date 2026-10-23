@@ -24,7 +24,10 @@ The wowdps daemon: one process owns tail → index → parse → meter → snaps
 - `loader.rs` — historical parses off the hub thread.
 - `server.rs` — accept, reader and writer threads; the lockfile is taken
   before the stale socket is unlinked.
-- `game.rs` — a 3 s `/proc` sweep for `game_process`.
+- `game.rs` — a 3 s sweep for `game_process`: `pgrep -fil` on macOS, a
+  /proc scan everywhere else (default: `World of Warcraft.app` on macOS,
+  `wow.exe` elsewhere —
+  `config::default_game_process`).
 - `overlay.rs` — the supervisor (below): spawns `<gui_binary> --overlay` on
   game start, `SetVisible` on exit, exit-grace termination, manual-hide
   stickiness, spawn stderr surfaced in `Status`. The daemon's exit

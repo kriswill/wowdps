@@ -109,6 +109,10 @@ pub struct Overlay {
     started: Instant,
     /// The surface size last asked of the compositor.
     sized: Option<(u32, u32)>,
+    /// macOS: the content outgrew the window and a resize would keep the
+    /// wrong corner — render asks for a re-anchor on this.
+    #[cfg(target_os = "macos")]
+    reopen: bool,
     /// Each graph's own state: the drill's, or a comparison's two.
     graphs: [graph::Shared; 2],
     _session: Vec<Subscription>,
@@ -184,6 +188,8 @@ impl Overlay {
             } else {
                 wowdps_gui_logic::hypr::socket_dir()
             },
+            #[cfg(target_os = "macos")]
+            reopen: false,
             _game: None,
             _theme_watch: None,
             graphs: Default::default(),
@@ -511,7 +517,14 @@ impl Render for Overlay {
         // there (a badge, a right press, the daemon's answer). On the edge
         // strip, that size is the content's; the strip spans the edge.
         let listener = self.grip_listener(cx).into_any_element();
-        let Some(placed) = self.place(window, cx) else {
+        let placed = self.place(window, cx);
+        // macOS: a size change re-anchors — the new window opens before
+        // the old one goes, so the app never stands without a surface.
+        #[cfg(target_os = "macos")]
+        if std::mem::take(&mut self.reopen) {
+            cx.emit(Reanchor(self.cfg.edge));
+        }
+        let Some(placed) = placed else {
             // Hidden: nothing drawn, nothing taking input.
             return div().size_full().child(listener).into_any_element();
         };

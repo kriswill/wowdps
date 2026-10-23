@@ -437,6 +437,10 @@ fn a_death_s_line_opens_its_recap(cx: &mut TestAppContext) {
 /// the window's bottom, and the owner's chip is on the header, in their
 /// role's place.
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "gpui's mac platform must be created on the main thread"
+)]
 fn the_chrome_leaves_a_raid_its_rows() {
     let mut cx = super::shots::app();
     own_config();

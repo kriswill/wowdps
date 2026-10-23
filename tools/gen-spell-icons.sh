@@ -12,7 +12,8 @@
 # usage: tools/gen-spell-icons.sh [wow-dir]
 #   wow-dir: folder holding .build.info and Data/. When omitted the tool
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
-#   logs_dir, or a scan of Steam compatdata prefixes).
+#   logs_dir, or a scan of the install roots (Steam compatdata on
+#   Linux, /Applications and ~/Applications on macOS).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

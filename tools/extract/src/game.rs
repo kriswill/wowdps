@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 /// Find the install without a hardcoded path. In order: `$WOWDPS_WOW_DIR`,
 /// the wowdps config's `logs_dir` (walking up to the folder holding
 /// `.build.info` — the daemon already knows where the game is), then a
-/// scan of the conventional Steam compatdata roots (shared with the
-/// daemon: `wowdps_core::cli`). Exactly one scan hit is required; several
+/// scan of the conventional install roots (shared with the daemon:
+/// `wowdps_core::cli` — Steam compatdata on Linux, `/Applications` and
+/// `~/Applications` on macOS). Exactly one scan hit is required; several
 /// installs must be disambiguated explicitly — unlike the daemon, a CLI
 /// user is there to answer.
 pub fn locate() -> Result<PathBuf, String> {
@@ -47,7 +48,7 @@ pub fn locate() -> Result<PathBuf, String> {
                 .into(),
         ),
         [only] => {
-            eprintln!("install: {} (from Steam scan)", only.display());
+            eprintln!("install: {} (from install scan)", only.display());
             Ok(only.clone())
         }
         _ => Err(format!(
@@ -232,7 +233,11 @@ mod tests {
         assert_eq!(locate().unwrap(), wow);
 
         unsafe { std::env::remove_var("WOWDPS_WOW_DIR") };
-        // Nothing configured, no Steam roots: a clear error.
+        // Nothing configured, no scan roots: a clear error. The Steam
+        // roots below exist only off macOS — discovery checks the
+        // Applications roots there, which a machine with the game
+        // installed fills (as core's cli tests note).
+        #[cfg(not(target_os = "macos"))]
         assert!(locate().unwrap_err().contains("no WoW install found"));
         std::fs::write(
             cfg.join("wowdps").join("config.toml"),
@@ -246,13 +251,16 @@ mod tests {
         std::fs::remove_file(cfg.join("wowdps").join("config.toml")).unwrap();
 
         // One Steam install: found; two: ambiguous.
-        let compat = home.join(".steam/steam/steamapps/compatdata");
-        let steam1 = compat.join("1/pfx/drive_c/Program Files (x86)/World of Warcraft");
-        make_install(&steam1);
-        assert_eq!(locate().unwrap(), steam1.canonicalize().unwrap());
-        let steam2 = compat.join("2/pfx/drive_c/Program Files (x86)/World of Warcraft");
-        make_install(&steam2);
-        assert!(locate().unwrap_err().contains("multiple WoW installs"));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let compat = home.join(".steam/steam/steamapps/compatdata");
+            let steam1 = compat.join("1/pfx/drive_c/Program Files (x86)/World of Warcraft");
+            make_install(&steam1);
+            assert_eq!(locate().unwrap(), steam1.canonicalize().unwrap());
+            let steam2 = compat.join("2/pfx/drive_c/Program Files (x86)/World of Warcraft");
+            make_install(&steam2);
+            assert!(locate().unwrap_err().contains("multiple WoW installs"));
+        }
 
         unsafe {
             std::env::remove_var("XDG_CONFIG_HOME");
