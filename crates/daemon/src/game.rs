@@ -27,7 +27,7 @@ pub fn game_running(pattern: &str) -> bool {
 pub fn game_running(pattern: &str) -> bool {
     !pattern.is_empty()
         && std::process::Command::new("/usr/bin/pgrep")
-            .args(["-fil", pattern])
+            .args(["-fil", "--", pattern])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
