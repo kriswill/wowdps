@@ -2,6 +2,15 @@
 
 ## 2026-10-23
 
+- **Update** — macOS support (PR #111): [wowdps-core](core.md) discovers
+  installs under `/Applications` and `~/Applications`;
+  [wowdps-daemon](daemon.md) finds the game with `pgrep -fil` there
+  (default `game_process` `World of Warcraft.app`), and every other
+  system keeps the /proc sweep; [wowdps-gui](gui.md) draws the overlay
+  as a floating non-activating panel exactly the content's size,
+  re-anchored on every size change, its display chosen by index; the
+  [wowdps-proto](proto.md) client runs without `/proc`. DuckDB needs no
+  macOS case: it is bundled everywhere (entry below).
 - **Update** — [wowdps-history](history.md): DuckDB is bundled from the
   crate's own source (`=1.10506.1`, JSON and Parquet features, no ICU)
   instead of system-linked to nixpkgs' libduckdb; `tests/duckdb_version.rs`,
