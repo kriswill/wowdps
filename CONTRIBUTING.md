@@ -31,7 +31,8 @@ short:
     `image` only to build GPUI `RenderImage` frames.
   - gui-logic: serde/toml.
   - encounter-rubric: serde/toml, the one engine-side crate that names them.
-  - history: duckdb, system-linked to nixpkgs' libduckdb, never bundled.
+  - history: duckdb, bundled (compiled from the crate's own source, JSON and
+    Parquet features, no ICU).
 - No `[patch]` and no fork of GPUI or GPUI Kit: a capability GPUI lacks is
   designed around or contributed upstream.
 - No chrono (timestamps are hand-parsed), no tokio (threads + channels), no
@@ -65,10 +66,12 @@ up; the Nix shells build the same toolchain from that file). The code must
 still build on stable — `rust-version` in Cargo.toml is the floor and CI's
 canary checks it — so don't reach for `#![feature]`.
 
-Building the GUI and `wowdps-history` (so `cargo test --workspace` too) needs
-system libraries: the ones GPUI links and loads, and libduckdb. On NixOS use
-the dev shell (devenv, the reference, or `nix develop`). The daemon/TUI
-binary is pure Rust and builds anywhere.
+Building the GUI (so `cargo test --workspace` too) needs the system
+libraries GPUI links and loads, and `wowdps-history` needs a C++ compiler for
+its bundled DuckDB (about 350 C++ units, compiled again whenever
+libduckdb-sys's build inputs change). On NixOS use
+the dev shell (devenv, the reference, or `nix develop`), which provides both.
+The daemon/TUI binary is pure Rust and builds anywhere.
 
 ## LLM-assisted contributions
 
