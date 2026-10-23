@@ -282,7 +282,11 @@ pub fn catalog() -> Vec<Tool> {
                           back. `players: all` rows also carry the same scalars, but of \
                           the R17 tank split only taken and dtps: mitigated, prevented, \
                           reduced and mitigated_pct ride me/peer alone (as do tank_pair \
-                          and healers).",
+                          and healers). A keystone run's `instance` names key_level, \
+                          completed and (v47) affixes: the affix ids its \
+                          CHALLENGE_MODE_START listed, in that order — empty for a run \
+                          the log joined mid-way, and on a card stored before v47 until \
+                          regrade_fights rewrites it.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -599,7 +603,20 @@ pub fn catalog() -> Vec<Tool> {
                           where no line reported it; a pet's pool is never the player's). \
                           ASK THIS for a healer's mana curve: when they ran dry, how long \
                           they sat full. Absent below the details tier and on a record \
-                          written before it until regrade_fights.",
+                          written before it until regrade_fights. The `fight` object is \
+                          the stored card: on a keystone run its `instance` names \
+                          key_level, completed and (v47) affixes, the affix ids its \
+                          CHALLENGE_MODE_START listed, in that order — empty for a run \
+                          the log joined mid-way, and on a card stored before v47 until \
+                          regrade_fights rewrites it. An IMPORTED fight (`fight.origin` \
+                          names its source; `history` never lists one) answers its card \
+                          alone, tier card: since v48 its `fight.players` carry each \
+                          player's meter as the source gave it under the same rulings \
+                          (damage/dps, healing/hps, overheal, absorbed, heal_absorbed, \
+                          deaths, taken/dtps, support_given/support_received, \
+                          healed_received, self_healed, rated over combat_ms; the \
+                          mitigation split, aura spans and shields stay 0), with no view \
+                          rows, and a drill or a from_secs/to_secs window is an error.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -812,9 +829,13 @@ pub fn catalog() -> Vec<Tool> {
                           id, kind, name, encounter{id,difficulty,group_size}, key, \
                           start_utc_ms, duration_ms, success, aborted, build, owner, \
                           pinned, players[], and v46 imported: true for a fight imported \
-                          from outside this machine's logs, whose players carry no \
-                          numbers — add `AND NOT imported` to any question about the \
-                          user's own history: averages, kills, bests, ranks), players (one \
+                          from outside this machine's logs, whose players carry (since \
+                          v48) the meter the importer reckoned, rated over combat_ms, and \
+                          before v48 no numbers — add `AND NOT imported` to any question \
+                          about the user's own history: averages, kills, bests, ranks — and v47 \
+                          affixes: a keystone run's affix ids as a list, NULL off a key, \
+                          for a key the log joined mid-run (its END names none) and on a \
+                          card stored before v47), players (one \
                           row per player per fight: fight_id, imported, encounter_id, \
                           difficulty, guid, name, class, spec, role \
                           (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
@@ -833,7 +854,9 @@ pub fn catalog() -> Vec<Tool> {
                           median within fight and role, the DPS role by effective_dps; \
                           imported fights left out), rows (the \
                           seven views' meter rows + death recaps), details (breakdowns + timelines \
-                          for kills, bests, pins and longer wipes), loadouts, annotations, and \
+                          for kills, bests, pins and longer wipes, and since v48 an imported \
+                          fight's 1 s damage and healing curves, its lists empty), loadouts, \
+                          annotations, and \
                           the probed views taken, mitigation, taken_spells, taken_sources, \
                           support, support_targets, uptime (v25: fight × target guid × \
                           spell_id, label, kind by name, src = the caster, count, total_ms — \
@@ -848,7 +871,10 @@ pub fn catalog() -> Vec<Tool> {
                           efficiency by boss and the per-spell shield drill — are in \
                           the repo's docs/history-queries.md; `wowdps history role-night` \
                           answers the role_night question from SQL. Read-only, offline; \
-                          returns {columns, rows}. Notes: fights.success is the kill \
+                          returns {columns, rows}. No time zone functions (the bundled \
+                          DuckDB has no ICU): for local time use start_local_ms, or \
+                          start_utc_ms + tz_min * 60000 (tz_min is minutes east of UTC, \
+                          NULL on a legacy log). Notes: fights.success is the kill \
                           flag (no result column); fights.owner is as written — the \
                           daemon resolves \"me\" at answer time, so older files read null \
                           here while history/progression name the owner; players.dps is \
@@ -1675,17 +1701,42 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             "damage+player, healing+player (by_ability, by_target, timeline)",
         ));
     }
-    if f.tier < 2 {
-        // v46: an imported fight never had more than its card and replay.
-        return Err(if f.card.is_imported() {
-            format!(
-                "{fight_id}: an imported fight — the store keeps its card and replay only, no rows to answer from"
-            )
-        } else {
-            format!(
-                "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
-            )
+    // v46: an imported fight keeps no rows tier. v48: its card is its
+    // meter — every player's totals and rates — so it answers the card
+    // alone, and a window or a drill says what it lacks: never whole-fight
+    // totals in place of the stretch asked for.
+    if f.tier < 2 && f.card.is_imported() {
+        if window.is_some() {
+            return Err(format!(
+                "{fight_id}: an imported fight — the store keeps its card (each player's \
+                 whole-fight totals and rates, in `fight.players`) but no rows or series: there \
+                 is nothing to window; ask without from_secs/to_secs"
+            ));
+        }
+        if drill.is_some() {
+            return Err(format!(
+                "{fight_id}: an imported fight — the store keeps its card (each player's totals \
+                 and rates, in `fight.players`), its replay and its players' 1 s damage and \
+                 healing curves, but no rows: there is no breakdown to drill into"
+            ));
+        }
+        return Ok(obj! {
+            "fight": card_json(&f.card),
+            "tier": Json::str(tier_name),
+            "available_views": Json::Arr(Vec::new()),
+            "view": Json::str(view_name(view)),
+            "rows": Json::Arr(Vec::new()),
+            "note": Json::str(
+                "an imported fight: its meter is the card — fight.players carries each \
+                 player's totals and rates as the source gave them — and there are no view \
+                 rows or drills",
+            ),
         });
+    }
+    if f.tier < 2 {
+        return Err(format!(
+            "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
+        ));
     }
     if let Some(guid) = &drill
         && f.breakdown.is_none()
@@ -2454,6 +2505,10 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
             },
             "key_level": k.level.map_or(Json::Null, |l| Json::u64(u64::from(l))),
             "completed": k.completed.map_or(Json::Null, Json::Bool),
+            // v47: the key's affix ids as its START listed them; empty on
+            // an unkeyed instance, a run joined mid-way and a card stored
+            // before v47 (regrade_fights fills it from the log).
+            "affixes": Json::Arr(k.affixes.iter().map(|&a| Json::u64(u64::from(a))).collect()),
         }),
         "date": Json::str(utc_datetime(c.start_utc_ms)),
         "start_utc_ms": Json::num(c.start_utc_ms as f64),
@@ -5510,6 +5565,40 @@ mod tests {
         );
     }
 
+    /// v47: a keystone card's instance names its affixes in the START's
+    /// order; an instance with none (an unkeyed visit, a run joined
+    /// mid-way, a card stored before v47) names an empty list.
+    #[test]
+    fn a_keys_instance_names_its_affixes() {
+        use wowdps_proto::history::KeyInfo;
+        let keyed = |affixes: Vec<u32>| FightCard {
+            key: Some(KeyInfo {
+                map_id: 2521,
+                difficulty: 8,
+                level: Some(14),
+                completed: Some(true),
+                affixes,
+            }),
+            ..card(60_000, Vec::new())
+        };
+        let affixes = |c: &FightCard| {
+            card_json(c)
+                .get("instance")
+                .and_then(|i| i.get("affixes"))
+                .map(Json::to_line)
+        };
+        assert_eq!(
+            affixes(&keyed(vec![10, 9, 147])).as_deref(),
+            Some("[10,9,147]")
+        );
+        assert_eq!(affixes(&keyed(Vec::new())).as_deref(), Some("[]"));
+        assert_eq!(
+            card_json(&card(60_000, Vec::new())).get("instance"),
+            Some(&Json::Null),
+            "no instance, no affixes"
+        );
+    }
+
     #[test]
     fn argument_errors_never_reach_the_daemon() {
         let mut bridge = Bridge::lazy();
@@ -5577,6 +5666,7 @@ mod tests {
                 difficulty: 8,
                 level: Some(11),
                 completed,
+                ..KeyInfo::default()
             }),
             ..FightCard::default()
         };

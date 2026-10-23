@@ -254,7 +254,9 @@ wowdps history stats                                   # replay.files/bytes/form
 
 Since v46 the store also keeps fights imported from outside this machine's
 logs (a fight a client converted and handed the daemon whole): a card whose
-`origin` names its source, and a replay, nothing else. `fights.imported`
+`origin` names its source, and a replay, and since v48 the details tier
+its players' curves make, nothing else; since v48 an import's `players`
+rows carry the meter the importer reckoned. `fights.imported`
 (and `players.imported`) is true for them on every lake, `false` everywhere
 on one without imports; add `AND NOT imported` to a recipe that is about
 your own fights, as the fixed questions (`best-kill`, `progression`,

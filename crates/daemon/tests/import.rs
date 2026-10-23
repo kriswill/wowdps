@@ -25,7 +25,7 @@ use wowdps_daemon::mock::MockDaemon;
 use wowdps_daemon::replay::cut_text;
 use wowdps_model::{Class, Encounter, Spec, View};
 use wowdps_proto::history::{
-    FightCard, FightKind, ImportedCard, ImportedPlayer, Origin, imported_id,
+    FightCard, FightDetails, FightKind, ImportedCard, ImportedPlayer, Origin, imported_id,
 };
 use wowdps_proto::{
     ClientMsg, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, OriginFilter, TrendBucket,
@@ -160,18 +160,38 @@ fn imported(start: i64, success: bool, difficulty: u32) -> ImportedCard {
                 name: "Ana-Realm".to_string(),
                 class: Some(Class::Mage),
                 spec: Some(Spec::FrostMage),
+                ..ImportedPlayer::default()
             },
             ImportedPlayer {
                 guid: ZED.to_string(),
                 name: "Zed-Elsewhere".to_string(),
                 class: Some(Class::Priest),
                 spec: Some(Spec::Discipline),
+                ..ImportedPlayer::default()
             },
         ],
         owner: Some(ZED.to_string()),
         source: SOURCE.to_string(),
         ..ImportedCard::default()
     }
+}
+
+/// v48: an import with its meter: Ana's damage and healing over the 30 s
+/// pull with their 1 s curves, and Zed's healing without one.
+fn metered(start: i64) -> ImportedCard {
+    let mut card = imported(start, true, 15);
+    let ana = &mut card.players[0];
+    ana.damage = 60_000;
+    ana.damage_curve = vec![2_000; 30];
+    ana.healing = 3_000;
+    ana.heal_curve = vec![0, 3_000];
+    ana.overheal = 500;
+    ana.absorbed = 1_000;
+    ana.taken = 9_000;
+    ana.deaths = 1;
+    ana.support_received = 6_000;
+    card.players[1].healing = 90_000;
+    card
 }
 
 fn mem(cfg: Retention) -> Store<MemBackend> {
@@ -211,10 +231,10 @@ fn fights(store: &Store<MemBackend>, origin: OriginFilter, sort: FightSort) -> V
 
 // ---- the stored fight ---------------------------------------------------------
 
-/// An import is its card and its replay: the id from the source, no log,
-/// no rows, details or series, the replay decoding to the cut it was made
-/// from with the import's owner as its "you" — and it reads back after a
-/// restart, origin and all.
+/// An import that brings no curves is its card and its replay: the id from
+/// the source, no log, no rows, details or series, the replay decoding to
+/// the cut it was made from with the import's owner as its "you" — and it
+/// reads back after a restart, origin and all.
 #[test]
 fn an_import_is_a_card_and_a_replay_and_nothing_else() {
     let bytes = replay_bytes();
@@ -588,6 +608,239 @@ fn a_bad_import_is_refused_and_writes_nothing() {
     assert!(!store.has_replay(&id));
 }
 
+// ---- v48: the import's meter --------------------------------------------------
+
+/// An import's meter is its card and its details tier: every player's
+/// totals with their rates over the pull's combat clock, and the curves as
+/// a details file every reader parses through the record codec — the 1 s
+/// damage the replay tier's writer sums into R25's raid series — beside the
+/// replay; still no rows or series, so a stored fight answers the card,
+/// its meter on it. A restart reads it all back.
+#[test]
+fn an_imports_meter_is_its_card_and_its_details_tier() {
+    let bytes = replay_bytes();
+    let mut store = mem(Retention::default());
+    let (id, _) = store.import_replay(&metered(1_000_000), &bytes).unwrap();
+    let card = store.card(&id).unwrap().clone();
+    assert_eq!(card.rate_ms(), 30_000);
+    let ana = card.players.iter().find(|p| p.guid == ANA).unwrap();
+    assert_eq!((ana.damage, ana.dps), (60_000, 2_000.0));
+    assert_eq!((ana.healing, ana.hps), (3_000, 100.0));
+    assert_eq!((ana.taken, ana.dtps, ana.deaths), (9_000, 300.0, 1));
+    assert_eq!((ana.overheal, ana.absorbed), (500, 1_000));
+    assert_eq!(ana.effective_dps(card.rate_ms()), 1_800.0, "R19");
+    let zed = card.players.iter().find(|p| p.guid == ZED).unwrap();
+    assert_eq!((zed.healing, zed.hps, zed.damage), (90_000, 3_000.0, 0));
+
+    // The details file, through the record codec as every reader parses it.
+    let text = String::from_utf8(
+        store
+            .backend()
+            .read("details", &format!("{id}.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let details = FightDetails::from_json(&wowdps_proto::json::parse(&text).unwrap()).unwrap();
+    assert_eq!(store.details(&id).as_ref(), Some(&details));
+    assert_eq!(details.id, id);
+    assert_eq!(details.players.len(), 1, "Zed brought no curve");
+    let p = &details.players[0];
+    assert_eq!((p.guid.as_str(), p.damage_timeline.bucket_ms), (ANA, 1000));
+    assert_eq!(p.damage_timeline.buckets, [2_000; 30]);
+    assert_eq!(p.heal_timeline.buckets, [0, 3_000]);
+    // R25's raid series as `replay-export` and the replay write it.
+    let raid = replay::csv::raid_csv(&p.damage_timeline.buckets, 1000);
+    assert!(raid.starts_with(replay::csv::RAID_HEAD), "{raid}");
+    assert_eq!(raid.lines().count(), 31);
+    assert!(raid.contains("\n29000,2000\n"), "{raid}");
+    assert!(replay::decode(&store.replay_file(&id).unwrap()).is_some());
+
+    assert!(!store.backend().exists("rows", &format!("{id}.json")));
+    assert!(!store.has_series(&id));
+    let f = store.stored_fight(&id, View::Damage, None, None).unwrap();
+    assert_eq!(f.tier, 1);
+    assert_eq!(f.card.players, card.players);
+
+    let reopened = Store::open(copied(store.backend()), Retention::default());
+    assert_eq!(reopened.card(&id), Some(&card));
+    assert_eq!(reopened.details(&id), Some(details));
+}
+
+/// Protected like a pin, details and all: caps of nothing demote every
+/// local wipe's details, never the import's.
+#[test]
+fn an_imports_details_are_never_demoted() {
+    let tmp = Temp::new("demote");
+    let path = log_of(&tmp, &[(70, false, 15), (70, false, 15)]);
+    let facts = LogFacts::read(&path);
+    let cfg = Retention {
+        keep_details_per_encounter: 0,
+        keep_progression: false,
+        ..Retention::default()
+    };
+    let mut store = mem(cfg);
+    let (id, _) = store
+        .import_replay(&metered(1_000_000), &replay_bytes())
+        .unwrap();
+    let local: Vec<String> = closed_fights(&path)
+        .iter()
+        .filter_map(|f| store.store(f, facts))
+        .collect();
+    assert_eq!(local.len(), 2);
+    assert!(local.iter().all(|l| !store.has_details(l)), "demoted");
+    assert!(store.has_details(&id));
+}
+
+/// A re-import replaces the fight whole, its details too: one without
+/// curves takes the old details away, one with them writes them again,
+/// and one whose start moved leaves none under its old id.
+#[test]
+fn a_reimport_replaces_the_details_whole() {
+    let bytes = replay_bytes();
+    let mut store = mem(Retention::default());
+    let (id, _) = store.import_replay(&metered(1_000_000), &bytes).unwrap();
+    assert!(store.has_details(&id));
+    store
+        .import_replay(&imported(1_000_000, true, 15), &bytes)
+        .unwrap();
+    assert!(!store.has_details(&id), "no curves, no details");
+    assert_eq!(store.card(&id).unwrap().players[0].damage, 0);
+    store.import_replay(&metered(1_000_000), &bytes).unwrap();
+    assert!(store.has_details(&id));
+    let (moved, replaced) = store.import_replay(&metered(1_005_000), &bytes).unwrap();
+    assert!(replaced && moved != id);
+    assert!(!store.has_details(&id), "the old id keeps nothing");
+    assert!(store.has_details(&moved));
+}
+
+/// A curve that disagrees with its total — short of it, or past the
+/// fight's end — refuses the import, naming the player; nothing written.
+/// On a whole-second fight (30 000 ms) the END's own second is the 31st
+/// bucket: 31 are taken, 32 refused.
+#[test]
+fn an_import_whose_curve_disagrees_is_refused() {
+    let bytes = replay_bytes();
+    let mut store = mem(Retention::default());
+    let mut short = metered(1_000_000);
+    short.players[0].damage_curve[3] = 0;
+    let err = store.import_replay(&short, &bytes).unwrap_err();
+    assert!(
+        err.contains(&format!("{ANA}'s damage curve sums to 58000")),
+        "{err}"
+    );
+    let mut long = metered(1_000_000);
+    long.players[0].damage_curve = vec![0; 31];
+    long.players[0].damage_curve.push(60_000);
+    let err = store.import_replay(&long, &bytes).unwrap_err();
+    assert!(err.contains("damage curve runs 32 s"), "{err}");
+    assert!(store.cards().is_empty());
+    assert!(store.backend().is_empty());
+
+    // The boundary itself: a hit at 30.000 s lands in second 30, the 31st.
+    let mut at_end = metered(1_000_000);
+    at_end.players[0].damage_curve = vec![0; 30];
+    at_end.players[0].damage_curve.push(60_000);
+    let (id, _) = store.import_replay(&at_end, &bytes).unwrap();
+    let d = store.details(&id).unwrap();
+    assert_eq!(d.players[0].damage_timeline.buckets.len(), 31);
+}
+
+/// A failed re-import whose old details cannot be written back leaves the
+/// old card standing WITHOUT details — never the refused import's curves
+/// under it — and says so beside the write that failed; when the refused
+/// import's details cannot be removed either, it says that the card shows
+/// them. Nothing panics on either path.
+#[test]
+fn a_failed_details_restore_is_said() {
+    let bytes = replay_bytes();
+    let mut store = Store::open(Flaky::over(MemBackend::new()), Retention::default());
+    let (id, _) = store.import_replay(&metered(1_000_000), &bytes).unwrap();
+    let name = format!("{id}.json");
+    let card_before = store.card(&id).unwrap().clone();
+    let replay_before = store.replay_file(&id).unwrap();
+    let mut other = metered(1_000_000);
+    other.players[0].heal_curve = vec![3_000];
+
+    // The new details are written, the card's write fails, and the old
+    // details' write-back fails too: the new ones go, leaving none.
+    store.backend().fail_writes_in.set(Some("fights"));
+    store.backend().writes_left_in.set(Some(("details", 1)));
+    let err = store.import_replay(&other, &bytes).unwrap_err();
+    assert!(err.contains("fights writes fail"), "{err}");
+    assert!(
+        err.contains(&format!(
+            "its old details could not be put back (details writes run out): {id} is left \
+             without them"
+        )),
+        "{err}"
+    );
+    assert!(!store.has_details(&id), "never the refused import's curves");
+    assert_eq!(store.card(&id), Some(&card_before), "the old card stands");
+    assert_eq!(
+        store.replay_file(&id).as_deref(),
+        Some(replay_before.as_slice())
+    );
+
+    // With details again, the same — and the refused import's details
+    // cannot be removed either: said, the file left as it is.
+    store.backend().fail_writes_in.set(None);
+    store.backend().writes_left_in.set(None);
+    store.import_replay(&metered(1_000_000), &bytes).unwrap();
+    store.backend().fail_writes_in.set(Some("fights"));
+    store.backend().writes_left_in.set(Some(("details", 1)));
+    store
+        .backend()
+        .fail_remove_files
+        .borrow_mut()
+        .push(format!("details/{name}"));
+    let err = store.import_replay(&other, &bytes).unwrap_err();
+    assert!(
+        err.contains("nor the new ones removed") && err.contains("refused import's curves"),
+        "{err}"
+    );
+    let left = store.details(&id).unwrap();
+    assert_eq!(left.players[0].heal_timeline.buckets, [3_000]);
+}
+
+/// A re-import whose card write fails puts the old details back, as it
+/// puts the old replay back; one whose details write fails leaves the old
+/// import whole; and details there that cannot be read refuse the
+/// re-import before anything is written.
+#[test]
+fn a_failed_reimport_keeps_the_old_details() {
+    let bytes = replay_bytes();
+    let mut store = Store::open(Flaky::over(MemBackend::new()), Retention::default());
+    let (id, _) = store.import_replay(&metered(1_000_000), &bytes).unwrap();
+    let name = format!("{id}.json");
+    let before = store.backend().read("details", &name).unwrap();
+    let card_before = store.card(&id).unwrap().clone();
+    let mut other = metered(1_000_000);
+    other.players[0].heal_curve = vec![3_000];
+
+    store.backend().fail_writes_in.set(Some("fights"));
+    let err = store.import_replay(&other, &bytes).unwrap_err();
+    assert!(err.contains("fights writes fail"), "{err}");
+    assert_eq!(store.backend().read("details", &name), Some(before.clone()));
+    assert_eq!(store.card(&id), Some(&card_before));
+
+    store.backend().fail_writes_in.set(Some("details"));
+    let err = store.import_replay(&other, &bytes).unwrap_err();
+    assert!(err.contains("details writes fail"), "{err}");
+    assert_eq!(store.backend().read("details", &name), Some(before.clone()));
+    assert_eq!(store.card(&id), Some(&card_before));
+    assert!(store.has_replay(&id));
+
+    store.backend().fail_writes_in.set(None);
+    store.backend().fail_reads_in.set(Some("details"));
+    let err = store.import_replay(&other, &bytes).unwrap_err();
+    assert!(
+        err.contains("details") && err.contains("cannot be read"),
+        "{err}"
+    );
+    store.backend().fail_reads_in.set(None);
+    assert_eq!(store.backend().read("details", &name), Some(before));
+}
+
 // ---- the mock -----------------------------------------------------------------
 
 /// The mock answers `ImportReplay` as the history thread does: the stored
@@ -601,7 +854,7 @@ fn the_mock_answers_an_import_as_the_thread_does() {
     let before = mock.history().cards().len();
     let out = mock.handle(ClientMsg::ImportReplay {
         req_id: 7,
-        card: Box::new(imported(1_000_000, true, 15)),
+        card: Box::new(metered(1_000_000)),
         replay: bytes.clone(),
     });
     let id = imported_id(SOURCE, 1_000_000);
@@ -653,6 +906,10 @@ fn the_mock_answers_an_import_as_the_thread_does() {
     };
     assert_eq!(fight.tier, 1);
     assert!(fight.card.is_imported());
+    // v48: the card is the import's meter.
+    let ana = fight.card.players.iter().find(|p| p.guid == ANA).unwrap();
+    assert_eq!((ana.damage, ana.dps), (60_000, 2_000.0));
+    assert!(mock.history().has_details(&id));
     let listed = |mock: &mut MockDaemon, origin| {
         let out = mock.handle(ClientMsg::GetHistory {
             req_id: 10,

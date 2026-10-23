@@ -21,6 +21,12 @@ shapes: a key whose door logged 0, a key joined mid-run, and a raid whose
 difficulty was switched outside so its door logged 0. For that raid the
 meter, the scanner, every lazy slice, the live tail and every checkpoint
 resume must agree ([the decision](../decisions/a-pull-zones-in.md)).
+The key's START lists `[9,10]`: its visit keeps them in that order, the
+pre-key visit and the joined key none, and a lazily loaded Σ's visit
+equals the full replay's, affixes included
+([Keep A Keystone Run's Affixes](../decisions/keep-keystone-affixes.md)).
+The daemon's suites store its key's card with them, carry them over the
+wire and refill them by regrade.
 
 ## Source
 

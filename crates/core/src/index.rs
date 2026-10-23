@@ -1101,6 +1101,8 @@ fn overall_meta(
         completed: v.completed,
         official_ms: v.official_ms,
         pars_ms: v.pars_ms,
+        // The clock and the verdict read none; the scan keeps none.
+        affixes: Vec::new(),
     };
     let at = end_ms.unwrap_or(v.start_ms);
     SegmentMeta {

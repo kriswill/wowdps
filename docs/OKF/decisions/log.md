@@ -1,5 +1,55 @@
 # Log
 
+## 2026-10-23
+
+- **Creation** — [DuckDB Is Bundled, Not System-Linked](duckdb-is-bundled-not-system-linked.md):
+  `wowdps-history` compiles DuckDB from the crate's own source on every
+  platform (JSON and Parquet, no ICU), dropping the pin to nixpkgs'
+  libduckdb that held the crate a release behind and kept three zip
+  advisories open; no DuckDB debug info in debug builds, dependabot held
+  to DuckDB 1.x.
+
+## 2026-10-19
+
+- **Creation** — [An Import Carries Its Meter](an-import-carries-its-meter.md):
+  v48 — an imported fight's players carry the totals the importer reckoned
+  under the rulings and their 1 s damage and healing curves; the store
+  derives the rates over the card's combat clock and keeps the curves as
+  the details tier, still no rows or series.
+
+- **Update** — [Imported Fights Live In The History Store](imported-fights-in-the-store.md):
+  its "replay tier alone" amended by v48's meter and details tier.
+
+- **Update** — [The Replay Tier Lives In The History Store, Cut By The Parser](replay-tier-in-the-store.md):
+  an import is a card, a replay and (v48) its details.
+
+## 2026-10-17
+
+- **Update** — [Keep A Keystone Run's Affixes](keep-keystone-affixes.md):
+  after review — a key joined mid-run reads NULL in the lake too, and every
+  older replay is recut, keyless ones included, rather than re-stamped.
+
+- **Creation** — [Keep A Keystone Run's Affixes](keep-keystone-affixes.md):
+  v47 and replay format 6 — the affix ids a CHALLENGE_MODE_START lists are
+  parsed onto the keyed visit and kept on the card, the replay head, the
+  mcp card and the lake, landed early so a regrade and the recut queue
+  backfill every stored key while its log survives.
+
+## 2026-10-12
+
+- **Update** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+  after review — altitudes filled from the view before they are checked
+  (`Area::altitudes`), an ordered crop, fade, court and spell checks, an
+  arena's own `travel`, a levels fixture, Echo of Doragosa's court posted
+  on 2097 though its draft says 2099; and the base rule narrowed to what
+  holds: a set may amend an arena's map and view, never a level's.
+
+- **Creation** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+  a dungeon level is an instance file's `[level.<ui_map>]`, the same `Map`
+  an arena's is; any map names its areas (with altitudes), paths (with a
+  mode) and a transition, and the render's crop, include, fade, ground and
+  exposure; all base, every resolved map held to origin/main's.
+
 ## 2026-10-11
 
 - **Update** — [Imported Fights Live In The History Store, Apart From Ours](imported-fights-in-the-store.md):

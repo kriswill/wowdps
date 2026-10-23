@@ -44,7 +44,10 @@ grades, progression graphs) needs a place to keep data across sessions.
   (system-linked from nixpkgs, never bundled) over the same files. The MCP
   server proxies the fixed questions to the daemon and shells out to that
   binary for a `history_sql` tool. This is the one new dependency (signed
-  off: nixpkgs DuckDB 1.5.4, system-linked).
+  off: nixpkgs DuckDB 1.5.4, system-linked). **2026-10-23:** DuckDB is now
+  bundled from the crate's own source on every platform (JSON and Parquet,
+  no ICU), no longer system-linked; see
+  [DuckDB Is Bundled, Not System-Linked](OKF/decisions/duckdb-is-bundled-not-system-linked.md).
 - Prerequisites in core: encounter id + difficulty on segments, the game build
   from `COMBAT_LOG_VERSION`, and the timestamp's timezone offset. Best-percent
   progression rides on ruling R16 (boss health), built with the store.

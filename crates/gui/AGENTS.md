@@ -23,7 +23,7 @@ Read before the work it covers:
   Hyprland IPC, keys, models, words, geometry) belongs to
   `crates/gui-logic`, with its tests. The GUI brings a text measure and its
   paint.
-- **Stock GPUI only.** `gpui-kit` is pinned exactly (`=0.7.0`) with its
+- **Stock GPUI only.** `gpui-kit` is pinned exactly (`=0.8.0`) with its
   default features and no `tree-sitter*`; no `[patch]`, no fork. Design
   around a missing capability or contribute it upstream. A GPUI or Kit bump
   is its own change. Our code names no transitive crate except serde/toml
@@ -80,6 +80,11 @@ Read before the work it covers:
 - It has no keyboard: every gesture is a click, a right press or a wheel.
 - It is single-instance: a new `--overlay` launch evicts the running one.
   Never kill an overlay by a PID from earlier output.
+- **Nothing it prints may panic.** A spawned overlay's stderr is a pipe to
+  the daemon that spawned it, and `eprintln!` panics once that daemon is
+  gone. Runtime notices use `writeln!(std::io::stderr(), …)` and drop the
+  result; only `main.rs`'s answers to arguments the daemon never passes
+  print with the macros.
 - Debug aids: the `WOWDPS_OVERLAY_*` variables (`overlay/panel/autos.rs`,
   `docs/tracing.md`).
 - **The render guard.** Before merging anything that touches the overlay

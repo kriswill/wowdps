@@ -66,7 +66,11 @@ usually somebody else's.
   those from log lines through the meter's rulings, and a converted fight's
   events are another tool's reading of a log, with its own amounts. A
   stored fight answers the card alone (tier 1); the GUI's stored pull and
-  the mcp's `stored_fight` already handle a card without rows.
+  the mcp's `stored_fight` already handle a card without rows. (Amended in
+  v48 by [An Import Carries Its Meter](an-import-carries-its-meter.md): the
+  importer reckons each player's totals under the rulings and sends their
+  1 s curves, which the store keeps on the card and as the details tier;
+  still no rows or series.)
 - **Protected, like a pin.** An import is a deliberate act, and the store
   cannot make it again: there is no log to rewrite or recut it from. So it
   is never evicted, demoted or trimmed, by the caps or by
@@ -91,8 +95,9 @@ The replay can drop its pull-directory source and read the store alone,
 and a converted fight is kept, trimmed by nothing, beside this machine's
 own. Imports count against `history_replay_mb`'s total without ever being
 trimmed by it, as pins do, so many large imports squeeze out unprotected
-local replays first. An imported card carries no numbers, so a client that
-lists one draws its name, date, verdict and roster, and its replay. A
+local replays first. An imported card carried no numbers, so a client that
+lists one drew its name, date, verdict and roster, and its replay; since
+v48 it carries its players' meter too. A
 wire-shape change: deploy per the playbook.[^playbook] Landed in PR #108
 (the wire and the record, the store, the lake's column, and the fixes an
 independent review asked for).
