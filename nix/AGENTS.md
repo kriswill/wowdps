@@ -17,8 +17,15 @@ and the home-manager and NixOS modules. Why and how:
 - **One concern per file:** `nix/dev/default.nix` assembles `wrappers.nix`
   (generator and workspace-binary wrappers, resolved against the live
   checkout), `env.nix` (the dlopened libraries, the pinned
-  `PKG_CONFIG_PATH`, the linker and clang mirror, sccache) and
-  `contract.nix`. Each shell file adds only what it alone plumbs.
+  `PKG_CONFIG_PATH`, the linker and clang mirror, sccache), `codeql.nix`
+  (the CodeQL CLI and `wowdps-codeql`) and `contract.nix`. Each shell file
+  adds only what it alone plumbs.
+- **Unfree by name, never wholesale.** `codeql` is the one unfree package
+  taken from nixpkgs: `nix/dev/codeql.nix` imports nixpkgs again with an
+  `allowUnfreePredicate` naming it alone, so the nixpkgs both shells
+  evaluate stays free-only. Never set `allowUnfree`; another unfree
+  package is added to that list by name. (`coderabbit` comes prebuilt
+  through its own input.)
 - **Pins agree.** `devenv.yaml`'s nixpkgs, rust-overlay, okf and llm-agents
   pins match `flake.lock` (`update-locks.yml` keeps them so weekly).
 - **The toolchain is declared once,** in `rust-toolchain.toml`; never pin a
