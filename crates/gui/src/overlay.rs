@@ -113,6 +113,7 @@ pub fn choose_output(cfg: &Config) -> Option<String> {
 /// before it picks an output.
 const GAME_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn surface(
     cx: &mut App,
     output: Option<&str>,
@@ -325,6 +326,7 @@ fn open_on(
 /// The Σ split's own daemon connection: a `Window` kind, so the daemon's
 /// `SetVisible` — the overlay's alone — never reaches it, holding only the
 /// top rows.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn split_link(cx: &mut App) -> Result<gpui_kit::Entity<crate::session::Session>, String> {
     use gpui_kit::AppContext as _;
     use wowdps_proto::{ClientKind, ClientState};
@@ -340,7 +342,7 @@ fn split_link(cx: &mut App) -> Result<gpui_kit::Entity<crate::session::Session>,
 
 /// Neither a layer shell (Linux) nor a floating panel (macOS) is
 /// available: the overlay is honest about it.
-#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn surface(_: &mut App, _: Option<&str>, _: DaemonClient, _: Config) -> Result<(), String> {
     Err("the overlay needs Linux (wlr-layer-shell) or macOS".to_string())
 }

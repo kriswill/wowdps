@@ -87,8 +87,10 @@ impl Overlay {
         let across = if shown { content } else { (1.0, 1.0) };
         // Linux: the surface spans the edge's whole length. macOS: the
         // window is exactly its content — it has no input region, so the
-        // rest of a spanning strip would swallow the game's clicks.
-        #[cfg(target_os = "linux")]
+        // rest of a spanning strip would swallow the game's clicks. Other
+        // systems open no surface (`overlay::surface` refuses) and keep
+        // the strip's code, as before macOS had a panel.
+        #[cfg(not(target_os = "macos"))]
         let want = strip.surface(across);
         #[cfg(target_os = "macos")]
         let want = across;
@@ -102,7 +104,7 @@ impl Overlay {
             // macOS's `resize` keeps the wrong corner fixed for an
             // edge-anchored panel, and nothing moves an origin afterwards —
             // a size change asks for a re-anchor instead (render emits it).
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "macos"))]
             window.resize(size(px(want.0), px(want.1)));
             #[cfg(target_os = "macos")]
             if reanchor {
@@ -154,7 +156,7 @@ impl Overlay {
         if grip.moved {
             // macOS: the window IS the content, so nothing slides within
             // the strip — the pointer travel is just the drag threshold.
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "macos"))]
             {
                 let offset = placed.strip.dragged(placed.content, grip.from, travel);
                 if offset != self.offset {
