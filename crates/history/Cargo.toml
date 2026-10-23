@@ -12,18 +12,26 @@ repository.workspace = true
 # reads the lake the daemon writes — never the log, never the socket except
 # as a thin client for `import` — so it links model + proto (and the daemon
 # crate for its config reader), plus the
-# one signed-off dependency in the workspace: DuckDB, SYSTEM-linked to the
-# nixpkgs library (flake.nix sets DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR and
-# patches the rpath); never `bundled`, whose build would cost CI minutes.
-# The crate version encodes the library version (1.10504 = DuckDB 1.5.4)
-# and must move with `pkgs.duckdb`; tests/duckdb_version.rs fails by name
-# when the two drift (a dependabot bump ahead of nixpkgs, or a nixpkgs bump
-# that leaves the pin behind).
+# one signed-off dependency in the workspace: DuckDB, BUNDLED — compiled
+# from the crate's own copy of the DuckDB source on every platform, so the
+# library is the crate's by construction and there is no system library to
+# keep in step (re-decided 2026-10-23; docs/OKF/decisions/
+# duckdb-is-bundled-not-system-linked.md). The JSON and Parquet extensions
+# come in as features and are linked in statically. ICU is absent: the cc
+# bundled build ships only core_functions + json + parquet (ICU would need
+# `bundled-cmake` and a duckdb-rs source checkout), and no history query
+# uses it. The cost is a C++ compile of ~350 units (about a minute on 24
+# cores, several on a CI runner, without debug info: the workspace
+# Cargo.toml says why). sccache reuses those objects only while
+# libduckdb-sys's OUT_DIR is unchanged, so any version change in its
+# build-dependency closure compiles them again. The crate version encodes
+# the DuckDB version (1.10506 = DuckDB 1.5.6); dependabot may bump it
+# freely within DuckDB 1.x and ignores 1.20000.0 (DuckDB 2.0) onward.
 
 [dependencies]
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
-duckdb = { version = "=1.10505.0", default-features = false }
+duckdb = { version = "=1.10506.1", default-features = false, features = ["bundled", "json", "parquet"] }
 
 [dev-dependencies]
 wowdps-core = { path = "../core" }

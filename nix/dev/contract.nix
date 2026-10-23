@@ -3,9 +3,10 @@
 # shell answers to `nix develop -c wowdps-dev-contract`.
 #
 # It tests the ENVIRONMENT, never the code: "evaluation didn't crash" is not
-# the same claim as "cargo, the nightly toolchain, libduckdb and the GUI's
-# dlopen path are all really here". A check kept beside one of two twin shells
-# could only ever vouch for that one, which is why it lives here instead.
+# the same claim as "cargo, the nightly toolchain, the C++ compiler and the
+# GUI's dlopen path are all really here". A check kept beside one of two twin
+# shells could only ever vouch for that one, which is why it lives here
+# instead.
 {
   pkgs,
   lib ? pkgs.lib,
@@ -66,6 +67,11 @@ pkgs.writeShellScriptBin "wowdps-dev-contract" (
       echo "dev shell contract: CC/CXX are ''${CC:-unset}/''${CXX:-unset}, not clang/clang++" >&2
       exit 1
     }
+    # wowdps-history bundles DuckDB, compiled from C++ source by CXX.
+    command -v clang++ > /dev/null || {
+      echo "dev shell contract: clang++ missing from PATH (wowdps-history's bundled DuckDB needs it)" >&2
+      exit 1
+    }
     # xkbcommon, fontconfig and xcb: what the GUI's GPUI links.
     for pc in xkbcommon fontconfig xcb; do
       pkg-config --exists "$pc" || {
@@ -73,11 +79,7 @@ pkgs.writeShellScriptBin "wowdps-dev-contract" (
         exit 1
       }
     done
-    [ -e "$DUCKDB_LIB_DIR/libduckdb.so" ] && [ -e "$DUCKDB_INCLUDE_DIR/duckdb.h" ] || {
-      echo "dev shell contract: DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR do not point at libduckdb" >&2
-      exit 1
-    }
-    for so in libwayland-client.so libxkbcommon.so libvulkan.so libGL.so libduckdb.so; do
+    for so in libwayland-client.so libxkbcommon.so libvulkan.so libGL.so; do
       found=0
       IFS=: read -ra dirs <<< "$LD_LIBRARY_PATH"
       for dir in "''${dirs[@]}"; do

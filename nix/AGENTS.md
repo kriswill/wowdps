@@ -16,7 +16,7 @@ and the home-manager and NixOS modules. Why and how:
   gets a check in `contract.nix`.
 - **One concern per file:** `nix/dev/default.nix` assembles `wrappers.nix`
   (generator and workspace-binary wrappers, resolved against the live
-  checkout), `env.nix` (DuckDB, the dlopened libraries, the pinned
+  checkout), `env.nix` (the dlopened libraries, the pinned
   `PKG_CONFIG_PATH`, the linker and clang mirror, sccache) and
   `contract.nix`. Each shell file adds only what it alone plumbs.
 - **Pins agree.** `devenv.yaml`'s nixpkgs, rust-overlay, okf and llm-agents
