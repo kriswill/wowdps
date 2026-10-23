@@ -332,14 +332,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn install_discovery_checks_the_applications_roots() {
-        // A stray HOME is never an install; the real roots are validated
-        // on the machine that has the game.
+        // An install under a temp HOME's Applications folder is found; the
+        // real /Applications is validated on the machine that has the game.
         let home = std::env::temp_dir().join(format!("wowdps-cli-mac-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        // Off macOS a stray HOME is never an install; on macOS discovery
-        // also scans /Applications, which a real machine may fill.
-        #[cfg(not(target_os = "macos"))]
-        assert!(discover_wow_installs(&home).is_empty());
         std::fs::create_dir_all(home.join("Applications/World of Warcraft/Data/data")).unwrap();
         std::fs::write(home.join("Applications/World of Warcraft/.build.info"), "x").unwrap();
         let found = discover_wow_installs(&home);
