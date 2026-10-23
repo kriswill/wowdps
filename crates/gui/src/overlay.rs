@@ -266,7 +266,7 @@ fn open_on(
         Bounds, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, point, px,
         size,
     };
-    use wowdps_gui_logic::config::Edge;
+    use wowdps_gui_logic::surface::panel_origin;
 
     let (edge, offset, (w, h)) = {
         let o = overlay.read(cx);
@@ -290,20 +290,9 @@ fn open_on(
         })
         .unwrap_or((1920.0, 1080.0));
     // The content sits at the offset along the edge, clamped so it stays
-    // whole (strip.rs's `place`), and flush with the screen's side across
-    // it — the expanded panel grown inward from the edge.
-    let (x, y) = match edge {
-        Edge::Left => (0.0, offset.clamp(0.0, (screen.1 - h).max(0.0))),
-        Edge::Right => (
-            (screen.0 - w).max(0.0),
-            offset.clamp(0.0, (screen.1 - h).max(0.0)),
-        ),
-        Edge::Top => (offset.clamp(0.0, (screen.0 - w).max(0.0)), 0.0),
-        Edge::Bottom => (
-            offset.clamp(0.0, (screen.0 - w).max(0.0)),
-            (screen.1 - h).max(0.0),
-        ),
-    };
+    // whole, and flush with the screen's side across it: the expanded panel
+    // grown inward from the edge.
+    let (x, y) = panel_origin(edge, offset, (w, h), screen);
     let options = WindowOptions {
         display_id,
         titlebar: None,

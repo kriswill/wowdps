@@ -867,9 +867,10 @@ empty input region: the daemon's `SetVisible` composed with `follow_game`
 (the game's workspace on screen, `gui-logic/src/hypr.rs`; `game_match`).
 On macOS the surface is a floating GPUI panel (`WindowKind::PopUp` — a
 non-activating NSPanel, level 101, above all Spaces and fullscreen
-auxiliary) exactly the content's size, at the offset along the edge: there
-is no input region, so the strip's spanning surface would eat the game's
-clicks along the whole edge; hidden is a 1 px window. A size change
+auxiliary) exactly the content's size, at the offset along the edge
+(gui-logic's `surface::panel_origin`): there is no input region, so the
+strip's spanning surface would eat the game's clicks along the whole edge;
+hidden is a 1 px window. A size change
 re-anchors — the `Reanchor` event reopens (a macOS `resize` keeps the
 wrong corner fixed, and an origin cannot move after the fact); a drag
 slides nothing, the offset stays as configured. Closing

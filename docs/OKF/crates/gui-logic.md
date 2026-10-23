@@ -100,10 +100,10 @@ guard, then drawn by the GPUI GUI.
 
 - The overlay (phase 2): `graph` (the drill graph's plot: marks, hover
   and probe words, the drag window), `drill` (the drill's columns, stat
-  cards and recap words), `surface` (the edge strip's placement and
-  `nearest_edge`), `output` (which output the overlay opens on), and
-  `timeline` (the visit blocks the overlay's strip and the rail group a
-  log by).
+  cards and recap words), `surface` (the edge strip's placement,
+  `nearest_edge` and macOS's `panel_origin`), `output` (which output the
+  overlay opens on), and `timeline` (the visit blocks the overlay's strip
+  and the rail group a log by).
 - The window's frame and stage (steps 3.1–3.2): `theme`'s measures and
   tokens (`defs`, `metrics`: sizes, pitches, shadows, every window and
   overlay colour), `glyph` (the line icons as data), `labels` (the
