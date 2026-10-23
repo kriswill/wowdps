@@ -388,10 +388,15 @@ fn handshake(stream: &UnixStream, kind: ClientKind) -> io::Result<Arc<Mutex<Inbo
             ));
         }
     }
-    // Clearing SO_RCVTIMEO fails with EINVAL on darwin once the peer has
-    // closed the socket; there the reader thread hits EOF immediately
-    // anyway, so the reset failure cannot change the outcome.
-    let _ = reader.set_read_timeout(None);
+    // Clearing SO_RCVTIMEO fails with EINVAL on macOS once the peer has
+    // closed the socket; there the reader thread hits EOF at once anyway,
+    // so that one failure is ignored. Anywhere else a failure is an error:
+    // the reader stops at its first read error, and a timeout left set
+    // would disconnect the client after 5 quiet seconds.
+    match reader.set_read_timeout(None) {
+        Err(e) if cfg!(target_os = "macos") && e.kind() == io::ErrorKind::InvalidInput => {}
+        other => other?,
+    }
 
     let inbox = Arc::new(Mutex::new(Inbox::default()));
     let inbox_for_reader = Arc::clone(&inbox);
