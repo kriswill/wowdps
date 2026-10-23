@@ -15,6 +15,9 @@ sources:
   - id: ci
     resource: ../../../.github/workflows/ci.yml
     title: The CI workflow — devenv, the two-shell contract, the cargo caches
+  - id: codeql
+    resource: ../../../nix/dev/codeql.nix
+    title: nix/dev/codeql.nix — the CodeQL CLI, allowed by name, and wowdps-codeql
 ---
 
 **Where:** `nix/dev/` (the environment both shells import), `devenv.nix`,
@@ -163,11 +166,23 @@ or Vulkan libraries.
 toolchain and the CLIs it reaches through its own inputs — `okf`, and
 `coderabbit` (alias `cr`, prebuilt and unfree, from numtide's
 `llm-agents.nix`, which keeps its own nixpkgs because following ours its
-package set does not evaluate). `nix/dev/` is parceled by concern:
-`wrappers.nix` (the `wowdps-gen-*` generators and the four workspace-binary
-wrappers, resolved against the live checkout), `env.nix`, `contract.nix`
-(built as the runnable `wowdps-dev-contract` from the same command list that
-builds the wrappers) and `default.nix` assembling them. The wrappers put
+package set does not evaluate). The second unfree tool, `codeql`
+(GitHub's CodeQL CLI, behind the local [`wowdps-codeql`](../tools/codeql.md)
+check), comes from nixpkgs itself, which refuses to evaluate an unfree
+package it was not told to allow. No shell file allows it:
+`nix/dev/codeql.nix` imports the same nixpkgs again with an `allowUnfreePredicate` naming
+`codeql` alone, so both shells take it from `nix/dev/` while the package
+set they evaluate everything else from stays free-only; no blanket
+`allowUnfree` anywhere[^codeql]. Its wrapper also points the extractor's
+`RUST_SRC_PATH` at nixpkgs' stable library source, since the nightly's own
+`rust-src` degrades the database (the tool doc says how). The extra import
+builds the same store path and cost the flake shell's evaluation 0.4 s (1.2 s to 1.6 s, measured
+2026-10-23). `nix/dev/` is parceled by concern: `wrappers.nix` (the
+`wowdps-gen-*` generators and the four workspace-binary wrappers, resolved
+against the live checkout), `env.nix`, `codeql.nix` (the CLI and
+`wowdps-codeql`), `contract.nix` (built as the runnable
+`wowdps-dev-contract` from the same command lists that build the wrappers
+and the check) and `default.nix` assembling them. The wrappers put
 `wowdps`, `wowdps-history`, `wowdps-mcp` and `wowdps-gui` on PATH: each runs
 `cargo build --release --bin <it>` in the checkout and then `exec`s the real
 binary, so a shell never hands out a stale build (the `exec` keeps
@@ -196,4 +211,5 @@ stay in lockstep.
 
 [^env]: `nix/dev/env.nix`: `pinned`, `rustLinker` (the mirror), `flakeShellHook`, `flakePackages`, `rustcWrapper`.
 [^contract]: `nix/dev/contract.nix`: the shared-values block and the Linux linker/compiler checks.
+[^codeql]: `nix/dev/codeql.nix`: `allowed`, the import with the predicate, and the `wowdps-codeql` wrapper.
 [^ci]: `.github/workflows/ci.yml`: the ci job's devenv install, the cache-service step, rust-cache's shared-key and cmd-format, and the contract step; `.github/workflows/cache-warm.yml`: the main-only warm.

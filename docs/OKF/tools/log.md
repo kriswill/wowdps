@@ -1,5 +1,17 @@
 # Log
 
+## 2026-10-23
+
+- **Creation** — [codeql](codeql.md): GitHub's CodeQL default-setup run
+  (rust and actions, the default suites, pinned query packs) as a local
+  check, `wowdps-codeql`, that fails only on an alert missing from the
+  committed baseline (`tools/codeql-baseline.txt`, seeded with main's ten);
+  the extractor reads std from nixpkgs' stable library source, because the
+  nightly's own `rust-src` degraded the database and hid 7 of the 10, and a
+  degraded database fails the run; the CLI is the one unfree package the
+  shells take from nixpkgs, allowed by name
+  ([decision](../decisions/devenv-is-the-reference-shell.md)).
+
 ## 2026-10-16
 
 - **Update** — [dev-unit](dev-unit.md): stopping a daemon takes down orphan

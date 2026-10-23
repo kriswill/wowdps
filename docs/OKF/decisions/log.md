@@ -2,6 +2,12 @@
 
 ## 2026-10-23
 
+- **Update** — [devenv Is The Reference Shell, And The Flake Shell Mirrors It](devenv-is-the-reference-shell.md):
+  `codeql` is the second unfree tool, taken from nixpkgs through
+  `nix/dev/codeql.nix`'s own import, whose `allowUnfreePredicate` names it
+  alone; `codeql.nix` joins the parcels, and the contract checks `codeql`
+  and the [`wowdps-codeql`](../tools/codeql.md) check in both shells.
+
 - **Creation** — [DuckDB Is Bundled, Not System-Linked](duckdb-is-bundled-not-system-linked.md):
   `wowdps-history` compiles DuckDB from the crate's own source on every
   platform (JSON and Parquet, no ICU), dropping the pin to nixpkgs'

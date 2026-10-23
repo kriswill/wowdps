@@ -125,6 +125,7 @@ cargo run --bin wowdps -- --file crates/core/fixtures/sample.txt
 tools/dev-unit.sh status            # the unit's profile, overlay GUI, state
 nix develop -c okf validate         # the bundle (okf is on the shell's PATH)
 coderabbit review --agent           # alias cr; --base main reviews the branch
+wowdps-codeql                       # CodeQL locally; fails on an alert not in the baseline
 ```
 
 - `--file` refuses to attach to a daemon following another source. With
@@ -137,6 +138,12 @@ coderabbit review --agent           # alias cr; --base main reviews the branch
   Never edit them alone: a local fix is a patch in
   `.claude/skills/patches/`, and `tools/skills-update.sh` refreshes them and
   reapplies every patch (never `bunx skills update`).
+- CodeQL: CI's scan is GitHub's default setup (the repository's settings,
+  no workflow file), run on every PR. `wowdps-codeql [--accept]
+  [rust|actions]` runs the same languages, suites and query packs locally
+  (`tools/codeql.sh`) and, as GitHub fails a PR only on an alert not open
+  on main, fails only on an alert missing from `tools/codeql-baseline.txt`;
+  `--accept` rewrites that baseline. A run takes minutes on every core.
 - Debugging: `docs/tracing.md`. A frozen meter is usually the game's
   multi-minute log flush; check the log file's mtime before suspecting the
   tail.
