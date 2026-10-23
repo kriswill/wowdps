@@ -45,9 +45,10 @@ Usage:
   wowdps-gui             meter window (starts the wowdps daemon if needed)
   wowdps-gui --overlay   pin an edge tab over the game (a layer surface on
                          Linux, a floating panel on macOS); click it to
-                         expand the meter, drag it along the edge (on
-                         Hyprland: onto another edge). Under Hyprland it
-                         is born on the game's monitor and follows the game:
+                         expand the meter. On Linux, drag it along the
+                         edge (on Hyprland: onto another edge); on macOS
+                         it stays at the configured offset. Under Hyprland
+                         it is born on the game's monitor and follows the game:
                          it hides whenever WoW's workspace is off screen
                          (follow_game = false in the config disables this;
                          game_match sets the window class/title substring to
