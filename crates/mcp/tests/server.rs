@@ -995,8 +995,6 @@ fn status_words_the_overlay_and_a_lost_daemon() {
     }
 
     // A supervisor set to spawn a gui that does not exist, woken by a
-    // "game" whose process pattern is this very test binary.
-    // A supervisor set to spawn a gui that does not exist, woken by a
     // "game" whose process pattern is a real sleep we spawn. The test
     // binary itself would be the game on Linux (its name matches), but it
     // is an ancestor of the daemon's pgrep call and macOS pgrep does not
