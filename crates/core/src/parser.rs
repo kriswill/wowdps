@@ -4144,8 +4144,10 @@ mod tests {
         Full,
         /// Spec 0 and an empty talent bracket (`SHORT_BUILD_UNSPECCED`).
         Unspecced,
-        /// Every item level under 100: a character still leveling
-        /// (`SHORT_BUILD_LOW_LEVEL`).
+        /// Every item level under 100 and at least one real item: a
+        /// character still leveling (`SHORT_BUILD_LOW_LEVEL`). A dump of
+        /// empty slots alone is not one: every corrupt tuple parses to
+        /// `GearItem::default()`, item 0 at item level 0.
         LowLevel,
         Drifted,
     }
@@ -4155,7 +4157,7 @@ mod tests {
             BuildShape::Full
         } else if spec_id == Some(0) && talents.is_empty() {
             BuildShape::Unspecced
-        } else if !gear.is_empty() && gear.iter().all(|g| g.ilvl < 100) {
+        } else if gear.iter().any(|g| g.item_id != 0) && gear.iter().all(|g| g.ilvl < 100) {
             BuildShape::LowLevel
         } else {
             BuildShape::Drifted
@@ -4199,6 +4201,14 @@ mod tests {
         assert_eq!(build_shape(Some(71), &[], &kit), BuildShape::Drifted);
         assert_eq!(build_shape(Some(71), &[pick; 2], &kit), BuildShape::Drifted);
         assert_eq!(build_shape(Some(71), &[pick; 2], &[]), BuildShape::Drifted);
+        // A gear bracket whose every tuple failed to parse is all empty
+        // slots, every item level 0: never a leveling character's kit.
+        let empty = vec![GearItem::default(); 18];
+        assert_eq!(build_shape(Some(71), &[], &empty), BuildShape::Drifted);
+        assert_eq!(
+            build_shape(Some(71), &[pick; 2], &empty),
+            BuildShape::Drifted
+        );
         assert_eq!(build_shape(Some(71), &[pick; 30], &kit), BuildShape::Full);
     }
 
