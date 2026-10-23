@@ -1002,7 +1002,7 @@ fn status_words_the_overlay_and_a_lost_daemon() {
     // binary itself would be the game on Linux (its name matches), but it
     // is an ancestor of the daemon's pgrep call and macOS pgrep does not
     // match its own ancestors — so the game is a process on neither side.
-    let mut game = std::process::Command::new("/bin/sleep")
+    let mut game = std::process::Command::new("sleep")
         .arg("30")
         .spawn()
         .expect("spawn the fake game");
