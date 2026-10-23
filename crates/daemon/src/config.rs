@@ -16,8 +16,15 @@ pub struct Config {
     /// What to tail when no `--file`/`--logs` override is given. `None`
     /// means "not configured": the daemon then discovers the install
     /// (`wowdps_core::cli::default_logs_dir`) instead of assuming a path.
+    /// Point it at the flavor's `Logs` folder — on macOS, where the game
+    /// lives wherever it was installed (say an external volume), e.g.
+    /// `/Volumes/T7/Games/World of Warcraft/_retail_/Logs`; the addon and
+    /// everything else derive from it (`addon::product_dir`).
     pub logs_dir: Option<PathBuf>,
-    /// Case-insensitive substring matched against /proc comm+cmdline.
+    /// How the game is found: on Linux a case-insensitive substring of
+    /// /proc comm+cmdline; on macOS the same substring over every
+    /// process's full argument list (`pgrep -fil`, so an ERE, not a
+    /// literal).
     pub game_process: String,
     pub auto_overlay: bool,
     pub overlay_exit_grace_secs: u64,
@@ -55,11 +62,23 @@ pub struct Config {
     pub history_characters: Vec<String>,
 }
 
+/// The default `game_process`: the game binary — Windows-style under
+/// Proton; on macOS the app bundle (`World of Warcraft.app` matches the
+/// game's own command line — the bundle path inside `_retail_` — and not
+/// this meter's, which a broader `World of Warcraft` would).
+pub fn default_game_process() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "World of Warcraft.app"
+    } else {
+        "wow.exe"
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             logs_dir: None,
-            game_process: "wow.exe".to_string(),
+            game_process: default_game_process().to_string(),
             auto_overlay: true,
             overlay_exit_grace_secs: 180,
             gui_binary: "wowdps-gui".to_string(),
@@ -283,7 +302,7 @@ mod tests {
     fn a_missing_file_is_the_default_config() {
         let cfg = Config::load_from(Path::new("/nonexistent/wowdps.toml"));
         assert_eq!(cfg, Config::default());
-        assert_eq!(cfg.game_process, "wow.exe");
+        assert_eq!(cfg.game_process, default_game_process());
         assert!(cfg.auto_overlay);
     }
 
@@ -401,7 +420,11 @@ auto_overlay = true
 "#;
         let cfg = Config::parse(text);
         assert!(!cfg.auto_overlay, "root key read");
-        assert_eq!(cfg.game_process, "wow.exe", "sectioned key ignored");
+        assert_eq!(
+            cfg.game_process,
+            default_game_process(),
+            "sectioned key ignored"
+        );
     }
 
     #[test]
@@ -415,7 +438,11 @@ overlay_exit_grace_secs = ten
 logs_dir = "/ok"   # with a trailing comment
 "#;
         let cfg = Config::parse(text);
-        assert_eq!(cfg.game_process, "wow.exe", "wrong type ignored");
+        assert_eq!(
+            cfg.game_process,
+            default_game_process(),
+            "wrong type ignored"
+        );
         assert!(cfg.auto_overlay, "wrong type ignored");
         assert_eq!(cfg.overlay_exit_grace_secs, 180);
         assert_eq!(cfg.logs_dir, Some(PathBuf::from("/ok")));
@@ -438,7 +465,7 @@ logs_dir = "/ok"   # with a trailing comment
         assert_eq!(cfg.game_process, "a\\tb");
         // A dangling backslash makes the value unparseable: ignored.
         let cfg = Config::parse(r#"game_process = "a\""#);
-        assert_eq!(cfg.game_process, "wow.exe");
+        assert_eq!(cfg.game_process, default_game_process());
     }
 
     /// The config file lives under `$XDG_CONFIG_HOME`, else `$HOME/.config`,

@@ -1,11 +1,14 @@
-//! `--overlay`: the meter as a layer surface over the game (spec §7). The
+//! `--overlay`: the meter as a surface over the game (spec §7). The
 //! view is `panel::Overlay`; this module opens its surface.
 //!
 //! Step 2.1 places the surface as the iced overlay does — anchored to the
 //! edge and the corner the offset counts from, the offset a margin — and
 //! sizes it for the state (`gui_logic::surface`). Step 2.2 moves it onto
 //! the edge strip (`strip.rs`), where a drag moves the content and never
-//! the surface.
+//! the surface. Linux realizes that as a wlr-layer-shell surface spanning
+//! the edge; macOS as a floating panel exactly the content's size, since
+//! it has no input region to keep the rest of a spanning strip
+//! click-through.
 
 use std::io::Write as _;
 
@@ -23,7 +26,7 @@ mod strip;
 
 /// Open the overlay once its output is known. Wayland names its outputs
 /// only after the event loop turns, so a named output is waited for —
-/// briefly: a second, then the compositor chooses. A surface that cannot
+/// briefly: a second, then the system chooses. A surface that cannot
 /// open goes to `failed`.
 pub fn open(
     cx: &mut App,
@@ -52,24 +55,41 @@ pub fn open(
     .detach();
 }
 
-/// The display GPUI keys by the UUID of `name` (spike S4).
+/// The display GPUI keys by the UUID of `name` (spike S4). macOS's display
+/// UUIDs are Core Graphics's own, not hashed names, so a name there is the
+/// display's 1-based index in GPUI's order (`primary` is 1).
 fn display_named(cx: &App, name: &str) -> Option<gpui_kit::DisplayId> {
-    let want = wowdps_gui_logic::output::output_uuid(name);
-    cx.displays()
-        .into_iter()
-        .find(|d| d.uuid().is_ok_and(|uuid| *uuid.as_bytes() == want))
-        .map(|d| d.id())
+    #[cfg(target_os = "linux")]
+    {
+        let want = wowdps_gui_logic::output::output_uuid(name);
+        cx.displays()
+            .into_iter()
+            .find(|d| d.uuid().is_ok_and(|uuid| *uuid.as_bytes() == want))
+            .map(|d| d.id())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let index = match name.trim() {
+            "primary" => Some(1),
+            s => s.parse::<usize>().ok(),
+        }?;
+        cx.displays()
+            .into_iter()
+            .nth(index.checked_sub(1)?)
+            .map(|d| d.id())
+    }
 }
 
 /// Which output the overlay is born on — a layer surface never changes
-/// output. `WOWDPS_OVERLAY_OUTPUT` (by hand) or a configured `monitor`
-/// wins; else, under Hyprland with `follow_game`, the monitor showing the
-/// game's workspace, so a daemon-spawned overlay never follows the user's
-/// focus onto the terminal's screen. The daemon spawns the overlay on the
-/// game PROCESS (`WOWDPS_OVERLAY_GAME_STARTING`) and Proton maps the window
-/// seconds later, so that wait is up to `GAME_WINDOW_WAIT`; a hand launch
-/// asks once. `None`: the compositor chooses. Called before the app starts:
-/// the wait never blocks a frame.
+/// output, and a macOS panel is only placed once. `WOWDPS_OVERLAY_OUTPUT`
+/// (by hand) or a configured `monitor` wins; else, under Hyprland with
+/// `follow_game`, the monitor showing the game's workspace, so a
+/// daemon-spawned overlay never follows the user's focus onto the
+/// terminal's screen. The daemon spawns the overlay on the game PROCESS
+/// (`WOWDPS_OVERLAY_GAME_STARTING`) and Proton maps the window seconds
+/// later, so that wait is up to `GAME_WINDOW_WAIT`; a hand launch asks
+/// once. `None`: the system chooses. Called before the app starts: the
+/// wait never blocks a frame.
 pub fn choose_output(cfg: &Config) -> Option<String> {
     use wowdps_gui_logic::hypr;
     if let Ok(name) = std::env::var("WOWDPS_OVERLAY_OUTPUT") {
@@ -93,7 +113,7 @@ pub fn choose_output(cfg: &Config) -> Option<String> {
 /// before it picks an output.
 const GAME_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn surface(
     cx: &mut App,
     output: Option<&str>,
@@ -109,7 +129,7 @@ fn surface(
     if let (Some(name), None) = (output, display_id) {
         let _ = writeln!(
             std::io::stderr(),
-            "wowdps-gui: no output named {name}; the compositor chooses"
+            "wowdps-gui: no output named {name}; the system chooses"
         );
     }
     // WOWDPS_OVERLAY_AUTOVIEW: start on that view, before the first Watch.
@@ -120,7 +140,8 @@ fn surface(
     let session = cx.new(|cx| crate::session::Session::running_with(Box::new(client), state, cx));
     let overlay = cx.new(|cx| panel::Overlay::new(session, cfg, Rc::new(split_link), cx));
     let current = Rc::new(Cell::new(Some(open_on(cx, output, display_id, &overlay)?)));
-    // A tab dropped by another edge: the surface is recreated there — the
+    // A tab dropped by another edge, or on macOS a size change (a resize
+    // keeps the wrong corner fixed): the surface is recreated there — the
     // new one opened before the old one goes, so the app never stands
     // without a window.
     let held = Rc::clone(&current);
@@ -136,7 +157,7 @@ fn surface(
             Err(e) => {
                 let _ = writeln!(
                     std::io::stderr(),
-                    "wowdps-gui: the overlay cannot move edge: {e}"
+                    "wowdps-gui: the overlay cannot re-anchor: {e}"
                 );
             }
         }
@@ -172,7 +193,7 @@ fn open_on(
 
     let (edge, across) = {
         let o = overlay.read(cx);
-        let (w, h) = wowdps_gui_logic::surface::surface_size(&o.cfg, o.expanded, false);
+        let (w, h) = o.want_size(cx);
         (o.cfg.edge, (w as f32, h as f32))
     };
     // The edge's full length. Not zero, which layer-shell reads as "stretch":
@@ -228,10 +249,73 @@ fn open_on(
         .map_err(|e| format!("cannot open the overlay: {e}"))
 }
 
+/// A floating panel for `overlay` on its edge, exactly the content's size:
+/// macOS has no input region, so a strip spanning the whole edge would
+/// swallow the game's clicks along it — the window IS the tab (then the
+/// panel), placed at the offset along the edge, flush across it. A size
+/// change cannot move the origin here, so `place` asks for a re-anchor
+/// (the surface module reopens, and the new corner is computed right).
+#[cfg(target_os = "macos")]
+fn open_on(
+    cx: &mut App,
+    _output: Option<&str>,
+    display_id: Option<gpui_kit::DisplayId>,
+    overlay: &gpui_kit::Entity<panel::Overlay>,
+) -> Result<gpui_kit::AnyWindowHandle, String> {
+    use gpui_kit::{
+        Bounds, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, point, px,
+        size,
+    };
+    use wowdps_gui_logic::surface::panel_origin;
+
+    let (edge, offset, (w, h)) = {
+        let o = overlay.read(cx);
+        (
+            o.cfg.edge,
+            o.cfg.offset as f32,
+            // `place`'s sizes: the content shown, a pixel hidden (an
+            // invisible window takes no clicks).
+            if o.shown() { o.want_size(cx) } else { (1, 1) },
+        )
+    };
+    let (w, h) = (w as f32, h as f32);
+    // The display's rect in logical pixels, top-left origin (macOS).
+    let display = display_id
+        .and_then(|id| cx.find_display(id))
+        .or_else(|| cx.primary_display());
+    let screen = display
+        .map(|d| {
+            let b = d.bounds();
+            (f32::from(b.size.width), f32::from(b.size.height))
+        })
+        .unwrap_or((1920.0, 1080.0));
+    // The content sits at the offset along the edge, clamped so it stays
+    // whole, and flush with the screen's side across it: the expanded panel
+    // grown inward from the edge.
+    let (x, y) = panel_origin(edge, offset, (w, h), screen);
+    let options = WindowOptions {
+        display_id,
+        titlebar: None,
+        window_bounds: Some(WindowBounds::Windowed(Bounds {
+            origin: point(px(x), px(y)),
+            size: size(px(w), px(h)),
+        })),
+        window_background: WindowBackgroundAppearance::Transparent,
+        focus: false,
+        kind: WindowKind::PopUp,
+        is_resizable: false,
+        ..Default::default()
+    };
+    let root = overlay.clone();
+    cx.open_window(options, move |_, _| root)
+        .map(Into::into)
+        .map_err(|e| format!("cannot open the overlay: {e}"))
+}
+
 /// The Σ split's own daemon connection: a `Window` kind, so the daemon's
 /// `SetVisible` — the overlay's alone — never reaches it, holding only the
 /// top rows.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn split_link(cx: &mut App) -> Result<gpui_kit::Entity<crate::session::Session>, String> {
     use gpui_kit::AppContext as _;
     use wowdps_proto::{ClientKind, ClientState};
@@ -245,9 +329,11 @@ fn split_link(cx: &mut App) -> Result<gpui_kit::Entity<crate::session::Session>,
     Ok(cx.new(|cx| crate::session::Session::running_with(Box::new(client), state, cx)))
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Neither a layer shell (Linux) nor a floating panel (macOS) is
+/// available: the overlay is honest about it.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn surface(_: &mut App, _: Option<&str>, _: DaemonClient, _: Config) -> Result<(), String> {
-    Err("the overlay is a wlr-layer-shell surface, which only Linux has".to_string())
+    Err("the overlay needs Linux (wlr-layer-shell) or macOS".to_string())
 }
 
 /// How long `edge` of the overlay's output is, in logical pixels: from

@@ -2182,6 +2182,145 @@ mod tests {
         );
     }
 
+    /// A real-shaped short build (the 2026-10 survey's kind A): a max-level
+    /// player in full gear logged with spec 0, an empty talent bracket and an
+    /// empty PvP tuple `()`, right after the ENCOUNTER_START of a pull that
+    /// ended within seconds. The same player carries a full build on every
+    /// other line of the log. Every guid is invented.
+    const SHORT_BUILD_UNSPECCED: &str = concat!(
+        "COMBATANT_INFO,Player-1111-0A000001,1,",
+        "520,610,22900,2800,0,0,0,0,298,298,298,55,55,1160,1160,1160,240,1250,0,0,0,880,",
+        "0,[],(),",
+        "[(250101,298,(8017,0,0),(13335,40,13786),(240900,295)),",
+        "(240951,285,(),(12214,13667,12497),(240983,295)),",
+        "(250102,289,(8001,0,0),(6652,13440),()),",
+        "(167082,1,(),(),()),",
+        "(250103,289,(7987,0,0),(13335,6652),()),",
+        "(268201,298,(),(42,13577),(240900,295)),",
+        "(250104,289,(7935,0,0),(13440,6652),()),",
+        "(244501,285,(7963,0,0),(12214,13667),()),",
+        "(193701,289,(),(13440,6652),()),",
+        "(250105,289,(),(13335,6652),()),",
+        "(251001,289,(7967,0,0),(13440,6652),(240900,295)),",
+        "(268202,298,(7967,0,0),(6652,13668),(240900,295)),",
+        "(249301,298,(),(6652,13335),()),",
+        "(249302,298,(),(41,13335),()),",
+        "(249303,289,(),(6652,13577),()),",
+        "(193702,298,(7983,8052,0),(13440,6652),()),",
+        "(237801,295,(8041,8052,0),(12214,13655),()),",
+        "(133670,1,(),(),())],",
+        "[Player-1111-0A000001,1235108,1,Player-1111-0A000002,1459,1,",
+        "Player-1111-0A000003,381741,1,Player-1111-0A000004,6673,1],",
+        "29,0,0,0",
+    );
+
+    /// The other real short build (kind B): a low-level character leveling
+    /// through Timewalking dungeons, its picks growing line by line (2 to 21
+    /// over one night), gear item levels under 50 with the empty slots
+    /// written `(0,0,(),(),())`, and a zeroed PvP tuple. Every guid is
+    /// invented.
+    const SHORT_BUILD_LOW_LEVEL: &str = concat!(
+        "COMBATANT_INFO,Player-1111-0A000006,0,",
+        "70,28,700,29,0,0,0,0,12,12,12,0,0,26,26,26,0,13,19,19,19,140,",
+        "71,[(92537,114643,1),(90327,112184,1)],(0,0,0,0),",
+        "[(236101,11,(),(6710),()),(175301,5,(),(),()),(0,0,(),(),()),(0,0,(),(),()),",
+        "(236105,12,(),(6710),()),(236103,12,(),(6710),()),(236106,8,(),(6710),()),",
+        "(236108,17,(),(6712),()),(236102,7,(),(6710),()),(175302,11,(),(6500),()),",
+        "(236110,11,(),(6710),()),(236109,16,(),(6710),()),(0,0,(),(),()),(0,0,(),(),()),",
+        "(236107,16,(),(6712),()),(236111,16,(),(6712),()),(236112,19,(),(6712),()),",
+        "(178201,2,(),(),())],",
+        "[Player-1111-0A000006,6673,1,Player-1111-0A000006,386164,1,",
+        "Player-1111-0A000007,462854,1,Player-1111-0A000007,1459,1],",
+        "24,0,0,0",
+    );
+
+    /// The two short builds real logs carry, read as written: a 2026-10
+    /// survey of 73 logs found 31 of 19,524 COMBATANT_INFO lines short of a
+    /// full build, every one of these two shapes. The real-log gate excuses
+    /// exactly these (`build_shape`).
+    #[test]
+    fn combatant_info_short_builds_read_as_written() {
+        let Event::CombatantInfo {
+            spec_id,
+            talents,
+            gear,
+            stats,
+            auras,
+            ..
+        } = parse(SHORT_BUILD_UNSPECCED)
+        else {
+            panic!("not COMBATANT_INFO");
+        };
+        assert_eq!(spec_id, Some(0));
+        assert!(talents.is_empty(), "the empty bracket gives no picks");
+        assert_eq!(gear.len(), 18);
+        assert!(gear.iter().all(|g| g.item_id != 0), "the whole kit");
+        assert_eq!(gear.iter().map(|g| g.ilvl).max(), Some(298));
+        assert_eq!(stats.len(), 22);
+        assert_eq!(auras.len(), 4);
+
+        let Event::CombatantInfo {
+            spec_id,
+            talents,
+            gear,
+            stats,
+            auras,
+            ..
+        } = parse(SHORT_BUILD_LOW_LEVEL)
+        else {
+            panic!("not COMBATANT_INFO");
+        };
+        assert_eq!(spec_id, Some(71));
+        assert_eq!(
+            talents,
+            vec![
+                TalentPick {
+                    node_id: 92537,
+                    entry_id: 114643,
+                    rank: 1
+                },
+                TalentPick {
+                    node_id: 90327,
+                    entry_id: 112184,
+                    rank: 1
+                },
+            ]
+        );
+        assert_eq!(gear.len(), 18);
+        assert_eq!(
+            gear[0],
+            GearItem {
+                item_id: 236101,
+                ilvl: 11,
+                enchants: vec![],
+                bonus_ids: vec![6710],
+                gems: vec![],
+            }
+        );
+        let empty: Vec<usize> = gear
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| **g == GearItem::default())
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(empty, vec![2, 3, 12, 13], "each empty slot holds its place");
+        assert_eq!(gear.iter().map(|g| g.ilvl).max(), Some(19));
+        assert_eq!(stats.len(), 22);
+        let got: Vec<(&str, u32, u32)> = auras
+            .iter()
+            .map(|a| (a.caster.as_str(), a.spell_id, a.stacks))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Player-1111-0A000006", 6673, 1),
+                ("Player-1111-0A000006", 386164, 1),
+                ("Player-1111-0A000007", 462854, 1),
+                ("Player-1111-0A000007", 1459, 1),
+            ]
+        );
+    }
+
     #[test]
     fn combatant_info_malformed_gear_item_holds_its_slot() {
         // The gear array is positional: a corrupt tuple must become an empty
@@ -3996,6 +4135,83 @@ mod tests {
         ));
     }
 
+    /// The real-log gate's verdict on one COMBATANT_INFO: a full build, one of
+    /// the two honest short builds a 2026-10 survey of 73 real logs found
+    /// (every entry a player), or neither, which is a drifted bracket scan.
+    #[derive(Debug, PartialEq)]
+    enum BuildShape {
+        /// 30+ picks: real max-level players run ~50-80.
+        Full,
+        /// Spec 0 and an empty talent bracket (`SHORT_BUILD_UNSPECCED`).
+        Unspecced,
+        /// Every item level under 100 and at least one real item: a
+        /// character still leveling (`SHORT_BUILD_LOW_LEVEL`). A dump of
+        /// empty slots alone is not one: every corrupt tuple parses to
+        /// `GearItem::default()`, item 0 at item level 0.
+        LowLevel,
+        Drifted,
+    }
+
+    fn build_shape(spec_id: Option<u32>, talents: &[TalentPick], gear: &[GearItem]) -> BuildShape {
+        if talents.len() >= 30 {
+            BuildShape::Full
+        } else if spec_id == Some(0) && talents.is_empty() {
+            BuildShape::Unspecced
+        } else if gear.iter().any(|g| g.item_id != 0) && gear.iter().all(|g| g.ilvl < 100) {
+            BuildShape::LowLevel
+        } else {
+            BuildShape::Drifted
+        }
+    }
+
+    #[test]
+    fn real_log_gate_excuses_only_the_two_short_builds() {
+        let shape = |body: &str| {
+            let Event::CombatantInfo {
+                spec_id,
+                talents,
+                gear,
+                ..
+            } = parse(body)
+            else {
+                panic!("not COMBATANT_INFO");
+            };
+            build_shape(spec_id, &talents, &gear)
+        };
+        assert_eq!(shape(SHORT_BUILD_UNSPECCED), BuildShape::Unspecced);
+        assert_eq!(shape(SHORT_BUILD_LOW_LEVEL), BuildShape::LowLevel);
+        // Kind A's line under a real spec: no longer the honest shape.
+        let specced = SHORT_BUILD_UNSPECCED.replacen(",880,0,[]", ",880,577,[]", 1);
+        assert_eq!(shape(&specced), BuildShape::Drifted);
+        // What a drifted scan gives: a max-level kit with few or no picks,
+        // or picks with no gear read at all.
+        let kit = vec![
+            GearItem {
+                item_id: 250101,
+                ilvl: 298,
+                ..GearItem::default()
+            };
+            18
+        ];
+        let pick = TalentPick {
+            node_id: 92537,
+            entry_id: 114643,
+            rank: 1,
+        };
+        assert_eq!(build_shape(Some(71), &[], &kit), BuildShape::Drifted);
+        assert_eq!(build_shape(Some(71), &[pick; 2], &kit), BuildShape::Drifted);
+        assert_eq!(build_shape(Some(71), &[pick; 2], &[]), BuildShape::Drifted);
+        // A gear bracket whose every tuple failed to parse is all empty
+        // slots, every item level 0: never a leveling character's kit.
+        let empty = vec![GearItem::default(); 18];
+        assert_eq!(build_shape(Some(71), &[], &empty), BuildShape::Drifted);
+        assert_eq!(
+            build_shape(Some(71), &[pick; 2], &empty),
+            BuildShape::Drifted
+        );
+        assert_eq!(build_shape(Some(71), &[pick; 30], &kit), BuildShape::Full);
+    }
+
     /// Whole-file smoke test against a real combat log. Skipped unless
     /// `WOWDPS_REAL_LOG` points at one, so the shared gate stays hermetic.
     ///
@@ -4010,6 +4226,10 @@ mod tests {
         let (mut total, mut none, mut other, mut dmg, mut heal, mut absorb) = (0, 0, 0, 0, 0, 0);
         let (mut dmg_sum, mut heal_sum) = (0u64, 0u64);
         let (mut cinfo, mut cinfo_talented, mut cinfo_geared) = (0, 0, 0);
+        // The two honest short builds, counted apart from the full builds;
+        // any other short build is kept by its shape for the assertion.
+        let (mut cinfo_unspecced, mut cinfo_low_level) = (0, 0);
+        let mut drifted: Vec<String> = Vec::new();
         for raw in text.lines() {
             if raw.trim().is_empty() {
                 continue;
@@ -4036,6 +4256,7 @@ mod tests {
                     }
                     Event::Absorbed { .. } => absorb += 1,
                     Event::CombatantInfo {
+                        spec_id,
                         ref talents,
                         ref gear,
                         ..
@@ -4045,8 +4266,18 @@ mod tests {
                         // dump is the standard 15-18 slot inventory with sane
                         // item levels. A drifted bracket position would land
                         // way outside these bands.
-                        if talents.len() >= 30 {
-                            cinfo_talented += 1;
+                        match build_shape(spec_id, talents, gear) {
+                            BuildShape::Full => cinfo_talented += 1,
+                            BuildShape::Unspecced => cinfo_unspecced += 1,
+                            BuildShape::LowLevel => cinfo_low_level += 1,
+                            // The line's shape, never its guid: no name
+                            // leaves a real log.
+                            BuildShape::Drifted => drifted.push(format!(
+                                "fields={} spec={spec_id:?} picks={} max_ilvl={}",
+                                raw.split(',').count(),
+                                talents.len(),
+                                gear.iter().map(|g| g.ilvl).max().unwrap_or(0),
+                            )),
                         }
                         if (10..=20).contains(&gear.len()) && gear.iter().all(|g| g.ilvl < 2000) {
                             cinfo_geared += 1;
@@ -4059,14 +4290,26 @@ mod tests {
         eprintln!(
             "lines={total} unparsed={none} other={other} damage={dmg} heal={heal} \
              absorbed={absorb} dmg_total={dmg_sum} effective_heal={heal_sum} \
-             combatant_info={cinfo} talented={cinfo_talented} geared={cinfo_geared}"
+             combatant_info={cinfo} talented={cinfo_talented} geared={cinfo_geared} \
+             excused={} (unspecced={cinfo_unspecced} low_level={cinfo_low_level})",
+            cinfo_unspecced + cinfo_low_level
         );
         assert_eq!(none, 0, "every line of a real log must parse");
         assert!(dmg > 0 && heal > 0 && absorb > 0, "expected real events");
-        // The bracket scan against real 461-508-field lines: every
-        // COMBATANT_INFO must yield a plausible full build and gear dump.
+        // The bracket scan against real 160-530-field lines: every
+        // COMBATANT_INFO must yield a plausible gear dump, and a full build
+        // or one of the two honest short builds (`build_shape`). Those two
+        // are all a 73-log survey (2026-10, 19,524 lines, every one a
+        // player) found short; "at least half" would pass a drift that hit
+        // half the lines.
         assert!(cinfo > 0, "expected COMBATANT_INFO lines in a real log");
-        assert_eq!(cinfo_talented, cinfo, "talent bracket drifted?");
+        assert_eq!(
+            cinfo_talented + cinfo_unspecced + cinfo_low_level,
+            cinfo,
+            "talent bracket drifted? {} short build(s) of no honest shape, first: {:?}",
+            drifted.len(),
+            drifted.iter().take(5).collect::<Vec<_>>(),
+        );
         assert_eq!(cinfo_geared, cinfo, "gear bracket drifted?");
     }
 

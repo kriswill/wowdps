@@ -14,7 +14,8 @@ pub fn is_wow_install(p: &Path) -> bool {
 
 /// The retail logs directory to tail when no `logs_dir` is configured:
 /// `$WOWDPS_WOW_DIR` when it names an install, else the most recently
-/// updated install found under the conventional Steam roots. `None` when
+/// updated install found under the conventional install roots (Battle.net's
+/// on macOS, Steam's Proton prefixes elsewhere). `None` when
 /// nothing is found — the daemon reports that instead of tailing a
 /// made-up path.
 pub fn default_logs_dir() -> Option<PathBuf> {
@@ -32,29 +33,41 @@ fn retail_logs(wow: &Path) -> PathBuf {
     wow.join("_retail_").join("Logs")
 }
 
-/// WoW install roots under `home`'s conventional Steam locations' Proton
-/// prefixes, deduplicated (the roots are often symlinks to one another).
+/// WoW installs under `home`'s conventional roots, deduplicated (the
+/// roots are often symlinks to one another): the Battle.net folders on
+/// macOS (`/Applications`, `~/Applications`), the Steam roots' Proton
+/// prefixes elsewhere.
 pub fn discover_wow_installs(home: &Path) -> Vec<PathBuf> {
-    let roots = [
-        home.join(".local/share/Steam"),
-        home.join(".steam/steam"),
-        home.join(".steam/root"),
-        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
-    ];
     let mut found: Vec<PathBuf> = Vec::new();
-    for root in roots {
-        let Ok(entries) = std::fs::read_dir(root.join("steamapps").join("compatdata")) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let candidate = entry
-                .path()
-                .join("pfx/drive_c/Program Files (x86)/World of Warcraft");
-            if is_wow_install(&candidate) {
-                let canonical = candidate.canonicalize().unwrap_or(candidate);
-                if !found.contains(&canonical) {
-                    found.push(canonical);
-                }
+    fn consider(candidate: PathBuf, found: &mut Vec<PathBuf>) {
+        if is_wow_install(&candidate) {
+            let canonical = candidate.canonicalize().unwrap_or(candidate);
+            if !found.contains(&canonical) {
+                found.push(canonical);
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    for root in [PathBuf::from("/Applications"), home.join("Applications")] {
+        consider(root.join("World of Warcraft"), &mut found);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let roots = [
+            home.join(".local/share/Steam"),
+            home.join(".steam/steam"),
+            home.join(".steam/root"),
+            home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
+        ];
+        for root in roots {
+            let Ok(entries) = std::fs::read_dir(root.join("steamapps").join("compatdata")) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let candidate = entry
+                    .path()
+                    .join("pfx/drive_c/Program Files (x86)/World of Warcraft");
+                consider(candidate, &mut found);
             }
         }
     }
@@ -269,6 +282,10 @@ mod tests {
         );
     }
 
+    // The compatdata roots exist only off macOS, where discovery checks
+    // /Applications — a machine with the game installed would leak into
+    // these assertions.
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn install_discovery_scans_steam_prefixes_and_prefers_the_newest() {
         let home = std::env::temp_dir().join(format!("wowdps-cli-test-{}", std::process::id()));
@@ -309,6 +326,34 @@ mod tests {
             retail_logs(&picked).display()
         );
 
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn install_discovery_checks_the_applications_roots() {
+        // An install under a temp HOME's Applications folder is found; the
+        // real /Applications is validated on the machine that has the game.
+        let home = std::env::temp_dir().join(format!("wowdps-cli-mac-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("Applications/World of Warcraft/Data/data")).unwrap();
+        std::fs::write(home.join("Applications/World of Warcraft/.build.info"), "x").unwrap();
+        // Discovery canonicalizes what it finds, and the temp dir sits
+        // behind a symlink on macOS (/var is /private/var), so both sides
+        // are compared canonical.
+        let want = home
+            .join("Applications/World of Warcraft")
+            .canonicalize()
+            .unwrap();
+        let found = discover_wow_installs(&home);
+        // A machine with the game in /Applications finds that install too,
+        // and it also ends in "Applications/World of Warcraft": only the temp
+        // install itself proves ~/Applications was scanned.
+        let mine = found
+            .iter()
+            .find(|p| p.canonicalize().ok().as_ref() == Some(&want))
+            .unwrap_or_else(|| panic!("{} is not in {found:?}", want.display()));
+        assert!(is_wow_install(mine));
         std::fs::remove_dir_all(&home).unwrap();
     }
 
@@ -443,12 +488,16 @@ mod tests {
         }
         assert_eq!(default_logs_dir(), Some(wow.join("_retail_").join("Logs")));
 
-        // Not an install: fall through to discovery, which finds nothing.
+        // Not an install: fall through to discovery. On Linux it finds
+        // nothing (the compatdata roots live under the empty home); on
+        // macOS it scans the Applications roots a real machine may fill,
+        // so only Linux asserts the fall-through.
         unsafe { std::env::set_var("WOWDPS_WOW_DIR", &home) };
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(default_logs_dir(), None);
         unsafe { std::env::remove_var("WOWDPS_WOW_DIR") };
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(default_logs_dir(), None);
-
         match saved_home {
             Some(h) => unsafe { std::env::set_var("HOME", h) },
             None => unsafe { std::env::remove_var("HOME") },

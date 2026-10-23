@@ -1,7 +1,7 @@
 ---
 type: Crate
 title: wowdps-gui
-description: 'The wowdps GUI on Zed''s GPUI through GPUI Kit — the meter window and the wlr-layer-shell overlay, a pure client of model, proto and gui-logic; built as crates/gui-new beside the iced GUI, it took this crate''s place at the cutover.'
+description: 'The wowdps GUI on Zed''s GPUI through GPUI Kit — the meter window and the overlay (a wlr-layer-shell surface on Linux, a floating panel on macOS), a pure client of model, proto and gui-logic; built as crates/gui-new beside the iced GUI, it took this crate''s place at the cutover.'
 resource: crates/gui
 tags: [crate, gui]
 status: stable
@@ -837,32 +837,43 @@ overlay layer, `KeyboardInteractivity::None`, transparent), opened through
 (`gui-logic/src/single.rs`): a new `--overlay` launch evicts the running one
 via an unversioned takeover socket, so orphans can't stack surfaces or
 respawn daemons. Its output is chosen before the app starts
-(`overlay::choose_output`), because a layer surface never changes output:
+(`overlay::choose_output`), because a surface never changes output:
 `WOWDPS_OVERLAY_OUTPUT`, else config `monitor`, else under Hyprland with
 `follow_game` the game's monitor (`hypr::game_monitor`: the game window's
 workspace, then that workspace's monitor from the `workspaces` reply — so a
-game parked off screen still resolves), else the compositor's choice. The
+game parked off screen still resolves), else the system's choice. The
 daemon spawns on the game PROCESS and the window maps seconds later under
 Proton, so a daemon-spawned overlay — marked by the
 `WOWDPS_OVERLAY_GAME_STARTING` env the supervisor sets — polls for up to 30 s
-(`GAME_WINDOW_WAIT`) before choosing; a hand launch asks once. The display is
-found by recomputing GPUI's UUIDv5 of the output name
+(`GAME_WINDOW_WAIT`) before choosing; a hand launch asks once. Linux finds
+the display by recomputing GPUI's UUIDv5 of the output name
 (`gui_logic::output::output_uuid`), never by bounds, which are wrong at
-fractional scale and under rotation. **The edge strip**: gpui-pre sets a
-layer surface's margin only when it is created, so the surface spans its
-edge's whole LENGTH (anchored to the edge and both neighbors), its
-THICKNESS follows the state (`Window::resize`, sized in `render`, only a
-change sent), the content sits at the configured offset inside it, and the
-input region is exactly the content (`Window::set_input_region`), the rest of
-the strip click-through (`overlay/strip.rs` is the arithmetic). The grip (the
-tab, the header) tells a click from a drag beyond 5 px, a window-wide
-listener follows a drag off the content, and the offset is remembered by
-itself; under Hyprland a tab dropped near another edge recreates the surface
-there (gui-logic's `surface::nearest_edge`), the new one opened before the
-old one goes. It never asks for a zero length (layer-shell's "stretch" is a
-viewport protocol error under GPUI). "Hidden" is a 1 px strip with an empty
-input region: the daemon's `SetVisible` composed with `follow_game` (the
-game's workspace on screen, `gui-logic/src/hypr.rs`; `game_match`). Closing
+fractional scale and under rotation; macOS takes the display's 1-based
+index (Core Graphics's UUIDs are not hashed names). **The edge strip**: on
+Linux gpui-pre sets a layer surface's margin only when it is created, so
+the surface spans its edge's whole LENGTH (anchored to the edge and both
+neighbors), its THICKNESS follows the state (`Window::resize`, sized in
+`render`, only a change sent), the content sits at the configured offset
+inside it, and the input region is exactly the content
+(`Window::set_input_region`), the rest of the strip click-through
+(`overlay/strip.rs` is the arithmetic). The grip (the tab, the header)
+tells a click from a drag beyond 5 px, a window-wide listener follows a
+drag off the content, and the offset is remembered by itself; under
+Hyprland a tab dropped near another edge recreates the surface there
+(gui-logic's `surface::nearest_edge`), the new one opened before the old
+one goes. It never asks for a zero length (layer-shell's "stretch" is a
+viewport protocol error under GPUI). "Hidden" is a 1 px surface with an
+empty input region: the daemon's `SetVisible` composed with `follow_game`
+(the game's workspace on screen, `gui-logic/src/hypr.rs`; `game_match`).
+On macOS the surface is a floating GPUI panel (`WindowKind::PopUp` — a
+non-activating NSPanel, level 101, above all Spaces and fullscreen
+auxiliary) exactly the content's size, at the offset along the edge
+(gui-logic's `surface::panel_origin`): there is no input region, so the
+strip's spanning surface would eat the game's clicks along the whole edge;
+hidden is a 1 px window. A size change
+re-anchors — the `Reanchor` event reopens (a macOS `resize` keeps the
+wrong corner fixed, and an origin cannot move after the fact); a drag
+slides nothing, the offset stays as configured. Closing
 its last surface quits, and the supervisor takes it from there. It zooms by
 hand (`ov.z(…)`), and a wheel over the header zooms. Inside an instance visit
 the overlay anchors its frame on the *visit*: gui-logic's `timeline` groups

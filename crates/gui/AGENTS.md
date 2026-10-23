@@ -1,6 +1,7 @@
 # crates/gui (wowdps-gui)
 
-The meter window and, with `--overlay`, a wlr-layer-shell overlay, on
+The meter window and, with `--overlay`, an overlay surface over the game —
+a wlr-layer-shell surface on Linux, a floating panel on macOS — on
 Zed's GPUI through GPUI Kit. A pure client of model, proto and gui-logic:
 it cannot parse a log. As built, surface by surface:
 `docs/OKF/crates/gui.md`. Changing a window surface or the talent viewer:
@@ -61,13 +62,21 @@ Read before the work it covers:
 
 ## The overlay
 
-- gpui-pre sets a layer surface's margin only at creation, so the surface
-  spans its whole edge, the content sits at an offset inside it, and the
-  input region is exactly the content. Hidden is a 1 px strip with an empty
-  region. Never ask for a zero length: it is a protocol error.
-- Its output is chosen before the app starts, found by recomputing GPUI's
-  UUIDv5 of the output name (`gui_logic::output::output_uuid`), never by
-  bounds.
+- On Linux gpui-pre sets a layer surface's margin only at creation, so the
+  surface spans its whole edge, the content sits at an offset inside it, and
+  the input region is exactly the content. Hidden is a 1 px strip with an
+  empty region. Never ask for a zero length: it is a protocol error.
+- On macOS the surface is a floating GPUI panel (`WindowKind::PopUp` — a
+  non-activating NSPanel, above all Spaces) exactly the content's size:
+  there is no input region, so the strip's spanning surface would eat the
+  game's clicks along the edge. Hidden is a 1 px window. A size change
+  re-anchors (the `Reanchor` event reopens; a `resize` keeps the wrong
+  corner fixed and an origin cannot move), and a drag slides nothing — the
+  offset stays as configured.
+- Its output/display is chosen before the app starts: Linux finds it by
+  recomputing GPUI's UUIDv5 of the output name
+  (`gui_logic::output::output_uuid`), macOS by the display's 1-based index
+  in GPUI's order (`primary` is 1); never by bounds.
 - It has no keyboard: every gesture is a click, a right press or a wheel.
 - It is single-instance: a new `--overlay` launch evicts the running one.
   Never kill an overlay by a PID from earlier output.

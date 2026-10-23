@@ -62,8 +62,10 @@ and the wire. This is a map of where each lives, not a restatement.
   backlog from fresh combat.
 - `replay.rs` — the replay cut (below).
 - `cli.rs` — `default_logs_dir`: config `logs_dir`, else
-  `$WOWDPS_WOW_DIR`, else a Steam compatdata scan picking the newest
-  `.build.info`; an error only when nothing is found.
+  `$WOWDPS_WOW_DIR`, else the conventional install roots (a Steam
+  compatdata scan on Linux, `/Applications` and `~/Applications` on
+  macOS) picking the newest `.build.info`; an error only when nothing is
+  found.
 - **Generated tables**, each regenerated once per game patch by its
   `tools/gen-*.sh` through [wowdps-extract](extract.md):
   `class_spells.rs` (R8: out of instances COMBATANT_INFO never fires, so a

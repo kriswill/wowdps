@@ -8,7 +8,9 @@
 //! gpui-pre sets a layer surface's margin only when it is created, so the
 //! surface spans its edge's whole length and never moves; a drag moves the
 //! content and the input region inside it. Changing edge is the one thing
-//! that recreates the surface (`Reanchor`).
+//! that recreates the surface (`Reanchor`) — and on macOS any size change
+//! too, where the surface is a floating panel exactly the content's size
+//! and a resize would keep the wrong corner fixed.
 
 use std::time::Duration;
 
@@ -62,6 +64,14 @@ impl Overlay {
         self.daemon_visible && self.game_visible
     }
 
+    /// The size the state asks for right now — what a surface must be
+    /// opened with for its first `place` to agree (macOS re-anchors on any
+    /// mismatch).
+    pub(crate) fn want_size(&self, cx: &App) -> (u32, u32) {
+        let comparing = self.state(cx).screen == Screen::Compare;
+        surface_size(&self.cfg, self.expanded, comparing)
+    }
+
     /// Size the surface for the state, place the content on the strip, and
     /// fit the input region to it. `None` when hidden: a 1 px surface that
     /// draws nothing and takes no input, since layer-shell has no unmap.
@@ -71,18 +81,35 @@ impl Overlay {
             edge: self.cfg.edge,
             screen: (f32::from(vp.width), f32::from(vp.height)),
         };
-        let comparing = self.state(cx).screen == Screen::Compare;
-        let (w, h) = surface_size(&self.cfg, self.expanded, comparing);
+        let (w, h) = self.want_size(cx);
         let content = (w as f32, h as f32);
         let shown = self.shown();
         let across = if shown { content } else { (1.0, 1.0) };
+        // Linux: the surface spans the edge's whole length. macOS: the
+        // window is exactly its content — it has no input region, so the
+        // rest of a spanning strip would swallow the game's clicks. Other
+        // systems open no surface (`overlay::surface` refuses) and keep
+        // the strip's code, as before macOS had a panel.
+        #[cfg(not(target_os = "macos"))]
         let want = strip.surface(across);
+        #[cfg(target_os = "macos")]
+        let want = across;
         let want_px = (want.0.round() as u32, want.1.round() as u32);
         // An unconfigured surface has no length yet: the compositor's
         // configure gives it the edge's, and the next frame sizes it.
         if strip.length() > 0.0 && self.sized != Some(want_px) {
+            #[cfg(target_os = "macos")]
+            let reanchor = self.sized.is_some();
             self.sized = Some(want_px);
+            // macOS's `resize` keeps the wrong corner fixed for an
+            // edge-anchored panel, and nothing moves an origin afterwards —
+            // a size change asks for a re-anchor instead (render emits it).
+            #[cfg(not(target_os = "macos"))]
             window.resize(size(px(want.0), px(want.1)));
+            #[cfg(target_os = "macos")]
+            if reanchor {
+                self.reopen = true;
+            }
         }
         let rect = strip.place(content, self.offset);
         let region = shown.then_some(rect);
@@ -115,7 +142,9 @@ impl Overlay {
     }
 
     /// The pointer moved with the grip held: past the threshold it is a
-    /// drag, and the content follows it along the edge.
+    /// drag, and the content follows it along the edge. `cx` drives the
+    /// redraw on Linux; macOS only decides click-vs-drag.
+    #[cfg_attr(target_os = "macos", allow(unused_variables))]
     pub(super) fn grip_moved(&mut self, to: Point<Pixels>, cx: &mut Context<Self>) {
         let (Some(grip), Some(placed)) = (self.grip.as_mut(), self.placed) else {
             return;
@@ -125,11 +154,18 @@ impl Overlay {
             grip.moved = true;
         }
         if grip.moved {
-            let offset = placed.strip.dragged(placed.content, grip.from, travel);
-            if offset != self.offset {
-                self.offset = offset;
-                cx.notify();
+            // macOS: the window IS the content, so nothing slides within
+            // the strip — the pointer travel is just the drag threshold.
+            #[cfg(not(target_os = "macos"))]
+            {
+                let offset = placed.strip.dragged(placed.content, grip.from, travel);
+                if offset != self.offset {
+                    self.offset = offset;
+                    cx.notify();
+                }
             }
+            #[cfg(target_os = "macos")]
+            let _ = placed;
         }
     }
 

@@ -105,9 +105,11 @@ Nightly, from `rust-toolchain.toml`; the tree must still build on stable,
 so no `#![feature]`. Build in the dev shell (devenv, entered by its cd hook,
 or `nix develop`): the GUI links libraries only it provides, and
 `wowdps-history` needs the C++ compiler it provides to compile its bundled
-DuckDB. In the shell `wowdps`, `wowdps-history`, `wowdps-mcp` and
-`wowdps-gui` are wrappers that rebuild release from this checkout before
-they run (`WOWDPS_NO_BUILD=1` skips the build).
+DuckDB. macOS needs no nix: the GUI uses system frameworks, and Xcode's
+clang++ compiles the bundled DuckDB once. In the shell `wowdps`,
+`wowdps-history`, `wowdps-mcp` and `wowdps-gui` are wrappers that rebuild
+release from this checkout before they run (`WOWDPS_NO_BUILD=1` skips the
+build).
 
 ## Commands
 

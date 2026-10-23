@@ -9,7 +9,8 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::msg::{ClientKind, ClientMsg, Cursor, DaemonMsg, PROTO_VERSION};
@@ -56,12 +57,53 @@ pub fn prepare_socket_dir() -> io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Our uid, without libc: `/proc/self` is owned by the process's uid.
-/// Linux-only, like the rest of the daemon.
+/// Our uid, without libc, worked out once per process so every caller
+/// agrees on the socket dir: on Linux, `/proc/self` is owned by the
+/// process's uid; elsewhere a throwaway file we just created is ours by
+/// definition (`probe_uid`). Unwritable temp leaves 0 for the process,
+/// which fails ownership checks closed — a foreign dir is refused, never
+/// adopted.
 fn uid() -> u32 {
-    std::fs::metadata("/proc/self")
-        .map(|m| m.uid())
-        .unwrap_or(0)
+    static UID: OnceLock<u32> = OnceLock::new();
+    *UID.get_or_init(|| {
+        if let Ok(meta) = std::fs::metadata("/proc/self") {
+            return meta.uid();
+        }
+        static ATTEMPT: AtomicU64 = AtomicU64::new(0);
+        probe_uid(&std::env::temp_dir(), &ATTEMPT)
+    })
+}
+
+/// Names `probe_uid` tries before it gives up on 0: enough to step past
+/// the leftovers of a few crashed processes that had our pid.
+const UID_PROBE_TRIES: u32 = 16;
+
+/// The owner of a file created in `dir`. Each try takes a name no other
+/// try in this process takes (our pid and the next `attempt`) and creates
+/// it exclusively, so a stale or planted path (a symlink included) is
+/// never followed or truncated: a name that exists moves on to the next.
+/// 0 when no try can create its file.
+fn probe_uid(dir: &Path, attempt: &AtomicU64) -> u32 {
+    let pid = std::process::id();
+    for _ in 0..UID_PROBE_TRIES {
+        let n = attempt.fetch_add(1, Ordering::Relaxed);
+        let probe = dir.join(format!(".wowdps-uid-{pid}-{n}"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(file) => {
+                let uid = file.metadata().map(|m| m.uid()).unwrap_or(0);
+                drop(file);
+                let _ = std::fs::remove_file(&probe);
+                return uid;
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(_) => return 0,
+        }
+    }
+    0
 }
 
 /// The source a client forwards when it has to spawn the daemon itself.
@@ -378,7 +420,15 @@ fn handshake(stream: &UnixStream, kind: ClientKind) -> io::Result<Arc<Mutex<Inbo
             ));
         }
     }
-    reader.set_read_timeout(None)?;
+    // Clearing SO_RCVTIMEO fails with EINVAL on macOS once the peer has
+    // closed the socket; there the reader thread hits EOF at once anyway,
+    // so that one failure is ignored. Anywhere else a failure is an error:
+    // the reader stops at its first read error, and a timeout left set
+    // would disconnect the client after 5 quiet seconds.
+    match reader.set_read_timeout(None) {
+        Err(e) if cfg!(target_os = "macos") && e.kind() == io::ErrorKind::InvalidInput => {}
+        other => other?,
+    }
 
     let inbox = Arc::new(Mutex::new(Inbox::default()));
     let inbox_for_reader = Arc::clone(&inbox);
@@ -427,5 +477,36 @@ mod tests {
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn the_uid_probe_steps_past_leftovers_and_agrees_across_threads() {
+        let dir = std::env::temp_dir().join(format!("wowdps-uid-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let me = std::fs::metadata(&dir).unwrap().uid();
+        // A crashed process that had our pid left the first name behind.
+        let leftover = dir.join(format!(".wowdps-uid-{}-0", std::process::id()));
+        std::fs::write(&leftover, b"").unwrap();
+        let attempt = AtomicU64::new(0);
+        assert_eq!(probe_uid(&dir, &attempt), me);
+        // Concurrent probes each take their own name.
+        let uids: Vec<u32> = std::thread::scope(|s| {
+            let probes: Vec<_> = (0..8)
+                .map(|_| s.spawn(|| probe_uid(&dir, &attempt)))
+                .collect();
+            probes.into_iter().map(|p| p.join().unwrap()).collect()
+        });
+        assert!(
+            uids.iter().all(|&u| u == me),
+            "a probe disagreed with the dir owner"
+        );
+        // Every probe removed its file; the leftover is untouched.
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(left, vec![leftover]);
+        assert_eq!(uid(), me);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

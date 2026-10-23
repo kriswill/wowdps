@@ -66,7 +66,8 @@ const USAGE: &str = "usage:
 fetch and the gen-* commands read the local install's CASC storage (no
 network): wow-dir is the folder containing .build.info and Data/. When
 omitted, the install is located via $WOWDPS_WOW_DIR, the wowdps config's
-logs_dir, or a scan of Steam compatdata prefixes. --keys takes TACT keys
+logs_dir, or a scan of the install roots (Steam compatdata on Linux,
+/Applications and ~/Applications on macOS). --keys takes TACT keys
 in wowdev TACTKeys format; without a key, encrypted chunks decode to
 zeroes exactly like the game client. The gen-* commands expect --dbd-dir
 to hold <Table>.dbd schemas for the tables they read (the tools/gen-*.sh
