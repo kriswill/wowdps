@@ -496,7 +496,10 @@ mod tests {
                 .collect();
             probes.into_iter().map(|p| p.join().unwrap()).collect()
         });
-        assert!(uids.iter().all(|&u| u == me), "{uids:?}");
+        assert!(
+            uids.iter().all(|&u| u == me),
+            "a probe disagreed with the dir owner"
+        );
         // Every probe removed its file; the leftover is untouched.
         let left: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
