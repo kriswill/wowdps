@@ -330,7 +330,7 @@ fn status_reports_a_daemon_that_never_answers() {
 #[test]
 fn a_daemon_with_nothing_to_tail_fails_setup_and_logs_it() {
     let sb = Sandbox::new("nosource");
-    // No --file/--logs, config has no logs_dir, $HOME holds no Steam
+    // No --file/--logs, config has no logs_dir, $HOME holds no game
     // install: the daemon says so instead of tailing a made-up path.
     let out = sb.run(&["daemon"]);
     assert_eq!(out.status.code(), Some(1));

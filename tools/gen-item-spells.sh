@@ -17,7 +17,8 @@
 # usage: tools/gen-item-spells.sh [wow-dir]
 #   wow-dir: folder holding .build.info and Data/. When omitted the tool
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
-#   logs_dir, or a scan of the install roots (Steam compatdata on
+#   logs_dir, or a scan of the install roots: Steam's Proton prefixes and
+#   Wine prefixes under ~/.local, ~/Games, ~/.wine and flatpak app data on
 #   Linux, /Applications and ~/Applications on macOS).
 set -euo pipefail
 

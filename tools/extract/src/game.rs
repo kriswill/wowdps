@@ -11,10 +11,11 @@ use std::path::{Path, PathBuf};
 /// the wowdps config's `logs_dir` (walking up to the folder holding
 /// `.build.info` — the daemon already knows where the game is), then a
 /// scan of the conventional install roots (shared with the daemon:
-/// `wowdps_core::cli` — Steam compatdata on Linux, `/Applications` and
-/// `~/Applications` on macOS). Exactly one scan hit is required; several
-/// installs must be disambiguated explicitly — unlike the daemon, a CLI
-/// user is there to answer.
+/// `wowdps_core::cli` — Steam's Proton prefixes and Wine prefixes under
+/// `~/.local`, `~/Games`, `~/.wine` and flatpak app data on Linux,
+/// `/Applications` and `~/Applications` on macOS). Exactly one scan hit is
+/// required; several installs must be disambiguated explicitly — unlike
+/// the daemon, a CLI user is there to answer.
 pub fn locate() -> Result<PathBuf, String> {
     if let Some(dir) = std::env::var_os("WOWDPS_WOW_DIR") {
         let dir = PathBuf::from(dir);

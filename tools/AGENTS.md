@@ -20,9 +20,9 @@ under `docs/OKF/tools/`, and the extractor's structure is
   once per game patch. A generator change reruns it and commits the table
   with it.
 - **Generators read the local install** (`$WOWDPS_WOW_DIR`, the config's
-  `logs_dir`, or a Steam compatdata scan; or pass the folder holding
-  `.build.info`). The network serves only WoWDBDefs schemas and TACT keys.
-  Output is deterministic per build.
+  `logs_dir`, or a scan of Steam's Proton prefixes and Wine prefixes; or
+  pass the folder holding `.build.info`). The network serves only
+  WoWDBDefs schemas and TACT keys. Output is deterministic per build.
 - **Curated tables need two proofs.** `role_spells` and `proc_spells` are
   hand lists in `tools/extract/src/rolegen.rs` and `procgen.rs` that the
   generator validates against the client's own data, plus a committed

@@ -1,5 +1,21 @@
 # Log
 
+## 2026-10-25
+
+- **Update** — every generator that locates the install
+  ([gen-class-spells](gen-class-spells.md),
+  [gen-keystone-timers](gen-keystone-timers.md),
+  [gen-open-world-maps](gen-open-world-maps.md),
+  [gen-item-spells](gen-item-spells.md),
+  [gen-role-spells](gen-role-spells.md),
+  [gen-absorb-spells](gen-absorb-spells.md),
+  [gen-proc-spells](gen-proc-spells.md), [gen-icons](gen-icons.md),
+  [gen-spell-icons](gen-spell-icons.md),
+  [gen-talent-trees](gen-talent-trees.md)): the install scan now covers
+  Wine prefixes under `~/.local`, `~/Games`, `~/.wine` and flatpak app
+  data beside Steam's Proton prefixes
+  ([wowdps-core](../crates/core.md)'s discovery).
+
 ## 2026-10-23
 
 - **Creation** — [codeql](codeql.md): GitHub's CodeQL default-setup run

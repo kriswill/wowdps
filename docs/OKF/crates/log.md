@@ -1,5 +1,14 @@
 # Log
 
+## 2026-10-25
+
+- **Update** — [wowdps-core](core.md): install discovery on Linux also
+  walks `~/.local`, `~/Games`, `~/.wine` and `~/.var/app` breadth-first for
+  Wine prefixes (any directory holding `drive_c`), so an install moved out
+  of Steam's compatdata (a Proton prefix of its own, Lutris, Bottles,
+  Heroic, plain Wine) is found without a `logs_dir`; the walk follows no
+  symlink below a root, stops 7 levels down and after 20,000 directories.
+
 ## 2026-10-23
 
 - **Update** — macOS support (PR #111): [wowdps-core](core.md) discovers

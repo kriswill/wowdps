@@ -1,7 +1,9 @@
 //! Shared command-line handling: the `wowdps` dispatcher's subcommands.
 //! Hand-rolled so the binaries carry no argument-parsing dependency. Also
 //! hosts the machine-agnostic discovery of the game install, used when the
-//! config carries no `logs_dir`.
+//! config carries no `logs_dir`: Battle.net's folders on macOS; elsewhere
+//! Steam's Proton prefixes and the Wine prefixes under `~/.local`,
+//! `~/Games`, `~/.wine` and flatpak app data.
 
 use std::path::{Path, PathBuf};
 
@@ -15,8 +17,8 @@ pub fn is_wow_install(p: &Path) -> bool {
 /// The retail logs directory to tail when no `logs_dir` is configured:
 /// `$WOWDPS_WOW_DIR` when it names an install, else the most recently
 /// updated install found under the conventional install roots (Battle.net's
-/// on macOS, Steam's Proton prefixes elsewhere). `None` when
-/// nothing is found — the daemon reports that instead of tailing a
+/// on macOS, Steam's Proton prefixes and Wine prefixes elsewhere). `None`
+/// when nothing is found — the daemon reports that instead of tailing a
 /// made-up path.
 pub fn default_logs_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("WOWDPS_WOW_DIR") {
@@ -34,9 +36,11 @@ fn retail_logs(wow: &Path) -> PathBuf {
 }
 
 /// WoW installs under `home`'s conventional roots, deduplicated (the
-/// roots are often symlinks to one another): the Battle.net folders on
-/// macOS (`/Applications`, `~/Applications`), the Steam roots' Proton
-/// prefixes elsewhere.
+/// roots are often symlinks to one another, and the prefix walk reaches
+/// Steam's prefixes a second time): the Battle.net folders on macOS
+/// (`/Applications`, `~/Applications`); elsewhere the Steam roots' Proton
+/// prefixes, then every Wine prefix that `wine_prefixes` finds under
+/// `WINE_PREFIX_ROOTS`, each searched by `prefix_candidates`.
 pub fn discover_wow_installs(home: &Path) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = Vec::new();
     fn consider(candidate: PathBuf, found: &mut Vec<PathBuf>) {
@@ -70,8 +74,89 @@ pub fn discover_wow_installs(home: &Path) -> Vec<PathBuf> {
                 consider(candidate, &mut found);
             }
         }
+        for prefix in wine_prefixes(WINE_PREFIX_ROOTS.map(|root| home.join(root))) {
+            for candidate in prefix_candidates(&prefix) {
+                consider(candidate, &mut found);
+            }
+        }
     }
     found
+}
+
+/// Where the prefix walk starts, under home: launcher data in `~/.local`
+/// (Steam's and hand-made Proton prefixes, Bottles), `~/Games` (Lutris',
+/// Heroic's and umu's default), `~/.wine` (plain Wine's default prefix,
+/// itself a prefix) and `~/.var/app` (the same launchers as flatpaks).
+#[cfg(not(target_os = "macos"))]
+const WINE_PREFIX_ROOTS: [&str; 4] = [".local", "Games", ".wine", ".var/app"];
+
+/// How far below a walk root a prefix's `drive_c` may sit. Steam's
+/// `~/.local/share/Steam/steamapps/compatdata/<id>/pfx/drive_c` is 7 levels
+/// below `~/.local`, the deepest common layout (Heroic's
+/// `~/Games/Heroic/Prefixes/default/<name>/pfx/drive_c` is 6 below
+/// `~/Games`). A flatpak'd Steam sits deeper; the Steam scan covers it.
+#[cfg(not(target_os = "macos"))]
+const DRIVE_C_MAX_DEPTH: usize = 7;
+
+/// How many directories the walk may visit, all roots together, so a huge
+/// tree (a container store, a game library) can't stall startup. A typical
+/// home needs a few thousand, and breadth-first order finds shallow
+/// prefixes before the budget runs out.
+#[cfg(not(target_os = "macos"))]
+const PREFIX_WALK_BUDGET: usize = 20_000;
+
+/// Wine prefixes (directories holding `drive_c`) under `roots`, walked
+/// breadth-first across all of them at once. A root that is itself a
+/// prefix counts (`~/.wine`), and a root may be a symlink; below a root no
+/// symlink is followed (links loop, or lead out of home), a prefix is never
+/// descended into, and an unreadable directory is skipped.
+#[cfg(not(target_os = "macos"))]
+fn wine_prefixes(roots: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut prefixes = Vec::new();
+    let mut queue: std::collections::VecDeque<(PathBuf, usize)> =
+        roots.into_iter().map(|root| (root, 0)).collect();
+    let mut budget = PREFIX_WALK_BUDGET;
+    while let Some((dir, depth)) = queue.pop_front() {
+        let Some(left) = budget.checked_sub(1) else {
+            break;
+        };
+        budget = left;
+        if dir.join("drive_c").is_dir() {
+            prefixes.push(dir);
+            continue;
+        }
+        // A child's own drive_c would sit at depth + 2: past the cap, the
+        // children are not worth reading.
+        if depth + 2 > DRIVE_C_MAX_DEPTH {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            // `file_type` doesn't follow symlinks, so a link is never walked.
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                queue.push_back((entry.path(), depth + 1));
+            }
+        }
+    }
+    prefixes
+}
+
+/// Where a prefix may hold the game: `drive_c/World of Warcraft`, or one
+/// folder down (`Program Files (x86)`, `Program Files`, a custom `Games`).
+#[cfg(not(target_os = "macos"))]
+fn prefix_candidates(prefix: &Path) -> Vec<PathBuf> {
+    let drive_c = prefix.join("drive_c");
+    let mut candidates = vec![drive_c.join("World of Warcraft")];
+    if let Ok(entries) = std::fs::read_dir(&drive_c) {
+        candidates.extend(
+            entries
+                .flatten()
+                .map(|e| e.path().join("World of Warcraft")),
+        );
+    }
+    candidates
 }
 
 /// Of several installs, the one whose `.build.info` changed last — the
@@ -329,6 +414,120 @@ mod tests {
         std::fs::remove_dir_all(&home).unwrap();
     }
 
+    /// A fresh, empty home for one prefix-walk test.
+    #[cfg(not(target_os = "macos"))]
+    fn scratch_home(name: &str) -> PathBuf {
+        let home =
+            std::env::temp_dir().join(format!("wowdps-cli-wine-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        home
+    }
+
+    /// An install at `wow`, returned canonical (as discovery reports it).
+    #[cfg(not(target_os = "macos"))]
+    fn mk_install(wow: &Path) -> PathBuf {
+        std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+        std::fs::write(wow.join(".build.info"), "x").unwrap();
+        wow.canonicalize().unwrap()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_prefix_walk_finds_a_launchers_proton_prefix() {
+        let home = scratch_home("proton");
+        let wow = mk_install(
+            &home
+                .join(".local/share/emberlaunch/pfx/drive_c/Program Files (x86)/World of Warcraft"),
+        );
+        assert_eq!(discover_wow_installs(&home), vec![wow]);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_prefix_walk_finds_a_plain_wine_prefix() {
+        // No `pfx` level: the prefix is the launcher's game folder itself.
+        let home = scratch_home("plain");
+        let wow =
+            mk_install(&home.join("Games/mossy-vale/drive_c/Program Files/World of Warcraft"));
+        assert_eq!(discover_wow_installs(&home), vec![wow]);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_root_that_is_a_prefix_is_searched_in_any_drive_c_folder() {
+        // ~/.wine is the prefix itself, and the game sits in a folder of
+        // the player's own naming rather than a Program Files.
+        let home = scratch_home("root");
+        let wow = mk_install(&home.join(".wine/drive_c/Games/World of Warcraft"));
+        assert_eq!(discover_wow_installs(&home), vec![wow]);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_prefix_walk_finds_a_flatpak_prefix_holding_the_game_at_drive_c() {
+        let home = scratch_home("flatpak");
+        let wow =
+            mk_install(&home.join(
+                ".var/app/org.example.Cellar/data/cellar/bottle-one/drive_c/World of Warcraft",
+            ));
+        assert_eq!(discover_wow_installs(&home), vec![wow]);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn an_install_reached_twice_is_reported_once() {
+        // The Steam scan reaches this install through both Steam roots (one
+        // a symlink to the other, as on a real machine), and the walk
+        // reaches it again under ~/.local.
+        let home = scratch_home("twice");
+        let wow = mk_install(&home.join(
+            ".local/share/Steam/steamapps/compatdata/4242/pfx/drive_c/Program Files (x86)/World of Warcraft",
+        ));
+        std::fs::create_dir_all(home.join(".steam")).unwrap();
+        std::os::unix::fs::symlink(home.join(".local/share/Steam"), home.join(".steam/steam"))
+            .unwrap();
+        assert_eq!(wine_prefixes([home.join(".local")]).len(), 1);
+        assert_eq!(discover_wow_installs(&home), vec![wow]);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_prefix_walk_needs_a_drive_c_and_follows_no_link_below_a_root() {
+        let home = scratch_home("skips");
+        // Installs outside any drive_c: loose under a root, in a folder
+        // that only looks like a prefix's, and two folders down in one.
+        mk_install(&home.join("Games/World of Warcraft"));
+        mk_install(&home.join("Games/loose/Program Files/World of Warcraft"));
+        mk_install(&home.join(".local/share/deep/drive_c/a/b/World of Warcraft"));
+        // A real prefix outside every root, linked in below one.
+        let elsewhere = home.join("elsewhere");
+        let wow = mk_install(&elsewhere.join("pfx/drive_c/Program Files/World of Warcraft"));
+        std::os::unix::fs::symlink(&elsewhere, home.join(".local/share/linked")).unwrap();
+        assert!(discover_wow_installs(&home).is_empty());
+
+        // A root may itself be a link: ~/.wine pointing at that prefix counts.
+        std::os::unix::fs::symlink(elsewhere.join("pfx"), home.join(".wine")).unwrap();
+        assert_eq!(discover_wow_installs(&home), vec![wow]);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_prefix_walk_stops_at_the_depth_cap() {
+        let home = scratch_home("depth");
+        // drive_c 7 levels below ~/Games: found; 8 levels: past the cap.
+        let at_cap = mk_install(&home.join("Games/a/b/c/d/e/f/drive_c/World of Warcraft"));
+        mk_install(&home.join("Games/z/b/c/d/e/f/g/drive_c/World of Warcraft"));
+        assert_eq!(discover_wow_installs(&home), vec![at_cap]);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn install_discovery_checks_the_applications_roots() {
@@ -489,7 +688,8 @@ mod tests {
         assert_eq!(default_logs_dir(), Some(wow.join("_retail_").join("Logs")));
 
         // Not an install: fall through to discovery. On Linux it finds
-        // nothing (the compatdata roots live under the empty home); on
+        // nothing (the Steam roots and the prefix walk's roots all live
+        // under the empty home); on
         // macOS it scans the Applications roots a real machine may fill,
         // so only Linux asserts the fall-through.
         unsafe { std::env::set_var("WOWDPS_WOW_DIR", &home) };

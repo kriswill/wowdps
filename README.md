@@ -96,8 +96,9 @@ Hyprland workspace following, and the history store's `history_*` keys (fights
 persist across sessions as JSON under `~/.local/share/wowdps/history/`;
 `wowdps history sql "…"` runs DuckDB over them, and the MCP server exposes the
 same store as `history`, `progression`, `trend`, `stored_fight`, `pin_fight`
-and `history_sql`). Log discovery checks `$WOWDPS_WOW_DIR`, then
-scans Steam/Proton prefixes for the newest install.
+and `history_sql`). Log discovery checks `$WOWDPS_WOW_DIR`, then scans
+Steam's Proton prefixes and Wine prefixes under `~/.local`, `~/Games`,
+`~/.wine` and flatpak app data for the newest install.
 
 ### Themes
 

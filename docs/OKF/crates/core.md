@@ -62,10 +62,17 @@ and the wire. This is a map of where each lives, not a restatement.
   backlog from fresh combat.
 - `replay.rs` — the replay cut (below).
 - `cli.rs` — `default_logs_dir`: config `logs_dir`, else
-  `$WOWDPS_WOW_DIR`, else the conventional install roots (a Steam
-  compatdata scan on Linux, `/Applications` and `~/Applications` on
-  macOS) picking the newest `.build.info`; an error only when nothing is
-  found.
+  `$WOWDPS_WOW_DIR`, else the conventional install roots (`/Applications`
+  and `~/Applications` on macOS; on Linux Steam's Proton prefixes, then
+  Wine prefixes under `~/.local`, `~/Games`, `~/.wine` and flatpak app
+  data) picking the newest `.build.info`; an error only when nothing is
+  found. The Linux prefix walk is breadth-first over all four roots: a
+  prefix is any directory holding `drive_c`, searched at
+  `drive_c/World of Warcraft` and one folder down; it never follows a
+  symlink below a root or descends into a prefix, stops 7 levels down
+  (Steam's `compatdata/<id>/pfx/drive_c` under `~/.local`) and gives up
+  after 20,000 directories. Every hit is canonicalized, so an install the
+  Steam scan and the walk both reach counts once.
 - **Generated tables**, each regenerated once per game patch by its
   `tools/gen-*.sh` through [wowdps-extract](extract.md):
   `class_spells.rs` (R8: out of instances COMBATANT_INFO never fires, so a
