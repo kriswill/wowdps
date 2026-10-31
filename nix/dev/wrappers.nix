@@ -1,7 +1,12 @@
 # The commands the dev shells put on PATH that are ABOUT this repo: the
-# game-data generators and the workspace's own binaries. Both kinds resolve
-# against the live checkout at run time rather than a store copy, which is the
-# whole reason they are wrappers and not packages.
+# game-data generators, the workspace's own binaries and the extractor's
+# dev-time tool. All three kinds resolve against the live checkout at run time
+# rather than a store copy, which is the whole reason they are wrappers and not
+# packages. The replay and its tools left for the private wowdps-replay
+# repository (https://github.com/kriswill/wowdps-replay), and the map and
+# portrait editors for wowdps-editors
+# (https://github.com/kriswill/wowdps-editors); their own dev shells wrap
+# them.
 { pkgs }:
 let
   # `wowdps gen-<name>` external dispatch: the repo's tools/gen-*.sh on PATH
@@ -15,6 +20,9 @@ let
     "icons"
     "spell-icons"
     "talent-trees"
+    # The spell tips and the placed table.
+    "spell-tips"
+    "placed-spells"
   ];
 
   # The workspace binaries, as the dispatcher's external-command lookup names
@@ -69,13 +77,48 @@ let
       fi
       exec "$root/target/release/${name}" "$@"
     '';
+  # The dev-time tools the extractor carries beside its generators, each a
+  # subcommand of its binary (`bin`) under a name of its own: built from the
+  # live checkout like the binaries, then exec'd with the arguments as given.
+  tools = {
+    # The game's tables as SQL: decoded into a per-build cache once, then
+    # DuckDB with a view per table (tools/extract/src/db2sql.rs).
+    "wowdps-db2" = {
+      bin = "wowdps-extract";
+      subcommand = "sql";
+    };
+  };
+
+  toolWrapper =
+    name: t:
+    pkgs.writeShellScriptBin name ''
+      set -eu
+      root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+      if [ ! -e "$root/crates/core/fixtures/check.awk" ]; then
+        echo "${name}: run this from inside the wowdps checkout" >&2
+        exit 127
+      fi
+      if [ -z "''${WOWDPS_NO_BUILD:-}" ]; then
+        # The release build the gen-* scripts use, so neither rebuilds the
+        # other's.
+        cargo build --release --quiet --manifest-path "$root/Cargo.toml" \
+          -p ${t.bin} --bin ${t.bin} >&2
+      fi
+      exec "$root/target/release/${t.bin}" ${t.subcommand} "$@"
+    '';
 in
 {
-  packages = map genWrapper generators ++ map binWrapper binaries;
+  packages =
+    map genWrapper generators
+    ++ map binWrapper binaries
+    ++ pkgs.lib.mapAttrsToList toolWrapper tools;
 
   # The names, for the contract check — generated from the same lists that
   # build the wrappers, so the check cannot fall behind them the way a
   # hand-copied list does.
-  names = map (name: "wowdps-gen-${name}") generators ++ binaries;
+  names =
+    map (name: "wowdps-gen-${name}") generators
+    ++ binaries
+    ++ builtins.attrNames tools;
 
 }
