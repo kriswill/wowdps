@@ -36,8 +36,10 @@ does, and [census-proc-spells](census-proc-spells.md) builds through it.
   instead, which is how a regenerate runs without the network or against
   schemas pinned by hand.
 - **The build is the scripts' own.** It is the release build the dev
-  shell's `wowdps-*` tool wrappers use (`nix/dev/wrappers.nix`), so neither
-  rebuilds the other's.
+  shell's `wowdps-*` tool wrappers use (`nix/dev/wrappers.nix`), under
+  `$CARGO_TARGET_DIR` when that is set and the checkout's `target/`
+  otherwise, so neither rebuilds the other's and both run the binary
+  that build made.
 
 ## Source
 

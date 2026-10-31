@@ -75,7 +75,9 @@ let
         cargo build --release --quiet --manifest-path "$root/Cargo.toml" \
           --bin ${name} >&2
       fi
-      exec "$root/target/release/${name}" "$@"
+      # Where cargo put it: under CARGO_TARGET_DIR when that is set (a
+      # worktree's own target), else the checkout's.
+      exec "''${CARGO_TARGET_DIR:-$root/target}/release/${name}" "$@"
     '';
   # The dev-time tools the extractor carries beside its generators, each a
   # subcommand of its binary (`bin`) under a name of its own: built from the
@@ -104,7 +106,7 @@ let
         cargo build --release --quiet --manifest-path "$root/Cargo.toml" \
           -p ${t.bin} --bin ${t.bin} >&2
       fi
-      exec "$root/target/release/${t.bin}" ${t.subcommand} "$@"
+      exec "''${CARGO_TARGET_DIR:-$root/target}/release/${t.bin}" ${t.subcommand} "$@"
     '';
 in
 {
