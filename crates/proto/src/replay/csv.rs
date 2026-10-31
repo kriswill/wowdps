@@ -257,6 +257,22 @@ pub fn raid_csv(series: &[u64], bucket_ms: u64) -> String {
     out
 }
 
+/// `dps.tsv` (the replay's, beside the seven files): each player's
+/// damage on the meter's grid, the curve the GUI's graph draws for a
+/// player (R12's `Timeline`), a line a player: their whole name as
+/// `units.tsv` names them (`Name-Realm-Region`), the bucket's length in ms
+/// (1 at least) and the buckets, comma separated; no heading. A stored
+/// fight's comes from its details tier, a pull cut from a log from its
+/// meter; both through this writer.
+pub fn dps_tsv<'a>(players: impl IntoIterator<Item = (&'a str, u32, &'a [u64])>) -> String {
+    let mut out = String::new();
+    for (name, bucket_ms, buckets) in players {
+        let values: Vec<String> = buckets.iter().map(u64::to_string).collect();
+        let _ = writeln!(out, "{name}\t{}\t{}", bucket_ms.max(1), values.join(","));
+    }
+    out
+}
+
 /// What `pull.txt` takes from beyond the cut: the instance as the journal
 /// names it (else the cut's zone), the log it was cut from, its owner and
 /// its order among the instance's encounters; and, where the cutter knows
