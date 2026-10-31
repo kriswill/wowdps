@@ -2,6 +2,9 @@
 
 ## 2026-10-30
 
+- **Update** — [wowdps-proto](proto.md): `replay::csv::dps_tsv`, the one
+  writer of a replay's `dps.tsv` (each player's damage curve on the
+  meter's grid).
 - **Update** — [wowdps-proto](proto.md), [wowdps-history](history.md):
   `replay::csv::PullFacts` gains `local_ms` and `best_pct`, and
   `pull.txt` says `local` and `best` where they are given;

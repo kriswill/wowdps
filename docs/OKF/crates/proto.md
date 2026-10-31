@@ -132,7 +132,9 @@ column as the extractor's old cutter did, plus `tracks.csv`'s trailing
 `pull.txt`. `pull.txt` says the pull's `local` start (the log's own
 clock) and its `best` (R16's) where its writer knows them
 (`PullFacts::local_ms`, `best_pct`): `replay-export` from the card, a cut
-from a log from its segment and meter.
+from a log from its segment and meter. `dps_tsv` writes a replay's
+`dps.tsv` beside them: each player's R12 damage curve, a line a player,
+from a stored fight's details tier or a cut's meter.
 
 ## Seams
 

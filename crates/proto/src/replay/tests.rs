@@ -1079,6 +1079,21 @@ fn the_files_carry_the_shields_pools_and_buff_rows() {
     );
 }
 
+/// `dps.tsv`: a line a player, their whole name, the bucket (1 ms at
+/// least) and the buckets; a player with none keeps their line.
+#[test]
+fn the_players_curves_are_a_line_each() {
+    let curve = [100, 0, 2_500];
+    assert_eq!(
+        csv::dps_tsv([
+            ("Tank-Realm-US", 1000, &curve[..]),
+            ("Heals-Realm-US", 0, &[][..]),
+        ]),
+        "Tank-Realm-US\t1000\t100,0,2500\nHeals-Realm-US\t1\t\n"
+    );
+    assert_eq!(csv::dps_tsv([]), "");
+}
+
 /// Tracks moving between floors, a unit never on the head's floor, a head
 /// with no floor at all, rows naming no unit: all round-trip.
 #[test]
