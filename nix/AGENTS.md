@@ -15,11 +15,11 @@ and the home-manager and NixOS modules. Why and how:
   and `nix develop -c wowdps-dev-contract`; a value both shells must share
   gets a check in `contract.nix`.
 - **One concern per file:** `nix/dev/default.nix` assembles `wrappers.nix`
-  (generator and workspace-binary wrappers, resolved against the live
-  checkout), `env.nix` (the dlopened libraries, the pinned
-  `PKG_CONFIG_PATH`, the linker and clang mirror, sccache), `codeql.nix`
-  (the CodeQL CLI and `wowdps-codeql`) and `contract.nix`. Each shell file
-  adds only what it alone plumbs.
+  (the generator, workspace-binary and extractor-tool wrappers, resolved
+  against the live checkout), `env.nix` (the dlopened libraries, the
+  pinned `PKG_CONFIG_PATH`, the linker and clang mirror, sccache),
+  `codeql.nix` (the CodeQL CLI and `wowdps-codeql`) and `contract.nix`.
+  Each shell file adds only what it alone plumbs.
 - **Unfree by name, never wholesale.** `codeql` is the one unfree package
   taken from nixpkgs: `nix/dev/codeql.nix` imports nixpkgs again with an
   `allowUnfreePredicate` naming it alone, so the nixpkgs both shells

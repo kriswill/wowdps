@@ -8,7 +8,8 @@
 # devenv is the reference shell, locally and in CI; the flake shell also
 # mirrors what devenv's languages.rust adds on its own (env.nix).
 #
-#   wrappers.nix  the commands about this repo — generators, workspace binaries
+#   wrappers.nix  the commands about this repo — generators, workspace binaries,
+#                 the extractor's dev tool
 #   env.nix       the dlopened libraries behind LD_LIBRARY_PATH, the pinned
 #                 PKG_CONFIG_PATH, the flake's mirror of devenv's clang and
 #                 linker, sccache
