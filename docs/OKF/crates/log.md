@@ -2,6 +2,19 @@
 
 ## 2026-10-30
 
+- **Update** — [wowdps-extract](extract.md): the crate at the replay
+  branch's library half (Step 0 of the replay's move to its own
+  repository): the game-data library the replay's extractor builds on
+  (`command`'s one command line, the pictures, the atlases, the
+  per-machine files, the store reader `pulls`, the journal's reading and
+  `spelltip`'s text readers), and the generators of files wowdps's crates
+  read: proto's `placed` table (`placegen`), the spell tips
+  (`spelltipgen`) and the creatures seed (`wowhead`), with `db2sql`
+  (`wowdps-db2`). It depends on core and proto, with no features and no
+  build script; the replay's half (`wowdps-replay-extract`, with the
+  rubric's drafter) lives in wowdps-replay
+  ([decision](../decisions/replay-extract-splits-from-extract.md)).
+
 - **Deprecation** — [wowdps-encounter-rubric](encounter-rubric.md): the
   crate left wowdps with the replay for the private wowdps-replay
   repository, its base season files, curated set and gen-rubric with it;

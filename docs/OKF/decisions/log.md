@@ -2,6 +2,11 @@
 
 ## 2026-10-30
 
+- **Creation** — [The Replay's Extractor Splits From The Game-Data Library](replay-extract-splits-from-extract.md)
+  and [Keep The Dev Tools In The Extractor, Calling The Shell's CLIs](dev-tools-in-the-extractor.md)
+  (with its 2026-10-30 update), brought from the replay branch with the
+  extractor's library half.
+
 - **Deprecation** — [Resolve An Encounter Through An Ordered Layer Stack](encounter-rubric-layers.md)
   and [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
   both are the encounter rubric's, which left wowdps with the replay for
