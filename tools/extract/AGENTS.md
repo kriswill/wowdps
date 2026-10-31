@@ -19,8 +19,9 @@ that drive it: `tools/AGENTS.md`.
   no features and no build script: the GPU and HTTPS dependencies, the
   encounter rubric and its drafter (gen-rubric) and the curated set's
   embed are the replay's extractor's. Anything else needs a sign-off. The
-  dev tools stay stdlib-only by calling the shell's CLIs (`curl`,
-  `duckdb`).
+  dev tools stay stdlib-only by calling CLIs: `curl`, and for
+  `wowdps-db2` a `duckdb` CLI, which must be on `PATH` (the dev shells
+  carry none).
 - **One command line.** The library's `command` module is what both
   extractors' commands run on: `command/args.rs` is the one parser, and a
   word no command takes (an unknown flag above all) is an error;
