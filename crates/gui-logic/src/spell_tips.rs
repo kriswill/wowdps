@@ -3,9 +3,10 @@
 //! journal's words) and what a cast lane asks of a spell (whether it is
 //! passive or channeled, a class spell, the duration of the aura it
 //! applies, and the spell whose effect it is), from the per-machine cache
-//! `$XDG_DATA_HOME/wowdps/spell-tips.bin` beside `spell-icons.bin`,
-//! written by `tools/gen-spell-tips.sh` (`tools/extract/src/spelltipgen.rs`,
-//! which documents how each fact is read from the game's tables).
+//! `$XDG_DATA_HOME/wowdps/spell-tips.bin` beside `spell-icons.bin`. The
+//! replay's spell-tips generator writes it (it arrives with the
+//! extractor's split, and documents how each fact is read from the game's
+//! tables); this module documents the file as a reader takes it, below.
 //!
 //! Entirely optional, as the icons are: no file (or one of a future format
 //! version) answers `None`, and a reader says the spell's name as the log

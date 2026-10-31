@@ -1,6 +1,6 @@
 use super::*;
 
-/// One record as `spelltipgen::encode` lays it out.
+/// One record, laid out as the module's file layout documents it.
 struct Rec<'a> {
     id: u32,
     parent: u32,
