@@ -58,6 +58,8 @@ and the dependency policy.
   the private repository https://github.com/kriswill/wowdps-replay.
 - A change a replay crate needs in a wowdps crate lands here first; the
   replay then bumps its pinned revision.
+- The map editor, the portrait editor and the map viewer live in the
+  private repository https://github.com/kriswill/wowdps-editors.
 
 ## The live daemon
 
