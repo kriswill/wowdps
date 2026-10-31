@@ -16,7 +16,8 @@
 //! pixels. Either way each icon loses the bevel the game frames it with
 //! (`CROP_OF_64`) and is circle-masked, so the art sits where the drawn
 //! discs did: 208 px tiles from the upscales, 52 px from the game's own.
-//! The GUI halves a tile to the level it draws at (gui-logic's `icons`).
+//! The GUI halves a tile to the level it draws at through the icon levels
+//! gui-logic's `icons` gains (a reader without them draws a tile whole).
 //! Output is deterministic per input: same install (and upscales) in, same
 //! bytes out.
 //!

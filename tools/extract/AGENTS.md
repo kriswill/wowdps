@@ -38,11 +38,12 @@ that drive it: `tools/AGENTS.md`.
   `wowdps_proto::dirs`. The creatures file `seed-creatures` seeds goes
   through `wowdps_proto::creatures` (`parse`, `merge`, `render`). The spell
   tips (`gen-spell-tips`, `spelltipgen.rs`) are written here alone and
-  read by gui-logic's `spell_tips`, as the spell icons are: a layout
-  change moves both and the version in both headers. The `placed` table
-  (`gen-placed-spells`, `placegen.rs`) is proto's (`wowdps_proto::placed`),
-  read by the daemon's replay cut and the replay. A 2x atlas sheet's members share their 1x twins'
-  elements: cut a scale's member through `Atlas::committed` and
+  read by gui-logic's `spell_tips` (the reader it gains with its spell
+  tips), as the spell icons are: a layout change moves both and the
+  version in both headers. The `placed` table (`gen-placed-spells`,
+  `placegen.rs`) is proto's (`wowdps_proto::placed`), read by the
+  daemon's replay cut and the replay. A 2x atlas sheet's members share
+  their 1x twins' elements: cut a scale's member through `Atlas::committed` and
   `Atlas::cut`, not by element.
 - **Inputs are stored fights.** The history store's cards and replay
   tier are read through `pulls.rs` (`Fight::read`, `walk`, `windows`: a

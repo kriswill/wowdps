@@ -11,9 +11,11 @@
 # players, a zoomed window), so each is upscaled 4x by Real-ESRGAN's
 # illustration model (realesrgan-ncnn-vulkan, MIT, on the GPU through
 # Vulkan; from $PATH, else built from nixpkgs), as the replay's
-# gen-portraits does the journal's portraits: 208 px tiles, which the GUI halves to the
-# size each disc is drawn at. Without the upscaler (or with --no-upscale)
-# the tiles are the game's own pixels, 52 px.
+# gen-portraits does the journal's portraits: 208 px tiles, which the GUI
+# halves to the size each disc is drawn at through the icon levels
+# gui-logic's reader gains (a reader without them draws a tile whole).
+# Without the upscaler (or with --no-upscale) the tiles are the game's own
+# pixels, 52 px.
 #
 # Network is only used for the WoWDBDefs schema, the wowdev TACTKeys list
 # (both fetched fresh each run — this runs once per game patch) and, when it
