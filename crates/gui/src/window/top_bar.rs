@@ -396,10 +396,11 @@ fn picker(
     let ring_color = me.class.map_or(w.c(|t| t.ink_3), |c| {
         hsla(wowdps_gui_logic::theme::Color::of_class(c))
     });
+    let px = w.device(side);
     let art = me
         .spec
-        .and_then(|s| images::spec_icon(s.id()))
-        .or_else(|| me.class.and_then(images::class_icon));
+        .and_then(|s| images::spec_icon(s.id(), px))
+        .or_else(|| me.class.and_then(|c| images::class_icon(c, px)));
     let icon = div()
         .size(side)
         .flex_none()

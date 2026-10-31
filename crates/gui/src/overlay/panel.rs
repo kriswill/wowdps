@@ -539,7 +539,7 @@ impl Render for Overlay {
                 });
             }));
         }
-        let ov = Ov::new(self.cfg.zoom, cx);
+        let ov = Ov::new(self.cfg.zoom, cx).at_scale(window.scale_factor());
         let content = if self.expanded {
             self.panel(&ov, window, cx).into_any_element()
         } else {

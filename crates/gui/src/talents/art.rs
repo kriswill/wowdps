@@ -41,12 +41,16 @@ pub fn ring() -> Option<Tile> {
     available().then(|| talent_art()?.ring(make)).flatten()
 }
 
-pub fn class_icon(class: Class) -> Option<Tile> {
-    available().then(|| images::class_icon(class)).flatten()
+/// The class crest for a disc `px` device pixels across.
+pub fn class_icon(class: Class, px: f32) -> Option<Tile> {
+    available().then(|| images::class_icon(class, px)).flatten()
 }
 
-pub fn spec_icon(spec_id: u32) -> Option<Tile> {
-    available().then(|| images::spec_icon(spec_id)).flatten()
+/// The spec's icon for a disc `px` device pixels across.
+pub fn spec_icon(spec_id: u32, px: f32) -> Option<Tile> {
+    available()
+        .then(|| images::spec_icon(spec_id, px))
+        .flatten()
 }
 
 /// A node's icon, cut to its shape, grey when untaken.
