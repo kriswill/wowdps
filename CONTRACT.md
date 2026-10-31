@@ -1046,8 +1046,9 @@ serde/toml. encounter-rubric (`wowdps-encounter-rubric`, the seasonal
 encounter rubric, signed off 2026-10-05): serde (derive) + toml, the one
 engine-side crate that names them, plus proto for the XDG directories
 (`proto::dirs`) its per-machine text sidecars and the user's rubric files
-resolve through; the rubric is reviewed as TOML files under the crate's own
-`seasons/` and embedded at build time, and every reader reads and writes it through this
+resolve through; the rubric's base is reviewed as TOML files under the crate's own
+`seasons/` and embedded at build time (a curated set is laid over it by its reader:
+the replay's `curated/seasons/`, private to it), and every reader reads and writes it through this
 crate, never naming serde/toml itself — the daemon among them (v45: its replay cut reads the
 rubric's generated `placed` table through core's `replay::PlacedTable`). history: model + proto + duckdb
 (`bundled`: compiled from the crate's own DuckDB source on every platform,

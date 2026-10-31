@@ -6,13 +6,16 @@
 //! that change the room.
 //!
 //! The rubric is TOML under the crate's `seasons/` (the crate's `README.md`
-//! is the schema's reference), embedded at build time:
+//! is the schema's reference), embedded at build time (`Rubric::embedded`),
+//! or read whole from a tree shaped so on disk at runtime
+//! (`Rubric::from_dir`, a checkout's, where the editors save):
 //!
 //! ```text
-//! seasons/<season>/season.toml                    the season, its defaults
+//! seasons/<season>/season.toml                    the season, its defaults, its rules
 //! seasons/<season>/<instance>/instance.toml       the raid or dungeon
 //! seasons/<season>/<instance>/<id>-<slug>.draft.toml   generated (gen-rubric)
 //! seasons/<season>/<instance>/<id>-<slug>.toml         tuned by hand
+//! seasons/<season>/<instance>/trash.toml               tuned by hand
 //! ```
 //!
 //! An encounter resolves through an ordered stack of SOURCES (`Source`),
@@ -64,7 +67,28 @@
 //! same `Map` an encounter's is, so a reader draws a raid's arena and a
 //! dungeon's level with one type, and either may name the places the
 //! camera knows (`area`), the ways between them (`path`) and what the
-//! replay does while the log is quiet (`transition`).
+//! replay does while the log is quiet (`transition`). A level also gives
+//! the usual route's pulls on it (`pull`): packs of the instance's
+//! creatures in its areas, whose forces are their members', some of which
+//! the route may skip (`optional`), so its forces read with them and
+//! without (`Level::route_forces`).
+//!
+//! A dungeon's CREATURES are the instance file's own `[npc.<key>]`, with
+//! the enemy forces each gives, and its whole `forces`
+//! (`Instance::npcs`, `npc_of`, `forces`; `Rubric::instance_by_map` finds
+//! the instance by the map id a run's log writes): who is in the dungeon
+//! outside its encounters' own tables, the base's alone, as a level is.
+//!
+//! A dungeon's TRASH is what those creatures do outside its bosses: a
+//! curated `trash.toml` per instance, shaped like an encounter's file and
+//! resolved into an `Encounter` (`Rubric::trash`, by the map id; its
+//! `encounter` 0, its name and instance the instance's) over the
+//! instance's `[npc]`, at a keystone's difficulty. It gives no map, view,
+//! travel, phase or room of its own (`TRASH_TABLES`), and `check_trash`
+//! refuses a trigger counting from its start, which would be the key's.
+//!
+//! An entry's colors are the rubric's own names (`tint::NAMES`), which a
+//! reader paints in its theme's hues and `check` holds every tint to.
 //!
 //! The journal's words for each ability are not in the repository: they
 //! live in a per-machine sidecar (`text`) a reader lays over an encounter
@@ -77,7 +101,18 @@
 //! cache's index. `placed` is the generated table of what players place in
 //! the room (totems, gateways, rings, zones) and how the log tells where
 //! each stands: no encounter's, but read by the extractor's cut and the
-//! replay alike.
+//! replay alike. `turn` is the rule that proposes a map's `view.turn`:
+//! the boss at the top as seen from the raid at the pull, squared with the
+//! render's walls; the extractor's `suggest-turns` and the map editor offer
+//! it, and no render reads it (an unsaid turn is north up). `swirl` draws a
+//! place's swirling texture (`Swirl`) as a disc of pixels, the one look
+//! for the replay and the map editor. `guess` picks where a volley's kill
+//! stood that the log never placed (its `place_kills`): on one of its
+//! projectiles' fronts as it died, the one inside the room farthest from
+//! the NPC's spots still standing, the one rule for the replay and the
+//! editors. `drift` reads the way the players drifted over a stretch, the
+//! bearing a ground's push takes where it says `toward = "drift"` (a wind
+//! the log never writes), the one rule for both again.
 
 mod check;
 pub mod difficulty;
@@ -91,6 +126,7 @@ pub mod placed;
 pub mod portraits;
 pub mod schema;
 mod stack;
+pub mod swirl;
 pub mod text;
 pub mod tint;
 pub mod turn;
@@ -99,14 +135,14 @@ pub mod write;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-pub use check::{check, check_level};
+pub use check::{check, check_instance, check_level, check_level_with, check_trash};
 pub use layer::{Origin, Provenance, SetBy, Source};
 use layer::{Set, lay};
 use schema::Gated;
 pub use schema::*;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-pub use stack::user_dir;
+pub use stack::{TreeFiles, user_dir};
 use toml::{Table, Value};
 pub use turn::{
     ROOM_TURN_GUARD_YD, ROOM_TURN_WINDOW_MS, ROOM_WALL_SHARE, midpoint, plane, room_turn,
@@ -114,7 +150,42 @@ pub use turn::{
 
 /// The rubric format this build reads and writes. A file in an older one is
 /// migrated forward on load (`migrate`); a newer one is refused.
-pub const SCHEMA: u32 = 1;
+///
+/// 2 (2026-10-17): an instance's creatures and their enemy forces
+/// (`[npc]`, `forces`), an NPC's `forces` and `aloft`, and the trash file.
+/// Keys added, none changed, so a file in 1 reads as it is; a build that
+/// reads 1 refuses a file in 2 by its number rather than on a key it does
+/// not know. A `trash.toml` it cannot place at all: it takes the name for
+/// a misnamed encounter file, so it refuses a tree holding one whole.
+/// Added to 2 later the same day, before any committed file gave one: a
+/// level's `pull` tables (a pull's `optional` among them), an NPC's
+/// `control`, a ground that `ends` on a hit and a ground's `push`. A
+/// build of 2 without them refuses a file giving one on the key. Later
+/// still, a line's `to = "@source"` (`Line::SOURCE`): a value, not a key,
+/// so a build of 2 without it reads the file and its `check` refuses the
+/// line, naming an NPC `"@source"` it does not have. Later still, a
+/// ground's `clears` and a line's `hold`: keys, so a build of 2 without
+/// them refuses a file giving one on the key. Later still (2026-10-27), a
+/// ground's `falls` and a clock's `each`, keys, and two value forms of a
+/// push: `on` as a list of triggers (still read as one alone, always
+/// written as a list) and `toward` as the word `"drift"`; a `renew` beside
+/// a `push`, which `check` refused before, is allowed. A build of 2
+/// without them refuses a file giving a key on the key, and a list `on` or
+/// a `"drift"` on its value's form; one written before reads as it did.
+/// Later still (2026-10-29), a hit's `lands` (a `hit` trigger's and a
+/// ground's `hit` ending's), a ground's `ends = { first = [...] }` and its
+/// `sweeps`, keys: a build of 2 without them refuses a file giving one on
+/// the key. Its `clears` may then name a ground that renews or has `seen`
+/// hits, which `check` refused before. And a volley's `around` and
+/// `inward`, keys, and its `preview` beside a `from` that is no aura coming
+/// off where it has a `delay` (a value `check` refused before).
+/// Later still (2026-10-29), a `[knock]` table and a reach's `absorbs`:
+/// keys, so a build of 2 without them refuses a file giving one on the
+/// key. Later still (2026-10-29), a ground's `follows`: a key, so a build
+/// of 2 without it refuses a file giving one on the key. Later still
+/// (2026-10-30), an area's `stencil`, a map's and an area's `hang`: keys,
+/// so a build of 2 without them refuses a file giving one on the key.
+pub const SCHEMA: u32 = 2;
 
 /// What an instance file's `[encounter.<id>]` may hold: the encounter's map,
 /// how it is first shown, what changes it in the fight (rooms off it, its
@@ -123,10 +194,41 @@ pub const SCHEMA: u32 = 1;
 /// go at where the season's do not fit the arena (`travel`).
 const INSTANCE_TABLES: [&str; 7] = ["map", "view", "room", "place", "event", "npc", "travel"];
 
-/// What an instance file's `[level.<ui_map>]` may hold, and what a level
-/// reads of the season's and the instance's `[defaults]`: its map, the
-/// view while no area holds the party, and its paths' speeds.
-const LEVEL_TABLES: [&str; 3] = ["map", "view", "travel"];
+/// What an instance file's `[level.<ui_map>]` may hold: its map, the view
+/// while no area holds the party, its paths' speeds, and the usual route's
+/// pulls on it.
+const LEVEL_TABLES: [&str; 4] = ["map", "view", "travel", "pull"];
+
+/// What a level reads of the season's and the instance's `[defaults]`:
+/// its map, view and travel, never a pull, which is one level's alone.
+const LEVEL_DEFAULTS: [&str; 3] = ["map", "view", "travel"];
+
+/// What a `[defaults]` may give, a season's or an instance's, the base's
+/// or a set's: an encounter's tables, which every encounter under it lays
+/// in whole (its levels read the map, view and travel among them,
+/// `LEVEL_DEFAULTS`), and their `[difficulty.<name>]` overrides. Anything
+/// else would make every encounter under it unreadable, so it is refused
+/// where its file is read (`defaults_keys`): a level's `pull`, one level's
+/// alone, and an encounter's own words (its id, name, order), its draft's.
+const DEFAULTS_TABLES: [&str; 20] = [
+    "map", "view", "travel", "npc", "ability", "phase", "place", "ground", "mark", "line",
+    "volley", "flash", "knock", "range", "apart", "streak", "room", "reach", "event", "spell",
+];
+
+/// What an instance's `trash.toml` may give, besides its `schema` and its
+/// `[difficulty.<name>]` overrides of these: what its creatures are, do and
+/// leave, and the game's facts of their spells. Its `encounter`, `name` and
+/// `instance` are its instance's, laid in as it resolves; it has no `order`,
+/// and the `map`, `view`, `travel`, `phase` and `room` of a run are its
+/// levels' and its bosses'.
+const TRASH_TABLES: [&str; 15] = [
+    "npc", "ability", "place", "ground", "mark", "line", "volley", "flash", "knock", "range",
+    "apart", "streak", "reach", "event", "spell",
+];
+
+/// The difficulty an instance's trash resolves at: a keystone (Mythic
+/// Keystone, 8), through Mythic's, Heroic's and Normal's.
+const KEYSTONE: u32 = 8;
 
 mod embedded {
     include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
@@ -193,6 +295,9 @@ pub struct Rubric {
     user_errors: Vec<String>,
     /// The most any encounter resolves with (`with_tier`).
     tier: Tier,
+    /// Where the base was read from (`base_origin`): the files handed in
+    /// (`Embedded`), or a tree on disk (`Dir`, `from_dir`).
+    base: Origin,
 }
 
 /// One season: its raids and dungeons. Its `season.toml` is read into it
@@ -211,8 +316,62 @@ pub struct Season {
     pub instances_from: Vec<u32>,
     #[serde(default)]
     defaults: Table,
+    /// The game's rules for the season's keystones that its tables do
+    /// not hold (`[rules]`); none said, none known.
+    #[serde(default)]
+    pub rules: SeasonRules,
     #[serde(skip)]
     pub instances: BTreeMap<String, Instance>,
+}
+
+/// A season's rules for its keystones, which the client's tables do not
+/// hold (`[rules]` of its `season.toml`): what a player's death costs the
+/// key's clock, by the key's level. The base's by construction: a curated
+/// or user set's `season.toml` gives `[defaults]` and nothing else, so no
+/// set can give or amend them. A reader finds them through a run's map:
+/// `rubric.instance_by_map(map).map(|(s, _)| s.rules.penalty_at(level))`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeasonRules {
+    /// `[[from_level, seconds], …]`: from each key level up, until the
+    /// next pair's, the seconds each death adds to the key's clock
+    /// (`death_penalty = [[2, 0], [7, 5], [12, 15]]`), in any order.
+    #[serde(default)]
+    pub death_penalty: Vec<(u32, f32)>,
+}
+
+impl SeasonRules {
+    /// What is wrong with the rules as written, each said once: a
+    /// from-level given twice, or seconds that are not a finite number at
+    /// or above 0. `Rubric::from_files` refuses a season file whose rules
+    /// say any, naming the file and the key.
+    pub fn problems(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut seen: Vec<u32> = Vec::new();
+        for &(from, secs) in &self.death_penalty {
+            if seen.contains(&from) {
+                out.push(format!("`rules.death_penalty`: +{from} given twice"));
+            }
+            seen.push(from);
+            if !secs.is_finite() || secs < 0.0 {
+                out.push(format!(
+                    "`rules.death_penalty`: +{from} costs {secs} s, not a number of seconds at or above 0"
+                ));
+            }
+        }
+        out
+    }
+
+    /// The seconds a death costs a key of `level`: the pair with the
+    /// highest from-level at or under it. `None` under the lowest, or
+    /// where the season gives no table.
+    pub fn penalty_at(&self, level: u32) -> Option<f32> {
+        self.death_penalty
+            .iter()
+            .filter(|(from, _)| *from <= level)
+            .max_by_key(|(from, _)| *from)
+            .map(|&(_, secs)| secs)
+    }
 }
 
 /// One raid or dungeon of a season. Its `instance.toml` is read into it as
@@ -232,6 +391,23 @@ pub struct Instance {
     pub journal: Option<u32>,
     #[serde(default)]
     pub map: Option<u32>,
+    /// The dungeon's whole enemy forces: what a keystone's count runs to
+    /// (`forces`).
+    #[serde(default)]
+    forces: Option<u32>,
+    /// Who is in the dungeon outside its encounters' own tables, by key,
+    /// as its file writes them, switched-off entries and all: its trash,
+    /// with their enemy forces, the base's alone. What is laid under the
+    /// instance's trash, so a trash file may switch one back on.
+    #[serde(default, rename = "npc")]
+    written: BTreeMap<String, Npc>,
+    /// `written`'s enabled entries (`npcs`).
+    #[serde(skip)]
+    npc: BTreeMap<String, Npc>,
+    /// Each creature id `npc` lists, to the first key (in key order)
+    /// listing it (`npc_of`).
+    #[serde(skip)]
+    creatures: BTreeMap<u32, String>,
     #[serde(default)]
     defaults: Table,
     #[serde(skip)]
@@ -240,6 +416,49 @@ pub struct Instance {
     /// (`[level.<ui_map>]`): `{ map = …, view = …, travel = … }`.
     #[serde(skip)]
     levels: BTreeMap<u32, Table>,
+}
+
+impl Instance {
+    /// The dungeon's whole enemy forces (its file's top-level `forces`):
+    /// what a keystone's count runs to. `None` where it says none (a raid).
+    pub fn forces(&self) -> Option<u32> {
+        self.forces
+    }
+
+    /// The instance's own creatures (`[npc.<key>]` of its file), by key:
+    /// who is in the dungeon outside its encounters' tables, with their
+    /// enemy forces. Read as written, its switched-off entries left out;
+    /// no difficulty applies here (an entry's `only` is read where the
+    /// table is laid under the instance's trash).
+    pub fn npcs(&self) -> &BTreeMap<String, Npc> {
+        &self.npc
+    }
+
+    /// The instance's creature a creature id is (a GUID's sixth field),
+    /// with its key: the first key, in key order, that lists it. `None`
+    /// for a creature it does not list (a boss its encounter names).
+    pub fn npc_of(&self, creature: u32) -> Option<(&str, &Npc)> {
+        let key = self.creatures.get(&creature)?;
+        self.npc.get_key_value(key).map(|(k, n)| (k.as_str(), n))
+    }
+
+    /// Its creatures as read: the switched-off ones left out of `npc`, and
+    /// every creature id it lists indexed to the first key listing it.
+    fn read_npcs(mut self) -> Instance {
+        self.npc = self
+            .written
+            .iter()
+            .filter(|(_, n)| n.enabled)
+            .map(|(k, n)| (k.clone(), n.clone()))
+            .collect();
+        self.creatures.clear();
+        for (key, n) in &self.npc {
+            for &c in &n.creature {
+                self.creatures.entry(c).or_insert_with(|| key.clone());
+            }
+        }
+        self
+    }
 }
 
 /// One encounter's base: its files' stem, its draft, and its map and NPCs
@@ -268,6 +487,9 @@ enum FileRole<'a> {
         stem: &'a str,
         draft: bool,
     },
+    /// `<season>/<instance>/trash.toml`: the instance's trash, tuned by
+    /// hand.
+    Trash { season: &'a str, instance: &'a str },
 }
 
 impl<'a> FileRole<'a> {
@@ -280,6 +502,7 @@ impl<'a> FileRole<'a> {
             [season, instance, "instance.toml"] => {
                 Ok(Some(FileRole::Instance { season, instance }))
             }
+            [season, instance, "trash.toml"] => Ok(Some(FileRole::Trash { season, instance })),
             [season, instance, file] => {
                 let Some(name) = file.strip_suffix(".toml") else {
                     return Ok(None);
@@ -357,6 +580,57 @@ impl<'a> Drawing<'a> {
     }
 }
 
+/// Whether a trash file's keys are what one may give (`TRASH_TABLES`, at
+/// its top and in each `[difficulty.<name>]`), its creatures amended but
+/// never their identity or worth: no `forces` for any creature, and no
+/// `creature` ids for one of `base`'s (the instance's, as written), though
+/// a creature the file adds gives its own ids. An error names the key.
+fn trash_keys(t: &Table, base: &BTreeMap<String, Npc>) -> Result<(), String> {
+    let refuse = |k: &str| {
+        Err(format!(
+            "`{k}`: a trash file gives only `{}`, and its `[difficulty.<name>]` overrides of them",
+            TRASH_TABLES.join("`, `")
+        ))
+    };
+    // A body's creatures: what each is stays the instance's.
+    let creatures = |at: &str, body: &Table| -> Result<(), String> {
+        let Some(Value::Table(npc)) = body.get("npc") else {
+            return Ok(());
+        };
+        for (key, n) in npc {
+            let Value::Table(n) = n else { continue };
+            if n.contains_key("forces") {
+                return Err(format!(
+                    "`{at}npc.{key}.forces`: what a creature gives toward a keystone's forces is the instance's (its [npc]); a trash file gives none, and a creature it adds gives none"
+                ));
+            }
+            if n.contains_key("creature") && base.contains_key(key) {
+                return Err(format!(
+                    "`{at}npc.{key}.creature`: which creature ids are the instance's {key} is the instance's (its [npc]); a trash file gives ids only to a creature it adds"
+                ));
+            }
+        }
+        Ok(())
+    };
+    for (k, v) in t {
+        match (k.as_str(), v) {
+            ("schema", _) => {}
+            ("difficulty", Value::Table(d)) => {
+                for (name, o) in d {
+                    let Value::Table(o) = o else { continue };
+                    if let Some(k) = o.keys().find(|k| !TRASH_TABLES.contains(&k.as_str())) {
+                        return refuse(&format!("difficulty.{name}.{k}"));
+                    }
+                    creatures(&format!("difficulty.{name}."), o)?;
+                }
+            }
+            (k, _) if TRASH_TABLES.contains(&k) || k == "difficulty" => {}
+            (k, _) => return refuse(k),
+        }
+    }
+    creatures("", t)
+}
+
 /// A file's text as its table, brought to `SCHEMA` (`migrate`); an error
 /// names the file.
 fn parse(path: &str, text: &str, errs: &mut Vec<String>) -> Option<Table> {
@@ -410,6 +684,103 @@ impl Rubric {
     pub fn from_files(
         files: impl IntoIterator<Item = (String, String)>,
     ) -> Result<Rubric, Vec<String>> {
+        Rubric::read(files, &|p: &str| p.to_string(), Origin::Embedded)
+    }
+
+    /// The rubric from a `seasons/` tree on disk (a checkout's
+    /// `crates/encounter-rubric/seasons/`, where the editors save): every
+    /// `.toml` under `dir`, read now and laid as `from_files` lays the
+    /// files a build embeds, its base (the seasons, the instances with
+    /// their levels and creatures, the drafts and the drawings) and its
+    /// tuned and trash files as the curated tier's first set, named for
+    /// the tree (`Source::Curated(Origin::Dir(dir))`, which
+    /// `with_curated_dir` replaces as it does the embedded set). So a map,
+    /// a level or a creature saved into the tree is read with no rebuild.
+    /// `base_origin` says the base came from `dir`.
+    ///
+    /// A stray entry is passed over (a dot-file, a link to nothing, a
+    /// non-UTF-8 name but a `.toml`'s: `TreeFiles::read`). As `from_files`
+    /// refuses a build's tree, any error refuses the
+    /// whole: a file that cannot be read, parsed or placed, an encounter
+    /// or a level two instances give, a trash file no reader looks at. Each
+    /// names its file by its place on disk (a clash, by the files' places
+    /// under `dir`). So is a `dir` that is no directory, or holds no
+    /// `<season>/season.toml`. And as `with_curated_dir` refuses a set
+    /// that leaves an encounter unreadable, the tree is refused where any
+    /// encounter or instance's trash does not read on some difficulty at
+    /// the base or the curated tier, or a level does not read: the build's
+    /// tree is held so by its test, a tree on disk is checked here, each
+    /// subject named under `dir` with where its files lie under it. So a
+    /// tree is held to more than the build's reader holds a build's files
+    /// to (`from_files` never reads them so): a draft saved mid-work that
+    /// fails on one difficulty refuses the whole tree until it is fixed,
+    /// and a writer should save each file whole (written beside, then
+    /// moved over it), or a reader may read it half written.
+    ///
+    /// The version folds in the tree's path after every file: a rubric
+    /// read from a tree never shares its version with one built from the
+    /// same files (its curated set's provenance names the tree), as
+    /// `with_curated_dir`'s does not.
+    pub fn from_dir(dir: &std::path::Path) -> Result<Rubric, Vec<String>> {
+        Rubric::from_tree(TreeFiles::read(dir))
+    }
+
+    /// The rubric from a tree's files a walk read (`TreeFiles::read`), as
+    /// `from_dir` reads it: so a reader that compared the walk's
+    /// fingerprint with the one it last read parses only a tree that
+    /// changed.
+    pub fn from_tree(tree: TreeFiles) -> Result<Rubric, Vec<String>> {
+        let TreeFiles {
+            root,
+            present,
+            files,
+            errors,
+        } = tree;
+        let dir = root.as_path();
+        if !present {
+            return Err(vec![format!("{}: not a directory", dir.display())]);
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        let seasons = files
+            .iter()
+            .any(|(p, _)| matches!(FileRole::of(p), Ok(Some(FileRole::Season { .. }))));
+        if !seasons {
+            return Err(vec![format!(
+                "{}: no season: a seasons tree holds a <season>/season.toml",
+                dir.display()
+            )]);
+        }
+        let name = dir.display().to_string();
+        let shown = |p: &str| dir.join(p).display().to_string();
+        let mut r = Rubric::read(files, &shown, Origin::Dir(name.clone()))?;
+        let errs = r.unreadable(&name);
+        if !errs.is_empty() {
+            return Err(errs);
+        }
+        r.hash = hash_files(r.hash, [("\0dir\0", name.as_str())]);
+        r.version = r.versioned();
+        Ok(r)
+    }
+
+    /// Where the base was read from: `Origin::Embedded` for the files a
+    /// build embeds or `from_files` was handed, `Origin::Dir` for a tree on
+    /// disk (`from_dir`), by its path. Never a bundle: a bundle is laid
+    /// over a base, never read as one.
+    pub fn base_origin(&self) -> &Origin {
+        &self.base
+    }
+
+    /// The rubric from `(path, text)` pairs, paths relative to `seasons/`:
+    /// `from_files`, and `from_dir` over a tree's files. `shown` names a
+    /// file in an error; `origin` is where the files came from, the base's
+    /// (`base_origin`) and the tuned and trash files' set's alike.
+    fn read(
+        files: impl IntoIterator<Item = (String, String)>,
+        shown: &dyn Fn(&str) -> String,
+        origin: Origin,
+    ) -> Result<Rubric, Vec<String>> {
         let mut files: Vec<(String, String)> = files.into_iter().collect();
         files.sort();
         let hash = hash_files(
@@ -417,12 +788,15 @@ impl Rubric {
             files.iter().map(|(p, t)| (p.as_str(), t.as_str())),
         );
         let mut errs = Vec::new();
+        // Each file by its role, named as `shown` names it: from here on a
+        // file's path is what an error calls it.
+        let names: Vec<String> = files.iter().map(|(p, _)| shown(p)).collect();
         let mut roles = Vec::new();
-        for (path, text) in &files {
+        for ((path, text), name) in files.iter().zip(&names) {
             match FileRole::of(path) {
-                Ok(Some(role)) => roles.push((path.as_str(), text.as_str(), role)),
+                Ok(Some(role)) => roles.push((name.as_str(), text.as_str(), role)),
                 Ok(None) => {}
-                Err(e) => errs.push(format!("{path}: {e}")),
+                Err(e) => errs.push(format!("{name}: {e}")),
             }
         }
         // Seasons and instances first, so encounters find their parents.
@@ -436,6 +810,14 @@ impl Rubric {
             };
             match typed::<Season>(t) {
                 Ok(s) => {
+                    if let Err(e) = defaults_keys(&s.defaults) {
+                        errs.push(format!("{path}: {e}"));
+                    }
+                    let problems = s.rules.problems();
+                    if !problems.is_empty() {
+                        errs.extend(problems.into_iter().map(|p| format!("{path}: {p}")));
+                        continue;
+                    }
                     let id = season.to_string();
                     seasons.insert(id.clone(), Season { id, ..s });
                 }
@@ -483,27 +865,44 @@ impl Rubric {
             };
             match typed::<Instance>(t) {
                 Ok(i) => {
+                    if let Err(e) = defaults_keys(&i.defaults) {
+                        errs.push(format!("{path}: {e}"));
+                    }
                     drawings.extend(Drawing::read(path, season, instance, encounter, &mut errs));
                     let levels = read_levels(path, level, &mut errs);
                     let slug = instance.to_string();
                     s.instances
-                        .insert(slug.clone(), Instance { slug, levels, ..i });
+                        .insert(slug.clone(), Instance { slug, levels, ..i }.read_npcs());
                 }
                 Err(e) => errs.push(format!("{path}: {e}")),
             }
         }
-        // The tuned files beside their drafts: the curated tier's first set.
-        let mut tuned = Set::new(Source::Curated(Origin::Embedded));
+        // The tuned files beside their drafts, and each instance's trash
+        // file: the curated tier's first set.
+        let mut tuned = Set::new(Source::Curated(origin.clone()));
         for &(path, text, ref role) in &roles {
-            let FileRole::Encounter {
-                season,
-                instance,
-                id,
-                stem,
-                draft,
-            } = *role
-            else {
-                continue;
+            let (season, instance, id, stem, draft) = match *role {
+                FileRole::Encounter {
+                    season,
+                    instance,
+                    id,
+                    stem,
+                    draft,
+                } => (season, instance, id, stem, draft),
+                FileRole::Trash { season, instance } => {
+                    let Some(t) = parse(path, text, &mut errs) else {
+                        continue;
+                    };
+                    match seasons.get(season).and_then(|s| s.instances.get(instance)) {
+                        None => errs.push(format!("{path}: no {season}/{instance}/instance.toml")),
+                        Some(inst) => match trash_keys(&t, &inst.written) {
+                            Err(e) => errs.push(format!("{path}: {e}")),
+                            Ok(()) => tuned.instance_mut(season, instance).trash = Some(t),
+                        },
+                    }
+                    continue;
+                }
+                FileRole::Season { .. } | FileRole::Instance { .. } => continue,
             };
             let Some(t) = parse(path, text, &mut errs) else {
                 continue;
@@ -569,14 +968,49 @@ impl Rubric {
             sets: vec![tuned],
             user_errors: Vec::new(),
             tier: Tier::default(),
+            base: origin,
         };
         r.version = r.versioned();
+        // A trash file where no reader looks (an older season's copy of a
+        // returning dungeon) would be laid and never read.
+        let mut errs = Vec::new();
+        for set in &r.sets {
+            for (season, s) in &set.seasons {
+                for (instance, i) in &s.instances {
+                    if i.trash.is_some()
+                        && let Some(e) = r.trash_elsewhere(season, instance)
+                    {
+                        errs.push(format!(
+                            "{}: {e}",
+                            shown(&format!("{season}/{instance}/trash.toml"))
+                        ));
+                    }
+                }
+            }
+        }
+        if !errs.is_empty() {
+            return Err(errs);
+        }
         Ok(r)
     }
 
     /// Every season, newest first.
     pub fn seasons(&self) -> &[Season] {
         &self.seasons
+    }
+
+    /// The raid or dungeon whose map id (the instance file's `map`, the id
+    /// the log's ZONE_CHANGE and CHALLENGE_MODE_START write) is `map`, with
+    /// its season: the newest season's, as `encounter` answers a returning
+    /// dungeon's encounters from it; within a season, the first by slug.
+    /// `None` when no season has it.
+    pub fn instance_by_map(&self, map: u32) -> Option<(&Season, &Instance)> {
+        self.seasons.iter().find_map(|s| {
+            s.instances
+                .values()
+                .find(|i| i.map == Some(map))
+                .map(|i| (s, i))
+        })
     }
 
     /// What an interpretation records it ran under: the seasons and a hash
@@ -744,9 +1178,10 @@ impl Rubric {
     /// A dungeon level, by its UiMap id, as the newest season that has it
     /// gives it: the season's `[defaults]`, the instance's, then the
     /// level's own `[level.<ui_map>]`, each read for its `map`, `view` and
-    /// `travel`. No difficulty applies to a level, and it is the base's
-    /// alone: a curated or user set never reaches it. `None` when no
-    /// season has it.
+    /// `travel` (a `pull` is the level's own, never a default's), with the
+    /// instance's creatures laid in (`Level::npc`). No difficulty applies
+    /// to a level, and it is the base's alone: a curated or user set never
+    /// reaches it. `None` when no season has it.
     pub fn level(&self, ui_map: u32) -> Option<Result<Level, String>> {
         let (n, slug) = self.levels.get(&ui_map)?;
         let season = self.seasons.get(*n)?;
@@ -769,6 +1204,163 @@ impl Rubric {
             .collect();
         out.sort_by_key(|&(n, id, _, i)| (n, i.slug.as_str(), id));
         out.into_iter().map(|(_, id, s, i)| (id, s, i)).collect()
+    }
+
+    /// An instance's trash, by the map id a run's log writes: what its
+    /// creatures do outside its encounters, as an `Encounter` (its
+    /// `encounter` 0, its `name` and `instance` the instance's) at the
+    /// rubric's own tier. The instance's own creatures (`[npc]`) are its
+    /// base, and each curated or user set's `trash.toml` is laid over them
+    /// in the stack's order; it resolves at a keystone's difficulty (8),
+    /// through Mythic's, Heroic's and Normal's, an `only` as exact as an
+    /// encounter's. Every instance has one, its base alone where no set
+    /// gives a file. `None` when no season has the map (`instance_by_map`).
+    pub fn trash(&self, map: u32) -> Option<Result<Encounter, String>> {
+        self.trash_at(map, self.tier)
+    }
+
+    /// An instance's trash as `trash` gives it, at `tier` or the rubric's
+    /// own, whichever is less.
+    pub fn trash_at(&self, map: u32, tier: Tier) -> Option<Result<Encounter, String>> {
+        let (season, inst) = self.instance_by_map(map)?;
+        Some(self.resolve_trash(season, inst, Some(KEYSTONE), tier.min(self.tier), None))
+    }
+
+    /// An instance's trash as `trash_at` gives it, and who set each of its
+    /// keys: the same `Encounter`, with its `Provenance`.
+    pub fn trash_traced(
+        &self,
+        map: u32,
+        tier: Tier,
+    ) -> Option<Result<(Encounter, Provenance), String>> {
+        let (season, inst) = self.instance_by_map(map)?;
+        let mut prov = Provenance::default();
+        let e = self.resolve_trash(
+            season,
+            inst,
+            Some(KEYSTONE),
+            tier.min(self.tier),
+            Some(&mut prov),
+        );
+        Some(e.map(|e| (e, prov)))
+    }
+
+    /// The sources with a file an instance's trash reads, by the map id,
+    /// in the stack's order: the instance's own file (its creatures)
+    /// always, then each curated set and the user's that holds its
+    /// `trash.toml`. A set laid twice in a row is listed once. Empty when
+    /// no season has the map. What `layers_of` is to an encounter.
+    pub fn trash_layers_of(&self, map: u32) -> Vec<Source> {
+        let Some((season, inst)) = self.instance_by_map(map) else {
+            return Vec::new();
+        };
+        let mut out = vec![Source::Instance];
+        for set in &self.sets {
+            if set.has_trash(&season.id, &inst.slug) && out.last() != Some(&set.source) {
+                out.push(set.source.clone());
+            }
+        }
+        out
+    }
+
+    /// Whether a curated set gives the map's instance a trash file
+    /// (`trash_layers_of`).
+    pub fn has_curated_trash(&self, map: u32) -> bool {
+        self.trash_layers_of(map)
+            .iter()
+            .any(|s| matches!(s, Source::Curated(_)))
+    }
+
+    /// Whether the user's files give the map's instance a trash file
+    /// (`trash_layers_of`).
+    pub fn has_user_trash(&self, map: u32) -> bool {
+        self.trash_layers_of(map).contains(&Source::User)
+    }
+
+    /// An instance's trash, by its season and slug, on `difficulty` at
+    /// `tier`, uncapped: what laying a set checks. `None` when the base has
+    /// no such instance.
+    fn answer_trash(
+        &self,
+        season: &str,
+        instance: &str,
+        difficulty: Option<u32>,
+        tier: Tier,
+    ) -> Option<Result<Encounter, String>> {
+        let s = self.seasons.iter().find(|s| s.id == season)?;
+        let inst = s.instances.get(instance)?;
+        Some(self.resolve_trash(s, inst, difficulty, tier, None))
+    }
+
+    /// Why a layer's trash file for `season`/`instance` would never be
+    /// read: the instance gives no map id to find it by, or a newer season
+    /// answers its map (a returning dungeon). `None` when its trash is
+    /// answered from there.
+    fn trash_elsewhere(&self, season: &str, instance: &str) -> Option<String> {
+        let map = self
+            .seasons
+            .iter()
+            .find(|s| s.id == season)
+            .and_then(|s| s.instances.get(instance))
+            .and_then(|i| i.map);
+        let Some(map) = map else {
+            return Some(format!(
+                "{season}/{instance} gives no `map` id, which its trash is found by"
+            ));
+        };
+        match self.instance_by_map(map) {
+            Some((s, i)) if s.id == season && i.slug == instance => None,
+            Some((s, i)) => Some(format!(
+                "map {map}'s trash is answered from {}/{}; a layer's trash file goes there",
+                s.id, i.slug
+            )),
+            None => Some(format!("no season answers map {map}")),
+        }
+    }
+
+    /// Lay an instance's trash up to `tier`: its own creatures, then each
+    /// set's trash file, then the difficulty overrides `difficulty` reads;
+    /// and type the result.
+    fn resolve_trash(
+        &self,
+        season: &Season,
+        inst: &Instance,
+        difficulty: Option<u32>,
+        tier: Tier,
+        prov: Option<&mut Provenance>,
+    ) -> Result<Encounter, String> {
+        let where_ = format!("{}/{}/trash", season.id, inst.slug);
+        let mut stack = Stacked {
+            t: Table::new(),
+            overrides: Vec::new(),
+            prov,
+            where_: &where_,
+        };
+        // Who is in the dungeon: the instance's own creatures, the base's,
+        // as written (a trash file may switch one back on; `typed` drops
+        // the ones still off).
+        if !inst.written.is_empty() {
+            let npc = Value::try_from(&inst.written).map_err(|e| format!("{where_}: {e}"))?;
+            stack.lay(Source::Instance, &Table::from_iter([("npc".into(), npc)]))?;
+        }
+        // What they do: each set's trash file, in the stack's order.
+        for set in self.sets.iter().filter(|s| s.source.tier() <= tier) {
+            if let Some(t) = set
+                .instance(&season.id, &inst.slug)
+                .and_then(|i| i.trash.as_ref())
+            {
+                stack.lay(set.source.clone(), t)?;
+            }
+        }
+        stack.typed(
+            difficulty,
+            [
+                ("schema", Value::Integer(i64::from(SCHEMA))),
+                ("encounter", Value::Integer(0)),
+                ("name", Value::String(inst.name.clone())),
+                ("instance", Value::String(inst.slug.clone())),
+            ],
+        )
     }
 
     /// An encounter's season, instance and files, as the index places it.
@@ -852,51 +1444,7 @@ impl Rubric {
                 stack.lay(set.source.clone(), t)?;
             }
         }
-        let chain = difficulty.map(difficulty::chain).unwrap_or(&[]);
-        let Stacked {
-            mut t,
-            overrides,
-            mut prov,
-            ..
-        } = stack;
-        // The difficulty overrides last, the most general difficulty first,
-        // and each difficulty's in the stack's order.
-        for name in chain.iter().rev() {
-            for (source, o) in &overrides {
-                if let Some(Value::Table(o)) = o.get(*name) {
-                    let by = SetBy {
-                        source: source.clone(),
-                        difficulty: Some(name),
-                    };
-                    lay(&mut t, o.clone(), "", prov.as_deref_mut().map(|p| (p, &by)));
-                }
-            }
-        }
-        if !t.contains_key("instance") {
-            t.insert("instance".into(), Value::String(inst.slug.clone()));
-            if let Some(p) = prov {
-                p.set(
-                    "instance",
-                    SetBy {
-                        source: Source::Instance,
-                        difficulty: None,
-                    },
-                );
-            }
-        }
-        let mut e =
-            Encounter::deserialize(Value::Table(t)).map_err(|e| format!("{where_}: {e}"))?;
-        gate(&mut e, |g| {
-            g.enabled() && (difficulty.is_none() || difficulty::applies(g.only(), chain))
-        });
-        // An ability under one this difficulty does not have stands alone.
-        let kept: std::collections::BTreeSet<String> = e.ability.keys().cloned().collect();
-        for a in e.ability.values_mut() {
-            if a.under.as_ref().is_some_and(|u| !kept.contains(u)) {
-                a.under = None;
-            }
-        }
-        Ok(e)
+        stack.typed(difficulty, [("instance", Value::String(inst.slug.clone()))])
     }
 }
 
@@ -931,6 +1479,74 @@ impl Stacked<'_, '_> {
             self.overrides.push((by.source, o));
         }
         Ok(())
+    }
+
+    /// The table laid, typed: the difficulty overrides `difficulty` reads
+    /// laid last, the most general difficulty first and each difficulty's
+    /// in the stack's order; each of `fill` set where no file set it (by
+    /// the instance the encounter lies in); every entry switched off, or
+    /// kept to other difficulties, dropped.
+    fn typed<const N: usize>(
+        self,
+        difficulty: Option<u32>,
+        fill: [(&str, Value); N],
+    ) -> Result<Encounter, String> {
+        let chain = difficulty.map(difficulty::chain).unwrap_or(&[]);
+        let Stacked {
+            mut t,
+            overrides,
+            mut prov,
+            where_,
+        } = self;
+        for name in chain.iter().rev() {
+            for (source, o) in &overrides {
+                if let Some(Value::Table(o)) = o.get(*name) {
+                    let by = SetBy {
+                        source: source.clone(),
+                        difficulty: Some(name),
+                    };
+                    lay(&mut t, o.clone(), "", prov.as_deref_mut().map(|p| (p, &by)));
+                }
+            }
+        }
+        for (k, v) in fill {
+            if !t.contains_key(k) {
+                t.insert(k.into(), v);
+                if let Some(p) = prov.as_deref_mut() {
+                    p.set(
+                        k,
+                        SetBy {
+                            source: Source::Instance,
+                            difficulty: None,
+                        },
+                    );
+                }
+            }
+        }
+        let mut e =
+            Encounter::deserialize(Value::Table(t)).map_err(|e| format!("{where_}: {e}"))?;
+        let grounds: std::collections::BTreeSet<String> = e.ground.keys().cloned().collect();
+        gate(&mut e, |g| {
+            g.enabled() && (difficulty.is_none() || difficulty::applies(g.only(), chain))
+        });
+        // An ability under one this difficulty does not have stands alone.
+        let kept: std::collections::BTreeSet<String> = e.ability.keys().cloned().collect();
+        for a in e.ability.values_mut() {
+            if a.under.as_ref().is_some_and(|u| !kept.contains(u)) {
+                a.under = None;
+            }
+        }
+        // A ground this difficulty does not have (kept to others, or
+        // switched off) is cleared by none: Mythic Keystone lays the Mythic
+        // overlays, whose `clears` may name a Mythic-only ground it lacks.
+        // A name that was never a ground stays, for `check` to refuse.
+        let kept: std::collections::BTreeSet<String> = e.ground.keys().cloned().collect();
+        for g in e.ground.values_mut() {
+            for list in [&mut g.clears, &mut g.sweeps] {
+                list.retain(|c| kept.contains(c) || !grounds.contains(c));
+            }
+        }
+        Ok(e)
     }
 }
 
@@ -1035,8 +1651,9 @@ fn read_levels(path: &str, level: Table, errs: &mut Vec<String>) -> BTreeMap<u32
 }
 
 /// A level laid over its season's and instance's `[defaults]` (their
-/// `LEVEL_TABLES` alone) and typed: its map's UiMap its own unless it says
-/// one, every entry switched off dropped.
+/// `LEVEL_DEFAULTS` alone) and typed: its map's UiMap its own unless it
+/// says one, every entry switched off dropped, and the instance's
+/// creatures laid in (`Level::npc`), which its pulls name.
 fn resolve_level(
     season: &Season,
     inst: &Instance,
@@ -1047,7 +1664,7 @@ fn resolve_level(
     for defaults in [&season.defaults, &inst.defaults] {
         let read: Table = defaults
             .iter()
-            .filter(|(k, _)| LEVEL_TABLES.contains(&k.as_str()))
+            .filter(|(k, _)| LEVEL_DEFAULTS.contains(&k.as_str()))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         merge(&mut t, read);
@@ -1060,8 +1677,44 @@ fn resolve_level(
     if l.map.ui_map.is_none() {
         l.map.ui_map = Some(ui_map);
     }
-    gate_map(&mut l.map, &|g: &dyn Gated| g.enabled());
+    let keep = |g: &dyn Gated| g.enabled();
+    gate_map(&mut l.map, &keep);
+    l.pull.retain(|_, p| keep(p));
+    l.npc = inst.npcs().clone();
     Ok(l)
+}
+
+/// A `[defaults]` table's keys, each one of `DEFAULTS_TABLES` or the
+/// `difficulty` overrides of them: an error names the first that is not,
+/// as `[defaults.<key>]`.
+pub(crate) fn defaults_keys(d: &Table) -> Result<(), String> {
+    let refused = |at: String, k: &str| {
+        if k == "pull" {
+            format!("[{at}.pull]: a pull is one level's alone, never a default")
+        } else {
+            format!(
+                "[{at}.{k}]: a default gives only an encounter's tables (`{}`), which every encounter under it reads",
+                DEFAULTS_TABLES.join("`, `")
+            )
+        }
+    };
+    for (k, v) in d {
+        match (k.as_str(), v) {
+            ("difficulty", Value::Table(overlays)) => {
+                for (name, over) in overlays {
+                    if let Value::Table(over) = over
+                        && let Some(k) =
+                            over.keys().find(|k| !DEFAULTS_TABLES.contains(&k.as_str()))
+                    {
+                        return Err(refused(format!("defaults.difficulty.{name}"), k));
+                    }
+                }
+            }
+            (k, _) if DEFAULTS_TABLES.contains(&k) => {}
+            (k, _) => return Err(refused("defaults".into(), k)),
+        }
+    }
+    Ok(())
 }
 
 fn seasons_ids(seasons: &[Season]) -> String {
@@ -1073,19 +1726,30 @@ fn seasons_ids(seasons: &[Season]) -> String {
 }
 
 /// A file's table, brought to `SCHEMA`: every file names the format it was
-/// written in, and a migration per older version runs in order. None yet.
-fn migrate(t: Table) -> Result<Table, String> {
+/// written in, and a migration per older version runs in order, each one
+/// version forward, the file then naming `SCHEMA`.
+fn migrate(mut t: Table) -> Result<Table, String> {
     let v = t
         .get("schema")
         .and_then(Value::as_integer)
         .ok_or("no `schema = N`")?;
-    match u32::try_from(v) {
-        Ok(SCHEMA) => Ok(t),
-        Ok(n) if n > SCHEMA => Err(format!(
+    let no_way = || format!("schema {v} has no migration to {SCHEMA}");
+    let mut n = u32::try_from(v).map_err(|_| no_way())?;
+    if n > SCHEMA {
+        return Err(format!(
             "schema {n} is newer than this build reads ({SCHEMA})"
-        )),
-        _ => Err(format!("schema {v} has no migration to {SCHEMA}")),
+        ));
     }
+    while n < SCHEMA {
+        n = match n {
+            // 1 → 2: the instance's creatures and forces, an NPC's `forces`
+            // and `aloft`: keys added, none changed.
+            1 => 2,
+            _ => return Err(no_way()),
+        };
+    }
+    t.insert("schema".into(), Value::Integer(i64::from(SCHEMA)));
+    Ok(t)
 }
 
 /// Lay `over` onto `base`: tables merge key by key, anything else replaces.
@@ -1147,6 +1811,7 @@ fn gate(e: &mut Encounter, keep: impl Fn(&dyn Gated) -> bool) {
         line,
         volley,
         flash,
+        knock,
         range,
         apart,
         streak,
@@ -1172,6 +1837,7 @@ fn gate(e: &mut Encounter, keep: impl Fn(&dyn Gated) -> bool) {
     retain(line, &keep);
     retain(volley, &keep);
     retain(flash, &keep);
+    retain(knock, &keep);
     retain(range, &keep);
     retain(apart, &keep);
     retain(streak, &keep);
@@ -1198,6 +1864,7 @@ fn gate_map(map: &mut Map, keep: &dyn Fn(&dyn Gated) -> bool) {
         floor: _,
         level: _,
         ceiling: _,
+        hang: _,
         light: _,
         exclude_groups: _,
         exclude_models: _,
@@ -1210,6 +1877,7 @@ fn gate_map(map: &mut Map, keep: &dyn Fn(&dyn Gated) -> bool) {
         ground: _,
         exposure: _,
         transition: _,
+        water: _,
     } = map;
     retain(layer, keep);
     retain(glow, keep);

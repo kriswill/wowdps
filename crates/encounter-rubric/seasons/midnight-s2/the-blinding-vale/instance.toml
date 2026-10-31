@@ -9,6 +9,11 @@ map = 2859
 # is cut over the ground its parties walked (every stored keystone run's
 # posts on it), as gen-floors drew it from a level posts file.
 
+# Its region frames 818 by 1,200 yd, at 6.75 px a yard, its edges ragged
+# where the minimap's tiles stop; the crop keeps where its parties walk
+# and 80 yd past it (every 10 yd cell with three posts or more), at 8 px a
+# yard, the minimap still under the rest.
 [level.2500.map]
 floor = "the-blinding-vale-L1"
+crop = [1010, 1240, 1610, 2250]
 ground = "walked"

@@ -16,6 +16,10 @@
 //! `<id>-<slug>.toml`, each over the last, and the whole block over
 //! everything below it. A draft is the base's: no set may hold one.
 //!
+//! An instance's TRASH (`Rubric::trash`) resolves through a shorter stack:
+//! the instance file's own creatures (`[npc]`, the `Instance` source),
+//! then each set's `<season>/<instance>/trash.toml`, in the same order.
+//!
 //! The merge is the rubric's one rule (tables key by key, anything else
 //! replaced whole), here with a `Provenance` kept beside it when asked:
 //! per key path, the source that last set it, and the `[difficulty.<name>]`
@@ -36,7 +40,8 @@ pub enum Origin {
     Embedded,
     /// The tuned files of a `seasons/` tree on disk (a checkout's), read at
     /// runtime in the embedded ones' place, by the name it was laid under
-    /// (`Rubric::with_curated_dir`).
+    /// (`Rubric::with_curated_dir`); or read with the tree's base, by the
+    /// tree's path (`Rubric::from_dir`, whose `base_origin` is this too).
     Dir(String),
     /// A named file set laid in at runtime (`Rubric::with_curated`).
     Bundle(String),
@@ -51,7 +56,8 @@ pub enum Origin {
 pub enum Source {
     /// The season's `season.toml`, its `[defaults]`.
     Season,
-    /// The instance's `instance.toml`, its `[defaults]`.
+    /// The instance's `instance.toml`: its `[defaults]`, and, under the
+    /// instance's trash, its own creatures (`[npc]`).
     Instance,
     /// The generated `<id>-<slug>.draft.toml`.
     Draft,
@@ -234,12 +240,14 @@ pub(crate) fn lay(
 }
 
 /// What one instance's files of a set give: its `[defaults]`, its
-/// `[encounter.<id>]` drawings, and its encounters' files.
+/// `[encounter.<id>]` drawings, its encounters' files and its trash file.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct InstanceFiles {
     pub defaults: Option<Table>,
     pub drawings: BTreeMap<u32, Table>,
     pub encounters: BTreeMap<u32, Table>,
+    /// `trash.toml`: what the instance's trash does, outside its bosses.
+    pub trash: Option<Table>,
 }
 
 /// What one season's files of a set give: its `[defaults]` and its
@@ -289,8 +297,14 @@ impl Set {
             .is_some_and(|i| i.encounters.contains_key(&id))
     }
 
+    /// Whether the set holds the instance's trash file.
+    pub fn has_trash(&self, season: &str, instance: &str) -> bool {
+        self.instance(season, instance)
+            .is_some_and(|i| i.trash.is_some())
+    }
+
     /// Whether any file of the set is read by the encounter: its own, its
-    /// drawing, or its instance's or season's.
+    /// drawing, or its instance's or season's (never its instance's trash).
     pub fn touches(&self, season: &str, instance: &str, id: u32) -> bool {
         let Some(s) = self.season(season) else {
             return false;
@@ -324,6 +338,11 @@ pub(crate) enum Placed {
         /// Whether the file brought an encounter the rubric had no files
         /// for, so taking it out takes the encounter out too.
         new: bool,
+    },
+    /// An instance's `trash.toml`.
+    Trash {
+        season: String,
+        instance: String,
     },
 }
 

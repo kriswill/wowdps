@@ -15,9 +15,53 @@ ppy = 16
 # events its layers break on). Part of the base: a room looks and changes
 # the same at every tier.
 
-# Nymrissa Wavecaller. The island and a band of the lagoon round it. The
-# rest of the lagoon and its rocky shore are left out.
+# Nymrissa Wavecaller (3379): 11 pulls, 270° ×5, 255° ×3, 240° ×2, 285° ×1
+[encounter.3379.view]
+turn = 270
+
+# Nymrissa Wavecaller. The island and the lagoon round it, out past the
+# twelve spots the murloc packs rise at (68-77 yd from the middle). The
+# rocky shore is left out.
 [encounter.3379.map]
 stencil = [
-    { center = [4762.9, -12083.0], radius = 72.0 },
+    { center = [4762.9, -12083.0], radius = 84.0 },
 ]
+
+# The lagoon's water, tuned by eye for the replay: a pale blue rim over
+# the shallow shelf rings the island, and the deep lagoon is darker and
+# bluer than the island floor, at the preview's size and at 3-4 px a yard.
+# In-game video frames show a dark navy lagoon, its bed seen through the
+# shelf; the render's island floor is darker than the game's, so the
+# water is set against it (rim luma about 40, deep 16-23, island 30)
+# rather than at the game's ratio. The client's own look (the default
+# light's river colors) reads pale and green, and its bed murk is left
+# out: it only lifted the deep water.
+[encounter.3379.map.water]
+close = [56, 96, 140]
+far = [10, 16, 40]
+shallow = 0.3
+deep = 0.95
+depth = 10
+
+# The Alluring Bubble Nymrissa gathers at the island's middle: the Bubble
+# Stalker is posted only as it pops, at (4760, -12085) in every pull. A
+# murloc that reaches it vanishes 8-11 yd from its middle. It stands from
+# each Alluring Bubble until the whirlpools reach it and it pops.
+[encounter.3379.place.alluring-bubble]
+name = "Alluring Bubble"
+kind = "pool"
+tint = "blue"
+at = [4760.0, -12085.0]
+radius = 9
+from = { cast = { spell = 1257717, by = "nymrissa-wavecaller" } }
+until = { hit = { spell = 1266340 } }
+
+# The island Pop! must land players on: its floor's edge lies 55-62 yd
+# from the bubble on the render, and no one landing inside 55 yd was
+# bitten within 15 s on four kills. A throw past it falls in the lagoon,
+# to the shark.
+[encounter.3379.place.island]
+name = "The island"
+kind = "spawn"
+at = [4760.0, -12085.0]
+radius = 60

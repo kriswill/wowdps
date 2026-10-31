@@ -14,6 +14,10 @@ map = 2825
 floor = "den-of-nalorakk-L1"
 ground = "walked"
 
+# Its region frames 810 by 1,185 yd, at 6.75 px a yard; the crop keeps
+# where its parties walk and 80 yd past it (every 10 yd cell with three
+# posts or more), at 8 px a yard, the minimap still under the rest.
 [level.2514.map]
 floor = "den-of-nalorakk-L2"
+crop = [4030, -5730, 4700, -4830]
 ground = "walked"

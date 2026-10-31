@@ -9,6 +9,10 @@ map = 1753
 # is cut over the ground its parties walked (every stored keystone run's
 # posts on it), as gen-floors drew it from a level posts file.
 
+# Its region frames 1,089 by 1,604 yd, at 5 px a yard; the crop keeps
+# where its parties walk and 80 yd past it (every 10 yd cell with three
+# posts or more), at 8 px a yard, the minimap still under the rest.
 [level.903.map]
 floor = "seat-of-the-triumvirate-L1"
+crop = [5350, 10120, 6270, 10930]
 ground = "walked"

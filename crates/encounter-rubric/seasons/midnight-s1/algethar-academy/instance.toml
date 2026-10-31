@@ -21,9 +21,13 @@ map = 2526
 # The Academy's grounds (the floors cache's level 1). The run begins at the
 # entrance; the Overgrown Ancient, Vexamus and Echo of Doragosa are fought
 # here. The party leaves for Crawth's level from its departure, and comes
-# back at its arrival, carried from Crawth's court.
+# back at its arrival, carried from Crawth's court. Its region frames 839 by
+# 1,229 yd, at 6.5 px a yard; the crop keeps where its parties walk and 80
+# yd past it (every 10 yd cell with three posts or more), every place below
+# within it, at 8 px a yard, the minimap still under the rest.
 [level.2097.map]
 floor = "algethar-academy-L1"
+crop = [1360, -3330, 2123, -2670]
 ground = "walked"
 
 [level.2097.map.area.entrance]
@@ -33,6 +37,8 @@ shape = [{ center = [1410, -2772], radius = 15 }]
 name = "The Overgrown Ancient's court"
 shape = [{ center = [1762, -3086], radius = 20 }]
 encounter = 2563
+# Overgrown Ancient (2563): 2 pulls, 180° ×1, 345° ×1
+turn = 180
 
 [level.2097.map.area.departure]
 name = "Away to Crawth's level"
@@ -51,6 +57,8 @@ encounter = 2562
 # whose box holds this court too), but the log posts the fight on 2097:
 # every player post of it on both runs is here, none on 2099. So the
 # court is on this level, an exception the embedded test names.
+# Vexamus (2562): 2 pulls, 30° ×1, 45° ×1
+turn = 30
 [level.2097.map.area.doragosa-court]
 name = "Echo of Doragosa's court"
 shape = [{ center = [1480, -3194], radius = 50 }]
@@ -58,6 +66,8 @@ encounter = 2565
 
 # The first 470 yd went at 11 yd a second on the run that has them, faster
 # than the season's run: the path keeps that pace (a run with speed is a guess).
+# Echo of Doragosa (2565): 2 pulls, 210° ×1, 240° ×1
+turn = 210
 [level.2097.map.path.entrance-to-ancient]
 from = "entrance"
 to = "overgrown-ancient-court"
@@ -102,6 +112,8 @@ shape = [{ center = [2088, -3107], radius = 25 }]
 name = "Crawth's court"
 shape = [{ center = [2376, -3043], radius = 33 }]
 encounter = 2564
+# Crawth (2564): 2 pulls, 300° ×1, 345° ×1
+turn = 300
 
 [level.2098.map.area.departure]
 name = "Back to the grounds"

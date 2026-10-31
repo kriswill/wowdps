@@ -1,6 +1,6 @@
 //! A rendered floor's placement sidecar, read and written in one place.
 //!
-//! `wowdps-extract gen-floors` renders a boss's room top-down into the
+//! `wowdps-replay-extract gen-floors` renders a boss's room top-down into the
 //! per-machine floors cache (`~/.local/share/wowdps/floors/`) as
 //! `<slug>.png`, and beside it `<slug>.txt`: where the picture lies in the
 //! world and what else was written with it. The replay and the stencil
@@ -302,7 +302,7 @@ impl Walk {
     /// each walked only where it is said, so a map saying none hashes as
     /// it did before gen-floors drew by them: `crop`, `include_groups`,
     /// `include_models`, each enabled `fade` by its key, piece and alpha
-    /// (a disabled one draws nothing), and `exposure`.
+    /// (a disabled one draws nothing), `exposure` and `water`.
     fn said(&mut self, map: &Map) {
         if let Some(c) = map.crop {
             self.key("crop");
@@ -342,6 +342,109 @@ impl Walk {
             self.key("exposure");
             self.f32(x);
         }
+        if let Some(w) = &map.water {
+            let crate::Water {
+                close,
+                far,
+                shallow,
+                deep,
+                depth,
+                bed,
+                types,
+                shore,
+            } = w;
+            self.key("water");
+            self.bytes(close);
+            self.bytes(far);
+            self.f32(*shallow);
+            self.f32(*deep);
+            self.f32(*depth);
+            self.opt(*bed, |w, c| w.bytes(&c));
+            // Walked where it is said, so a water naming none hashes as
+            // one did before it could; as a set, sorted and once each, so
+            // their order and a repeat move no hash.
+            if let Some(types) = types {
+                let mut set = types.clone();
+                set.sort_unstable();
+                set.dedup();
+                self.key("types");
+                self.u32s(&set);
+            }
+            if let Some(y) = shore {
+                self.key("shore");
+                self.f32(*y);
+            }
+        }
+    }
+
+    /// What cuts a render area by area, each walked only where it is said,
+    /// so a map saying none hashes as one did before a render read them:
+    /// the map's `hang`; each enabled area saying a `ceiling` or a `hang`
+    /// (its key, the two, and its `shape`, which places them) or, on a
+    /// level (`level`), a `stencil` (its shapes); and, on a level some
+    /// enabled area gives a stencil, each enabled path's corridor by its
+    /// key, its way (`Map::path_way`, so an unsaid one follows its areas'
+    /// middles) and its width (`Path::corridor_width`). An arena's area
+    /// stencil is not drawn, nor are its corridors: neither is walked.
+    fn cut(&mut self, map: &Map, level: bool) {
+        if let Some(h) = map.hang {
+            self.key("hang");
+            self.f32(h);
+        }
+        let areas: Vec<(&String, &crate::Area)> = map
+            .area
+            .iter()
+            .filter(|(_, a)| {
+                a.enabled
+                    && (a.ceiling.is_some() || a.hang.is_some() || (level && !a.stencil.is_empty()))
+            })
+            .collect();
+        if !areas.is_empty() {
+            self.key("area");
+            self.len(areas.len());
+            for (key, a) in areas {
+                let crate::Area {
+                    enabled: _,
+                    name: _,
+                    shape,
+                    far: _,
+                    home: _,
+                    near: _,
+                    turn: _,
+                    ceiling,
+                    hang,
+                    stencil,
+                    encounter: _,
+                } = a;
+                self.str(key);
+                self.opt(*ceiling, Walk::f32);
+                self.opt(*hang, Walk::f32);
+                if ceiling.is_some() || hang.is_some() {
+                    self.shapes(shape);
+                }
+                if level {
+                    self.shapes(stencil);
+                }
+            }
+        }
+        if level && map.level_stenciled() {
+            let corridors: Vec<(&String, Vec<[f32; 2]>, f32)> = map
+                .path
+                .iter()
+                .filter(|(_, p)| p.enabled)
+                .filter_map(|(key, p)| Some((key, map.path_way(p)?, p.corridor_width())))
+                .collect();
+            self.key("corridor");
+            self.len(corridors.len());
+            for (key, way, width) in corridors {
+                self.str(key);
+                self.len(way.len());
+                for p in way {
+                    self.point(p);
+                }
+                self.f32(width);
+            }
+        }
     }
 }
 
@@ -353,11 +456,14 @@ impl Map {
     /// `exclude_textures`, `stencil`, `ppy`, and each `glow` by its key,
     /// `color`, `hot`, `area`, `except` and `below`; and, walked only where
     /// said (`Walk::said`), `crop`, `include_groups`, `include_models`,
-    /// each enabled `fade` and `exposure` (the options carry the exposure
+    /// each enabled `fade`, `water` and `exposure` (the options carry the exposure
     /// the render took, `--exposure` given outright or its default times
-    /// this). It reads none of `ui_map`, `floor`, `layer`, a glow's `name`,
+    /// this); and, walked only where said too (`Walk::cut`), `hang` and
+    /// each enabled area's `ceiling` and `hang` with the shape they cover.
+    /// It reads none of `ui_map`, `floor`, `layer`, a glow's `name`,
     /// `on`, `rise`, `hold` and `fade`, nor `ground` (an arena is cut at
-    /// one level), `area`, `path` and `transition`, nor the encounter's
+    /// one level), an area's camera keys and `stencil` (an arena's is not
+    /// drawn), `path` and `transition`, nor the encounter's
     /// `[view]`: changing those moves no pixel and no hash. Every key is
     /// named here, so a key added to the map is a choice: the day
     /// gen-floors draws by one, it joins the walk. A room off the arena
@@ -368,6 +474,7 @@ impl Map {
             floor: _,
             level,
             ceiling,
+            hang: _,
             light,
             exclude_groups,
             exclude_models,
@@ -385,8 +492,10 @@ impl Map {
             area: _,
             path: _,
             transition: _,
+            water: _,
         } = self;
-        // `crop`, `include_*`, `fade` and `exposure` go in `said`, below.
+        // `crop`, `include_*`, `fade`, `exposure` and `water` go in `said`,
+        // below; `hang` and the areas' ceilings and hangs in `cut`.
         let mut w = Walk::new();
         w.key("level");
         w.opt(*level, Walk::f32);
@@ -429,6 +538,7 @@ impl Map {
         }
         w.options(opts);
         w.said(self);
+        w.cut(self, false);
         w.0
     }
 
@@ -439,17 +549,23 @@ impl Map {
     /// is said, so a level whose map says none of them hashes as
     /// `level_params` does: `exclude_groups`, `exclude_models`,
     /// `exclude_textures`, a `ground` that is a height (`walked` reaches
-    /// the hash as its posts, `terrain` as none), and `Walk::said`'s keys.
-    /// A level's render reads none of `level`, `ceiling`, `light`,
-    /// `stencil`, `ppy`, `glow` and `layer` (it is cut to its own heights
-    /// at the tool's density, lit as the client lights it), nor the
-    /// camera's `area`, `path` and `transition`.
+    /// the hash as its posts, `terrain` as none), a `ceiling` other than
+    /// the options' (how far over its ground a terrain level is cut; the
+    /// options carry the tool's), `Walk::said`'s keys, and `Walk::cut`'s:
+    /// `hang`, each enabled area's `ceiling` and `hang` with the shape
+    /// they cover and its `stencil`, and, where an area gives a stencil,
+    /// each enabled path's corridor. A level's render reads none of
+    /// `level`, `light`, `stencil`, `ppy`, `glow` and `layer` (it is cut to
+    /// its own heights at the tool's density, lit as the client lights
+    /// it), nor an area's camera keys, a path's way where no area gives a
+    /// stencil, nor `transition`.
     pub fn level_params(&self, posts: &[Vec<[f32; 2]>], opts: &RenderOptions) -> u64 {
         let Map {
             ui_map: _,
             floor: _,
             level: _,
-            ceiling: _,
+            ceiling,
+            hang: _,
             light: _,
             exclude_groups,
             exclude_models,
@@ -467,6 +583,7 @@ impl Map {
             area: _,
             path: _,
             transition: _,
+            water: _,
         } = self;
         let mut w = Walk::new();
         w.key("level");
@@ -493,7 +610,16 @@ impl Map {
             w.key("ground");
             w.f32(*h);
         }
+        // How far over its ground a terrain level is cut: the tool's own
+        // (`--ceiling`, in the options) where the map says that or nothing,
+        // so a level whose defaults say the tool's ceiling hashes as it
+        // did before a level read one.
+        if let Some(c) = ceiling.filter(|c| *c != opts.ceiling) {
+            w.key("ceiling");
+            w.f32(c);
+        }
         w.said(self);
+        w.cut(self, true);
         w.0
     }
 }
@@ -633,6 +759,16 @@ pub fn slug(name: &str) -> String {
             _ => None,
         })
         .collect()
+}
+
+/// The floors cache's file for a place's swirl texture (`Swirl::texture`,
+/// a FileDataID): `swirl-<fdid>.png`, beside the floors, one file a
+/// texture however many places name it. `gen-floors` writes it, the
+/// game's texture at its top mip as RGBA, as it decodes; the replay reads
+/// it and draws it through `swirl::disc` (the map editor will draw the
+/// swirl so too, opening the install itself).
+pub fn swirl_texture_file(fdid: u32) -> String {
+    format!("swirl-{fdid}.png")
 }
 
 impl Sidecar {
@@ -1239,6 +1375,12 @@ mod tests {
         }
     }
 
+    /// A swirl texture's file is named by its FileDataID alone.
+    #[test]
+    fn a_swirl_texture_is_named_by_its_file_data_id() {
+        assert_eq!(swirl_texture_file(5207558), "swirl-5207558.png");
+    }
+
     /// A dungeon's level: the instance's name, its map and level, no
     /// encounter id; it reads back as written and is found by its map
     /// and level, never as an arena.
@@ -1532,6 +1674,10 @@ mod tests {
     /// What `the_params_hash_is_fixed_for_a_fixed_map` pins.
     const PINNED_HASH: u64 = 0x0522_f77f_e37e_db5a;
 
+    /// A map's water, every key but `bed` (`[map.water]`).
+    const WATER: &str =
+        "[water]\nclose = [18, 22, 29]\nfar = [14, 20, 38]\nshallow = 0.7\ndeep = 0.85\ndepth = 18";
+
     /// A map of one glow and nothing else; and with `more` TOML before it.
     fn map_with(more: &str) -> Map {
         let text = format!(
@@ -1563,10 +1709,63 @@ mod tests {
             "exposure = 1.2",
             "[fade.roof]\ngroup = 1\nalpha = 0.5",
             "[fade.crate]\nmodel = 12345\nalpha = 0.25",
+            WATER,
+            "hang = 6",
+            "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nceiling = 8",
+            "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nhang = 4",
         ];
         for more in drawn {
             assert_ne!(map_with(more).params_hash(&opts), h, "{more}");
         }
+        // An area's ceiling and hang by where they lie, and by their area's
+        // key; not by its camera's keys.
+        let hall = |what: &str| {
+            map_with(&format!(
+                "[area.hall]\nshape = [{{ center = [0.0, 0.0], radius = 9.0 }}]\n{what}"
+            ))
+            .params_hash(&opts)
+        };
+        let ceiled = hall("ceiling = 8");
+        assert_ne!(hall("ceiling = 9"), ceiled);
+        assert_ne!(hall("hang = 8"), ceiled);
+        assert_ne!(hall("ceiling = 8\nhang = 4"), ceiled);
+        assert_eq!(
+            hall("ceiling = 8\nhome = 2\nturn = 90\nname = \"Hall\""),
+            ceiled
+        );
+        assert_ne!(
+            map_with("[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 10.0 }]\nceiling = 8")
+                .params_hash(&opts),
+            ceiled
+        );
+        assert_ne!(
+            map_with("[area.court]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nceiling = 8")
+                .params_hash(&opts),
+            ceiled
+        );
+        // The water by each of its keys, its bed among them.
+        let water = map_with(WATER).params_hash(&opts);
+        for (key, other) in [
+            ("close = [18, 22, 29]", "close = [18, 22, 30]"),
+            ("far = [14, 20, 38]", "far = [14, 21, 38]"),
+            ("shallow = 0.7", "shallow = 0.6"),
+            ("deep = 0.85", "deep = 0.9"),
+            ("depth = 18", "depth = 19"),
+            ("depth = 18", "depth = 18\nbed = [51, 101, 145]"),
+            ("depth = 18", "depth = 18\ntypes = [924]"),
+            ("depth = 18", "depth = 18\ntypes = [924, 927]"),
+            ("depth = 18", "depth = 18\nshore = 0"),
+        ] {
+            let moved = map_with(&WATER.replace(key, other)).params_hash(&opts);
+            assert_ne!(moved, water, "{other}");
+        }
+        // The types as a set: their order and a repeat move nothing.
+        let typed = |list: &str| {
+            map_with(&WATER.replace("depth = 18", &format!("depth = 18\ntypes = {list}")))
+                .params_hash(&opts)
+        };
+        assert_eq!(typed("[924, 927]"), typed("[927, 924]"));
+        assert_eq!(typed("[924]"), typed("[924, 924]"));
         // Each fade by its piece and its alpha; a disabled one draws
         // nothing.
         let fade = |what: &str| map_with(&format!("[fade.roof]\n{what}")).params_hash(&opts);
@@ -1603,6 +1802,11 @@ mod tests {
             "[layer.platform]\nwmo = 7549724",
             "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]",
             "[area.a]\nshape = []\n[area.b]\nshape = []\n[path.way]\nfrom = \"a\"\nto = \"b\"",
+            // An area switched off draws nothing; an arena's area stencil
+            // is not drawn, nor its corridors.
+            "[area.hall]\nenabled = false\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nceiling = 8\nhang = 4",
+            "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nstencil = [{ center = [0.0, 0.0], radius = 5.0 }]",
+            STENCILED_PATH,
         ];
         for more in undrawn {
             assert_eq!(map_with(more).params_hash(&opts), h, "{more}");
@@ -1673,14 +1877,48 @@ mod tests {
             "include_models = [12345]",
             "ground = 120.5",
             "exposure = 1.2",
+            "ceiling = 12",
             "[fade.roof]\ngroup = 1\nalpha = 0.5",
+            WATER,
+            "hang = 6",
+            // An area's own ceiling moves it, even the tool's: it is the
+            // area's in the map's place.
+            "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nceiling = 25",
+            "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nhang = 4",
+            "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nstencil = [{ center = [0.0, 0.0], radius = 5.0 }]",
+            STENCILED_PATH,
         ] {
             assert_ne!(level(more).level_params(&posts, &opts), h, "{more}");
         }
+        // With a stencil said, each path's corridor by its way and width:
+        // an unsaid way by its areas' middles; one switched off, nothing.
+        let stenciled = level(STENCILED).level_params(&posts, &opts);
+        let pathed =
+            |what: &str| level(&format!("{STENCILED_PATH}\n{what}")).level_params(&posts, &opts);
+        let way = pathed("");
+        assert_ne!(way, stenciled);
+        assert_ne!(pathed("width = 4"), way);
+        assert_ne!(pathed("width = 8"), pathed("width = 6"));
+        assert_ne!(
+            pathed("points = [[0.0, 0.0], [25.0, 5.0], [50.0, 0.0]]"),
+            way
+        );
+        assert_eq!(pathed("enabled = false"), stenciled);
+        assert_eq!(pathed("mode = \"mount\"\nspeed = 9\nname = \"Way\""), way);
+        let moved = STENCILED.replace("center = [50.0, 0.0]", "center = [60.0, 0.0]");
+        assert_ne!(
+            level(&format!("{moved}\n[path.way]\nfrom = \"a\"\nto = \"b\""))
+                .level_params(&posts, &opts),
+            way
+        );
+        // Without a path, an area saying none of them moves nothing.
+        assert_eq!(level(&moved).level_params(&posts, &opts), stenciled);
+        // A ceiling of the tool's own (the season's default, 25) is what
+        // the options carry already.
         for more in [
             "floor = \"elsewhere\"",
             "level = 380.5",
-            "ceiling = 12",
+            "ceiling = 25",
             "light = \"graded\"",
             "ppy = 16",
             "ground = \"walked\"",
@@ -1688,10 +1926,19 @@ mod tests {
             "stencil = [{ center = [0.0, 0.0], radius = 50.0 }]",
             "transition = { after = 3.0 }",
             "[area.hall]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]",
+            // A corridor cuts nothing where no area gives a stencil; an
+            // area switched off gives none.
+            "[area.a]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\n[area.b]\nshape = [{ center = [50.0, 0.0], radius = 9.0 }]\n[path.way]\nfrom = \"a\"\nto = \"b\"\nwidth = 4",
+            "[area.hall]\nenabled = false\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nstencil = [{ center = [0.0, 0.0], radius = 5.0 }]",
         ] {
             assert_eq!(level(more).level_params(&posts, &opts), h, "{more}");
         }
     }
+
+    /// Two areas, the first with a stencil (`STENCILED`), and a path
+    /// between them, its way unsaid (`STENCILED_PATH`).
+    const STENCILED: &str = "[area.a]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nstencil = [{ center = [0.0, 0.0], radius = 5.0 }]\n[area.b]\nshape = [{ center = [50.0, 0.0], radius = 9.0 }]";
+    const STENCILED_PATH: &str = "[area.a]\nshape = [{ center = [0.0, 0.0], radius = 9.0 }]\nstencil = [{ center = [0.0, 0.0], radius = 5.0 }]\n[area.b]\nshape = [{ center = [50.0, 0.0], radius = 9.0 }]\n[path.way]\nfrom = \"a\"\nto = \"b\"";
 
     /// The hash is the walk's own: a fixed map hashes to a fixed number, so
     /// no serializer's bump can move every floor's.

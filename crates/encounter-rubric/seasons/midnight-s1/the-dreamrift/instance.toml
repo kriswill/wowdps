@@ -4,3 +4,13 @@ name = "The Dreamrift"
 kind = "raid"
 journal = 1314
 map = 2939
+
+# Each boss's map, by DungeonEncounterID: how its room is drawn and first
+# shown. Part of the base: a room looks the same at every tier.
+
+# Chimaerus the Undreamt God. No pull of it is stored to trace a stencil
+# from, and drawn whole the render took 860 yd of the dream about it. A box
+# 300 yd a side about the pool in the roots, where the journal pins him:
+# trace a stencil once a pull is stored.
+[encounter.3306.map]
+crop = [-1565, -1340, -1265, -1040]

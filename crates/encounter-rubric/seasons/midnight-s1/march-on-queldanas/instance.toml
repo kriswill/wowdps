@@ -5,8 +5,8 @@ kind = "raid"
 journal = 1308
 map = 2913
 
-# Every boss room here has a stencil, small enough to render at twice the
-# tool's density: zoomed in, its edges and textures hold.
+# Every boss room here has a stencil or a crop, small enough to render at
+# twice the tool's density: zoomed in, its edges and textures hold.
 [defaults.map]
 ppy = 16
 
@@ -14,6 +14,17 @@ ppy = 16
 # shown, and what changes it in the fight (rooms off it, its places, the
 # events its layers break on). Part of the base: a room looks and changes
 # the same at every tier.
+
+# Belo'ren, Child of Al'ar. No pull of it is stored to trace a stencil
+# from, and drawn whole the render took the isle (1,080 yd a side, 17,280
+# px). A box 300 yd a side about the plaza and its emblem, the gardens
+# round it kept: trace a stencil once a pull is stored.
+[encounter.3182.map]
+crop = [10565, -4770, 10865, -4470]
+
+# Midnight Falls (3183): 23 pulls, 0° ×23
+[encounter.3183.view]
+turn = 0
 
 # Midnight Falls. The round platform about the void pit, and the crescent
 # terrace with its pylons round one side of it. The other platforms in the
@@ -29,3 +40,20 @@ stencil = [
         [11015.9, -4537.3],
     ] },
 ]
+
+# The void pool at the pit's middle (7.3 Void Water, 924, the one water
+# the floor pours). The game draws it dark through its near-black diffuse
+# texture (voiddiffuse01), which the tables do not give as an opacity: its
+# own Color_0 is a bright purple (#a400d7), and at the water's alpha over
+# the pit's pale floor it drew a mauve marble disc. So the map names it and
+# pours it a dark purple near its old minimap fill (#0f0030), opaque but
+# for a trace of the floor. It is a film 0.27 yd deep, so it shows whole
+# from its edge (`shore = 0`).
+[encounter.3183.map.water]
+types = [924]
+close = [18, 4, 44]
+far = [10, 0, 30]
+shallow = 0.95
+deep = 1
+depth = 2
+shore = 0

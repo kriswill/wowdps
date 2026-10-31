@@ -15,6 +15,10 @@ ppy = 16
 # events its layers break on). Part of the base: a room looks and changes
 # the same at every tier.
 
+# Sszorak (3420): 34 pulls, 300° ×24, 315° ×2, 120° ×1, 285° ×1
+[encounter.3420.view]
+turn = 300
+
 # Sszorak. The octagonal platform the fight keeps to, out past its rim. The
 # venom field round it and the buildings at the room's edge are left out.
 [encounter.3420.map]
@@ -25,21 +29,30 @@ stencil = [
     ] },
 ]
 
+# The Twin Fangs (3421): 34 pulls, 0° ×28, 345° ×3, 15° ×2, 330° ×1
+[encounter.3421.view]
+turn = 0
+
 # The Twin Fangs. The triangular platform out past its rim, its venom middle
 # kept. The venom field round it, the stairs past it and the side platforms
 # no one stands on are left out.
 [encounter.3421.map]
 stencil = [
     { points = [
-        [692.5, 16.6], [692.5, -16.4], [586.5, -76.9], [557.0, -68.4],
-        [557.0, 68.6], [586.5, 76.6],
+        [697.0, 23.0], [697.0, -22.0], [581.0, -87.0], [550.0, -67.0],
+        [550.0, 65.0], [587.0, 87.0],
     ] },
 ]
+
+# The Coiled Altar (3429): 48 pulls, 0° ×47
+[encounter.3429.view]
+turn = 0
 
 # The Coiled Altar. The square platform out to the rail round it, and its
 # four corner pillars. The moss round it, its rocks and the room's outer
 # walls are left out.
 [encounter.3429.map]
+ceiling = 79
 stencil = [
     { points = [
         [1100.1, 57.6], [1215.1, 57.4], [1214.9, -57.1], [1099.9, -56.9],
@@ -49,6 +62,10 @@ stencil = [
     { center = [1106.7, -50.3], radius = 16.0 },
     { center = [1208.3, -50.5], radius = 16.0 },
 ]
+
+# Entombed Sentinels (3445): 58 pulls, 60° ×25, 240° ×16, 150° ×6
+[encounter.3445.view]
+turn = 60
 
 # Entombed Sentinels. The pool holds two strips 5 yd under its venom in a
 # flat yellow (material 1092, shader 4), wider than the venom's grid: their
@@ -62,13 +79,14 @@ stencil = [
 # replay turns the room (60.1°, steps top and bottom), from the platform's
 # top left.
 [encounter.3445.map]
+ceiling = 87
 exclude_textures = [4516750]
 stencil = [{ points = [
-    [697.4, -285.6], [723.8, -300.8], [732.9, -285.0], [769.8, -306.2],
-    [760.7, -322.0], [787.1, -337.2], [764.4, -376.6], [784.6, -388.2],
-    [765.9, -420.7], [745.7, -409.1], [725.2, -444.9], [698.7, -429.7],
-    [688.7, -447.0], [651.9, -425.9], [661.9, -408.5], [635.4, -393.3],
-    [655.4, -358.6], [635.2, -347.0], [653.9, -314.5], [674.1, -326.1],
+    [700.0, -288.0], [723.8, -300.8], [732.9, -285.0], [769.8, -306.2],
+    [760.7, -322.0], [787.1, -337.2], [814.0, -352.0], [799.0, -380.0],
+    [807.0, -384.0], [774.0, -441.0], [766.0, -437.0], [750.0, -464.0],
+    [683.0, -427.0], [603.0, -384.0], [620.0, -353.0], [612.0, -349.0],
+    [646.0, -292.0], [653.0, -296.0], [668.0, -269.0], [695.0, -284.0],
 ] }]
 
 # Vashnik the Malignant: the whole hall, its middle chamber with the side
@@ -78,6 +96,8 @@ stencil = [{ points = [
 # raid too: two of the nine the log placed on 10/5 stood past the middle
 # chamber's walls, at (412.3, -242.8) and (497.3, -288.8).
 [encounter.3455.map]
+ceiling = 58
+exposure = 2.3
 stencil = [
     { points = [
         [358.7, -381.8], [383.7, -338.5], [366.5, -328.4], [351.0, -287.2],
@@ -228,6 +248,10 @@ tint = "purple"
 at = [471.6, -344.1]
 radius = 4
 
+# Nek'zali the Soulcoiler (3470): 37 pulls, 0° ×37
+[encounter.3470.view]
+turn = 0
+
 # Nek'zali the Soulcoiler. The arena lit as the game lights it: the light
 # baked into its floor and props, over the map's own ambient (Light 16313,
 # clear weather: (35, 63, 63), no sun). The building's ambient grade turned
@@ -237,13 +261,15 @@ radius = 4
 # The octagon out to its walls, with the stairs down from it and the shrine
 # opposite. The colonnades round it are left out.
 [encounter.3470.map]
+ceiling = 53
 light = "baked"
+exposure = 1.5
 stencil = [
     { points = [
-        [262.7, 25.7], [262.7, 23.1], [293.7, 23.1], [293.7, -18.9],
-        [262.7, -18.9], [262.7, -21.5], [229.3, -54.9], [182.1, -54.9],
-        [148.7, -21.5], [148.7, -18.9], [113.7, -18.9], [113.7, 23.1],
-        [148.7, 23.1], [148.7, 25.7], [182.1, 59.1], [229.3, 59.1],
+        [307.0, 29.0], [307.0, 12.0], [307.0, -8.0], [307.0, -27.0],
+        [307.0, -44.0], [305.0, -58.0], [246.0, -108.0], [167.0, -108.0],
+        [114.0, -66.0], [75.0, -66.0], [75.0, -61.0], [75.0, 66.0],
+        [115.0, 65.0], [167.0, 107.0], [245.0, 107.0], [306.0, 56.0],
     ] },
 ]
 
@@ -257,6 +283,9 @@ kind = "pool"
 tint = "teal"
 at = [206.9, 0.0]
 radius = 11.3
+# The Soulcoiled visual's texture (model 7637250) swirling over it, its
+# colors, twist and spin matched to the kill's video.
+swirl = { texture = 5207558, colors = ["#03201a", "#7af0b8"], twist = 330, spin = -12 }
 
 # Inside the well (Mythic): each time a Drowned Echo wakes in it, the raid
 # outside takes Grasping Depths (1293214) every second and is pulled toward
@@ -300,10 +329,15 @@ light = "baked"
 scale = 0.57
 only = ["mythic"]
 
+# Ula'tek (3492): 47 pulls, 0° ×34, 15° ×13
+[encounter.3492.view]
+turn = 0
+
 # Ula'tek. The ring of terraces round the venom lake, the lake and the
 # platform in it, cut short of the corridor. What lies past the ring is
 # left out.
 [encounter.3492.map]
+ceiling = 80
 stencil = [
     { points = [
         [1686.0, 82.4], [1686.0, -79.2], [1618.8, -146.4], [1496.2, -146.4],
@@ -314,9 +348,10 @@ stencil = [
 # The arena's platform, a building of its own placed on the floor, stands
 # until The Shattering, 45 s into the Intermission, then stands as its four
 # quarters. Those break one at a time in Stage Three, one to each Circling
-# Prey: which quarter goes at which cast is read from where the players
-# stood (the one they left nearest to it). The last quarter stands to the
-# kill.
+# Prey: each cast breaks the quarter Ula'tek casts it beside, read from
+# where she stands as it lands (45.7-46.5 yd out from the platform's
+# middle, just off that quarter's outer corner, on every cast of 20 pulls).
+# The last quarter stands to the kill.
 [encounter.3492.map.layer.starting-platform]
 wmo = 7549724
 breaks = { event = "the-shattering" }
@@ -336,6 +371,46 @@ breaks = { event = "circling-prey" }
 [encounter.3492.map.layer.quarter-4]
 wmo = 7549725
 breaks = { event = "circling-prey" }
+
+# Ula'tek's places. Her court is where the raid goes: the platform in the
+# lake, where it stands in Stages One and Three, and the terraces either
+# side, where Stage Two sends it. 150-270 s into the 9/27 Heroic kill every
+# player stood on one terrace or the other, 45-126 yd out from the
+# platform's middle (X 1541-1642). They crossed the venom between the
+# platform's rim and a terrace's edge at X 1553, 25-45 yd in a second or
+# less (27-260 yd a second), out at 165-169 s and back at 243-260 s: a
+# leap, timed to the next post.
+# The court's box is that play area's (251 by 142 yd), so the camera opens
+# as it did, on the play area; the ring past it is the stencil's. The
+# altitudes are the view's (far 1, home 1.15, near 8 of each one's fit).
+[encounter.3492.map.area.court]
+name = "Ula'tek's court"
+shape = [{ points = [[1645, 126], [1645, -126], [1500, -126], [1500, 126]] }]
+encounter = 3492
+
+[encounter.3492.map.area.platform]
+name = "The platform"
+shape = [{ center = [1553.7, 0.0], radius = 40 }]
+
+[encounter.3492.map.area.west-terrace]
+name = "The west terrace"
+shape = [{ points = [[1645, 70], [1645, 105], [1610, 140], [1525, 140], [1525, 70]] }]
+
+[encounter.3492.map.area.east-terrace]
+name = "The east terrace"
+shape = [{ points = [[1645, -70], [1645, -105], [1610, -140], [1525, -140], [1525, -70]] }]
+
+[encounter.3492.map.path.platform-to-west]
+from = "platform"
+to = "west-terrace"
+mode = "leap"
+points = [[1553.7, 40], [1553.7, 72]]
+
+[encounter.3492.map.path.platform-to-east]
+from = "platform"
+to = "east-terrace"
+mode = "leap"
+points = [[1553.7, -40], [1553.7, -72]]
 
 # The Shattering: the raid is flung into the air and the platform cracks
 # into its four quarters. The log writes no line for it. The fight runs on a
@@ -384,9 +459,14 @@ name = "Spectral Ula'tek"
 creature = [268029]
 role = "object"
 
+# The Lost Explorers (3497): 47 pulls, 180° ×27, 270° ×14, 90° ×1
+[encounter.3497.view]
+turn = 180
+
 # The Lost Explorers. The octagonal platform in the middle. The gulf round
 # it and the ring of walkways and rooms past it are left out.
 [encounter.3497.map]
+ceiling = 55
 stencil = [
     { points = [
         [757.2, 495.0], [757.2, 447.0], [723.2, 413.0], [675.2, 413.0],

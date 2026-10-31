@@ -3,15 +3,16 @@
 //! file is an error that names its path, not a silent default.
 //!
 //! Named entries (`npc`, `ability`, `phase`, `place`, `ground`, `mark`,
-//! `line`, `volley`, `flash`, `range`, `apart`, `streak`, `room`, `reach`,
-//! `event`, `map.layer`, `map.glow`, `map.fade`, `map.area`, `map.path`)
+//! `line`, `volley`, `flash`, `knock`, `range`, `apart`, `streak`, `room`,
+//! `reach`, `event`, `map.layer`, `map.glow`, `map.fade`, `map.area`, `map.path`)
 //! are TOML tables keyed by a slug, so a later layer (the tuned file, a
 //! difficulty) changes one by naming it, and `enabled = false` drops it;
 //! all but the map's can be kept to some difficulties by their `only`. The
 //! game's `spell` facts are keyed the same way, by spell id.
 //!
 //! A dungeon's level (`Level`) holds the same `Map` and a `View`, so a
-//! reader draws a raid's arena and a dungeon's level with one type.
+//! reader draws a raid's arena and a dungeon's level with one type, and
+//! the usual route's pulls on it (`pull`, keyed by a slug like the rest).
 
 use std::collections::BTreeMap;
 
@@ -62,6 +63,10 @@ pub struct Encounter {
     /// Spells whose hits the replay flashes on their victims.
     #[serde(default)]
     pub flash: BTreeMap<String, Flash>,
+    /// Players thrown straight out from a middle as a trigger fires: a
+    /// knockback.
+    #[serde(default)]
+    pub knock: BTreeMap<String, Knock>,
     /// Circles the replay draws round NPCs: how far an aura they pulse
     /// reaches.
     #[serde(default)]
@@ -114,6 +119,7 @@ impl Default for Encounter {
             line: BTreeMap::new(),
             volley: BTreeMap::new(),
             flash: BTreeMap::new(),
+            knock: BTreeMap::new(),
             range: BTreeMap::new(),
             apart: BTreeMap::new(),
             streak: BTreeMap::new(),
@@ -166,8 +172,18 @@ pub struct Map {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub level: Option<f32>,
     /// Yards over the arena level that are drawn (`gen-floors --ceiling`).
+    /// An area's own `ceiling` says it over the area (`Map::ceiling_at`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ceiling: Option<f32>,
+    /// Yards over the ground at which a placed object hangs over the walk:
+    /// a building, a WMO group, a doodad or a terrain prop whose lowest
+    /// point stands this high or higher over the ground under its
+    /// footprint's middle is left out, as an exclusion leaves it out
+    /// (`include_groups` and `include_models` still draw it). What stands
+    /// on the floor is the ceiling's to cut. Unsaid, nothing hangs; an
+    /// area's own `hang` says it over the area (`Map::hang_at`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hang: Option<f32>,
     /// How it is lit: unsaid or `baked`, as the client lights it (the light
     /// baked into a building, the sun on the ground, over the map's
     /// ambient); `graded`, by its building's ambient.
@@ -190,6 +206,7 @@ pub struct Map {
     /// What of the room is worth drawing, its shapes joined: `gen-floors`
     /// renders their bounds alone, leaves everything outside them clear and
     /// lays no minimap past them. Unsaid, the room and what lies round it.
+    /// An arena's alone: a level is bounded by its areas' (`Area::stencil`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stencil: Vec<StencilShape>,
     /// Pixels a yard the arena is rendered at (`gen-floors --ppy`); unsaid,
@@ -245,6 +262,61 @@ pub struct Map {
     /// it was last posted, the camera held.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<Transition>,
+    /// How the render draws the floor's water: its look in place of the
+    /// client's, on every water whose colors are the game's default light's
+    /// (rivers, lakes, the ocean, procedural water), or on the liquid types
+    /// its `types` names; a magic water with colors of its own (Tyrhold's,
+    /// the void's) keeps them unless named. Unsaid, the client's look.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub water: Option<Water>,
+}
+
+/// A floor's water as its render draws it (`[map.water]`): every color
+/// red, green and blue as the floor should show it (lit, final), every
+/// key but `bed`, `types` and `shore` given in the resolved map (a layer
+/// may amend one key over another's table, as tables merge).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Water {
+    /// Its color where it is shallow.
+    pub close: [u8; 3],
+    /// Its color at `depth` and deeper.
+    pub far: [u8; 3],
+    /// How much of the surface under it it hides at the shore, 0 to 1.
+    pub shallow: f32,
+    /// How much it hides at `depth` and deeper, 0 to 1.
+    pub deep: f32,
+    /// Yards under its surface at which it is `far` and `deep`, from its
+    /// shore linearly in yards; above 0.
+    pub depth: f32,
+    /// The color the surface under it fades toward with depth, all of the
+    /// way at `depth` (the water's own murk); unsaid, no fade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bed: Option<[u8; 3]>,
+    /// The liquid types (`LiquidType` ids) it draws, exactly: a magic water
+    /// with colors of its own among them (the void's 924). Unsaid, every
+    /// water whose colors are the default light's. A type the render pours
+    /// no water of (a venom, which is drawn opaque) is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub types: Option<Vec<u32>>,
+    /// Yards over the surface under it at which all of it shows, faded in
+    /// from its shore; 0 or more. Unsaid, the render's own (0.75); 0, none
+    /// fades: a film of water a fraction of a yard deep (a void's) shows
+    /// whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shore: Option<f32>,
+}
+
+impl Water {
+    /// Whether it draws liquid type `liquid_type`, a water whose colors are
+    /// its type's own (`own_colors`) or the default light's: the types it
+    /// names where it names some, else those of the default light's.
+    pub fn draws(&self, liquid_type: u32, own_colors: bool) -> bool {
+        match &self.types {
+            Some(types) => types.contains(&liquid_type),
+            None => !own_colors,
+        }
+    }
 }
 
 /// A piece of the floor drawn see-through: one WMO group or one model,
@@ -342,9 +414,24 @@ pub struct Area {
     /// the floor's view's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<f32>,
-    /// Yards over the floor's level drawn here; unsaid, the map's.
+    /// Yards over the ground drawn over its shapes, in the map's
+    /// `ceiling`'s place: below it, or on a terrain level above it; on an
+    /// arena or a level of buildings an area can only lower the cut. Where
+    /// areas overlap the lowest wins (`Map::ceiling_at`). Unsaid, the map's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ceiling: Option<f32>,
+    /// Yards over the ground at which a placed object hangs over its shapes
+    /// (the map's `hang`); where areas overlap the lowest wins
+    /// (`Map::hang_at`). Unsaid, the map's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hang: Option<f32>,
+    /// Where the render ends over it, in a map stencil's form: a level
+    /// renders within the union of its areas' stencils and its paths'
+    /// corridors (`Map::level_stencil_depth`), all of it where no area
+    /// gives one. An arena's is written and checked, not drawn: an arena
+    /// ends at its map's `stencil`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stencil: Vec<StencilShape>,
     /// The boss fought here, by DungeonEncounterID: a boss's court.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encounter: Option<u32>,
@@ -401,7 +488,8 @@ pub struct Path {
     pub to: String,
     #[serde(default, skip_serializing_if = "Mode::is_run")]
     pub mode: Mode,
-    /// Yards across; unsaid, a single file.
+    /// Yards across; unsaid, a single file. A level's render reads it as
+    /// its corridor's width (`Path::corridor_width`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<f32>,
     /// Yards a second, over the season's for its `mode` (`Travel`).
@@ -418,6 +506,15 @@ pub struct Path {
 }
 
 impl Path {
+    /// Its corridor's width where its `width` is unsaid, yards: what a
+    /// stenciled level renders along it (`Map::level_stencil_depth`).
+    pub const CORRIDOR_YD: f32 = 8.0;
+
+    /// Its corridor's width, yards: its `width`, else `CORRIDOR_YD`.
+    pub fn corridor_width(&self) -> f32 {
+        self.width.unwrap_or(Path::CORRIDOR_YD)
+    }
+
     /// Yards a second a party goes it: its own `speed`, else the season's
     /// for its mode. `None`: timed to the next post.
     pub fn speed_in(&self, travel: &Travel) -> Option<f32> {
@@ -555,10 +652,11 @@ pub enum CameraQuiet {
 
 /// One level of a dungeon, `[level.<ui_map>]` in its instance file, read
 /// over the season's and the instance's `[defaults]` (their `map`, `view`
-/// and `travel`). A difficulty never applies to it. Its `map` is the same
-/// `Map` an encounter's is, so a reader draws an arena and a level alike;
-/// its `view` is what the replay shows while no area holds the party.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+/// and `travel`, never a `pull`). A difficulty never applies to it. Its
+/// `map` is the same `Map` an encounter's is, so a reader draws an arena
+/// and a level alike; its `view` is what the replay shows while no area
+/// holds the party; its `pull`s are the usual route's packs on it.
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Level {
     /// The UiMap id the level is: its key.
@@ -573,6 +671,157 @@ pub struct Level {
     pub view: View,
     #[serde(default)]
     pub travel: Travel,
+    /// The usual route's pulls on the level, by key: packs of the
+    /// instance's creatures, each in one of the map's areas.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pull: BTreeMap<String, Pull>,
+    /// The instance's creatures (its enabled `[npc]`), laid in by
+    /// `Rubric::level`: what a pull's members name, so `crate::check_level`
+    /// holds them to it and `Pull::forces` counts them. Never in a file:
+    /// the table is the instance's, not the level's, so a level read from
+    /// text alone (an editor's) has none; check one so with
+    /// `crate::check_level_with` and the instance's `Instance::npcs`. Left
+    /// out of a level's equality and its dump.
+    #[serde(skip)]
+    pub npc: BTreeMap<String, Npc>,
+}
+
+/// Two levels are equal by what their file gives and where it lies,
+/// whatever creatures were laid into either (`npc`): a level an editor
+/// reads from text equals the one `Rubric::level` answers for it.
+impl PartialEq for Level {
+    fn eq(&self, other: &Level) -> bool {
+        // Every field named, so a field added does not build here until it
+        // is compared or said not to be.
+        let Level {
+            ui_map,
+            instance,
+            map,
+            view,
+            travel,
+            pull,
+            npc: _,
+        } = self;
+        *ui_map == other.ui_map
+            && *instance == other.instance
+            && *map == other.map
+            && *view == other.view
+            && *travel == other.travel
+            && *pull == other.pull
+    }
+}
+
+impl Level {
+    /// Its pulls in the route's order: by `order`, then by key.
+    pub fn pulls_in_order(&self) -> Vec<(&str, &Pull)> {
+        let mut pulls: Vec<(&str, &Pull)> =
+            self.pull.iter().map(|(k, p)| (k.as_str(), p)).collect();
+        pulls.sort_by_key(|(_, p)| p.order);
+        pulls
+    }
+
+    /// The enemy forces its route gives, without its optional pulls and
+    /// with them: `(without, with)`, each the sum of `Pull::forces` over
+    /// `pulls_in_order`, a pull switched off left out (a level read from
+    /// text alone keeps one). Summed over an instance's levels and set
+    /// against its whole (`Instance::forces`), the first says whether the
+    /// usual route reaches 100% with its optional pulls left out, and by
+    /// how much; the second what they add. Both 0 until the instance's
+    /// creatures are laid in (`Level::npc`).
+    pub fn route_forces(&self) -> (u32, u32) {
+        self.pulls_in_order()
+            .into_iter()
+            .filter(|(_, p)| p.enabled)
+            .fold((0, 0), |(without, with), (_, p)| {
+                let f = p.forces(self);
+                let without = if p.optional {
+                    without
+                } else {
+                    without.saturating_add(f)
+                };
+                (without, with.saturating_add(f))
+            })
+    }
+}
+
+/// Written as the derived form was before the level had pulls, so a dump
+/// of a level with none (`fixtures/resolved-levels.txt`) reads as it did:
+/// `pull` only where it has some, and never `npc`, a copy of the
+/// instance's own table.
+impl std::fmt::Debug for Level {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Every field named, so a field added does not build here until it
+        // is dumped or said not to be.
+        let Level {
+            ui_map,
+            instance,
+            map,
+            view,
+            travel,
+            pull,
+            npc: _,
+        } = self;
+        let mut d = f.debug_struct("Level");
+        d.field("ui_map", ui_map)
+            .field("instance", instance)
+            .field("map", map)
+            .field("view", view)
+            .field("travel", travel);
+        if !pull.is_empty() {
+            d.field("pull", pull);
+        }
+        d.finish()
+    }
+}
+
+/// One pull of a dungeon level's usual route, `[level.<ui_map>.pull.<key>]`:
+/// a pack of the instance's creatures standing in one of the level's areas
+/// until the party pulls it. The log never shows a pack before it is
+/// pulled, so where each member stands (`spots`) comes from a census of
+/// the runs' first posts. Its share of the enemy forces is never said: it
+/// is its members' (`Pull::forces`), so an area's name need not carry it.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Pull {
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Its place in the usual route on its level, from 1; two pulls of a
+    /// level never share one. A run may go another way: the replay numbers
+    /// its packs by the run's own order.
+    pub order: u32,
+    /// A pack the usual route may skip at some key levels: a run that
+    /// leaves it has not left the route, so it is never counted missing;
+    /// the replay draws its members waiting in a lighter gray; and a
+    /// route's forces are read with it and without it
+    /// (`Level::route_forces`). Which key levels skip it is not said.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
+    /// The area it stands in, a key of the level's `map.area`: never a
+    /// boss's court (an area with an `encounter`).
+    pub area: String,
+    /// Who is in it: keys of the instance's `[npc]`, one a member, so a key
+    /// comes as many times as the pack holds that creature.
+    pub npc: Vec<String>,
+    /// Where each member stands until the pull, world X and Y, by index
+    /// with `npc`: one a member, or none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spots: Vec<[f32; 2]>,
+}
+
+impl Pull {
+    /// Its share of the enemy forces: what its members give as they die,
+    /// each by the `forces` of its creature in `level`'s (`Level::npc`). A
+    /// member giving none, or that the instance lacks, adds nothing; so
+    /// does every member of a level read from text alone until its `npc`
+    /// is laid in from `Instance::npcs`.
+    pub fn forces(&self, level: &Level) -> u32 {
+        self.npc
+            .iter()
+            .filter_map(|k| level.npc.get(k)?.forces)
+            .fold(0, u32::saturating_add)
+    }
 }
 
 /// One glowing liquid: where it lies, its color in the game, and when it
@@ -676,17 +925,7 @@ impl StencilShape {
     /// neither a polygon nor a circle (`crate::check` says which).
     pub fn bounds(&self) -> Option<[f32; 4]> {
         match (self.points.as_slice(), self.center, self.radius) {
-            (ps @ [_, _, _, ..], None, None) => Some(ps.iter().fold(
-                [f32::MAX, f32::MAX, f32::MIN, f32::MIN],
-                |b, p| {
-                    [
-                        b[0].min(p[0]),
-                        b[1].min(p[1]),
-                        b[2].max(p[0]),
-                        b[3].max(p[1]),
-                    ]
-                },
-            )),
+            (ps @ [_, _, _, ..], None, None) => points_bounds(ps),
             ([], Some(c), Some(r)) if r > 0.0 => Some([c[0] - r, c[1] - r, c[0] + r, c[1] + r]),
             _ => None,
         }
@@ -705,17 +944,39 @@ impl StencilShape {
             {
                 inside = !inside;
             }
-            let (ex, ey) = (b[0] - a[0], b[1] - a[1]);
-            let len2 = ex * ex + ey * ey;
-            let t = if len2 > 0.0 {
-                (((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / len2).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            nearest = nearest.min((p[0] - a[0] - t * ex).hypot(p[1] - a[1] - t * ey));
+            nearest = nearest.min(segment_distance(p, *a, *b));
         }
         if inside { nearest } else { -nearest }
     }
+}
+
+/// How far a world point lies from the segment `a` to `b`, in yards: from
+/// `a` where the two are one point. A polygon's edge (`StencilShape::depth`)
+/// and a path's corridor (`Map::level_stencil_depth`) both measure by it.
+pub(crate) fn segment_distance(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let (ex, ey) = (b[0] - a[0], b[1] - a[1]);
+    let len2 = ex * ex + ey * ey;
+    let t = if len2 > 0.0 {
+        (((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p[0] - a[0] - t * ex).hypot(p[1] - a[1] - t * ey)
+}
+
+/// Points' world bounds, `[x0, y0, x1, y1]`: `None` with no point.
+fn points_bounds(ps: &[[f32; 2]]) -> Option<[f32; 4]> {
+    ps.iter().map(|p| [p[0], p[1], p[0], p[1]]).reduce(join)
+}
+
+/// Two world bounds joined, `[x0, y0, x1, y1]`.
+fn join(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
 }
 
 impl Map {
@@ -754,6 +1015,162 @@ impl Map {
     pub fn stencil_keep(&self, p: [f32; 2]) -> f32 {
         (self.stencil_depth(p) / STENCIL_FEATHER + 0.5).clamp(0.0, 1.0)
     }
+
+    /// Whether a level's render is cut to its areas: some enabled area
+    /// gives a `stencil`.
+    pub(crate) fn level_stenciled(&self) -> bool {
+        self.area
+            .values()
+            .any(|a| a.enabled && !a.stencil.is_empty())
+    }
+
+    /// The world middles of a path's two areas (their bounds' middles),
+    /// `from`'s first: `None` where either is missing, switched off or
+    /// without a shape that is one.
+    fn path_ends(&self, path: &Path) -> Option<[[f32; 2]; 2]> {
+        let middle = |key: &str| {
+            let [x0, y0, x1, y1] = self.area.get(key).filter(|a| a.enabled)?.bounds()?;
+            Some([(x0 + x1) / 2.0, (y0 + y1) / 2.0])
+        };
+        Some([middle(&path.from)?, middle(&path.to)?])
+    }
+
+    /// The way a path goes, world X and Y, `from`'s end first: its
+    /// `points` where it gives two or more, else the straight line from
+    /// the middle of `from`'s bounds to the middle of `to`'s. `None` with
+    /// neither: an end area missing, switched off or without a shape.
+    pub fn path_way(&self, path: &Path) -> Option<Vec<[f32; 2]>> {
+        if path.points.len() >= 2 {
+            return Some(path.points.clone());
+        }
+        self.path_ends(path).map(Vec::from)
+    }
+
+    /// How far inside a path's corridor a world point lies, in yards: half
+    /// its `corridor_width` less its distance from the path's way
+    /// (`path_way`); negative outside. `None` for a path with no way.
+    fn corridor_depth(&self, path: &Path, p: [f32; 2]) -> Option<f32> {
+        let distance = if path.points.len() >= 2 {
+            let ps = &path.points;
+            ps.iter()
+                .zip(ps.iter().skip(1))
+                .map(|(a, b)| segment_distance(p, *a, *b))
+                .fold(f32::MAX, f32::min)
+        } else {
+            let [a, b] = self.path_ends(path)?;
+            segment_distance(p, a, b)
+        };
+        Some(path.corridor_width() / 2.0 - distance)
+    }
+
+    /// How far inside a level's stencil a world point lies, in yards: the
+    /// deepest of every enabled area's `stencil` shapes and every enabled
+    /// path's corridor (its way, `path_way`, widened to its
+    /// `corridor_width`), negative outside them all. `None` where no
+    /// enabled area gives a stencil: the level renders whole, its corridors
+    /// cutting nothing. A path with no way gives no corridor. What a
+    /// level's render is cut by, as `stencil_depth` is an arena's.
+    pub fn level_stencil_depth(&self, p: [f32; 2]) -> Option<f32> {
+        if !self.level_stenciled() {
+            return None;
+        }
+        let shapes = self
+            .area
+            .values()
+            .filter(|a| a.enabled)
+            .flat_map(|a| &a.stencil)
+            .map(|s| s.depth(p));
+        let corridors = self
+            .path
+            .values()
+            .filter(|path| path.enabled)
+            .filter_map(|path| self.corridor_depth(path, p));
+        shapes.chain(corridors).reduce(f32::max)
+    }
+
+    /// A level's stencil's world bounds, `[x0, y0, x1, y1]`: every enabled
+    /// area's `stencil` shapes and every corridor of `level_stencil_depth`
+    /// (its way's bounds padded by half its width) joined. `None` where
+    /// no enabled area gives a stencil. Unfeathered, as `stencil_bounds`:
+    /// a render pads either by `STENCIL_FEATHER`.
+    pub fn level_stencil_bounds(&self) -> Option<[f32; 4]> {
+        if !self.level_stenciled() {
+            return None;
+        }
+        let shapes = self
+            .area
+            .values()
+            .filter(|a| a.enabled)
+            .flat_map(|a| &a.stencil)
+            .filter_map(StencilShape::bounds);
+        let corridors = self
+            .path
+            .values()
+            .filter(|path| path.enabled)
+            .filter_map(|path| {
+                let half = path.corridor_width() / 2.0;
+                let [x0, y0, x1, y1] = points_bounds(&self.path_way(path)?)?;
+                Some([x0 - half, y0 - half, x1 + half, y1 + half])
+            });
+        shapes.chain(corridors).reduce(join)
+    }
+
+    /// How much of a world point a level's stencil keeps, 0 to 1, by
+    /// `stencil_keep`'s rule over `level_stencil_depth`: all of it with no
+    /// stencil.
+    pub fn level_stencil_keep(&self, p: [f32; 2]) -> f32 {
+        self.level_stencil_depth(p)
+            .map_or(1.0, |d| (d / STENCIL_FEATHER + 0.5).clamp(0.0, 1.0))
+    }
+
+    /// How many shapes a level's render is cut to (its sidecar's
+    /// `stencil`): every enabled area's `stencil` shapes and every corridor
+    /// of `level_stencil_depth`; 0 where no enabled area gives a stencil.
+    pub fn level_stencil_count(&self) -> usize {
+        if !self.level_stenciled() {
+            return 0;
+        }
+        let shapes: usize = self
+            .area
+            .values()
+            .filter(|a| a.enabled)
+            .map(|a| a.stencil.len())
+            .sum();
+        let corridors = self
+            .path
+            .values()
+            .filter(|path| {
+                path.enabled && (path.points.len() >= 2 || self.path_ends(path).is_some())
+            })
+            .count();
+        shapes + corridors
+    }
+
+    /// The ceiling over a world point, yards over the ground there: the
+    /// lowest `ceiling` among the enabled areas whose shapes it lies in
+    /// (on their edge counts), else the map's own. `None` where neither
+    /// says one: the renderer's own.
+    pub fn ceiling_at(&self, p: [f32; 2]) -> Option<f32> {
+        self.area
+            .values()
+            .filter(|a| a.enabled)
+            .filter_map(|a| a.ceiling.filter(|_| a.depth(p) >= 0.0))
+            .reduce(f32::min)
+            .or(self.ceiling)
+    }
+
+    /// The hang over a world point, yards over the ground there: the
+    /// lowest `hang` among the enabled areas whose shapes it lies in (on
+    /// their edge counts), as `ceiling_at` takes the lowest ceiling, else
+    /// the map's own. `None` where neither says one: nothing hangs there.
+    pub fn hang_at(&self, p: [f32; 2]) -> Option<f32> {
+        self.area
+            .values()
+            .filter(|a| a.enabled)
+            .filter_map(|a| a.hang.filter(|_| a.depth(p) >= 0.0))
+            .reduce(f32::min)
+            .or(self.hang)
+    }
 }
 
 /// How soft a stencil's edge is, in yards: a render reaches this far past
@@ -764,17 +1181,7 @@ pub const STENCIL_FEATHER: f32 = 1.0;
 /// Shapes' world bounds joined, `[x0, y0, x1, y1]`: `None` with no shape
 /// that is one.
 fn union_bounds(shapes: &[StencilShape]) -> Option<[f32; 4]> {
-    shapes
-        .iter()
-        .filter_map(StencilShape::bounds)
-        .reduce(|a, b| {
-            [
-                a[0].min(b[0]),
-                a[1].min(b[1]),
-                a[2].max(b[2]),
-                a[3].max(b[3]),
-            ]
-        })
+    shapes.iter().filter_map(StencilShape::bounds).reduce(join)
 }
 
 /// One removable piece of the room: a building placed on the floor.
@@ -803,8 +1210,10 @@ pub enum Breaks {
     Never,
     /// When the phase begins.
     Phase(String),
-    /// When the event happens: one that happens again and again, at the time
-    /// nearest to when the players stopped standing on it (README).
+    /// When the event happens: one that happens again and again breaks one
+    /// layer each time, the one nearest where its caster stood where a unit
+    /// casts it, else the one the players stopped standing on nearest that
+    /// time (README).
     Event(String),
 }
 
@@ -812,7 +1221,9 @@ pub enum Breaks {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct View {
-    /// Degrees clockwise on screen; unsaid, the room's default from the data.
+    /// Degrees clockwise on screen; unsaid, north up (the game's +X at the
+    /// top). `turn::room_turn` proposes one from a pull (the extractor's
+    /// `suggest-turns`, the map editor's suggestion); no render reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<f32>,
     /// How much closer than the whole arena the view opens.
@@ -831,7 +1242,8 @@ pub struct View {
     pub arena: Option<[f32; 4]>,
 }
 
-/// A creature in the fight.
+/// A creature in the fight, or, in an instance file's `[npc]`, in the
+/// dungeon.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Npc {
@@ -843,6 +1255,9 @@ pub struct Npc {
     pub creature: Vec<u32>,
     #[serde(default)]
     pub role: Role,
+    /// How it can be crowd-controlled; unsaid, every control lands.
+    #[serde(default, skip_serializing_if = "is_all")]
+    pub control: Control,
     /// The icon's FileDataID (the journal's portrait, else none).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<u32>,
@@ -859,9 +1274,37 @@ pub struct Npc {
     /// only as it finishes a cast.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub still: bool,
+    /// What a keystone's enemy forces gain as one of it dies, by the
+    /// season's forces table; unsaid, none (a boss, a pet, a raid's NPC).
+    /// Counted by its `creature` ids alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forces: Option<u32>,
+    /// The phases (their keys) it is in the air through: a boss that takes
+    /// wing. Empty, it never is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aloft: Vec<String>,
     /// Difficulty names it appears on; empty, every one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only: Vec<String>,
+}
+
+/// How a creature can be crowd-controlled, as the stuns and incapacitates
+/// the log shows landing on it or failing say: what a pull of it asks of a
+/// party that would stop its casts or hold it still.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Control {
+    /// Every control lands.
+    #[default]
+    All,
+    /// Stuns and incapacitates land, but no full control.
+    Stun,
+    /// Nothing lands.
+    Immune,
+}
+
+fn is_all(c: &Control) -> bool {
+    *c == Control::All
 }
 
 /// What an NPC is to the replay.
@@ -982,9 +1425,10 @@ pub struct Phase {
     pub only: Vec<String>,
 }
 
-/// Something the log shows that a phase, an event or a layer keys on.
+/// Something the log shows that a phase, an event or a layer keys on. A
+/// key a variant's table does not know is refused, as a struct's is.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Trigger {
     /// The pull begins.
     Start,
@@ -993,6 +1437,16 @@ pub enum Trigger {
     /// A hostile cast landing (`SPELL_CAST_SUCCESS`): a cast cut off never
     /// fires.
     Cast {
+        spell: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
+    },
+    /// A hostile cast beginning (`SPELL_CAST_START`): one with a cast time,
+    /// as its caster starts it, whether it lands or is cut off. An instant
+    /// cast has no start. As a ground's `from` beside its landing's `at`,
+    /// a frontal is drawn while it is cast (Sszorak's Mutilate and Ravage,
+    /// 3 s casts).
+    CastStart {
         spell: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         by: Option<String>,
@@ -1016,8 +1470,14 @@ pub enum Trigger {
     Appears { npc: String },
     /// An NPC dies.
     Death { npc: String },
-    /// A hostile spell hits.
-    Hit { spell: u32 },
+    /// A hostile spell hits. With `lands`, only as it lands, never at a
+    /// periodic tick the same spell writes after (`crate::lands`): Frost
+    /// Orb's touch, not the 12 s of its dot.
+    Hit {
+        spell: u32,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        lands: bool,
+    },
     /// The last player carrying a hostile aura loses it: the raid is clear
     /// of it (the end of an intermission's Helical Toxins).
     AuraGone { spell: u32 },
@@ -1031,18 +1491,27 @@ pub enum Trigger {
 /// or `secs` after the `nth` time its `since` trigger fired (`{ after = {
 /// secs = 68.5, since = { cast = … }, nth = 2 } }`: Ula'tek's Shattering,
 /// 68.5 s after her second Rage of the Shackled on every difficulty, whose
-/// clocks differ). A pull that ended first, or where `since` fired fewer
-/// times, never strikes it. Written as a bare number when it counts from
-/// the pull, so a later layer giving a number replaces the whole clock,
-/// and one giving `{ secs = … }` retimes a `since` clock and keeps the rest.
+/// clocks differ), or with `each`, `secs` after every time it fired (`{
+/// after = { secs = 9, since = { cast = … }, each = true } }`: the second
+/// gale of each of Sszorak's Howling Maelstroms, 9 s into it). A pull that
+/// ended first, or where `since` fired fewer times, never strikes it.
+/// Written as a bare number when it counts from the pull, so a later layer
+/// giving a number replaces the whole clock, and one giving `{ secs = … }`
+/// retimes a `since` clock and keeps the rest.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Clock {
     pub secs: f32,
     /// What it counts from; none, the pull's start.
     pub since: Option<Box<Trigger>>,
-    /// Which time `since` fired it counts from, the first being 1. It
-    /// means nothing without a `since`.
-    pub nth: u32,
+    /// Which time `since` fired it counts from, the first being 1; unsaid,
+    /// the first (`Clock::nth_or_first`). Held as said, so `check` can
+    /// refuse one beside `each`, as a layer may lay one over the other.
+    /// It means nothing without a `since`.
+    pub nth: Option<u32>,
+    /// It strikes `secs` after every time `since` fired, each one the pull
+    /// reached, not after one of them: `check` refuses it beside an `nth`.
+    /// Written only where it is true. It means nothing without a `since`.
+    pub each: bool,
 }
 
 impl Clock {
@@ -1051,8 +1520,14 @@ impl Clock {
         Clock {
             secs,
             since: None,
-            nth: 1,
+            nth: None,
+            each: false,
         }
+    }
+
+    /// Which time `since` fired it counts from: its `nth`, else the first.
+    pub fn nth_or_first(&self) -> u32 {
+        self.nth.unwrap_or(1)
     }
 }
 
@@ -1062,8 +1537,10 @@ impl Clock {
 struct Since {
     secs: f32,
     since: Box<Trigger>,
-    #[serde(default = "first")]
-    nth: u32,
+    #[serde(default)]
+    nth: Option<u32>,
+    #[serde(default)]
+    each: bool,
 }
 
 /// A clock's table form, as written.
@@ -1071,16 +1548,10 @@ struct Since {
 struct SinceRef<'a> {
     secs: f32,
     since: &'a Trigger,
-    #[serde(skip_serializing_if = "is_first")]
-    nth: u32,
-}
-
-fn first() -> u32 {
-    1
-}
-
-fn is_first(n: &u32) -> bool {
-    *n == 1
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nth: Option<u32>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    each: bool,
 }
 
 impl Serialize for Clock {
@@ -1091,6 +1562,7 @@ impl Serialize for Clock {
                 secs: self.secs,
                 since,
                 nth: self.nth,
+                each: self.each,
             }
             .serialize(s),
         }
@@ -1104,7 +1576,9 @@ impl<'de> Deserialize<'de> for Clock {
         impl<'de> Visitor<'de> for Seconds {
             type Value = Clock;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("seconds into the pull, or a table of `secs`, `since` and `nth`")
+                f.write_str(
+                    "seconds into the pull, or a table of `secs`, `since` and `nth` or `each`",
+                )
             }
             fn visit_f64<E: de::Error>(self, v: f64) -> Result<Clock, E> {
                 Ok(Clock::pull(v as f32))
@@ -1122,6 +1596,7 @@ impl<'de> Deserialize<'de> for Clock {
                     secs: s.secs,
                     since: Some(s.since),
                     nth: s.nth,
+                    each: s.each,
                 })
             }
         }
@@ -1149,14 +1624,138 @@ pub struct Place {
     /// Its surface, where it is liquid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquid_height: Option<f32>,
-    /// When it is there; unsaid, all fight.
+    /// A swirling texture filling its circle (`at`, `radius`): a spell's
+    /// visual the game draws over it, not the map's geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swirl: Option<Swirl>,
+    /// When it is there: it opens each time this fires and closes at the
+    /// next `until` (`Place::windows`); unsaid, it is there from the start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<Trigger>,
+    /// What closes it, the first firing after it opened; unsaid, it stays
+    /// to the end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<Trigger>,
     /// Difficulty names it appears on; empty, every one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only: Vec<String>,
+}
+
+impl Place {
+    /// Whether it is there only some of the fight: it gives a `from` or an
+    /// `until`.
+    pub fn comes_and_goes(&self) -> bool {
+        self.from.is_some() || self.until.is_some()
+    }
+
+    /// When it is there, from `start` to `end`, given every time its `from`
+    /// and its `until` fired (each read only where the place gives it; in
+    /// any order): it opens at each firing of `from` (unsaid, at `start`)
+    /// and closes at the first firing of `until` after it opened (unsaid,
+    /// or none after, at `end`). A `from` firing while it is open is passed
+    /// over, so a place cast again before it closes stays one window;
+    /// `until` closes it at its first firing, the first hit of a burst. One
+    /// that opened before `start` and is open still at it (a keystone
+    /// fight's clock, its stretch of the run) is there from `start`. Each
+    /// window is `(opened, closed)`, in time order, none empty. The one
+    /// reading of a place's windows: the replay's and the editors'.
+    pub fn windows<T: Copy + PartialOrd>(
+        &self,
+        from: &[T],
+        until: &[T],
+        start: T,
+        end: T,
+    ) -> Vec<(T, T)> {
+        let sorted = |v: &[T]| {
+            let mut v = v.to_vec();
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            v
+        };
+        let opens = match self.from {
+            Some(_) => sorted(from),
+            None => vec![start],
+        };
+        let closes = match self.until {
+            Some(_) => sorted(until),
+            None => Vec::new(),
+        };
+        let mut out: Vec<(T, T)> = Vec::new();
+        // When the last window closed, by the firings' own times.
+        let mut shut: Option<T> = None;
+        for o in opens {
+            // From the end on, or while it is open.
+            if o.partial_cmp(&end) != Some(std::cmp::Ordering::Less) || shut.is_some_and(|c| o < c)
+            {
+                continue;
+            }
+            let c = closes.iter().copied().find(|&c| c > o).unwrap_or(end);
+            shut = Some(c);
+            let c = if c < end { c } else { end };
+            // Open before the start: there from it, if still open then.
+            let o = if o < start { start } else { o };
+            if o < c {
+                out.push((o, c));
+            }
+        }
+        out
+    }
+}
+
+/// A place's swirling texture: the game's gray picture, colored between
+/// two colors, twisted toward the middle and turning. It fills the place's
+/// circle, feathered over the outer 5% of its radius, over the floor and
+/// under the place's ring and label. It is a spell's visual (the Soulcoil
+/// Well's), not the map's geometry, so no render of the floor bakes it:
+/// `crate::swirl::disc` draws it, the one look for the replay (turning it
+/// with the playhead) and the map editor (still).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Swirl {
+    /// The texture's FileDataID: a gray, tileable picture of the game's.
+    pub texture: u32,
+    /// Dark then light, each `#rrggbb`: the texture's gray, leveled from
+    /// 5% to 95%, runs from one to the other (`Swirl::rgb`).
+    pub colors: [String; 2],
+    /// Degrees the middle is turned, falling off to none at the rim:
+    /// `twist · (1 − r / R)²` at `r` of the radius `R`, as ImageMagick's
+    /// `-swirl` turns a picture.
+    pub twist: f32,
+    /// Degrees a second the whole disc turns, clockwise on screen
+    /// (`Swirl::turned`).
+    pub spin: f32,
+}
+
+impl Swirl {
+    /// The colors as red, green and blue, dark then light; `None` where
+    /// either is not `#rrggbb` (`check` names which).
+    pub fn rgb(&self) -> Option<[[u8; 3]; 2]> {
+        let [dark, light] = &self.colors;
+        Some([hex_rgb(dark)?, hex_rgb(light)?])
+    }
+
+    /// How far the disc has turned clockwise on screen `secs` on (the
+    /// replay's playhead): `spin` degrees a second, in radians in [0, 2π),
+    /// the `angle` `crate::swirl::disc` takes. Reduced in degrees first, so
+    /// a long fight keeps its precision.
+    pub fn turned(&self, secs: f32) -> f32 {
+        let a = (self.spin * secs).rem_euclid(360.0).to_radians();
+        if a < std::f32::consts::TAU { a } else { 0.0 }
+    }
+}
+
+/// `#rrggbb` as red, green and blue; `None` of anything else (no `#`, three
+/// digits, a letter past `f`, a sign).
+pub(crate) fn hex_rgb(s: &str) -> Option<[u8; 3]> {
+    let digits = s.strip_prefix('#')?.as_bytes();
+    if digits.len() != 6 {
+        return None;
+    }
+    let nibble = |b: u8| char::from(b).to_digit(16);
+    let mut out = [0u8; 3];
+    for (o, [hi, lo]) in out.iter_mut().zip(digits.as_chunks::<2>().0) {
+        *o = u8::try_from(nibble(*hi)? * 16 + nibble(*lo)?).ok()?;
+    }
+    Some(out)
 }
 
 /// Something the fight leaves on the floor, once each time the log shows
@@ -1175,8 +1774,8 @@ pub struct Ground {
     /// What it is to the players: "pool" (ground to stay off), "soak" (one
     /// to step on), "puddle" …
     pub kind: String,
-    /// The color the game draws it in, so the replay's matches: "green",
-    /// "red", "purple", "blue", "yellow", "orange".
+    /// The color the game draws it in, so the replay's matches: one of the
+    /// rubric's names (`crate::tint::NAMES`), as every tint is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tint: Option<String>,
     pub shape: Shape,
@@ -1197,8 +1796,56 @@ pub struct Ground {
     /// soaked).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<Trigger>,
+    /// When it goes: with the pull (unsaid), as `at` fires, seconds after
+    /// it forms, or at the first hit of a spell on someone standing in it.
     #[serde(default, skip_serializing_if = "Ends::is_pull")]
     pub ends: Ends,
+    /// A firing of `at` that lands inside one of it still on the floor
+    /// renews that one instead of placing another: a ground the log shows
+    /// only as it hurts someone standing in it, whose every tick would
+    /// otherwise place a new one (Sszorak's Caustic Residue). On the floor
+    /// is formed and not yet gone: a firing inside one still in its
+    /// `delay`, not yet formed, places another. Inside is where a new one
+    /// would land (`ahead` of its unit where it says so), within its
+    /// footprint as it is drawn then: a circle at its radius after `grow`
+    /// and `spread`, a line or a cone along its bearing, each where its
+    /// `orbit` and its `seen` hits have taken it. Each one it lands in is
+    /// renewed: an `{ after = s }` counts again from this firing, as one
+    /// this firing placed would (its `delay` after it, then `s`), a
+    /// `{ hit }` end and the pull's are kept, and nothing new is placed.
+    /// A renewal is not a new one forming: it keeps its footprint as it
+    /// first formed (`grow = "stacks"` at its first firing's stacks, its
+    /// `spread` not begun again). The firings are read in time order
+    /// across every `at` trigger, the hits of its `seen` and its `ends`
+    /// among them, each against the grounds as it found them (a `seen` hit
+    /// at a firing's moment after it, an ending one before), and where its
+    /// `push` has taken them by then: each one is given the pushes under
+    /// way or to come as it forms (one under way for the rest of it) as it
+    /// is placed, so a renewal finds it
+    /// where it is drawn (Caustic Residue blown across Sszorak's platform:
+    /// a tick inside a puddle where the wind has taken it renews it). One
+    /// that `falls` and is gone is not standing. `check` refuses it beside
+    /// a `from` (one would stand before the firing that places it), `ends
+    /// = "at"` (each gone as it lands, none stands to renew) and a `seen`
+    /// spell one of its `hit` triggers places it by (each hit would drag
+    /// it to its victim, so it would follow them).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub renew: bool,
+    /// One that formed inside the encounter's map stencil is gone the first
+    /// moment its spot lies outside it, where its `push` or its `orbit` has
+    /// taken it: a puddle blown off the platform (Sszorak's Caustic
+    /// Residue in the Howling Maelstrom's gales). Its end is the first of
+    /// that moment and the one it would have had, and no later renewal
+    /// lasts past it. Each `seen` hit that finds it again is a fresh
+    /// witness of where it is: formed or last found again outside the
+    /// stencil (in a room off the arena), it never falls; found again
+    /// inside, it falls when it next leaves. `check` refuses it on a ground
+    /// that neither
+    /// moves (no `push`, no `orbit`) nor has a stencil to fall off (the
+    /// encounter's `map.stencil`; a trash file gives no map, so its grounds
+    /// never fall).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub falls: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grow: Option<Grow>,
     /// Yards a second it widens once it forms, from the shape's radius to
@@ -1210,16 +1857,73 @@ pub struct Ground {
     /// under them says one is coming, and in how long.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub preview: bool,
+    /// A line or a cone that turns while it stands: each moment it points
+    /// from its spot toward a unit as the replay draws it then (its cast's
+    /// target, or the player carrying an aura), or along its trigger's
+    /// unit's facing as the log posts it (`Follows`). Its spot stays where
+    /// it formed, or where a `push` or a `seen` hit takes it, and it follows
+    /// the unit it picked as it fired for as long as it stands.
+    /// Nymrissa's Water Jet, a 6 s line she aims at the tank, turns with
+    /// the tank pushed round her. Unsaid, it keeps the way its unit faced
+    /// as its trigger fired. `check` refuses it on a circle or a ring,
+    /// beside an `orbit` (it turns one way) or an `ahead` (it would turn
+    /// about a spot ahead of its unit, not the unit), `"target"` by a
+    /// trigger that is no cast (its target would be the unit it lands on),
+    /// and an aura of spell 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follows: Option<Follows>,
     /// It circles a place (or an NPC) once it forms, at the distance it
     /// formed at: Nek'zali's Latent Cultists round the Soulcoil Well. The
     /// log never places it again, so it is drawn as inferred.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orbit: Option<Orbit>,
+    /// Each time one of its triggers fires, every one of it on the floor
+    /// moves along the next of some bearings in turn, or the way the
+    /// players drifted then: a ground the fight shoves about. The log never
+    /// places it again, so it is drawn as inferred, as an orbit is, and it
+    /// never orbits too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push: Option<Push>,
     /// Spells it deals to the players it touches: each hit places it at
     /// its victim again, so a ground that moves where the log cannot follow
     /// it is found anew whenever it hurts someone.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seen: Vec<u32>,
+    /// Other grounds (their keys) it sweeps away as it forms: each one of
+    /// them standing then whose spot lies inside its footprint is gone from
+    /// that moment. The Coiled Altar's Sever, a tank's frontal cone, destroys
+    /// the Coalesced Venom orbs it lands on, and the log writes no row for
+    /// an orb so destroyed, so without it an orb lasts until its pickup or
+    /// the pull's end. Forms is its `from` moment, after its `delay` (a
+    /// renewal is not a forming); standing is formed and not yet gone; its
+    /// footprint and their spots as each is drawn then (after `grow` and
+    /// `spread`, along its bearing, where `orbit`, `push` and `seen` have
+    /// taken each). A volley's `destroys` is the same between a volley and
+    /// NPCs. A key may be any ground of the encounter's file on any
+    /// difficulty: one the difficulty resolved does not have (kept to
+    /// others by `only`, or switched off) is dropped as it resolves, and
+    /// clears nothing. A ground it clears is read after it, each clear a
+    /// moment in that ground's own reading, so one that `renew`s places
+    /// another at a firing after the clear and a `seen` hit after it finds
+    /// a neighbor still standing. `check` refuses a key that is no ground
+    /// of the encounter, the ground itself, and a ground that clears or
+    /// sweeps this one in turn (by any way round): each is read after
+    /// those that clear it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clears: Vec<String>,
+    /// Other grounds (their keys) it sweeps away all the while it stands,
+    /// not only as it forms: each one of them is gone the first moment its
+    /// own shape meets this one's footprint while both stand, each as
+    /// drawn then: any overlap, not its spot alone as `clears` reads it.
+    /// A still one meets it at the later of the two forming (one formed
+    /// under it is gone as it forms); a moving or turning one where they
+    /// first touch. Nymrissa's Water Jet, a 6 s line that follows the tank,
+    /// washes away the Lingering Frost it touches, a puddle 8 yd in radius
+    /// going as the jet reaches its rim. Read and refused as
+    /// `clears` is, its keys dropped as it resolves where the difficulty
+    /// lacks them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sweeps: Vec<String>,
     /// Difficulty names it appears on; empty, every one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only: Vec<String>,
@@ -1227,13 +1931,14 @@ pub struct Ground {
 
 impl Trigger {
     /// Whether it is about a unit, so a ground can land where it stood: an
-    /// aura's target, a hit's victim, a cast's caster, an NPC that appears
-    /// or dies. The pull's start, a clock, health, a phase or an event name
-    /// no one.
+    /// aura's target, a hit's victim, a cast's caster (as it lands or as it
+    /// starts), an NPC that appears or dies. The pull's start, a clock,
+    /// health, a phase or an event name no one.
     pub fn marks_a_spot(&self) -> bool {
         matches!(
             self,
             Trigger::Cast { .. }
+                | Trigger::CastStart { .. }
                 | Trigger::AuraApplied { .. }
                 | Trigger::AuraRemoved { .. }
                 | Trigger::Appears { .. }
@@ -1241,6 +1946,44 @@ impl Trigger {
                 | Trigger::Hit { .. }
         )
     }
+
+    /// Whether it can name a unit apart from the one it lands on, a
+    /// ground's `follows = "target"`: a cast's target as it lands or as it
+    /// starts, where the log's row names one. An aura's carrier and a hit's
+    /// victim are the unit a ground lands on, so a ground there would
+    /// follow itself; an NPC that appears or dies is about itself; the rest
+    /// name no one.
+    pub fn names_a_target(&self) -> bool {
+        matches!(self, Trigger::Cast { .. } | Trigger::CastStart { .. })
+    }
+}
+
+/// What a line or a cone turns to while it stands (`Ground::follows`):
+/// written `"target"`, `"facing"` or `{ aura = N }`. Each moment it points
+/// from its spot toward the unit it follows, as that unit is drawn then
+/// (between its posts where they are close, else at its last), or along
+/// its unit's facing; before that unit is posted, or while it stands on the
+/// spot, the way it last pointed, from the way its unit faced as its
+/// trigger fired (`crate::follow`, the one reading for the replay and the
+/// editors).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum Follows {
+    /// Toward its cast's target: the unit a cast was aimed at, as it lands
+    /// or as it starts, where the log's row names one. A firing whose row
+    /// names none keeps the way its caster faced.
+    Target,
+    /// Along its trigger's unit's facing, as the log posts it each moment:
+    /// a frontal its caster turns while it stands.
+    Facing,
+    /// Toward the player carrying this aura (a spell id; the log's
+    /// hostile auras on players alone), as `follow::carrier` picks them:
+    /// the first it goes on from the firing, within
+    /// `follow::AURA_WITHIN_MS`, else the latest to take it still carrying
+    /// it then. Where the log's cast row names no target but the spell's
+    /// aura on its victim goes on with it (Water Jet's 1258901 on the
+    /// tank).
+    Aura(u32),
 }
 
 /// An aura the replay draws on each player while they carry it, with its
@@ -1303,6 +2046,94 @@ pub struct Orbit {
     /// Degrees a second, counter-clockwise seen from above; clockwise is
     /// negative.
     pub turn: f32,
+}
+
+/// What pushes a ground along the floor: each time one of `on` fires, every
+/// one of its entry on the floor moves along the next of `toward`'s
+/// bearings in turn (the first firing along the first, round again after
+/// the last), or the way the players drifted then, at `speed` for `secs`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Push {
+    /// What pushes them: each time any of these fires, every firing of
+    /// every one a push, in time order across them; one within a second of
+    /// the last counted is that push (a hit on five players is one). Read
+    /// as one trigger or a list, always written as a list: the three gales
+    /// of Sszorak's Howling Maelstrom, each an `after` counting from its
+    /// cast (`Clock::each`). `check` refuses an empty list.
+    #[serde(deserialize_with = "one_or_many")]
+    pub on: Vec<Trigger>,
+    /// Which way each push goes (`Toward`).
+    pub toward: Toward,
+    /// Yards a second it moves while pushed.
+    pub speed: f32,
+    /// Seconds each push lasts.
+    pub secs: f32,
+}
+
+/// Which way a push goes: a list of bearings, degrees in the world as a
+/// volley's `toward` reads them (0 along the X the combat log writes, 90
+/// along its Y), the firings taking them in turn; or the word `"drift"`:
+/// the way the living players drifted over each push, `secs` from its
+/// firing (`crate::drift`), the log's only witness of a wind it never
+/// writes. A push whose drift reads nothing moves none.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Toward {
+    Bearings(Vec<f32>),
+    Drift,
+}
+
+impl Toward {
+    /// The word a drift is written as.
+    pub const DRIFT: &str = "drift";
+}
+
+impl Serialize for Toward {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Toward::Bearings(b) => b.serialize(s),
+            Toward::Drift => s.serialize_str(Toward::DRIFT),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Toward {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Toward, D::Error> {
+        use serde::de::{self, SeqAccess, Visitor};
+        struct Way;
+        impl<'de> Visitor<'de> for Way {
+            type Value = Toward;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "a list of bearings in degrees, or {:?}", Toward::DRIFT)
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Toward, E> {
+                if v == Toward::DRIFT {
+                    Ok(Toward::Drift)
+                } else {
+                    Err(E::invalid_value(de::Unexpected::Str(v), &self))
+                }
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Toward, A::Error> {
+                Vec::<f32>::deserialize(de::value::SeqAccessDeserializer::new(seq))
+                    .map(Toward::Bearings)
+            }
+        }
+        d.deserialize_any(Way)
+    }
+}
+
+/// A list of triggers, or one alone (`Push::on`): read either way, held as
+/// a list. Read through its TOML value, so a lone trigger is read exactly
+/// as one in a list is: a table naming two kinds (laid key by key from two
+/// layers) is refused as any trigger's is.
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Trigger>, D::Error> {
+    use serde::de::Error;
+    let v = toml::Value::deserialize(d)?;
+    match v {
+        toml::Value::Array(_) => Vec::<Trigger>::deserialize(v),
+        v => Trigger::deserialize(v).map(|t| vec![t]),
+    }
+    .map_err(D::Error::custom)
 }
 
 /// A room off the main one that players are taken to and come back from,
@@ -1401,6 +2232,13 @@ pub struct Reach {
     pub npc: String,
     /// The `[place]` it must not reach.
     pub place: String,
+    /// The place takes in a unit that gets there: one the log never posts
+    /// again after it got there is drawn sliding to the place's middle and
+    /// gone, counted absorbed rather than dead (a murloc drawn into the
+    /// Alluring Bubble, last posted alive at its edge, with no death).
+    /// Unsaid, it is not.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub absorbs: bool,
     /// Difficulty names it appears on; empty, every one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only: Vec<String>,
@@ -1419,6 +2257,8 @@ pub enum MarkLabel {
 
 /// A circle round each of some NPCs at the reach of an aura they pulse:
 /// Entombed Sentinels' Marks, each Sentinel marking everyone within 40 yd.
+/// Every unit of an NPC standing is ringed, as each pulses its own: The
+/// Coiled Altar's ten axes a kill, ten rings.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Range {
@@ -1426,7 +2266,7 @@ pub struct Range {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// The NPCs it is drawn round.
+    /// The NPCs it is drawn round, each unit of them standing.
     pub npc: Vec<String>,
     /// Each NPC's color, in the same order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1438,7 +2278,8 @@ pub struct Range {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spell: Option<u32>,
     /// Two NPCs: also the line halfway between them, where one's reach
-    /// gives way to the other's, and how far apart they stand.
+    /// gives way to the other's, and how far apart they stand (one unit of
+    /// each, the one the replay places the NPC by).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sides: bool,
     /// Difficulty names it appears on; empty, every one.
@@ -1509,7 +2350,14 @@ pub struct Line {
     /// What starts one, where its unit stood (a trigger that names a unit,
     /// as a ground's `at`).
     pub from: Trigger,
-    /// The NPC it runs to.
+    /// The NPC it runs to (its key), or `"@source"` (`Line::SOURCE`): the
+    /// unit that put `from`'s aura on, the source the aura's row names as
+    /// it fires. A row naming none (applied, dose or removed) takes the one
+    /// the latest applied or dose row naming one named while the aura
+    /// stayed on that unit, so two applications of it on one unit share
+    /// it and the later applier wins. Only an aura's trigger has a source:
+    /// The Twin Fangs' Corrosive Spit, whose mark comes off as the add that
+    /// spat it lands its cast, three of them standing at once.
     pub to: String,
     /// Seconds after `from` it strikes; until then it is drawn faint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1517,9 +2365,32 @@ pub struct Line {
     /// The spells that hit along it as it strikes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hits: Vec<u32>,
+    /// It is held rather than struck: drawn from the unit `from`'s aura
+    /// went on, wherever that unit goes, to `to` for as long as the aura
+    /// stays on it, gone as it comes off (or at the pull's end, where it
+    /// never does). The Coiled Altar's Unnerving Fixation, put on a player
+    /// by the Manifestation of Dread that fixates them (`to = "@source"`),
+    /// which they must face. `check` refuses it beside a `from` that is no
+    /// `aura_applied` (only an aura going on stays on), a `delay` or
+    /// `hits` (it never strikes).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hold: bool,
     /// Difficulty names it appears on; empty, every one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only: Vec<String>,
+}
+
+impl Line {
+    /// What `to` says for the unit that put its trigger's aura on, in place
+    /// of an NPC's key. A name starting with `@` is a keyword, and this is
+    /// the one.
+    pub const SOURCE: &'static str = "@source";
+
+    /// Whether it runs to the unit that put its trigger's aura on (`to =
+    /// "@source"`) rather than to an NPC.
+    pub fn runs_to_source(&self) -> bool {
+        self.to == Self::SOURCE
+    }
 }
 
 /// Projectiles a trigger sends out from where its unit stood, each along a
@@ -1538,8 +2409,17 @@ pub struct Volley {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tint: Option<String>,
     /// What sends one out, where its unit stood (a trigger that names a
-    /// unit, as a ground's `at`).
+    /// unit, as a ground's `at`); with `around`, any trigger, sent round
+    /// that middle.
     pub from: Trigger,
+    /// The middle it sets out round, in place of `from`'s unit: a place's
+    /// spot (its key), or an NPC's unit as `from` fires. Nymrissa's
+    /// Swirling Whirlpools close on the Alluring Bubble from the lagoon's
+    /// rim; the cast that calls them is hers, wherever she stands. A place
+    /// that is not there as `from` fires sends none. `check` refuses a
+    /// unit's `aim` or a `side` round one where `from` names no unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub around: Option<String>,
     /// Their bearings, degrees: with the world's `aim`, 0 along the X the
     /// combat log writes, 90 along its Y; with the unit's, 0 the way it
     /// faced as `from` fired, 90 to its left.
@@ -1589,9 +2469,20 @@ pub struct Volley {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<f32>,
     /// Yards each one travels before it is gone; unsaid, until it leaves
-    /// the room (the map's stencil, else its render).
+    /// the room (the map's stencil, else its render), or coming `inward`
+    /// to its middle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub length: Option<f32>,
+    /// Each one comes in toward its middle rather than out from it: it
+    /// sets out `start` yards out on its bearing and comes in `length`
+    /// yards (unsaid, all the way in). Its way is the outward one turned
+    /// round (`Volley::ways`), so everything read along a way reads it
+    /// alike. A ring's slots close on its middle, so at a fixed `front`
+    /// (or a disc's width) they overlap near it; slots that are arcs of
+    /// the ring are not drawn yet. `check` refuses it beside a `spread`,
+    /// which turns a way about its start, the rim.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inward: bool,
     /// Seconds after `from` fires the first sets out; unsaid, at once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delay: Option<f32>,
@@ -1616,6 +2507,14 @@ pub struct Volley {
     /// is seen. A hit never takes a projectile away.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub holes: bool,
+    /// How `holes` are found: every slot a living player stood in the way
+    /// of unhit is a hole (`"slot"`, unsaid), or each sending has one, the
+    /// slots the largest cluster of those players spans round its middle
+    /// (`"cluster"`: Nymrissa's whirlpools, whose ring leaves the raid one
+    /// gap, where a player crossed unhit elsewhere, under an immunity, made
+    /// a second). `check` refuses `"cluster"` with no `holes`.
+    #[serde(default, skip_serializing_if = "HolesBy::is_slot")]
+    pub holes_by: HolesBy,
     /// With `holes`, a slot no one came near is drawn faint rather than
     /// whole: where the gaps are many and the raid tells few (Stage Three).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -1627,9 +2526,26 @@ pub struct Volley {
     /// one that dies while a volley is out is its kill.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub destroys: Vec<String>,
+    /// Its kills are drawn where it cleared them: an NPC of its `destroys`
+    /// that the log never places, dying while it is out, stood on one of
+    /// its projectiles' fronts, `start` plus `speed` times the seconds
+    /// since that sending set out (`guess::place`: of every front of every
+    /// sending in flight, not past its reach, inside the room, the farthest
+    /// from the NPC's spots still standing, posted or placed). The count,
+    /// the moment and the distance are the log's; the spot is picked, so
+    /// it is drawn as a guess. Unsaid, none is drawn; `check` refuses it
+    /// with no `destroys`; a trash rubric's volley places none (a run's
+    /// trash has no room to place them in).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub place_kills: bool,
     /// While the aura `from` waits to come off is on a player, the bearings
     /// their volley will go out on are drawn faint from them; its
-    /// projectiles appear as it sets out.
+    /// projectiles appear as it sets out. Beside any other `from`, with a
+    /// `delay`, each projectile of its first sending is drawn still at its
+    /// start from `from` until it sets out (`Volley::holds`), and a hit
+    /// there then is its:
+    /// the whirlpools forming at the lagoon's rim as the cast lands, 4 s
+    /// before they close on the bubble.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub preview: bool,
     /// Difficulty names it appears on; empty, every one.
@@ -1658,14 +2574,78 @@ impl Volley {
             .collect()
     }
 
-    /// How far one's middle has gone from its spot `secs` after it set out:
-    /// `None` before it sets out and once it has gone its `length`.
+    /// How far one's middle has gone along its way (`ways`) `secs` after
+    /// it set out: `None` before it sets out and once it has gone its
+    /// `length` (`reach`).
     pub fn out(&self, secs: f32) -> Option<f32> {
-        let d = self.start.unwrap_or(0.0) + self.speed * secs;
-        let past = self
-            .length
-            .is_some_and(|l| d > self.start.unwrap_or(0.0) + l);
+        let d = self.sets_out() + self.speed * secs;
+        let past = self.reach().is_some_and(|r| d > r);
         (secs >= 0.0 && !past).then_some(d)
+    }
+
+    /// Yards along its way each one's middle sets out at: its `start`, or
+    /// 0 for one coming `inward`, whose way begins `start` out.
+    pub fn sets_out(&self) -> f32 {
+        if self.inward {
+            0.0
+        } else {
+            self.start.unwrap_or(0.0)
+        }
+    }
+
+    /// Yards along its way each one's middle goes before it is gone: its
+    /// `start` and its `length`, or coming `inward` its `length` (unsaid,
+    /// its `start`: all the way in). None where it goes until it leaves
+    /// the room.
+    pub fn reach(&self) -> Option<f32> {
+        if self.inward {
+            self.length.or(self.start)
+        } else {
+            self.length.map(|l| self.start.unwrap_or(0.0) + l)
+        }
+    }
+
+    /// Whether each one is drawn still at its start from `from` until it
+    /// sets out: a `preview` with a `delay`, beside a `from` that is no
+    /// aura coming off (which previews its bearings from the carrier).
+    pub fn holds(&self) -> bool {
+        self.preview
+            && self.delay.is_some_and(|d| d > 0.0)
+            && !matches!(self.from, Trigger::AuraRemoved { .. })
+    }
+
+    /// Each projectile's way, when `from`'s unit faced `facing` (radians,
+    /// turned only with the unit's `aim`) and `side`'s NPC stood to its
+    /// left (`left`) or right: for each spot (`origins`; its place in
+    /// `spots`, none for the unit's own spot) and bearing (`steps_facing`,
+    /// by its place in `toward`), where it sets out from (yards along the
+    /// log's X and Y from the volley's middle: the unit's spot, or the
+    /// `around`'s) and its unit step. Outward, the spot and the bearing;
+    /// coming `inward`, `start` yards out on the bearing and the bearing
+    /// turned round, so its middle comes in toward the spot as it goes
+    /// (`sets_out` 0 along it). The one geometry for the replay and the
+    /// editors.
+    pub fn ways(&self, facing: f32, left: bool) -> Vec<Way> {
+        let spot = |j: usize| (!self.spots.is_empty()).then_some(j);
+        let start = self.start.unwrap_or(0.0);
+        let steps = self.steps_facing(facing);
+        let mut out = Vec::with_capacity(steps.len());
+        for (j, [ox, oy]) in self.origins(facing, left).into_iter().enumerate() {
+            for (i, &[sx, sy]) in steps.iter().enumerate() {
+                let (from, step) = if self.inward {
+                    ([ox + sx * start, oy + sy * start], [-sx, -sy])
+                } else {
+                    ([ox, oy], [sx, sy])
+                };
+                out.push(Way {
+                    spot: spot(j),
+                    bearing: i,
+                    from,
+                    step,
+                });
+            }
+        }
+        out
     }
 
     /// Each bearing as a unit step in the log's X and Y, its `aim` turned
@@ -1715,6 +2695,19 @@ impl Volley {
     }
 }
 
+/// One projectile's way of a volley (`Volley::ways`): which of its
+/// `spots` it sets out from (none, the unit's own spot) and which of its
+/// bearings it goes on (by their places in `spots` and `toward`), where
+/// its way begins (yards along the log's X and Y from the volley's
+/// middle) and its unit step along the log's X and Y.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Way {
+    pub spot: Option<usize>,
+    pub bearing: usize,
+    pub from: [f32; 2],
+    pub step: [f32; 2],
+}
+
 /// A spell whose hits are flashed on their victims: one that hits most of
 /// the raid at once reads as one blow to the raid (Noxious Blast, a
 /// droplet left unsoaked; the log never says where it lay).
@@ -1728,6 +2721,39 @@ pub struct Flash {
     pub spell: Vec<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tint: Option<String>,
+    /// Difficulty names it appears on; empty, every one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<String>,
+}
+
+/// Units thrown straight out from a middle each time a trigger fires about
+/// them, a knockback: Nymrissa Wavecaller's Pop!, the Alluring Bubble
+/// bursting at the island's middle and throwing everyone it hits 20 to 30
+/// yd out in under 2 s. The log writes the hit and posts the victims
+/// through their flight, but never says a throw was one: a reader takes
+/// each victim's throw off their track, from the firing until they stop
+/// going out from the middle.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Knock {
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The color it is drawn in ("blue" …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<String>,
+    /// What throws one: each firing throws the unit it is about (a hit's
+    /// victim, an aura's carrier), so it names a unit
+    /// (`Trigger::marks_a_spot`).
+    pub on: Trigger,
+    /// The middle they are thrown out from: a `[place]` (its `at`) or an
+    /// NPC (where the log has its unit as `on` fires), by key.
+    pub from: String,
+    /// A `[place]` whose circle a throw must land in: one landing outside
+    /// it is a fault (into the water round an island). Unsaid, none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<String>,
     /// Difficulty names it appears on; empty, every one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only: Vec<String>,
@@ -1783,9 +2809,33 @@ impl Form {
     }
 }
 
+/// How a volley's `holes` are found.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HolesBy {
+    /// Every slot a living player stood in the way of unhit is a hole:
+    /// Ula'tek's rows, their gaps many and changing every wave.
+    #[default]
+    Slot,
+    /// One hole a sending: the living players its slots crossed unhit,
+    /// clustered by their bearings round its middle (a gap of more than a
+    /// slot's spacing between two splits them), the slots the largest
+    /// cluster's players stand nearest, first to last; one crossed unhit
+    /// outside it makes none. For
+    /// a radial volley, its bearings round one middle spaced about evenly:
+    /// spots or parallel ways give bearings that say little.
+    Cluster,
+}
+
+impl HolesBy {
+    fn is_slot(&self) -> bool {
+        *self == HolesBy::Slot
+    }
+}
+
 /// When a ground goes.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Ends {
     /// With the pull: ground the raid has lost for good.
     #[default]
@@ -1794,11 +2844,52 @@ pub enum Ends {
     At,
     /// This many seconds after it forms.
     After(f32),
+    /// At the first hit of this spell on a player standing in it: a ground
+    /// that bursts on contact. Written as a `hit` trigger is, `{ hit = {
+    /// spell = N } }`, and with `lands` as one is, its landing hits alone
+    /// (`crate::lands`): a dot's tick on someone who walks over it after
+    /// is not a touch.
+    Hit {
+        spell: u32,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        lands: bool,
+    },
+    /// At the first of these to come, each a `hit` or an `after`: a Frost
+    /// Orb ends at its first touch, else shatters 40 s after it dropped,
+    /// `{ first = [{ hit = { spell = 1313448, lands = true } }, { after =
+    /// 40 }] }`. Its `after` is the earliest of its `after`s
+    /// (`Ends::after`), its hits every `hit` (`Ends::hits`). A list is
+    /// laid whole: a layer gives the whole list again. `check` refuses an
+    /// empty one and one holding a `first`, `"at"` or `"pull"`.
+    First(Vec<Ends>),
 }
 
 impl Ends {
     fn is_pull(&self) -> bool {
         *self == Ends::Pull
+    }
+
+    /// The seconds after it forms it is gone, where nothing comes first:
+    /// an `after`'s, or the earliest of a `first`'s.
+    pub fn after(&self) -> Option<f32> {
+        match self {
+            Ends::After(s) => Some(*s),
+            Ends::First(of) => of
+                .iter()
+                .filter_map(Ends::after)
+                .min_by(|a, b| a.total_cmp(b)),
+            Ends::Pull | Ends::At | Ends::Hit { .. } => None,
+        }
+    }
+
+    /// The hits that end it, each its spell and whether its landings alone
+    /// do (`lands`): a `hit`'s, or every `hit` of a `first`'s, in order.
+    pub fn hits(&self) -> Vec<(u32, bool)> {
+        match self {
+            Ends::Hit { spell, lands } => vec![(*spell, *lands)],
+            Ends::First(of) => of.iter().flat_map(Ends::hits).collect(),
+            Ends::Pull | Ends::At | Ends::After(_) => Vec::new(),
+        }
     }
 }
 
@@ -1857,8 +2948,8 @@ macro_rules! gated {
 }
 
 gated!(
-    Npc, Ability, Phase, Place, Ground, Mark, Line, Volley, Flash, Range, Apart, Streak, Room,
-    Reach, Event,
+    Npc, Ability, Phase, Place, Ground, Mark, Line, Volley, Flash, Knock, Range, Apart, Streak,
+    Room, Reach, Event,
 );
 
 impl Gated for Layer {
@@ -1886,6 +2977,12 @@ impl Gated for Area {
 }
 
 impl Gated for Path {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+impl Gated for Pull {
     fn enabled(&self) -> bool {
         self.enabled
     }

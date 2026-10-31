@@ -1,76 +1,684 @@
 # Ruby Life Pools: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
-schema = 1
+schema = 2
 name = "Ruby Life Pools"
 kind = "dungeon"
 journal = 1202
 map = 2521
 
 # The dungeon's levels, by UiMap id: each one's places and the ways between
-# them, part of the base. Derived from three completed keystone runs'
-# player posts in this machine's history store: a boss's court is a circle
+# them, part of the base. Derived from eleven completed keystone runs' posts
+# in this machine's history store (+5 to +15). A boss's court is a circle
 # round the middle of the posts while it was engaged, its radius about
-# their 98th percentile distance from that middle; a way is the party's
-# middle every 10 s between two bosses, thinned by hand. The party walks
-# every way here (2-3 yd a second through the trash). Between the levels it
-# is carried in about 16 s, posted on no level of the dungeon's (a few posts
-# on the continent's map, 1978). The places that are no court, their radii
-# and the names are guesses for the map editor to refine. The lower pools
-# are terrain, their render cut over the ground its parties walked
-# (`ground = "walked"`, every stored keystone run's posts on it);
-# Melidrussa's level is buildings, cut by their own groups.
+# their 98th percentile distance from that middle. A trash pack's area is
+# where its creatures were first posted, clustered across the runs (each
+# creature's first posts within 9 yd of each other on three runs or more):
+# the log writes a pack only once it is pulled, so this is where it stood
+# as the tank reached it, a few yards from its spawn at most. A way is the
+# party's middle every 2 s between two places, the median over the runs
+# that walked it. Between the levels the party is carried in about 16 s,
+# posted on no level of the dungeon's (a few posts on the continent's map,
+# 1978). The lower pools are terrain, their render cut over the ground its
+# parties walked (`ground = "walked"`, every stored keystone run's posts on
+# it); Melidrussa's level is buildings, cut by their own groups.
+#
+# Each level's pulls are the usual route's packs: who is in each (the
+# instance's creatures below, one entry a member), where each member
+# stands until it is pulled, and the route's order. The members and their
+# spots come from the creatures' first posts on the eleven runs: each
+# first post laid in the area it stands in, a creature counted by its
+# median number a run over the runs that pulled it there (three or more),
+# its spots the middles of that many clusters of its posts. A pull's share
+# of the enemy forces is its members' (`Pull::forces`), never written: the
+# route's pulls give 576 of 551 (104.5%) without the Thunderhead, the
+# eleven runs killed 552-605 (100.2-109.8%).
+#
+# A party quiet in the log travels the ways from its last post to its next
+# as a ghost, the camera gliding from area to area; a jump to the other
+# level flashes where it left and where it landed.
+
+# The dungeon's creatures outside its bosses' own tables, and the enemy
+# forces each gives as it dies: the season's values as a forces addon's
+# data gave them on 2026-09-24, checked against the stored runs (every one
+# of the eleven completed keys sums to 552-605 of the 551, none under).
+# The creature ids are the runs'. The bosses (Melidrussa Chillworn 188252,
+# Kokia Blazehoof 189232, Kyrakka 190484, Erkhart Stormvein 190485) are
+# their encounters' and give none. The hostiles the runs killed that the
+# forces data does not list (the affix's Voidbound Emissary among them)
+# give none and are not here.
+forces = 551
+
+# `control = "immune"`: in the eleven runs no stun or incapacitate landed on
+# these six, while ordinary trash took dozens (area stuns catch everything
+# in reach). The Tempest Channeler took none either but may stand out of
+# reach: left at the default until proven.
+
+# Melidrussa's level: the Infusion Chambers.
+[npc.primal-juggernaut]
+name = "Primal Juggernaut"
+creature = [188244]
+role = "add"
+control = "immune"
+forces = 25
+
+[npc.deepstone-earthshaper]
+name = "Deepstone Earthshaper"
+creature = [187969]
+role = "add"
+forces = 5
+
+[npc.earthbound-guardian]
+name = "Earthbound Guardian"
+creature = [188011]
+role = "add"
+forces = 5
+
+[npc.flashfrost-chillweaver]
+name = "Flashfrost Chillweaver"
+creature = [188067]
+role = "add"
+forces = 7
+
+# The whelps sleep in the halls (187894); Melidrussa wakes her own in her
+# fight (189893), which her encounter names too.
+[npc.infused-whelp]
+name = "Infused Whelp"
+creature = [187894, 189893]
+role = "add"
+forces = 0
+
+# A lieutenant: he opens Melidrussa's door.
+[npc.defier-draghar]
+name = "Defier Draghar"
+creature = [187897]
+role = "add"
+control = "immune"
+forces = 30
+
+# The lower pools: the ring, the bridge and the overlook.
+[npc.primalist-cinderweaver]
+name = "Primalist Cinderweaver"
+creature = [190207]
+role = "add"
+forces = 7
+
+[npc.ashseer-flamelasher]
+name = "Ashseer Flamelasher"
+creature = [190206]
+role = "add"
+forces = 7
+
+[npc.blazebound-destroyer]
+name = "Blazebound Destroyer"
+creature = [190034]
+role = "add"
+control = "immune"
+forces = 25
+
+# The Scorchlings the ring's packs stand among, and Kokia's (190205);
+# those a Blazebound Destroyer summons (194622) are its.
+[npc.scorchling]
+name = "Scorchling"
+creature = [190205]
+role = "add"
+forces = 0
+
+[npc.summoned-scorchling]
+name = "Scorchling"
+creature = [194622]
+role = "pet"
+owner = "blazebound-destroyer"
+
+# Kokia's Ritual of Blazebinding raises it; her encounter names her.
+[npc.blazebound-firestorm]
+name = "Blazebound Firestorm"
+creature = [189886]
+role = "pet"
+
+[npc.flamegullet]
+name = "Flamegullet"
+creature = [197697]
+role = "add"
+control = "immune"
+forces = 40
+
+[npc.thunderhead]
+name = "Thunderhead"
+creature = [197698]
+role = "add"
+control = "immune"
+forces = 48
+
+[npc.ruinous-stormbringer]
+name = "Ruinous Stormbringer"
+creature = [195119]
+role = "add"
+forces = 10
+
+[npc.storm-warrior]
+name = "Storm Warrior"
+creature = [197982]
+role = "add"
+forces = 5
+
+[npc.tempest-channeler]
+name = "Tempest Channeler"
+creature = [198047]
+role = "add"
+forces = 25
+
+# Summoned by the Tempest Channelers, and by High Channeler Ryvati too.
+[npc.primal-thundercloud]
+name = "Primal Thundercloud"
+creature = [197509]
+role = "pet"
+owner = "tempest-channeler"
+
+[npc.high-channeler-ryvati]
+name = "High Channeler Ryvati"
+creature = [197535]
+role = "add"
+control = "immune"
+forces = 30
 
 # Melidrussa Chillworn's level (the floors cache's level 2), where the run
-# begins.
+# begins: three pulls up the Infusion Chambers, then down to her court.
+# Every run took the three, two of them most often chained into one.
 [level.2095.map]
 floor = "ruby-life-pools-L2"
+transition = { unit = "travel", port = "flash", camera = "glide" }
 
 [level.2095.map.area.entrance]
+name = "The entrance"
 shape = [{ center = [1395, -168], radius = 15 }]
+
+# Pull 1, along the first hall: a Primal Juggernaut with a Deepstone
+# Earthshaper and an Earthbound Guardian at its mouth (10 runs, 0-9 s in),
+# then an Earthshaper and a Guardian (10 runs, 13 s) and a Flashfrost
+# Chillweaver with two Earthshapers (11 runs, 17 s) further on.
+[level.2095.map.area.first-juggernaut]
+name = "The first hall"
+shape = [
+    { center = [1436, -156], radius = 14 },
+    { center = [1489, -166], radius = 11 },
+    { center = [1516, -136], radius = 11 },
+]
+
+# Pull 2, round the second hall's bend: a Flashfrost Chillweaver and an
+# Earthbound Guardian (11 runs), a Primal Juggernaut (8 runs) and a
+# Chillweaver, a Guardian and an Earthshaper at its far end (9-10 runs),
+# about a minute in. Five Infused Whelps sleep on its north side; a run
+# that wakes them (5 of 11) fights them here.
+[level.2095.map.area.second-juggernaut]
+name = "The second hall"
+shape = [
+    { center = [1551, -136], radius = 11 },
+    { center = [1571, -140], radius = 10 },
+    { center = [1588, -146], radius = 12 },
+]
+
+# Pull 3, the hall before Melidrussa's door: Defier Draghar and three
+# Infused Whelps (6-9 runs), a Chillweaver and an Earthshaper (7-8 runs) and
+# a Guardian, a Chillweaver and an Earthshaper (8 runs). Draghar opens the
+# door.
+[level.2095.map.area.draghar]
+name = "The hall before Melidrussa's door"
+shape = [
+    { center = [1606, -180], radius = 13 },
+    { center = [1624, -143], radius = 10 },
+    { center = [1638, -166], radius = 11 },
+]
 
 [level.2095.map.area.melidrussa-court]
 name = "Melidrussa Chillworn's court"
 shape = [{ center = [1550, -253], radius = 35 }]
 encounter = 2609
+# Melidrussa Chillworn (2609): 12 pulls, 225° ×11, 240° ×1
+turn = 225
 
-[level.2095.map.path.entrance-to-melidrussa]
+[level.2095.map.path.entrance-to-first-juggernaut]
 from = "entrance"
-to = "melidrussa-court"
+to = "first-juggernaut"
+points = [[1395, -168], [1412, -166], [1436, -156]]
+
+[level.2095.map.path.first-to-second-juggernaut]
+from = "first-juggernaut"
+to = "second-juggernaut"
 points = [
-    [1395, -168], [1464, -164], [1523, -136], [1585, -142],
-    [1605, -168], [1575, -215], [1550, -253],
+    [1436, -156], [1468, -166], [1492, -160], [1504, -149],
+    [1521, -140], [1551, -136],
 ]
 
-# The lower pools (the floors cache's level 1): the party comes onto it by
-# Kokia Blazehoof's court and walks a loop round the pools to her, then on
-# to Kyrakka and Erkhart Stormvein.
+[level.2095.map.path.second-juggernaut-to-draghar]
+from = "second-juggernaut"
+to = "draghar"
+points = [[1551, -136], [1571, -140], [1595, -148], [1606, -161], [1606, -180]]
+
+[level.2095.map.path.draghar-to-melidrussa]
+from = "draghar"
+to = "melidrussa-court"
+points = [
+    [1606, -180], [1594, -192], [1582, -208], [1570, -223],
+    [1560, -240], [1550, -253],
+]
+
+# The usual route's pulls up the halls: the first two chained on most
+# runs. Pull 2's Infused Whelps sleep on its north side and are woken on
+# about half the runs (6 of 11); Draghar's three are fought with him.
+[level.2095.pull.first-juggernaut]
+name = "The first Juggernaut"
+order = 1
+area = "first-juggernaut"
+npc = [
+    "primal-juggernaut", "flashfrost-chillweaver", "deepstone-earthshaper",
+    "deepstone-earthshaper", "deepstone-earthshaper",
+    "deepstone-earthshaper", "earthbound-guardian", "earthbound-guardian",
+]
+spots = [
+    [1443.5, -154.3], [1516.3, -135.2], [1433.6, -155.5],
+    [1491.2, -163.7], [1512.7, -133.7], [1518.1, -139.3],
+    [1435.6, -159.1], [1497, -158.6],
+]
+
+[level.2095.pull.second-juggernaut]
+name = "The second Juggernaut"
+order = 2
+area = "second-juggernaut"
+npc = [
+    "primal-juggernaut", "flashfrost-chillweaver", "flashfrost-chillweaver",
+    "deepstone-earthshaper", "earthbound-guardian", "earthbound-guardian",
+    "infused-whelp", "infused-whelp", "infused-whelp", "infused-whelp",
+]
+spots = [
+    [1570.2, -135.6], [1552, -135], [1588.8, -134],
+    [1585.4, -151.2], [1549.1, -137.2], [1587.2, -148],
+    [1565.7, -127.2], [1582.9, -156.3], [1588.3, -134.1],
+    [1596, -154.3],
+]
+
+[level.2095.pull.draghar]
+name = "Defier Draghar"
+order = 3
+area = "draghar"
+npc = [
+    "defier-draghar", "flashfrost-chillweaver", "flashfrost-chillweaver",
+    "deepstone-earthshaper", "deepstone-earthshaper",
+    "deepstone-earthshaper", "earthbound-guardian", "infused-whelp",
+    "infused-whelp", "infused-whelp",
+]
+spots = [
+    [1604.2, -179.6], [1624.6, -142.4], [1637.7, -170],
+    [1624.2, -144.6], [1635, -174.4], [1637, -163.8],
+    [1640.2, -165.1], [1608.6, -172.5], [1613.8, -180.6],
+    [1617.5, -190.8],
+]
+
+# The lower pools (the floors cache's level 1). The party is set down on
+# the ring's inner edge, then clears the ring's nine packs (each a
+# Primalist Cinderweaver and an Ashseer Flamelasher, or a Blazebound
+# Destroyer, with Scorchlings round them), most often clockwise from the
+# north (7 of 11 runs; Ring 1 to 9 below in that order), else the other way, to Kokia Blazehoof at the
+# ring's north-west gate; then over the bridge to Kyrakka and Erkhart
+# Stormvein, through five packs of the storm's. The Thunderhead and the
+# Ruinous Stormbringer, lieutenants, are skipped on most runs.
 [level.2094.map]
 floor = "ruby-life-pools-L1"
 ground = "walked"
+transition = { unit = "travel", port = "flash", camera = "glide" }
 
+# Where the carried party is set down: 6 of 11 runs' first posts on this
+# level stand within a yard of [1572, -221].
 [level.2094.map.area.arrival]
-name = "From Melidrussa's level"
-shape = [{ center = [1646, -185], radius = 12 }]
+name = "Set down from Melidrussa's level"
+shape = [{ center = [1572, -219], radius = 12 }]
+
+[level.2094.map.area.ring-1]
+name = "Ring 1, north"
+shape = [
+    { center = [1652, -206], radius = 11 },
+    { center = [1640, -192], radius = 8 },
+]
+
+[level.2094.map.area.ring-2]
+name = "Ring 2, north"
+shape = [{ center = [1663, -247], radius = 11 }]
+
+[level.2094.map.area.ring-3]
+name = "Ring 3, north-east"
+shape = [{ center = [1657, -298], radius = 13 }]
+
+[level.2094.map.area.ring-4]
+name = "Ring 4, north-east"
+shape = [{ center = [1603, -322], radius = 12 }]
+
+# Flamegullet patrols the east with an Ashseer Flamelasher and a
+# Primalist Cinderweaver (Flamegullet first posted on 7 runs, 15-25 yd
+# west of the pair), two Scorchlings 10 yd east of them.
+[level.2094.map.area.ring-5]
+name = "Ring 5, east"
+shape = [
+    { center = [1552, -360], radius = 13 },
+    { center = [1529, -354], radius = 9 },
+    { center = [1565, -339], radius = 8 },
+]
+
+[level.2094.map.area.ring-6]
+name = "Ring 6, south"
+shape = [
+    { center = [1430, -240], radius = 10 },
+    { center = [1457, -252], radius = 10 },
+]
+
+[level.2094.map.area.ring-7]
+name = "Ring 7, south-west"
+shape = [{ center = [1464, -207], radius = 12 }]
+
+[level.2094.map.area.ring-8]
+name = "Ring 8, south-west"
+shape = [{ center = [1479, -166], radius = 12 }]
+
+[level.2094.map.area.ring-9]
+name = "Ring 9, west"
+shape = [{ center = [1520, -140], radius = 12 }]
+
+# The Thunderhead, a lieutenant on the ring's west side, killed on 4 of 11
+# keys (+8 to +13) and skipped on every +14 and +15.
+[level.2094.map.area.thunderhead]
+name = "The Thunderhead's patrol"
+shape = [{ center = [1570, -139], radius = 11 }]
 
 [level.2094.map.area.kokia-court]
 name = "Kokia Blazehoof's court"
 shape = [{ center = [1640, -136], radius = 40 }]
 encounter = 2606
+# Kokia Blazehoof (2606): 12 pulls, 105° ×3, 30° ×2, 45° ×2, 75° ×2, 90° ×2, 15° ×1
+turn = 105
+
+[level.2094.map.area.bridge-storm-warriors]
+name = "The bridge, near end"
+shape = [{ center = [1674, -97], radius = 10 }]
+
+[level.2094.map.area.bridge-tempest-channeler]
+name = "The bridge, far end"
+shape = [{ center = [1710, -53], radius = 12 }]
+
+[level.2094.map.area.overlook-flamelasher]
+name = "The overlook's approach"
+shape = [{ center = [1743, -10], radius = 10 }]
+
+# The overlook's last two packs stand in Kyrakka's court: a Tempest
+# Channeler, a Primalist Cinderweaver and a Storm Warrior, then High
+# Channeler Ryvati with two Storm Warriors, pulled just before the boss.
+[level.2094.map.area.overlook-channeler]
+name = "The overlook"
+shape = [{ center = [1766, 0], radius = 10 }]
+
+[level.2094.map.area.ryvati]
+name = "Ryvati's post"
+shape = [{ center = [1775, 20], radius = 10 }]
 
 [level.2094.map.area.kyrakka-court]
 name = "Kyrakka and Erkhart Stormvein's court"
 shape = [{ center = [1770, 23], radius = 45 }]
 encounter = 2623
 
-[level.2094.map.path.arrival-to-kokia]
+# Round the ring clockwise from the landing, as most runs went.
+# Kyrakka and Erkhart Stormvein (2623): 12 pulls, 60° ×6, 45° ×4, 75° ×1, 330° ×1
+turn = 60
+[level.2094.map.path.arrival-to-ring-1]
 from = "arrival"
-to = "kokia-court"
+to = "ring-1"
+points = [[1572, -219], [1610, -205], [1640, -192], [1652, -206]]
+
+[level.2094.map.path.ring-1-to-2]
+from = "ring-1"
+to = "ring-2"
+points = [[1652, -206], [1651, -216], [1654, -232], [1663, -247]]
+
+[level.2094.map.path.ring-2-to-3]
+from = "ring-2"
+to = "ring-3"
+points = [[1663, -247], [1661, -268], [1657, -298]]
+
+[level.2094.map.path.ring-3-to-4]
+from = "ring-3"
+to = "ring-4"
+points = [[1657, -298], [1647, -305], [1630, -312], [1613, -319], [1603, -322]]
+
+[level.2094.map.path.ring-4-to-5]
+from = "ring-4"
+to = "ring-5"
+points = [[1603, -322], [1590, -331], [1570, -341], [1552, -360]]
+
+[level.2094.map.path.ring-5-to-6]
+from = "ring-5"
+to = "ring-6"
 points = [
-    [1646, -185], [1666, -250], [1610, -320], [1580, -338],
-    [1455, -265], [1460, -210], [1512, -136], [1575, -134],
-    [1640, -136],
+    [1552, -360], [1541, -352], [1518, -340], [1497, -318],
+    [1476, -296], [1457, -273], [1457, -252],
 ]
 
-[level.2094.map.path.kokia-to-kyrakka]
+[level.2094.map.path.ring-6-to-7]
+from = "ring-6"
+to = "ring-7"
+points = [[1457, -252], [1456, -225], [1464, -207]]
+
+[level.2094.map.path.ring-7-to-8]
+from = "ring-7"
+to = "ring-8"
+points = [[1464, -207], [1468, -190], [1479, -166]]
+
+[level.2094.map.path.ring-8-to-9]
+from = "ring-8"
+to = "ring-9"
+points = [[1479, -166], [1501, -151], [1520, -140]]
+
+[level.2094.map.path.ring-9-to-thunderhead]
+from = "ring-9"
+to = "thunderhead"
+points = [[1520, -140], [1543, -143], [1570, -139]]
+
+[level.2094.map.path.thunderhead-to-kokia]
+from = "thunderhead"
+to = "kokia-court"
+points = [[1570, -139], [1596, -149], [1621, -150], [1640, -136]]
+
+# The other way round: from the landing west, past the Thunderhead.
+[level.2094.map.path.arrival-to-thunderhead]
+from = "arrival"
+to = "thunderhead"
+points = [[1572, -219], [1581, -208], [1583, -160], [1570, -139]]
+
+[level.2094.map.path.kokia-to-bridge]
 from = "kokia-court"
+to = "bridge-storm-warriors"
+points = [[1640, -136], [1656, -120], [1674, -97]]
+
+[level.2094.map.path.bridge]
+from = "bridge-storm-warriors"
+to = "bridge-tempest-channeler"
+points = [[1674, -97], [1682, -91], [1691, -76], [1710, -53]]
+
+[level.2094.map.path.bridge-to-overlook]
+from = "bridge-tempest-channeler"
+to = "overlook-flamelasher"
+points = [[1710, -53], [1725, -36], [1735, -25], [1743, -10]]
+
+[level.2094.map.path.overlook]
+from = "overlook-flamelasher"
+to = "overlook-channeler"
+points = [[1743, -10], [1750, -8], [1766, 0]]
+
+[level.2094.map.path.overlook-to-ryvati]
+from = "overlook-channeler"
+to = "ryvati"
+points = [[1766, 0], [1775, 20]]
+
+[level.2094.map.path.ryvati-to-kyrakka]
+from = "ryvati"
 to = "kyrakka-court"
-points = [[1640, -136], [1673, -95], [1698, -63], [1730, -30], [1755, -3], [1770, 23]]
+points = [[1775, 20], [1770, 23]]
+
+# The ring's packs in the usual clockwise order from the landing (the
+# other way round on 4 of 11 runs), the Thunderhead on the ring's west side
+# (killed on 4 of 11 keys, +8 to +13, skipped on every +14 and +15), then
+# the bridge and the overlook. Ryvati stood
+# with the overlook's channeler on the 3 runs that pulled them together.
+[level.2094.pull.ring-1]
+name = "North casters"
+order = 1
+area = "ring-1"
+npc = [
+    "ashseer-flamelasher", "primalist-cinderweaver", "scorchling",
+    "scorchling", "scorchling",
+]
+spots = [
+    [1654, -205.5], [1651.3, -205.4], [1638, -200.2],
+    [1644.9, -188.4], [1650.2, -208.9],
+]
+
+[level.2094.pull.ring-2]
+name = "North Destroyer"
+order = 2
+area = "ring-2"
+npc = ["blazebound-destroyer", "scorchling"]
+spots = [[1665.5, -255.5], [1663.8, -237.9]]
+
+[level.2094.pull.ring-3]
+name = "North-east casters"
+order = 3
+area = "ring-3"
+npc = [
+    "ashseer-flamelasher", "primalist-cinderweaver", "scorchling",
+    "scorchling", "scorchling", "scorchling",
+]
+spots = [
+    [1658.1, -295.6], [1660.2, -297.7], [1650.4, -299.3],
+    [1653.5, -310.4], [1657.9, -291.2], [1661.7, -301.5],
+]
+
+[level.2094.pull.ring-4]
+name = "North-east Destroyer"
+order = 4
+area = "ring-4"
+npc = [
+    "blazebound-destroyer", "ashseer-flamelasher", "primalist-cinderweaver",
+    "scorchling",
+]
+spots = [[1604.1, -320], [1611.9, -320.3], [1601.1, -326.1], [1594.8, -322]]
+
+[level.2094.pull.ring-5]
+name = "Flamegullet"
+order = 5
+area = "ring-5"
+npc = [
+    "flamegullet", "ashseer-flamelasher", "primalist-cinderweaver",
+    "scorchling", "scorchling",
+]
+spots = [
+    [1537.6, -350.9], [1550.5, -363.5], [1548.5, -370.9],
+    [1558.2, -339.8], [1568.5, -338.9],
+]
+
+[level.2094.pull.ring-6]
+name = "South casters"
+order = 6
+area = "ring-6"
+npc = [
+    "ashseer-flamelasher", "primalist-cinderweaver", "scorchling",
+    "scorchling",
+]
+spots = [[1432.4, -240], [1426.6, -241.3], [1442.3, -242.2], [1457.5, -250]]
+
+[level.2094.pull.ring-7]
+name = "South-west Destroyer"
+order = 7
+area = "ring-7"
+npc = [
+    "blazebound-destroyer", "ashseer-flamelasher", "primalist-cinderweaver",
+    "scorchling",
+]
+spots = [
+    [1466.2, -208.7], [1464.3, -202.6], [1459.5, -212.5],
+    [1468.6, -202.9],
+]
+
+[level.2094.pull.ring-8]
+name = "South-west casters"
+order = 8
+area = "ring-8"
+npc = [
+    "ashseer-flamelasher", "ashseer-flamelasher", "primalist-cinderweaver",
+    "scorchling", "scorchling",
+]
+spots = [
+    [1477.2, -168.5], [1483.7, -153.2], [1485.1, -163.9],
+    [1469.2, -173.1], [1480.8, -161.9],
+]
+
+[level.2094.pull.ring-9]
+name = "West Destroyer"
+order = 9
+area = "ring-9"
+npc = ["blazebound-destroyer", "primalist-cinderweaver", "scorchling"]
+spots = [[1518.6, -141.3], [1522, -138.3], [1519.3, -140.1]]
+
+[level.2094.pull.thunderhead]
+name = "Thunderhead"
+order = 10
+optional = true
+area = "thunderhead"
+npc = ["thunderhead", "scorchling", "scorchling", "scorchling"]
+spots = [
+    [1567.3, -132.3], [1560, -143.1], [1576.7, -144.7],
+    [1583.3, -141.1],
+]
+
+[level.2094.pull.bridge-storm-warriors]
+name = "Bridge Storm Warriors"
+order = 11
+area = "bridge-storm-warriors"
+npc = ["storm-warrior", "storm-warrior"]
+spots = [[1668.4, -102.2], [1675.7, -97.6]]
+
+[level.2094.pull.bridge-tempest-channeler]
+name = "Bridge Tempest Channeler"
+order = 12
+area = "bridge-tempest-channeler"
+npc = ["tempest-channeler", "storm-warrior", "storm-warrior"]
+spots = [[1700.5, -64.3], [1710.2, -55.5], [1719.3, -43.9]]
+
+[level.2094.pull.overlook-flamelasher]
+name = "Overlook Flamelasher"
+order = 13
+area = "overlook-flamelasher"
+npc = ["ashseer-flamelasher", "storm-warrior", "storm-warrior"]
+spots = [[1742.2, -11.1], [1741.9, -9.8], [1746.9, -9.2]]
+
+[level.2094.pull.overlook-channeler]
+name = "Overlook Tempest Channeler"
+order = 14
+area = "overlook-channeler"
+npc = [
+    "tempest-channeler", "primalist-cinderweaver", "storm-warrior",
+    "storm-warrior",
+]
+spots = [[1765.9, 2], [1767.9, -0.4], [1762.5, 6.1], [1762.9, -3]]
+
+[level.2094.pull.ryvati]
+name = "High Channeler Ryvati"
+order = 15
+area = "ryvati"
+npc = ["high-channeler-ryvati", "storm-warrior", "storm-warrior"]
+spots = [[1776.7, 23], [1767.7, 19.8], [1776, 15]]
+
+# Each boss's map, by DungeonEncounterID: how its room is drawn for a run's
+# fight with it. Part of the base.
+
+# Melidrussa Chillworn. The domed court out to its ring. Cut at her floor,
+# the render drew the valley's rocks and rings standing at that height for
+# 500 yd round it, at 8,415 by 8,422 px; every stored post of her fights
+# (67,192, on three runs) lies within 30 yd of the court's middle.
+[encounter.2609.map]
+stencil = [
+    { center = [1549.2, -246.1], radius = 64.0 },
+]

@@ -1,22 +1,25 @@
 //! Laying file sets over the base at runtime: a curated bundle
 //! (`Rubric::with_curated`), the tuned files of a `seasons/` tree on disk in
-//! the embedded ones' place (`Rubric::with_curated_dir`) and the user's own
-//! files (`Rubric::with_user`, `Rubric::with_user_dir`).
+//! the embedded ones' place (`Rubric::with_curated_dir`, or a walk of it,
+//! `Rubric::with_curated_tree`) and the user's own files
+//! (`Rubric::with_user`, `Rubric::with_user_dir`).
 //!
 //! A set is a tree shaped like `seasons/`, paths relative to it. Its files
 //! may be a `<season>/season.toml` (`[defaults]` alone), an
 //! `<season>/<instance>/instance.toml` (`[defaults]` and the
 //! `[encounter.<id>]` drawing tables an instance file may give) and
-//! `<season>/<instance>/<id>-<slug>.toml`; every season and instance it
-//! names must be the base's, an encounter's file and drawing lie where the
-//! rubric answers the encounter (a returning dungeon's newest season), the
-//! file keeps the slug the encounter's other files have, and a draft is the
-//! base's alone. Each file still carries
-//! `schema = N`.
+//! `<season>/<instance>/<id>-<slug>.toml`, and an instance's
+//! `<season>/<instance>/trash.toml`; every season and instance it names
+//! must be the base's, an encounter's file and drawing lie where the rubric
+//! answers the encounter (a returning dungeon's newest season), as a trash
+//! file lies where the rubric answers its map, the file keeps the slug the
+//! encounter's other files have, and a draft is the base's alone. Each file
+//! still carries `schema = N`.
 //!
-//! A tree on disk gives its tuned `<id>-<slug>.toml` files alone: its
-//! drafts, `season.toml` and `instance.toml` are the base's, which stays
-//! the one the rubric was made from.
+//! A tree on disk gives its tuned `<id>-<slug>.toml` and `trash.toml` files
+//! alone: its drafts, `season.toml` and `instance.toml` are the base's,
+//! which stays the one the rubric was made from. A reader that wants the
+//! tree's base too reads the whole tree with `Rubric::from_dir` instead.
 //!
 //! A curated set is laid whole or not at all: any file it cannot lay, or
 //! any encounter it makes unreadable where the tiers under it read it, is
@@ -26,6 +29,7 @@
 //! never takes the rubric down.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use toml::{Table, Value};
@@ -33,6 +37,7 @@ use toml::{Table, Value};
 use crate::layer::{Placed, Set};
 use crate::{
     Drawing, FileRole, Layers, Origin, Rubric, Source, Tier, difficulty, hash_files, index, parse,
+    trash_keys,
 };
 
 /// How deep under the user's directory a file is looked for: a rubric file
@@ -47,8 +52,83 @@ pub fn user_dir() -> Option<PathBuf> {
     wowdps_proto::dirs::config_home().map(|c| c.join("wowdps").join("rubric"))
 }
 
-/// An encounter on one difficulty (`None`: the encounter's own reading).
-type Reading = (u32, Option<u32>);
+/// The `.toml` files of a tree shaped like `seasons/` on disk, read and
+/// not yet parsed (`read_tree`): what `Rubric::from_tree` and
+/// `Rubric::with_user_tree` lay, and a fingerprint of them, so a reader
+/// can tell a tree unchanged since it last read it by a walk alone.
+#[derive(Debug, Clone)]
+pub struct TreeFiles {
+    pub(crate) root: PathBuf,
+    /// Whether `root` is a directory.
+    pub(crate) present: bool,
+    /// Each file by its path relative to `root` (`/`-joined) and its text,
+    /// in path order.
+    pub(crate) files: Vec<(String, String)>,
+    /// What could not be read, each by its place on disk.
+    pub(crate) errors: Vec<String>,
+}
+
+impl TreeFiles {
+    /// Every `.toml` under `root`, read now, and what could not be read. A
+    /// root that is not there holds nothing, and is no error here. A
+    /// dot-file (an editor's lock or swap file), a link to nothing and a
+    /// file gone since its directory was listed are passed over, as is any
+    /// name that is not UTF-8 but a `.toml`'s.
+    pub fn read(root: &Path) -> TreeFiles {
+        let mut files = Vec::new();
+        let mut errors = Vec::new();
+        read_tree(root, "", 0, &mut files, &mut errors);
+        files.sort();
+        TreeFiles {
+            root: root.to_path_buf(),
+            present: root.is_dir(),
+            files,
+            errors,
+        }
+    }
+
+    /// Where it was read from.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// FNV-1a over the root, every file's path and text in path order, and
+    /// every entry that could not be read: the same while nothing read
+    /// under the root has changed. No file is parsed.
+    pub fn fingerprint(&self) -> u64 {
+        let root = self.root.display().to_string();
+        let present = if self.present { "dir" } else { "none" };
+        hash_files(
+            0xcbf2_9ce4_8422_2325,
+            [("\0root\0", root.as_str()), ("\0present\0", present)]
+                .into_iter()
+                .chain(self.files.iter().map(|(p, t)| (p.as_str(), t.as_str())))
+                .chain(self.errors.iter().map(|e| ("\0error\0", e.as_str()))),
+        )
+    }
+}
+
+/// What a laid file is read by, and so what laying it is checked against:
+/// an encounter, or an instance's trash.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Subject {
+    /// An encounter, by its DungeonEncounterID.
+    Encounter(u32),
+    /// An instance's trash, by its season and slug.
+    Trash { season: String, instance: String },
+}
+
+impl fmt::Display for Subject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Subject::Encounter(id) => write!(f, "encounter {id}"),
+            Subject::Trash { season, instance } => write!(f, "{season}/{instance}'s trash"),
+        }
+    }
+}
+
+/// A subject on one difficulty (`None`: its own reading).
+type Reading = (Subject, Option<u32>);
 
 impl Rubric {
     /// The rubric with a curated file set laid over it, named `origin`
@@ -104,45 +184,74 @@ impl Rubric {
         Ok(self)
     }
 
-    /// The rubric with the tuned files of a `seasons/` tree on disk (a
-    /// checkout's `crates/encounter-rubric/seasons/`) as its first curated
-    /// set, named `origin` (`Source::Curated(Origin::Dir(origin))`), in
-    /// place of the tuned files it was built with (`Origin::Embedded`, or
-    /// a tree laid there before): a file saved into the tree is read by the
+    /// The rubric with the tuned and trash files of a `seasons/` tree on
+    /// disk (a checkout's `crates/encounter-rubric/seasons/`) as its first
+    /// curated set, named `origin` (`Source::Curated(Origin::Dir(origin))`),
+    /// in place of the ones it was built with (`Origin::Embedded`, or a
+    /// tree laid there before): a file saved into the tree is read by the
     /// next rubric made, with no rebuild. Bundles laid with `with_curated`
     /// stay over it, and the user's files over everything.
     ///
     /// Only the tree's tuned `<season>/<instance>/<id>-<slug>.toml` files
-    /// are read: its drafts, `season.toml` and `instance.toml` files are
-    /// the base's, and the base stays the one this rubric was made from (a
-    /// change to one of them still takes a rebuild). The tuned files are
-    /// laid as `with_curated` lays a bundle, through the same checks, and
-    /// the set is refused whole the same way: a file that cannot be read or
-    /// laid, or an encounter the set would make unreadable on any
-    /// difficulty, is an error naming its file by its place on disk, and
-    /// nothing is laid. A `dir` that is no directory is an error too; one
-    /// holding no tuned file leaves the curated tier reading the base. An
-    /// encounter only the replaced files brought (no draft) goes with them
-    /// unless the tree holds its file too.
+    /// and its instances' `trash.toml` files are read: its drafts,
+    /// `season.toml` and `instance.toml` files are the base's, and the base
+    /// stays the one this rubric was made from (`Rubric::from_dir` reads a
+    /// tree's base and tuned files alike). The files are laid as
+    /// `with_curated` lays a bundle, through the same checks, and the set
+    /// is refused whole the same way: a file that cannot be read or laid,
+    /// or an encounter or an instance's trash the set would make unreadable
+    /// on any difficulty (the replaced files' as well as its own), is an
+    /// error naming its file by its place on disk, and nothing is laid. A
+    /// `dir` that is no directory is an error too; one holding no tuned or
+    /// trash file leaves the curated tier reading the base. An encounter
+    /// only the replaced files brought (no draft) goes with them unless the
+    /// tree holds its file too, and a trash the replaced files gave reads
+    /// the tree's, or its base.
     pub fn with_curated_dir(
-        mut self,
+        self,
         origin: impl Into<String>,
         dir: &Path,
     ) -> Result<Rubric, Vec<String>> {
-        let origin = origin.into();
         if !dir.is_dir() {
             return Err(vec![format!("{}: not a directory", dir.display())]);
         }
+        self.with_curated_tree(origin, TreeFiles::read(dir))
+    }
+
+    /// The rubric with the tuned and trash files of a tree a walk read
+    /// (`TreeFiles::read` of a `seasons/` tree on disk) laid as
+    /// `with_curated_dir` lays its directory's, in the first curated
+    /// place: so a reader that compared the walk's fingerprint with the
+    /// one it last laid parses only a tree that changed, and lays exactly
+    /// the files it walked. A tree whose root was not there is refused as
+    /// no directory; what the walk could not read is an error, as it is to
+    /// `with_curated_dir`, beside any the files give.
+    pub fn with_curated_tree(
+        mut self,
+        origin: impl Into<String>,
+        tree: TreeFiles,
+    ) -> Result<Rubric, Vec<String>> {
+        let origin = origin.into();
+        let TreeFiles {
+            root,
+            present,
+            files: read,
+            errors,
+        } = tree;
+        let dir = root.as_path();
+        if !present {
+            return Err(vec![format!("{}: not a directory", dir.display())]);
+        }
         let shown = |p: &str| dir.join(p).display().to_string();
-        let mut errs = Vec::new();
-        let mut read = Vec::new();
-        read_tree(dir, "", 0, &mut read, &mut errs);
+        let mut errs = errors;
         // The tuned files, and any file where no rubric file goes (named by
         // `ordered`): every other file of the tree is the base's.
         let tuned = read.into_iter().filter(|(p, _)| {
             matches!(
                 FileRole::of(p),
-                Ok(Some(FileRole::Encounter { draft: false, .. })) | Err(_)
+                Ok(Some(
+                    FileRole::Encounter { draft: false, .. } | FileRole::Trash { .. }
+                )) | Err(_)
             )
         });
         let files = ordered(tuned, shown, &mut errs);
@@ -208,15 +317,57 @@ impl Rubric {
         Ok(self)
     }
 
+    /// What does not read in the rubric as it stands, the user's files
+    /// aside: each encounter and each instance's trash (where its map
+    /// answers it) read on every difficulty at the base and at the curated
+    /// tier, and every level. Each subject is named once with its first
+    /// error and the difficulties it fails on, led by `who`. What
+    /// `from_dir` refuses a tree for: the build's tree is held readable by
+    /// its test, a tree on disk is checked as it is read, as a curated set
+    /// is checked as it is laid.
+    pub(crate) fn unreadable(&self, who: &str) -> Vec<String> {
+        let mut subjects: BTreeSet<Subject> = self
+            .index
+            .keys()
+            .map(|&id| Subject::Encounter(id))
+            .collect();
+        for s in &self.seasons {
+            for i in s.instances.values() {
+                if i.map.is_some_and(|m| {
+                    self.instance_by_map(m)
+                        .is_some_and(|(a, b)| a.id == s.id && b.slug == i.slug)
+                }) {
+                    subjects.insert(Subject::Trash {
+                        season: s.id.clone(),
+                        instance: i.slug.clone(),
+                    });
+                }
+            }
+        }
+        let mut broken = self.failing(&subjects, Tier::Base);
+        for (reading, e) in self.failing(&subjects, Tier::Curated) {
+            broken.entry(reading).or_insert(e);
+        }
+        let mut out = blame(who, broken, &BTreeMap::new());
+        for (ui_map, _, _) in self.levels() {
+            // Its error names its place (`<season>/<instance>/level.<id>`).
+            if let Some(Err(e)) = self.level(ui_map) {
+                out.push(format!("{who}: {e}"));
+            }
+        }
+        out
+    }
+
     /// The user's files, where they were laid before a curated set `who`
     /// was laid or replaced, read again over it: a user file was checked
     /// against the curated tier as it stood then, and cannot know what a
     /// set laid after it gives or takes away. An encounter of `touched`
     /// that reads at the curated tier but not at the user's has its user
     /// file at fault: it is taken out and named in `user_errors`, as
-    /// `lay_user` leaves one out. (A user season or instance file is never
-    /// taken out here: it holds defaults alone.)
-    fn relay_user_over(&mut self, touched: &BTreeSet<u32>, who: &str) {
+    /// `lay_user` leaves one out; so is a user trash file of an instance
+    /// whose trash reads so. (A user season or instance file is never taken
+    /// out here: it holds defaults alone.)
+    fn relay_user_over(&mut self, touched: &BTreeSet<Subject>, who: &str) {
         let Some(user_at) = self
             .sets
             .iter()
@@ -224,37 +375,49 @@ impl Rubric {
         else {
             return;
         };
-        let mut out = Vec::new();
-        for ((id, d), e) in self.failing(touched, Tier::User) {
-            if out.iter().any(|(i, _)| *i == id) {
+        let mut out: Vec<(Subject, String)> = Vec::new();
+        for ((subject, d), e) in self.failing(touched, Tier::User) {
+            if out.iter().any(|(s, _)| *s == subject) {
                 continue;
             }
             // Broken under the user's file too: not the file's.
             if self
-                .answer(id, d, Tier::Curated, None)
+                .answer_subject(&subject, d, Tier::Curated)
                 .is_some_and(|r| r.is_err())
             {
                 continue;
             }
-            let Some((season, inst, layers)) = self.find(id) else {
-                continue;
+            let file = match &subject {
+                Subject::Encounter(id) => {
+                    let Some((season, instance, stem)) = self
+                        .find(*id)
+                        .map(|(s, i, l)| (s.id.clone(), i.slug.clone(), l.stem.clone()))
+                    else {
+                        continue;
+                    };
+                    let Some(u) = self
+                        .sets
+                        .get_mut(user_at)
+                        .filter(|u| u.has_encounter(&season, &instance, *id))
+                    else {
+                        continue;
+                    };
+                    u.instance_mut(&season, &instance).encounters.remove(id);
+                    format!("{season}/{instance}/{stem}.toml")
+                }
+                Subject::Trash { season, instance } => {
+                    let Some(u) = self
+                        .sets
+                        .get_mut(user_at)
+                        .filter(|u| u.has_trash(season, instance))
+                    else {
+                        continue;
+                    };
+                    u.instance_mut(season, instance).trash = None;
+                    format!("{season}/{instance}/trash.toml")
+                }
             };
-            let (season, instance, stem) =
-                (season.id.clone(), inst.slug.clone(), layers.stem.clone());
-            let held = self
-                .sets
-                .get(user_at)
-                .is_some_and(|u| u.has_encounter(&season, &instance, id));
-            if !held {
-                continue;
-            }
-            if let Some(u) = self.sets.get_mut(user_at) {
-                u.instance_mut(&season, &instance).encounters.remove(&id);
-            }
-            out.push((
-                id,
-                format!("{season}/{instance}/{stem}.toml: left out over {who}: {e}"),
-            ));
+            out.push((subject, format!("{file}: left out over {who}: {e}")));
         }
         if !out.is_empty() {
             self.hash = hash_files(
@@ -284,15 +447,23 @@ impl Rubric {
     }
 
     /// The encounters a set taken off the stack held that stay
-    /// (`survives`): what reads otherwise without it.
-    fn kept_of(&self, gone: &Set) -> BTreeSet<u32> {
+    /// (`survives`), and the instances whose trash it held (an instance's
+    /// trash always stays, on its creatures): what reads otherwise without
+    /// it.
+    fn kept_of(&self, gone: &Set) -> BTreeSet<Subject> {
         let mut kept = BTreeSet::new();
         for (season, s) in &gone.seasons {
             for (instance, i) in &s.instances {
                 for &id in i.encounters.keys() {
                     if self.survives(season, instance, id) {
-                        kept.insert(id);
+                        kept.insert(Subject::Encounter(id));
                     }
+                }
+                if i.trash.is_some() {
+                    kept.insert(Subject::Trash {
+                        season: season.clone(),
+                        instance: instance.clone(),
+                    });
                 }
             }
         }
@@ -327,13 +498,20 @@ impl Rubric {
     /// `None` reads the user's rubric directory (`user_dir`). A directory
     /// that is not there lays nothing; a file that cannot be read is named
     /// in `user_errors`, by its place on disk, and left out.
-    pub fn with_user_dir(mut self, root: Option<PathBuf>) -> Rubric {
+    pub fn with_user_dir(self, root: Option<PathBuf>) -> Rubric {
         let Some(root) = root.or_else(user_dir) else {
             return self;
         };
-        let mut files = Vec::new();
-        read_tree(&root, "", 0, &mut files, &mut self.user_errors);
-        self.lay_user(files, |p| root.join(p).display().to_string())
+        self.with_user_tree(TreeFiles::read(&root))
+    }
+
+    /// The rubric with the user's files a walk read (`TreeFiles::read` of
+    /// their directory) laid over everything, as `with_user_dir` lays
+    /// them: what could not be read is named in `user_errors`.
+    pub fn with_user_tree(mut self, tree: TreeFiles) -> Rubric {
+        self.user_errors.extend(tree.errors);
+        let root = tree.root;
+        self.lay_user(tree.files, |p| root.join(p).display().to_string())
     }
 
     /// The user's files `with_user` and `with_user_dir` found and could not
@@ -547,6 +725,26 @@ impl Rubric {
                     new,
                 })
             }
+            FileRole::Trash { season, instance } => {
+                let Some(inst) = base_season(self, season)
+                    .and_then(|n| self.seasons.get(n))
+                    .and_then(|s| s.instances.get(instance))
+                else {
+                    return Err(one(format!("the base has no {season}/{instance}")));
+                };
+                trash_keys(&t, &inst.written).map_err(one)?;
+                // A file where no reader looks (an older season's copy of a
+                // returning dungeon) would be laid and never read.
+                if let Some(e) = self.trash_elsewhere(season, instance) {
+                    return Err(one(e));
+                }
+                let set = self.sets.get_mut(at).ok_or_else(|| one("no set".into()))?;
+                set.instance_mut(season, instance).trash = Some(t);
+                Ok(Placed::Trash {
+                    season: season.to_string(),
+                    instance: instance.to_string(),
+                })
+            }
         }
     }
 
@@ -582,6 +780,9 @@ impl Rubric {
                 if *new {
                     self.forget_encounter(season, instance, *id);
                 }
+            }
+            Placed::Trash { season, instance } => {
+                set.instance_mut(season, instance).trash = None;
             }
         }
     }
@@ -620,16 +821,17 @@ impl Rubric {
         }
     }
 
-    /// The encounters a placed file is read by, as the index answers them.
-    fn touched(&self, placed: &Placed) -> BTreeSet<u32> {
-        let at = |season: &str, instance: Option<&str>| -> BTreeSet<u32> {
+    /// What a placed file is read by: the encounters, as the index answers
+    /// them, or its instance's trash.
+    fn touched(&self, placed: &Placed) -> BTreeSet<Subject> {
+        let at = |season: &str, instance: Option<&str>| -> BTreeSet<Subject> {
             self.index
                 .iter()
                 .filter(|(_, (n, slug))| {
                     self.seasons.get(*n).is_some_and(|s| s.id == season)
                         && instance.is_none_or(|i| i == slug)
                 })
-                .map(|(&id, _)| id)
+                .map(|(&id, _)| Subject::Encounter(id))
                 .collect()
         };
         match placed {
@@ -644,64 +846,84 @@ impl Rubric {
                 ..
             } => at(season, Some(instance))
                 .into_iter()
-                .filter(|i| i == id)
+                .filter(|s| *s == Subject::Encounter(*id))
                 .collect(),
+            Placed::Trash { season, instance } => BTreeSet::from([Subject::Trash {
+                season: season.clone(),
+                instance: instance.clone(),
+            }]),
         }
     }
 
-    /// Every reading of `ids` at `tier`, uncapped, on every difficulty,
-    /// that fails, with its error.
-    fn failing(&self, ids: &BTreeSet<u32>, tier: Tier) -> BTreeMap<Reading, String> {
+    /// Every reading of `subjects` at `tier`, uncapped, on every
+    /// difficulty, that fails, with its error.
+    fn failing(&self, subjects: &BTreeSet<Subject>, tier: Tier) -> BTreeMap<Reading, String> {
         let mut out = BTreeMap::new();
-        for &id in ids {
+        for subject in subjects {
             for d in std::iter::once(None).chain(difficulty::probes().map(Some)) {
-                if let Some(Err(e)) = self.answer(id, d, tier, None) {
-                    out.insert((id, d), e);
+                if let Some(Err(e)) = self.answer_subject(subject, d, tier) {
+                    out.insert((subject.clone(), d), e);
                 }
             }
         }
         out
     }
+
+    /// A subject on one difficulty at `tier`, uncapped: `None` when it
+    /// does not stand there.
+    fn answer_subject(
+        &self,
+        subject: &Subject,
+        difficulty: Option<u32>,
+        tier: Tier,
+    ) -> Option<Result<crate::Encounter, String>> {
+        match subject {
+            Subject::Encounter(id) => self.answer(*id, difficulty, tier, None),
+            Subject::Trash { season, instance } => {
+                self.answer_trash(season, instance, difficulty, tier)
+            }
+        }
+    }
 }
 
-/// What a set broke: each encounter `broken` reads unreadable that
-/// `before` (the same readings without the set) did not, once, with the
-/// first error and the difficulties it fails on.
+/// What a set broke: each subject `broken` reads unreadable that `before`
+/// (the same readings without the set) did not, once, with the first
+/// error and the difficulties it fails on.
 fn blame(
     who: &str,
     broken: BTreeMap<Reading, String>,
     before: &BTreeMap<Reading, String>,
 ) -> Vec<String> {
-    let mut by_id: BTreeMap<u32, (String, Vec<&'static str>)> = BTreeMap::new();
-    for ((id, d), e) in broken {
-        if before.contains_key(&(id, d)) {
+    let mut by: BTreeMap<Subject, (String, Vec<&'static str>)> = BTreeMap::new();
+    for (reading, e) in broken {
+        if before.contains_key(&reading) {
             continue;
         }
+        let (subject, d) = reading;
         let on = d
             .and_then(|d| difficulty::chain(d).first().copied())
             .unwrap_or("its own reading");
-        by_id
-            .entry(id)
+        by.entry(subject)
             .or_insert_with(|| (e, Vec::new()))
             .1
             .push(on);
     }
     let every = 1 + difficulty::probes().count();
-    by_id
-        .into_iter()
-        .map(|(id, (e, on))| {
+    by.into_iter()
+        .map(|(subject, (e, on))| {
             let on = if on.len() == every {
                 "every difficulty".to_string()
             } else {
                 on.join(", ")
             };
-            format!("{who}: encounter {id} (on {on}): {}", e.trim_end())
+            format!("{who}: {subject} (on {on}): {}", e.trim_end())
         })
         .collect()
 }
 
 /// A layer's season or instance file's `[defaults]`, its format number
-/// (checked by `migrate`) taken out, refusing any key but those and `also`.
+/// (checked by `migrate`) taken out, refusing any key but those and `also`,
+/// and any default no encounter has (`defaults_keys`).
 fn defaults_alone(t: &mut Table, also: &[&str], tier: &str) -> Result<Option<Table>, String> {
     t.remove("schema");
     if let Some(k) = t
@@ -718,15 +940,18 @@ fn defaults_alone(t: &mut Table, also: &[&str], tier: &str) -> Result<Option<Tab
         ));
     }
     match t.remove("defaults") {
-        Some(Value::Table(d)) => Ok(Some(d)),
+        Some(Value::Table(d)) => {
+            crate::defaults_keys(&d)?;
+            Ok(Some(d))
+        }
         None => Ok(None),
         Some(_) => Err("`defaults` is a table".into()),
     }
 }
 
 /// A set's files in the order they are laid, each once: seasons, then
-/// encounters, then instances (whose drawings must find their encounters'
-/// files), each by path. A file beside an encounter's that is no TOML is
+/// encounters and trash, then instances (whose drawings must find their
+/// encounters' files), each by path. A file beside an encounter's that is no TOML is
 /// passed over; one given twice, or anywhere a rubric file does not go,
 /// is an error naming it as `shown` does.
 fn ordered(
@@ -746,7 +971,7 @@ fn ordered(
         last = Some(path.clone());
         let rank = match FileRole::of(&path) {
             Ok(Some(FileRole::Season { .. })) => 0,
-            Ok(Some(FileRole::Encounter { .. })) => 1,
+            Ok(Some(FileRole::Encounter { .. } | FileRole::Trash { .. })) => 1,
             Ok(Some(FileRole::Instance { .. })) => 2,
             Ok(None) => continue,
             Err(e) => {
@@ -762,8 +987,12 @@ fn ordered(
 
 /// Every `.toml` under `dir`, its path relative to the tree's root
 /// (`rel`, `/`-joined) and its text. A root that is not there is no
-/// error; anything else that cannot be read is, by its place on disk.
-fn read_tree(
+/// error; anything else that cannot be read is, by its place on disk. A
+/// stray entry is passed over, never an error: a dot-file or directory
+/// (an editor's `.#instance.toml` lock, a swap file), a link to nothing, a
+/// file gone since its directory was listed, and a name that is not UTF-8
+/// unless it names a `.toml` file.
+pub(crate) fn read_tree(
     dir: &Path,
     rel: &str,
     depth: usize,
@@ -787,8 +1016,15 @@ fn read_tree(
             }
         };
         let path = entry.path();
-        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
-            errs.push(format!("{}: not a UTF-8 name", path.display()));
+        let raw = entry.file_name();
+        if raw.as_encoded_bytes().first() == Some(&b'.') {
+            continue;
+        }
+        let toml = path.extension().is_some_and(|x| x == "toml");
+        let Some(name) = raw.to_str().map(str::to_string) else {
+            if toml && !path.is_dir() {
+                errs.push(format!("{}: not a UTF-8 name", path.display()));
+            }
             continue;
         };
         let rel = if rel.is_empty() {
@@ -802,9 +1038,12 @@ fn read_tree(
             } else {
                 errs.push(format!("{}: too deep", path.display()));
             }
-        } else if path.extension().is_some_and(|x| x == "toml") {
+        } else if toml {
             match std::fs::read_to_string(&path) {
                 Ok(text) => out.push((rel, text)),
+                // A link to nothing, or a file renamed away mid-walk (a
+                // save written beside and moved over): not there.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => errs.push(format!("{}: {e}", path.display())),
             }
         }

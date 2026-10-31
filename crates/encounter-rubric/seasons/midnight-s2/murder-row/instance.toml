@@ -1,19 +1,1177 @@
 # Murder Row: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
-schema = 1
+schema = 2
 name = "Murder Row"
 kind = "dungeon"
 journal = 1304
 map = 2813
 
-# The dungeon's terrain levels, by UiMap id, part of the base: each one's
-# render is cut over the ground its parties walked (every stored keystone
-# run's posts on it), as gen-floors drew them from a level posts file. Its
-# other levels are buildings, cut by their own groups.
+# The dungeon's levels, by UiMap id: each one's places and the ways between
+# them, part of the base. Derived from the nineteen keystone runs stored on
+# this machine by 2026-10-30 (sixteen completed, +5 to +15, Aug-Oct 2026;
+# three left unfinished): a boss's court is a circle round the middle of
+# the players' posts while the boss was engaged, its radius their 98th
+# percentile distance from that middle and a little more; a way is the
+# party's middle every 10 s between the areas, thinned by hand; the other
+# places are where the party came onto or left a level. Their radii and
+# the names are for the map editor to refine. The street and the terrace
+# are terrain, each render cut over the ground its parties walked
+# (`ground = "walked"`, every stored keystone run's posts on it); the
+# warehouse is a building, cut by its own groups.
+#
+# Each level's pulls are the usual route's packs: who is in each (the
+# instance's creatures below, one entry a member), where each member stands
+# until it is pulled, and the route's order. They are cut from the runs
+# alone: each run's trash units sorted by the moment they were first hurt,
+# cut into pulls at gaps over 10 s, matched across runs by the pull's
+# median spot, each member a creature's units standing within 6 yd of one
+# another across runs, kept where 40% of the pull's runs had one; a spot
+# is the median of its first posts. A route addon's map could not place
+# them here (its one picture of all three levels fits no level closer than
+# 15 yd), so it gives the forces values and a cross-check of composition
+# only. A pull's share of the enemy forces is its members' (`Pull::forces`),
+# never written: the route's pulls give 646 of 655 without the optional
+# packs (98.6%: 227 on the street, 26 in the warehouse, 393 on the
+# terrace) and 688 with them all; the sixteen completed runs killed 656
+# to 740, so a party takes an optional pack or two.
 
+# The dungeon's creatures outside its bosses' own tables, and the enemy
+# forces each gives as it dies: the season's values as a route addon's
+# data gave them on 2026-10-30 (655 since the 2026-08-18 hotfix took a
+# Corrupted Warlock's pack off the terrace), checked against the stored
+# runs (the sixteen completed sum to 656-740 of the 655, none under). The
+# creature ids are the runs'. The bosses (Kystia Manaheart 234648, Zaen
+# Bladesorrow 234649, Xathuux the Annihilator 234647, Lithiel Cinderfury
+# 234763) and their own adds are their encounters' and give none; the
+# Warehouse Workers and Keen Taskmasters are both the trash before Zaen
+# (pulled 20-30 s before him on every run, 26 forces) and his journal's
+# adds, so they are here and in his draft. The hostiles the runs killed
+# that the forces data does not list (the affix's Voidbound Emissary among
+# them) give none.
+forces = 655
+
+# `control = "immune"`: in the nineteen runs only slows and knocks
+# (Remorseless Winter's slow, Typhoon, Ursol's Vortex) landed on these
+# seven, 4 to 13 each, while the small trash beside them took 100 to 300
+# stuns and incapacitates (Shadowfury, Blinding Light, Chaos Nova,
+# Incapacitating Roar, Shockwave, Psychic Scream). The guides agree. The
+# Keen Taskmasters and the Warehouse Workers took Chaos Nova, so they are
+# not.
+
+# The street: from the entrance to Kystia Manaheart.
+[npc.felwyrm]
+name = "Felwyrm"
+creature = [236085]
+role = "add"
+forces = 1
+
+[npc.row-hooligan]
+name = "Row Hooligan"
+creature = [236073]
+role = "add"
+forces = 3
+
+[npc.felonious-mage]
+name = "Felonious Mage"
+creature = [236084]
+role = "add"
+forces = 7
+
+# Stealthed until it strikes: the log first posts most of them as they are
+# pulled, so their spots are the surest of the street's.
+[npc.street-sneak]
+name = "Street Sneak"
+creature = [236091]
+role = "add"
+forces = 3
+
+[npc.bribed-guard]
+name = "Bribed Guard"
+creature = [236071]
+role = "add"
+control = "immune"
+forces = 25
+
+# One a run, by the first alley's mouth.
+[npc.bribed-captain]
+name = "Bribed Captain"
+creature = [252529]
+role = "add"
+control = "immune"
+forces = 35
+
+# Two a run, one of each id, at the street's east end.
+[npc.seductive-sayaad]
+name = "Seductive Sayaad"
+creature = [236082, 255604]
+role = "add"
+forces = 6
+
+# A lieutenant at the street's north end, one a run.
+[npc.massive-felwyrm]
+name = "Massive Felwyrm"
+creature = [236902]
+role = "add"
+control = "immune"
+forces = 12
+
+# Summon Wyrms raises four at a time from the Massive Felwyrm, 38 casts on
+# sixteen runs (8 to 12 a run); they give none.
+[npc.tiny-felwyrm]
+name = "Tiny Felwyrm"
+creature = [253324]
+role = "pet"
+owner = "massive-felwyrm"
+
+# The four snitches the party interrogates before Kystia can be fought;
+# the log never posts one, and none is fought.
+[npc.row-snitch]
+name = "Row Snitch"
+creature = [237723]
+role = "object"
+
+# The warehouse: the bar, then the floor before Zaen Bladesorrow.
+# The bar's critics: a Scathing Review on a random player, kicked or
+# controlled (73 cast, 50 kicked); never killed, and they give none.
+[npc.influentual-reviewer]
+name = "Influentual Reviewer"
+creature = [253081]
+role = "add"
+
+# The bar's patrons, bystanders of the clock-in event; none is fought.
+[npc.patron]
+name = "Patron"
+creature = [234984, 236525, 240289]
+role = "ignore"
+
+# Six a run on the warehouse floor, with the two Taskmasters: pulled 20 to
+# 30 s before Zaen on every run and dead 10 to 30 s into his fight, where
+# his draft also lists them.
+[npc.warehouse-worker]
+name = "Warehouse Worker"
+creature = [236893]
+role = "add"
+forces = 2
+
+[npc.keen-taskmaster]
+name = "Keen Taskmaster"
+creature = [236897]
+role = "add"
+forces = 7
+
+# Augurs' Terrace: the demons' level, from the warehouse's stair to
+# Xathuux and back east to Lithiel.
+[npc.unleashed-imp]
+name = "Unleashed Imp"
+creature = [234849]
+role = "add"
+forces = 2
+
+# Twenty a run, in five swarms.
+[npc.demon-fly]
+name = "Demon Fly"
+creature = [235257]
+role = "add"
+forces = 1
+
+[npc.trained-felhunter]
+name = "Trained Felhunter"
+creature = [235261]
+role = "add"
+forces = 5
+
+[npc.fel-invoker]
+name = "Fel Invoker"
+creature = [235268]
+role = "add"
+forces = 7
+
+[npc.wrathguard-flayer]
+name = "Wrathguard Flayer"
+creature = [235267]
+role = "add"
+forces = 5
+
+# Two a run.
+[npc.corrupted-warlock]
+name = "Corrupted Warlock"
+creature = [235265]
+role = "add"
+control = "immune"
+forces = 25
+
+# A Corrupted Warlock's death summons one (the guides); seen once on
+# nineteen runs, kicked (Doom Bolt) and killed.
+[npc.doomguard]
+name = "Doomguard"
+creature = [253278]
+role = "pet"
+owner = "corrupted-warlock"
+control = "immune"
+
+# Three a run: one in the first pack, one west with the Fel Invokers, one
+# east with the second Warlock.
+[npc.shivan-punisher]
+name = "Shivan Punisher"
+creature = [235465]
+role = "add"
+control = "immune"
+forces = 25
+
+# A lieutenant before Xathuux, one a run; his four Felcaster Neophytes
+# (238380) die as he is pulled, never posted, and are not here.
+[npc.felmaster-lucsei]
+name = "Felmaster Lucsei"
+creature = [236905]
+role = "add"
+control = "immune"
+forces = 30
+
+# Two a run: one after Xathuux, one before Lithiel.
+[npc.defiled-golem]
+name = "Defiled Golem"
+creature = [235322]
+role = "add"
+control = "immune"
+forces = 35
+
+# Lithiel's intro, at the terrace's arrival on every run: a second
+# creature id for her casts Ritual of Summoning, Demonic Gateway and
+# Summon Infernal, and three demons (272246, 272247, 272248) die for it,
+# never posted. Nothing to fight.
+[npc.lithiel-intro]
+name = "Lithiel Cinderfury"
+creature = [237415, 272246, 272247, 272248]
+role = "ignore"
+
+# The affix's Emissary: 14 or 15 a run, killed, giving none.
+[npc.voidbound-emissary]
+name = "Voidbound Emissary"
+creature = [229537]
+role = "add"
+
+# The run's narrators and escorts: Xal'atath's whispers, Belath Dawnblade,
+# the stalker that starts the run, the Fel Bat that dies for Lithiel.
+[npc.narrators]
+name = "Xal'atath"
+creature = [229227, 236933, 234359, 236089, 263940, 235850, 238390]
+role = "ignore"
+
+# The street (the floors cache's level 1): from the entrance north and
+# east along the row to Kystia Manaheart's shop.
 [level.2433.map]
 floor = "murder-row-L1"
+ceiling = 12
+hang = 4
+crop = [8640, -5010, 8935, -4725]
 ground = "walked"
 
+[level.2433.map.area.entrance]
+stencil = [
+    { points = [
+        [8703, -4924], [8695, -4916], [8685, -4916], [8677, -4924],
+        [8677, -4934], [8685, -4942], [8695, -4942], [8703, -4934],
+    ] },
+]
+shape = [{ center = [8690, -4929], radius = 10 }]
+
+[level.2433.map.area.entrance-packs]
+name = "The entrance"
+stencil = [
+    { points = [
+        [8718, -4856], [8704, -4842], [8684, -4842], [8670, -4856],
+        [8670, -4876], [8684, -4890], [8704, -4890], [8718, -4876],
+    ] },
+]
+shape = [{ center = [8694, -4866], radius = 22 }]
+
+[level.2433.map.area.left-hooligans]
+name = "The hooligans left of the entrance"
+stencil = [
+    { points = [
+        [8685, -4892], [8679, -4886], [8669, -4886], [8663, -4892],
+        [8663, -4902], [8669, -4908], [8679, -4908], [8685, -4902],
+    ] },
+]
+shape = [{ center = [8674, -4897], radius = 8 }]
+
+[level.2433.map.area.captain]
+name = "The Bribed Captain"
+stencil = [
+    { points = [
+        [8752, -4868], [8745, -4861], [8735, -4861], [8728, -4868],
+        [8728, -4878], [8735, -4885], [8745, -4885], [8752, -4878],
+    ] },
+    { points = [[8731, -4891], [8731, -4901], [8737, -4907], [8747, -4907], [8753, -4901]] },
+]
+shape = [{ center = [8740, -4873], radius = 9 }, { center = [8742, -4896], radius = 8 }]
+
+[level.2433.map.area.east-pack]
+name = "The east pack"
+stencil = [
+    { points = [
+        [8803, -4938], [8795, -4930], [8783, -4930], [8775, -4938],
+        [8775, -4950], [8783, -4958], [8795, -4958], [8803, -4950],
+    ] },
+    { points = [
+        [8771, -4909], [8764, -4902], [8754, -4902], [8747, -4909],
+        [8747, -4919], [8754, -4926], [8764, -4926], [8771, -4919],
+    ] },
+]
+shape = [{ center = [8789, -4944], radius = 11 }, { center = [8759, -4914], radius = 9 }]
+
+[level.2433.map.area.sayaads]
+name = "The Seductive Sayaads"
+stencil = [
+    { points = [
+        [8832, -4970], [8824, -4962], [8814, -4962], [8806, -4970],
+        [8806, -4980], [8814, -4988], [8824, -4988], [8832, -4980],
+    ] },
+]
+shape = [{ center = [8819, -4975], radius = 10 }]
+
+[level.2433.map.area.sneaks]
+name = "The Street Sneaks"
+stencil = [
+    { points = [
+        [8778, -4844], [8771, -4837], [8761, -4837], [8754, -4844],
+        [8754, -4854], [8761, -4861], [8771, -4861], [8778, -4854],
+    ] },
+    { points = [
+        [8787, -4874], [8780, -4867], [8770, -4867], [8763, -4874],
+        [8763, -4884], [8770, -4891], [8780, -4891], [8787, -4884],
+    ] },
+]
+shape = [{ center = [8766, -4849], radius = 9 }, { center = [8775, -4879], radius = 9 }]
+
+[level.2433.map.area.massive-felwyrm]
+name = "The Massive Felwyrm"
+stencil = [
+    { points = [
+        [8786, -4760], [8776, -4749], [8760, -4749], [8750, -4760],
+        [8750, -4776], [8760, -4787], [8776, -4787], [8786, -4776],
+    ] },
+    { points = [
+        [8753, -4773], [8746, -4766], [8736, -4766], [8729, -4773],
+        [8729, -4783], [8736, -4790], [8746, -4790], [8753, -4783],
+    ] },
+    { points = [
+        [8782, -4817], [8775, -4810], [8765, -4810], [8758, -4817],
+        [8758, -4827], [8765, -4834], [8775, -4834], [8782, -4827],
+    ] },
+]
+shape = [
+    { center = [8768, -4768], radius = 16 },
+    { center = [8741, -4778], radius = 9 },
+    { center = [8770, -4822], radius = 9 },
+]
+
+[level.2433.map.area.kystia-court]
+name = "Kystia Manaheart's shop"
+ceiling = 8
+stencil = [
+    { points = [
+        [8880, -4838], [8866, -4823], [8845, -4823], [8831, -4838],
+        [8831, -4859], [8845, -4873], [8866, -4873], [8880, -4859],
+    ] },
+]
+shape = [{ center = [8855.6, -4848.2], radius = 23 }]
+encounter = 3101
+
+[level.2433.map.area.departure]
+name = "Up to the warehouse"
+stencil = [
+    { points = [
+        [8911, -4839], [8903, -4831], [8893, -4831], [8885, -4839],
+        [8885, -4849], [8893, -4857], [8903, -4857], [8911, -4849],
+    ] },
+]
+shape = [{ center = [8898, -4844], radius = 10 }]
+
+[level.2433.map.path.entrance-to-packs]
+from = "entrance"
+to = "entrance-packs"
+points = [[8690, -4929], [8700, -4895], [8698, -4872]]
+
+[level.2433.map.path.packs-to-hooligans]
+from = "entrance-packs"
+to = "left-hooligans"
+points = [[8698, -4872], [8674, -4897]]
+
+[level.2433.map.path.packs-to-captain]
+from = "entrance-packs"
+to = "captain"
+points = [[8698, -4872], [8720, -4868], [8740, -4878]]
+
+[level.2433.map.path.captain-to-east-pack]
+from = "captain"
+to = "east-pack"
+points = [[8740, -4878], [8752, -4912], [8789, -4944]]
+
+[level.2433.map.path.east-pack-to-sayaads]
+from = "east-pack"
+to = "sayaads"
+points = [[8789, -4944], [8819, -4975]]
+
+[level.2433.map.path.east-pack-to-sneaks]
+from = "east-pack"
+to = "sneaks"
+points = [[8789, -4944], [8752, -4890], [8766, -4852]]
+
+[level.2433.map.path.sneaks-to-massive-felwyrm]
+from = "sneaks"
+to = "massive-felwyrm"
+points = [[8766, -4852], [8768, -4820], [8768, -4775]]
+
+[level.2433.map.path.sneaks-to-kystia]
+from = "sneaks"
+to = "kystia-court"
+points = [[8766, -4852], [8800, -4851], [8825, -4852], [8855.6, -4848.2]]
+
+[level.2433.map.path.kystia-to-departure]
+from = "kystia-court"
+to = "departure"
+points = [[8855.6, -4848.2], [8898, -4844]]
+
+# Pull 1, the entrance: a Bribed Guard with two Felonious Mages, six
+# Felwyrms and two Row Hooligans round the entrance, pulled in the first
+# 15 s on 18 of 19 runs.
+[level.2433.pull.entrance-packs]
+name = "The entrance"
+order = 1
+area = "entrance-packs"
+npc = [
+    "bribed-guard", "felonious-mage", "felonious-mage", "felwyrm", "felwyrm",
+    "felwyrm", "felwyrm", "felwyrm", "felwyrm", "row-hooligan", "row-hooligan",
+]
+spots = [
+    [8695.1, -4863.1], [8705.6, -4876.9], [8703.1, -4880.8],
+    [8707.1, -4878.4], [8701.9, -4879.3], [8684.1, -4852.9],
+    [8684.1, -4861.4], [8679.1, -4854.1], [8678.6, -4847.6],
+    [8700.3, -4867.9], [8700.1, -4868.6],
+]
+
+# Two Row Hooligans in the alley left of the entrance: taken on 10 of 19
+# runs, chained into the entrance pull; the guides skip them.
+[level.2433.pull.left-hooligans]
+name = "The hooligans left of the entrance"
+order = 2
+optional = true
+area = "left-hooligans"
+npc = ["row-hooligan", "row-hooligan"]
+spots = [[8675.8, -4896.8], [8673.1, -4897.9]]
+
+# Pull 3: the Bribed Captain at the first alley's mouth with two Felonious
+# Mages and two Felwyrms north of him, about 1:40 in (its own pull on 12
+# runs, chained into the entrance's on the rest).
+[level.2433.pull.captain]
+name = "The Bribed Captain"
+order = 3
+area = "captain"
+npc = ["bribed-captain", "felonious-mage", "felonious-mage", "felwyrm", "felwyrm"]
+spots = [
+    [8742.5, -4895.8], [8741.6, -4872.5], [8737.2, -4873.1],
+    [8739.8, -4874.9], [8739.7, -4869.6],
+]
+
+# Pull 4, the east pack: two Felonious Mages and four Felwyrms at the
+# street's east end (19 of 19 runs, about 1:50 in), with a Bribed Guard
+# and two Row Hooligans on the way to them.
+[level.2433.pull.east-pack]
+name = "The east pack"
+order = 4
+area = "east-pack"
+npc = [
+    "felonious-mage", "felonious-mage", "felwyrm", "felwyrm", "felwyrm",
+    "felwyrm", "bribed-guard", "row-hooligan", "row-hooligan",
+]
+spots = [
+    [8791.7, -4940.2], [8784.4, -4946.0], [8794.3, -4945.7],
+    [8789.9, -4938.3], [8786.9, -4951.1], [8784.5, -4940.4],
+    [8756.8, -4912.8], [8762.6, -4913.2], [8756.8, -4916.9],
+]
+
+# Two Seductive Sayaads beyond the east pack, every run (chained into it
+# on most, their own pull on 6).
+[level.2433.pull.sayaads]
+name = "The Seductive Sayaads"
+order = 5
+area = "sayaads"
+npc = ["seductive-sayaad", "seductive-sayaad"]
+spots = [[8823.7, -4970.2], [8815.0, -4979.9]]
+
+# Pull 6: three Street Sneaks with a Felonious Mage, a Felwyrm and a Row
+# Hooligan in the middle of the street, about 3 minutes in (12 runs as its
+# own pull).
+[level.2433.pull.sneaks]
+name = "The Street Sneaks"
+order = 6
+area = "sneaks"
+npc = [
+    "street-sneak", "street-sneak", "street-sneak", "felonious-mage",
+    "felwyrm", "row-hooligan",
+]
+spots = [
+    [8775.4, -4883.7], [8767.2, -4847.7], [8766.9, -4846.7],
+    [8762.6, -4848.8], [8763.6, -4846.2], [8775.0, -4874.2],
+]
+
+# Pull 7: the Massive Felwyrm at the street's north end with three
+# Felwyrms, three Row Hooligans, two Felonious Mages west of it and two
+# Street Sneaks on the way, the street's last pull on 18 of 19 runs. Its
+# Summon Wyrms raise the Tiny Felwyrms through the fight.
+[level.2433.pull.massive-felwyrm]
+name = "The Massive Felwyrm"
+order = 7
+area = "massive-felwyrm"
+npc = [
+    "massive-felwyrm", "felwyrm", "felwyrm", "felwyrm", "row-hooligan",
+    "row-hooligan", "row-hooligan", "felonious-mage", "felonious-mage",
+    "street-sneak", "street-sneak",
+]
+spots = [
+    [8768.1, -4759.3], [8766.8, -4758.4], [8765.9, -4758.3],
+    [8745.0, -4781.0], [8768.2, -4779.5], [8778.6, -4767.9],
+    [8760.6, -4774.1], [8739.2, -4773.1], [8736.6, -4782.0],
+    [8776.0, -4821.0], [8765.4, -4824.3],
+]
+
+# The warehouse (the floors cache's level 3), up the spire from the
+# street: the bar, the floor, Zaen Bladesorrow.
+[level.2435.map]
+floor = "murder-row-L3"
+hang = 4
+
+[level.2435.map.area.arrival]
+name = "The warehouse door"
+stencil = [
+    { points = [
+        [8915, -4838], [8907, -4830], [8897, -4830], [8889, -4838],
+        [8889, -4848], [8897, -4856], [8907, -4856], [8915, -4848],
+    ] },
+]
+shape = [{ center = [8902, -4843], radius = 10 }]
+
+[level.2435.map.area.bar]
+name = "The bar"
+stencil = [
+    { points = [
+        [8980, -4800], [8970, -4790], [8954, -4790], [8943, -4800],
+        [8943, -4816], [8954, -4827], [8970, -4827], [8980, -4816],
+    ] },
+]
+shape = [{ center = [8962, -4808], radius = 16 }]
+
+[level.2435.map.area.warehouse-floor]
+name = "The warehouse floor"
+stencil = [
+    { points = [
+        [8985, -4739], [8974, -4728], [8958, -4728], [8947, -4739],
+        [8947, -4755], [8958, -4766], [8974, -4766], [8985, -4755],
+    ] },
+]
+shape = [{ center = [8966, -4747], radius = 17 }]
+
+[level.2435.map.area.zaen-court]
+name = "Zaen Bladesorrow's warehouse"
+stencil = [
+    { points = [
+        [8948, -4729], [8934, -4714], [8913, -4714], [8898, -4729],
+        [8898, -4750], [8913, -4764], [8934, -4764], [8948, -4750],
+    ] },
+]
+shape = [{ center = [8923.4, -4739.3], radius = 23 }]
+encounter = 3102
+
+[level.2435.map.area.departure]
+name = "Down to Augurs' Terrace"
+stencil = [
+    { points = [
+        [8893, -4772], [8885, -4764], [8875, -4764], [8867, -4772],
+        [8867, -4782], [8875, -4790], [8885, -4790], [8893, -4782],
+    ] },
+]
+shape = [{ center = [8880, -4777], radius = 10 }]
+
+[level.2435.map.path.door-to-bar]
+from = "arrival"
+to = "bar"
+points = [[8902, -4843], [8958, -4830], [8962, -4808]]
+
+[level.2435.map.path.bar-to-floor]
+from = "bar"
+to = "warehouse-floor"
+points = [[8962, -4808], [8960, -4774], [8966, -4747]]
+
+[level.2435.map.path.floor-to-zaen]
+from = "warehouse-floor"
+to = "zaen-court"
+points = [[8966, -4747], [8945, -4744], [8923.4, -4739.3]]
+
+[level.2435.map.path.zaen-to-departure]
+from = "zaen-court"
+to = "departure"
+points = [[8923.4, -4739.3], [8882, -4747], [8880, -4777]]
+
+# The warehouse floor: six Warehouse Workers and two Keen Taskmasters,
+# pulled together on 18 of 19 runs, 20 to 30 s before Zaen.
+[level.2435.pull.warehouse-floor]
+name = "The warehouse floor"
+order = 1
+area = "warehouse-floor"
+npc = [
+    "keen-taskmaster", "keen-taskmaster", "warehouse-worker",
+    "warehouse-worker", "warehouse-worker", "warehouse-worker",
+    "warehouse-worker", "warehouse-worker",
+]
+spots = [
+    [8958.2, -4758.3], [8968.1, -4757.2], [8964.9, -4735.3],
+    [8970.5, -4755.4], [8959.7, -4735.7], [8964.8, -4735.3],
+    [8970.3, -4756.3], [8971.3, -4757.4],
+]
+
+# Augurs' Terrace (the floors cache's level 2): down from the warehouse,
+# west along the terrace to Xathuux, then back east to Lithiel. Its floor
+# is drawn over the whole district (900 by 750 yd), and the route keeps to
+# a band 560 by 300 across its south: the view keeps to that band.
 [level.2434.map]
 floor = "murder-row-L2"
+ceiling = 12
+hang = 4
+crop = [8580, -5100, 9190, -4740]
 ground = "walked"
+
+[level.2434.view]
+arena = [8600, -5080, 9170, -4760]
+
+[level.2434.map.area.arrival]
+name = "From the warehouse"
+stencil = [
+    { points = [
+        [8893, -4773], [8884, -4764], [8872, -4764], [8863, -4773],
+        [8863, -4785], [8872, -4794], [8884, -4794], [8893, -4785],
+    ] },
+]
+shape = [{ center = [8878, -4779], radius = 12 }]
+
+[level.2434.map.area.ritual]
+name = "Lithiel's ritual"
+stencil = [
+    { points = [
+        [8886, -4853], [8878, -4845], [8868, -4845], [8860, -4853],
+        [8860, -4863], [8868, -4871], [8878, -4871], [8886, -4863],
+    ] },
+]
+shape = [{ center = [8873, -4858], radius = 10 }]
+
+[level.2434.map.area.first-pack]
+name = "The first pack"
+stencil = [
+    { points = [
+        [8921, -4904], [8911, -4894], [8897, -4894], [8887, -4904],
+        [8887, -4918], [8897, -4928], [8911, -4928], [8921, -4918],
+    ] },
+    { points = [
+        [8926, -4917], [8920, -4911], [8912, -4911], [8906, -4917],
+        [8906, -4925], [8912, -4931], [8920, -4931], [8926, -4925],
+    ] },
+]
+shape = [{ center = [8904, -4911], radius = 14 }, { center = [8916, -4921], radius = 7 }]
+
+[level.2434.map.area.flies]
+name = "The Demon Flies"
+stencil = [
+    { points = [
+        [8893, -4936], [8882, -4925], [8866, -4925], [8855, -4936],
+        [8855, -4952], [8866, -4963], [8882, -4963], [8893, -4952],
+    ] },
+]
+shape = [{ center = [8874, -4944], radius = 17 }]
+
+[level.2434.map.area.warlock-pack]
+name = "The first Corrupted Warlock"
+stencil = [
+    { points = [
+        [8830, -4925], [8822, -4917], [8812, -4917], [8804, -4925],
+        [8804, -4935], [8812, -4943], [8822, -4943], [8830, -4935],
+    ] },
+]
+shape = [{ center = [8817, -4930], radius = 10 }]
+
+[level.2434.map.area.punisher-pack]
+name = "The Shivan Punisher and the Fel Invokers"
+stencil = [
+    { points = [
+        [8770, -4958], [8763, -4951], [8753, -4951], [8746, -4958],
+        [8746, -4968], [8753, -4975], [8763, -4975], [8770, -4968],
+    ] },
+    { points = [
+        [8732, -4970], [8723, -4979], [8723, -4991], [8732, -5000],
+        [8744, -5000], [8753, -4991],
+    ] },
+]
+shape = [{ center = [8758, -4963], radius = 9 }, { center = [8738, -4985], radius = 12 }]
+
+[level.2434.map.area.flies-by-the-felmaster]
+name = "Demon Flies by the Felmaster"
+stencil = [
+    { points = [
+        [8728, -4994], [8722, -4988], [8712, -4988], [8706, -4994],
+        [8706, -5004], [8712, -5010], [8722, -5010], [8728, -5004],
+    ] },
+]
+shape = [{ center = [8717, -4999], radius = 8 }]
+
+[level.2434.map.area.felmaster]
+name = "Felmaster Lucsei"
+stencil = [
+    { points = [
+        [8703, -4998], [8695, -4990], [8685, -4990], [8677, -4998],
+        [8677, -5008], [8685, -5016], [8695, -5016], [8703, -5008],
+    ] },
+]
+shape = [{ center = [8690, -5003], radius = 10 }]
+
+[level.2434.map.area.xathuux-court]
+name = "Xathuux's arena"
+stencil = [
+    { points = [
+        [8660, -5025], [8643, -5008], [8618, -5008], [8601, -5025],
+        [8601, -5050], [8618, -5067], [8643, -5067], [8660, -5050],
+    ] },
+]
+shape = [{ center = [8630.4, -5037.4], radius = 28 }]
+encounter = 3103
+
+[level.2434.map.area.imps-and-golem]
+name = "The imps and the Defiled Golem after Xathuux"
+stencil = [
+    { points = [
+        [8735, -5057], [8729, -5051], [8719, -5051], [8713, -5057],
+        [8713, -5067], [8719, -5073], [8729, -5073], [8735, -5067],
+    ] },
+    { points = [
+        [8719, -5041], [8714, -5036], [8706, -5036], [8701, -5041],
+        [8701, -5049], [8706, -5054], [8714, -5054], [8719, -5049],
+    ] },
+    { points = [
+        [8763, -5027], [8755, -5019], [8745, -5019], [8737, -5027],
+        [8737, -5037], [8745, -5045], [8755, -5045], [8763, -5037],
+    ] },
+]
+shape = [
+    { center = [8724, -5062], radius = 8 },
+    { center = [8710, -5045], radius = 6 },
+    { center = [8750, -5032], radius = 10 },
+]
+
+[level.2434.map.area.felhunters]
+name = "Trained Felhunters and a Fel Invoker"
+stencil = [
+    { points = [
+        [8799, -4984], [8793, -4978], [8783, -4978], [8777, -4984],
+        [8777, -4994], [8783, -5000], [8793, -5000], [8799, -4994],
+    ] },
+]
+shape = [{ center = [8788, -4989], radius = 8 }]
+
+[level.2434.map.area.imps]
+name = "Six Unleashed Imps"
+stencil = [
+    { points = [
+        [8832, -5002], [8826, -4996], [8818, -4996], [8812, -5002],
+        [8812, -5010], [8818, -5016], [8826, -5016], [8832, -5010],
+    ] },
+]
+shape = [{ center = [8822, -5006], radius = 7 }]
+
+[level.2434.map.area.north-imps]
+name = "Six Unleashed Imps to the north"
+stencil = [
+    { points = [
+        [8851, -4972], [8845, -4966], [8837, -4966], [8831, -4972],
+        [8831, -4980], [8837, -4986], [8845, -4986], [8851, -4980],
+    ] },
+]
+shape = [{ center = [8841, -4976], radius = 7 }]
+
+[level.2434.map.area.warlock-and-punisher]
+name = "The second Corrupted Warlock"
+stencil = [
+    { points = [
+        [8929, -4982], [8921, -4974], [8911, -4974], [8903, -4982],
+        [8903, -4992], [8911, -5000], [8921, -5000], [8929, -4992],
+    ] },
+    { points = [
+        [8915, -4997], [8910, -4992], [8902, -4992], [8897, -4997],
+        [8897, -5005], [8902, -5010], [8910, -5010], [8915, -5005],
+    ] },
+]
+shape = [{ center = [8916, -4987], radius = 10 }, { center = [8906, -5001], radius = 6 }]
+
+[level.2434.map.area.west-imps]
+name = "Six Unleashed Imps to the west"
+stencil = [
+    { points = [
+        [8898, -5024], [8892, -5018], [8884, -5018], [8878, -5024],
+        [8878, -5032], [8884, -5038], [8892, -5038], [8898, -5032],
+    ] },
+]
+shape = [{ center = [8888, -5028], radius = 7 }]
+
+[level.2434.map.area.east-imps]
+name = "Six Unleashed Imps to the east"
+stencil = [
+    { points = [
+        [8941, -5017], [8935, -5011], [8927, -5011], [8921, -5017],
+        [8921, -5025], [8927, -5031], [8935, -5031], [8941, -5025],
+    ] },
+]
+shape = [{ center = [8931, -5021], radius = 7 }]
+
+[level.2434.map.area.golem-pack]
+name = "The Defiled Golem before Lithiel"
+stencil = [
+    { points = [
+        [9020, -4963], [9010, -4953], [8996, -4953], [8986, -4963],
+        [8986, -4977], [8996, -4987], [9010, -4987], [9020, -4977],
+    ] },
+]
+shape = [{ center = [9003, -4970], radius = 14 }]
+
+# Lithiel fights from four fixed ends of her landing (the places below), a
+# Demonic Gateway taking her from one to another, 37 to 39 yd from the
+# landing's middle: her court is one circle round them all. The players'
+# posts while she is engaged lie in two clusters, north and south, each
+# within 50 yd of its own middle at the 98th percentile.
+[level.2434.map.area.lithiel-court]
+name = "Lithiel's Landing"
+stencil = [
+    { points = [
+        [9162, -4925], [9129, -4892], [9081, -4892], [9048, -4925],
+        [9048, -4973], [9081, -5006], [9129, -5006], [9162, -4973],
+    ] },
+]
+shape = [{ center = [9105, -4949], radius = 58 }]
+encounter = 3105
+
+[level.2434.map.path.arrival-to-ritual]
+from = "arrival"
+to = "ritual"
+points = [[8878, -4779], [8873, -4858]]
+
+[level.2434.map.path.ritual-to-first-pack]
+from = "ritual"
+to = "first-pack"
+points = [[8873, -4858], [8912, -4905]]
+
+[level.2434.map.path.first-pack-to-flies]
+from = "first-pack"
+to = "flies"
+points = [[8912, -4905], [8890, -4934], [8874, -4944]]
+
+[level.2434.map.path.flies-to-warlock]
+from = "flies"
+to = "warlock-pack"
+points = [[8874, -4944], [8817, -4930]]
+
+[level.2434.map.path.warlock-to-punisher]
+from = "warlock-pack"
+to = "punisher-pack"
+points = [[8817, -4930], [8776, -4953], [8750, -4970]]
+
+[level.2434.map.path.punisher-to-flies]
+from = "punisher-pack"
+to = "flies-by-the-felmaster"
+points = [[8750, -4970], [8717, -4999]]
+
+[level.2434.map.path.flies-to-felmaster]
+from = "flies-by-the-felmaster"
+to = "felmaster"
+points = [[8717, -4999], [8690, -5003]]
+
+[level.2434.map.path.felmaster-to-xathuux]
+from = "felmaster"
+to = "xathuux-court"
+points = [[8690, -5003], [8660, -5020], [8630.4, -5037.4]]
+
+[level.2434.map.path.xathuux-to-imps]
+from = "xathuux-court"
+to = "imps-and-golem"
+points = [[8630.4, -5037.4], [8680, -5050], [8710, -5054]]
+
+[level.2434.map.path.imps-to-felhunters]
+from = "imps-and-golem"
+to = "felhunters"
+points = [[8710, -5054], [8754, -5000], [8788, -4989]]
+
+[level.2434.map.path.felhunters-to-imps]
+from = "felhunters"
+to = "imps"
+points = [[8788, -4989], [8822, -5006]]
+
+[level.2434.map.path.felhunters-to-north-imps]
+from = "felhunters"
+to = "north-imps"
+points = [[8788, -4989], [8841, -4976]]
+
+[level.2434.map.path.imps-to-warlock]
+from = "imps"
+to = "warlock-and-punisher"
+points = [[8822, -5006], [8876, -5011], [8916, -4987]]
+
+[level.2434.map.path.imps-to-west-imps]
+from = "imps"
+to = "west-imps"
+points = [[8822, -5006], [8888, -5028]]
+
+[level.2434.map.path.west-imps-to-east-imps]
+from = "west-imps"
+to = "east-imps"
+points = [[8888, -5028], [8931, -5021]]
+
+[level.2434.map.path.warlock-to-golem]
+from = "warlock-and-punisher"
+to = "golem-pack"
+points = [[8916, -4987], [8962, -4980], [9003, -4970]]
+
+[level.2434.map.path.golem-to-lithiel]
+from = "golem-pack"
+to = "lithiel-court"
+points = [[9003, -4970], [9042, -4962], [9104, -4917]]
+
+# Pull 1 of the terrace: two Unleashed Imps, two Wrathguard Flayers, a Fel
+# Invoker and a Shivan Punisher where the party comes off the stair,
+# about a minute after the ritual (12 runs as its own pull).
+[level.2434.pull.first-pack]
+name = "The first pack"
+order = 1
+area = "first-pack"
+npc = [
+    "shivan-punisher", "fel-invoker", "wrathguard-flayer", "wrathguard-flayer",
+    "unleashed-imp", "unleashed-imp",
+]
+spots = [
+    [8916.2, -4920.9], [8897.6, -4919.8], [8900.5, -4916.5],
+    [8894.6, -4920.9], [8908.6, -4902.9], [8911.1, -4901.3],
+]
+
+# A swarm of seven Demon Flies south-west of the first pack (14 runs).
+[level.2434.pull.flies]
+name = "The Demon Flies"
+order = 2
+area = "flies"
+npc = [
+    "demon-fly", "demon-fly", "demon-fly", "demon-fly", "demon-fly",
+    "demon-fly", "demon-fly",
+]
+spots = [
+    [8879.9, -4945.2], [8868.9, -4945.1], [8862.1, -4941.2],
+    [8859.6, -4943.0], [8887.2, -4944.1], [8881.1, -4953.6],
+    [8877.3, -4938.4],
+]
+
+# Pull 3: the first Corrupted Warlock with two Wrathguard Flayers and four
+# Demon Flies west of them (13 runs).
+[level.2434.pull.warlock-pack]
+name = "The first Corrupted Warlock"
+order = 3
+area = "warlock-pack"
+npc = [
+    "corrupted-warlock", "wrathguard-flayer", "wrathguard-flayer", "demon-fly",
+    "demon-fly", "demon-fly", "demon-fly",
+]
+spots = [
+    [8821.8, -4929.8], [8823.1, -4925.6], [8820.8, -4934.7],
+    [8811.0, -4928.9], [8811.3, -4928.6], [8815.3, -4929.3],
+    [8808.1, -4928.8],
+]
+
+# Pull 4: a Shivan Punisher with two Fel Invokers, and eight Demon Flies
+# down the slope west of them (13 runs).
+[level.2434.pull.punisher-pack]
+name = "The Shivan Punisher and the Fel Invokers"
+order = 4
+area = "punisher-pack"
+npc = [
+    "shivan-punisher", "fel-invoker", "fel-invoker", "demon-fly", "demon-fly",
+    "demon-fly", "demon-fly", "demon-fly", "demon-fly", "demon-fly", "demon-fly",
+]
+spots = [
+    [8761.4, -4960.9], [8754.4, -4959.8], [8762.5, -4967.9],
+    [8743.0, -4978.8], [8731.9, -4989.1], [8739.0, -4988.1],
+    [8734.0, -4982.3], [8749.5, -4983.9], [8746.2, -4991.1],
+    [8726.9, -4991.5], [8743.5, -4981.7],
+]
+
+# Four Demon Flies between the Punisher's pack and the Felmaster, chained
+# into one or the other (8 to 12 runs each).
+[level.2434.pull.flies-by-the-felmaster]
+name = "Demon Flies by the Felmaster"
+order = 5
+area = "flies-by-the-felmaster"
+npc = ["demon-fly", "demon-fly", "demon-fly", "demon-fly"]
+spots = [[8720.1, -4996.7], [8716.9, -4996.1], [8719.2, -5005.2], [8711.6, -4998.3]]
+
+# Pull 6: Felmaster Lucsei, a lieutenant, with two Trained Felhunters
+# before Xathuux's arena (15 runs). His four Felcaster Neophytes die as he
+# is pulled.
+[level.2434.pull.felmaster]
+name = "Felmaster Lucsei"
+order = 6
+area = "felmaster"
+npc = ["felmaster-lucsei", "trained-felhunter", "trained-felhunter"]
+spots = [[8690.2, -5003.1], [8688.7, -4997.5], [8692.4, -5008.4]]
+
+# Pull 7, after Xathuux: six Unleashed Imps and two Wrathguard Flayers
+# east of his arena (13 runs), with a Defiled Golem that wanders north
+# of them (posted on 8).
+[level.2434.pull.imps-and-golem]
+name = "The imps and the Defiled Golem after Xathuux"
+order = 7
+area = "imps-and-golem"
+npc = [
+    "defiled-golem", "wrathguard-flayer", "wrathguard-flayer", "unleashed-imp",
+    "unleashed-imp", "unleashed-imp", "unleashed-imp", "unleashed-imp",
+    "unleashed-imp",
+]
+spots = [
+    [8753.1, -5028.5], [8708.9, -5045.1], [8709.5, -5044.0],
+    [8721.8, -5061.4], [8726.4, -5059.1], [8725.0, -5059.7],
+    [8723.5, -5065.7], [8725.0, -5063.8], [8727.4, -5062.8],
+]
+
+# Pull 8: two Trained Felhunters and a Fel Invoker on the way back east
+# (12 runs), pulled with the six imps beside them.
+[level.2434.pull.felhunters]
+name = "Trained Felhunters and a Fel Invoker"
+order = 8
+area = "felhunters"
+npc = ["fel-invoker", "trained-felhunter", "trained-felhunter"]
+spots = [[8789.3, -4991.4], [8791.9, -4986.5], [8784.9, -4986.5]]
+
+# Six Unleashed Imps east of the Felhunters (12 runs).
+[level.2434.pull.imps]
+name = "Six Unleashed Imps"
+order = 9
+area = "imps"
+npc = [
+    "unleashed-imp", "unleashed-imp", "unleashed-imp", "unleashed-imp",
+    "unleashed-imp", "unleashed-imp",
+]
+spots = [
+    [8819.2, -5008.7], [8822.2, -5007.2], [8823.0, -5006.9],
+    [8823.0, -5006.2], [8822.5, -5004.4], [8822.9, -5006.2],
+]
+
+# Six more imps north of the Felhunters, taken on 9 or 10 runs.
+[level.2434.pull.north-imps]
+name = "Six Unleashed Imps to the north"
+order = 10
+optional = true
+area = "north-imps"
+npc = [
+    "unleashed-imp", "unleashed-imp", "unleashed-imp", "unleashed-imp",
+    "unleashed-imp", "unleashed-imp",
+]
+spots = [
+    [8839.2, -4977.3], [8839.2, -4977.8], [8842.6, -4974.7],
+    [8841.9, -4975.5], [8842.8, -4974.1], [8844.2, -4974.2],
+]
+
+# Pull 11: the second Corrupted Warlock with three Trained Felhunters
+# (12 runs), and a Shivan Punisher south of them that is seldom posted
+# before it is pulled.
+[level.2434.pull.warlock-and-punisher]
+name = "The second Corrupted Warlock"
+order = 11
+area = "warlock-and-punisher"
+npc = [
+    "corrupted-warlock", "shivan-punisher", "trained-felhunter",
+    "trained-felhunter", "trained-felhunter",
+]
+spots = [
+    [8912.6, -4986.5], [8905.7, -5000.6], [8915.3, -4993.0],
+    [8918.2, -4985.9], [8913.1, -4982.1],
+]
+
+# Two more imp packs south of the way to Lithiel, taken on 7 runs each
+# where the count fell short.
+[level.2434.pull.west-imps]
+name = "Six Unleashed Imps to the west"
+order = 12
+optional = true
+area = "west-imps"
+npc = [
+    "unleashed-imp", "unleashed-imp", "unleashed-imp", "unleashed-imp",
+    "unleashed-imp", "unleashed-imp",
+]
+spots = [
+    [8886.3, -5026.9], [8890.8, -5027.0], [8887.8, -5032.5],
+    [8887.8, -5030.6], [8887.9, -5023.6], [8885.7, -5029.0],
+]
+
+[level.2434.pull.east-imps]
+name = "Six Unleashed Imps to the east"
+order = 13
+optional = true
+area = "east-imps"
+npc = [
+    "unleashed-imp", "unleashed-imp", "unleashed-imp", "unleashed-imp",
+    "unleashed-imp", "unleashed-imp",
+]
+spots = [
+    [8928.2, -5020.0], [8934.3, -5016.6], [8930.2, -5022.0],
+    [8931.4, -5025.2], [8931.4, -5021.0], [8931.4, -5025.2],
+]
+
+# Pull 14: the Defiled Golem before Lithiel's Landing with two Fel
+# Invokers and two Trained Felhunters, the terrace's last pull on 16 of
+# 19 runs.
+[level.2434.pull.golem-pack]
+name = "The Defiled Golem before Lithiel"
+order = 14
+area = "golem-pack"
+npc = [
+    "defiled-golem", "fel-invoker", "fel-invoker", "trained-felhunter",
+    "trained-felhunter",
+]
+spots = [
+    [9011.1, -4969.3], [8997.8, -4964.4], [8999.9, -4977.4],
+    [8994.6, -4961.6], [8998.6, -4978.6],
+]
+
+# The bosses' rooms: what of each court's floor the fights key on.
+
+# Lithiel's four ends: she is pulled at the east one (9141.3, -4950.2 on
+# every kill) and each Demonic Gateway takes her to another (44 gates on
+# sixteen kills: north 17, south 12, east 11, west 4, never the end she
+# stands on), the log posting her at the new end as the gate lands. Each
+# Malefic Wave rings out from the end she stands on. The gate's own two
+# ends are never posted. Their size is not in the log; 4 yd is drawn.
+[encounter.3105.place.north-end]
+name = "The north end"
+kind = "spawn"
+tint = "green"
+at = [9104.7, -4910.6]
+radius = 4
+
+[encounter.3105.place.south-end]
+name = "The south end"
+kind = "spawn"
+tint = "green"
+at = [9105.2, -4988.0]
+radius = 4
+
+[encounter.3105.place.east-end]
+name = "The east end"
+kind = "spawn"
+tint = "green"
+at = [9144.1, -4950.4]
+radius = 4
+
+[encounter.3105.place.west-end]
+name = "The west end"
+kind = "spawn"
+tint = "green"
+at = [9068.2, -4949.3]
+radius = 4

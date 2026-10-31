@@ -2,7 +2,7 @@
 # keystone pool is MythicPlusSeasonTrackedMap's eight dungeons for that
 # season; its raids are the journal's current tier. gen-rubric drafts every
 # encounter of these JournalInstances.
-schema = 1
+schema = 2
 name = "Midnight Season 2"
 order = 18
 instances = [
@@ -31,3 +31,17 @@ ceiling = 25
 [defaults.travel]
 run = 7.0
 mount = 14.0
+
+# The seconds each player's death adds to a keystone's clock, by the key's
+# level: [from_level, seconds]. Measured from 88 stored keystone runs,
+# completed and not joined mid-run: each one's official clock less its
+# wall time (the cut's last post less the 10 s countdown), over its log's
+# deaths, is 0 s a death at +2 to +5, 5 s at +7 to +11 and 15 s at +12 and
+# up, plus about 1.5 s a run; 78 fit within 1.0 to 2.3 s, the other 10 are
+# off by whole penalties (the log's death rows and the game's count
+# disagree on some runs). Ruby Life Pools: 0 a death at +5; 4.99, 5.79 and
+# 5.06 at +8, +10 and +11; 14.97, 14.87, 15.03 and 14.94 at +13, +13, +14
+# and +15 (docs/plan-mplus.md, "The data"). None of them was a +6: it is
+# assumed to cost nothing until a run shows otherwise.
+[rules]
+death_penalty = [[2, 0], [7, 5], [12, 15]]

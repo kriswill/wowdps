@@ -1,11 +1,11 @@
 //! The replay's NPC portraits: the two files that say which portrait each
 //! NPC wears and where it is cut, read and written in one place.
 //!
-//! - The CROPS file, `tools/extract/portrait-crops.tsv` in the repository:
-//!   where a person cut an NPC's portrait. The portrait editor writes it
-//!   ("Save to repo"), gen-portraits embeds and cuts from it. Its leading
-//!   `#` lines are its notes; then a header naming [`CROP_COLUMNS`], then a
-//!   line per NPC, by encounter and NPC key. [`parse_crops`] and
+//! - The CROPS file, `tools/replay-extract/portrait-crops.tsv` in the
+//!   repository: where a person cut an NPC's portrait. The portrait editor
+//!   writes it ("Save to repo"), gen-portraits embeds and cuts from it. Its
+//!   leading `#` lines are its notes; then a header naming
+//!   [`CROP_COLUMNS`], then a line per NPC, by encounter and NPC key. [`parse_crops`] and
 //!   [`crops_tsv`] are the rows; [`CropsFile`] is the file whole, notes
 //!   kept, and reads and writes the committed file back byte for byte.
 //! - The INDEX, `index.tsv` in the per-machine portraits cache: a line per
@@ -433,7 +433,7 @@ mod tests {
     /// reads it.
     const CROPS_FILE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tools/extract/portrait-crops.tsv"
+        "/../../tools/replay-extract/portrait-crops.tsv"
     );
 
     #[test]

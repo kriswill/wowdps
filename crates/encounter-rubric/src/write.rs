@@ -23,6 +23,7 @@ pub const ORDER: &[&str] = &[
     "name",
     "instance",
     "order",
+    "optional",
     "kind",
     "tint",
     "journal",
@@ -31,6 +32,7 @@ pub const ORDER: &[&str] = &[
     "floor",
     "level",
     "ceiling",
+    "hang",
     "light",
     "exposure",
     "scale",
@@ -62,6 +64,14 @@ pub const ORDER: &[&str] = &[
     "home",
     "near",
     "path",
+    "water",
+    "close",
+    "shallow",
+    "deep",
+    "depth",
+    "bed",
+    "types",
+    "shore",
     "transition",
     "after",
     "unit",
@@ -78,13 +88,17 @@ pub const ORDER: &[&str] = &[
     "run",
     "mount",
     "vehicle",
+    "pull",
     "npc",
     "creature",
     "role",
+    "control",
+    "forces",
     "icon",
     "owner",
     "shares",
     "still",
+    "aloft",
     "ability",
     "spell",
     "by",
@@ -107,12 +121,20 @@ pub const ORDER: &[&str] = &[
     "stacks",
     "triggers",
     "liquid_height",
+    "swirl",
+    "texture",
+    "colors",
+    "twist",
+    "spin",
     "from",
     "until",
     "ground",
     "delay",
     "ahead",
     "ends",
+    "first",
+    "renew",
+    "falls",
     "grow",
     "spread",
     "preview",
@@ -120,7 +142,6 @@ pub const ORDER: &[&str] = &[
     "aura",
     "count",
     "tick",
-    "each",
     "goal",
     "ring",
     "label",
@@ -144,13 +165,17 @@ pub const ORDER: &[&str] = &[
     "form",
     "start",
     "length",
+    "inward",
     "every",
     "times",
     "alternate",
     "holes",
+    "holes_by",
     "faint",
     "destroys",
+    "place_kills",
     "flash",
+    "knock",
     "range",
     "sides",
     "apart",
@@ -162,12 +187,18 @@ pub const ORDER: &[&str] = &[
     "room",
     "through",
     "reach",
+    "absorbs",
+    "follows",
     "orbit",
     "around",
+    "push",
     "seen",
+    "clears",
+    "sweeps",
     "event",
     "on",
     "cast",
+    "cast_start",
     "aura_applied",
     "aura_removed",
     "health_below",
@@ -176,9 +207,11 @@ pub const ORDER: &[&str] = &[
     "secs",
     "since",
     "nth",
+    "each",
     "appears",
     "death",
     "hit",
+    "lands",
     "aura_gone",
     "enter",
     "again",
@@ -189,8 +222,9 @@ pub const ORDER: &[&str] = &[
 
 /// Tables of named entries: each entry under them gets a header.
 const COLLECTIONS: &[&str] = &[
-    "npc", "ability", "phase", "place", "ground", "mark", "line", "volley", "flash", "range",
-    "apart", "streak", "room", "reach", "event", "layer", "glow", "fade", "area", "path", "spell",
+    "npc", "ability", "phase", "place", "ground", "mark", "line", "volley", "flash", "knock",
+    "range", "apart", "streak", "room", "reach", "event", "layer", "glow", "fade", "area", "path",
+    "pull", "spell",
 ];
 
 /// An encounter as a draft file's text: `header` as `#` comment lines,
@@ -449,7 +483,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::{Ability, Npc, Phase, Role, Rubric, Shape, Trigger};
+    use crate::{Ability, Control, Npc, Phase, Role, Rubric, Shape, Trigger};
 
     /// Every committed draft, written again from what it says: its header
     /// from its comment lines, the encounter it gives, and the encounter
@@ -551,6 +585,9 @@ mod tests {
         ] {
             keys(false, &Value::Table(file.parse().unwrap()), &mut seen);
         }
+        // A level's, its pulls among them.
+        let level = crate::tests::every_level_key();
+        keys(false, &Value::try_from(&level).unwrap(), &mut seen);
         let unranked: Vec<&String> = seen
             .iter()
             .filter(|k| !ORDER.contains(&k.as_str()))
@@ -567,12 +604,15 @@ mod tests {
         assert_eq!(Encounter::deserialize(Value::Table(back)).unwrap(), e);
         assert!(text.contains("\n[map.glow.g]\n"), "{text}");
         // The map's areas, paths and fades each under a header, in the
-        // schema's order; its transition on one line; the speeds a table.
+        // schema's order (a hang after the ceiling, the map's and an
+        // area's); its transition on one line; the speeds a table.
         for header in [
+            "\nlevel = 1.0\nceiling = 1.0\nhang = 1.0\nlight = \"graded\"\n",
             "\n[map.fade.group]\nenabled = false\nname = \"Fade\"\ngroup = 1\nalpha = 0.5\n",
-            "\n[map.area.a]\nencounter = 1\nenabled = false\nname = \"Area\"\nceiling = 1.0\n",
+            "\n[map.area.a]\nencounter = 1\nenabled = false\nname = \"Area\"\nceiling = 1.0\nhang = 1.0\nstencil = [{ center = [0.0, 0.0], radius = 1.0 }]\nfar = 1.0\n",
             "\n[map.path.3]\nenabled = false\nname = \"Path\"\nspell = 1\nfrom = \"a\"\nto = \"b\"\nmode = \"leap\"\nspeed = 1.0\nwidth = 1.0\npoints = [[0.0, 0.0], [1.0, 1.0]]\n",
             "\n[travel]\nrun = 1.0\nmount = 1.0\nvehicle = 1.0\n",
+            "\n[npc.boss]\nenabled = false\nname = \"Boss\"\ncreature = [1]\nrole = \"boss\"\ncontrol = \"stun\"\nforces = 1\nicon = 1\n",
         ] {
             assert!(text.contains(header), "{header}\n{text}");
         }
@@ -582,6 +622,17 @@ mod tests {
             ),
             "{text}"
         );
+        // A level's pull under a header of its own, its keys in the
+        // schema's order.
+        let Value::Table(level) = Value::try_from(&level).unwrap() else {
+            panic!("a level is a table");
+        };
+        let mut out = String::new();
+        emit(&mut out, &[], &level);
+        assert_eq!(
+            out,
+            "\n[pull.first]\nenabled = false\nname = \"Pull\"\norder = 1\noptional = true\narea = \"a\"\nnpc = [\"boss\", \"boss\"]\nspots = [[0.0, 0.0], [1.0, 1.0]]\n"
+        );
     }
 
     /// An instance file is written once, its header as it always was: what
@@ -590,7 +641,7 @@ mod tests {
     fn an_instance_file_is_written_with_its_header_alone() {
         assert_eq!(
             instance_text("written once", "The Raid", "raid", 1320, 3004),
-            "# written once\nschema = 1\nname = \"The Raid\"\nkind = \"raid\"\njournal = 1320\nmap = 3004\n"
+            "# written once\nschema = 2\nname = \"The Raid\"\nkind = \"raid\"\njournal = 1320\nmap = 3004\n"
         );
     }
 
@@ -612,10 +663,13 @@ mod tests {
                 name: "Ula'tek".into(),
                 creature: vec![248711],
                 role: Role::Boss,
+                control: Control::default(),
                 icon: Some(7_000_001),
                 owner: None,
                 shares: None,
                 still: false,
+                forces: None,
+                aloft: vec![],
                 only: vec![],
             },
         );
@@ -667,6 +721,10 @@ mod tests {
                         spell: 77,
                         by: None,
                     },
+                    Trigger::CastStart {
+                        spell: 78,
+                        by: Some("ulatek".into()),
+                    },
                 ],
                 again: false,
                 leave: Vec::new(),
@@ -675,7 +733,7 @@ mod tests {
         );
         let text = draft_text(&e, &BTreeMap::new(), "generated\n\ndo not edit").unwrap();
         assert!(
-            text.starts_with("# generated\n#\n# do not edit\nschema = 1\n"),
+            text.starts_with("# generated\n#\n# do not edit\nschema = 2\n"),
             "{text}"
         );
         assert!(
@@ -688,7 +746,7 @@ mod tests {
         );
         assert!(
             text.contains(
-                "enter = [{ phase = \"stage-one\" }, { health_below = { npc = \"ulatek\", pct = 50.0 } }, { cast = { spell = 77 } }]"
+                "enter = [{ phase = \"stage-one\" }, { health_below = { npc = \"ulatek\", pct = 50.0 } }, { cast = { spell = 77 } }, { cast_start = { spell = 78, by = \"ulatek\" } }]"
             ),
             "{text}"
         );
@@ -711,7 +769,7 @@ mod tests {
     #[test]
     fn each_difficulty_reads_back_to_its_own_encounter() {
         let mut e: Encounter = toml::from_str(
-            "schema = 1\nencounter = 3445\nname = \"Entombed Sentinels\"\ninstance = \"raid\"\n",
+            "schema = 2\nencounter = 3445\nname = \"Entombed Sentinels\"\ninstance = \"raid\"\n",
         )
         .unwrap();
         e.ability.insert(
@@ -835,7 +893,7 @@ mod tests {
         let file = text_file(&texts, "this machine's").unwrap();
         assert_eq!(
             file,
-            "# this machine's\nschema = 1\n\
+            "# this machine's\nschema = 2\n\
              \n[ability.mark-of-blood]\ntext = \"Marks players within 40 yards.\"\n\
              \n[difficulty.lfr.ability.mark-of-blood]\ntext = \"Marks players within 30 yards.\"\n\
              \n[difficulty.mythic.ability.mark-of-blood]\ntext = \"Marks them twice.\"\n"

@@ -1,5 +1,5 @@
 # Altar of Fangs: written once by tools/gen-rubric.sh (build 12.1.0.69933), then tuned by hand.
-schema = 1
+schema = 2
 name = "Altar of Fangs"
 kind = "dungeon"
 journal = 1322
@@ -17,6 +17,165 @@ map = 2993
 # first two levels are terrain, each render cut over the ground its parties
 # walked (`ground = "walked"`, every stored keystone run's posts on it); the
 # third is buildings, cut by their own groups.
+#
+# Each level's pulls are the usual route's packs, from the twelve completed
+# keystone runs stored by 2026-10-09 (+7 to +15): who is in each (the
+# instance's creatures below, one entry a member), where each member
+# stands until it is pulled, and the route's order. The packs are a route
+# addon's enemy groups (its pack of each enemy), placed in world yards by
+# a fit of its map to the creatures' first posts, a level at a time (a
+# median 9-11 yd off, about what a tank's pull drags a pack); a pull is
+# the groups the runs engage together, each member's spot the median of
+# the first posts matched to it on three runs or more, else the addon's
+# spot. A pull's share of the enemy forces is its members' (`Pull::forces`),
+# never written: the route's pulls give 858 of 817 (105%) without the
+# optional one, 872 with it; the runs whose logs begin at the entrance
+# killed 825-851. Packs no run or almost none took (two of the third
+# level's three Ula'tek's Chosen packs, two Blades by its west wall) are
+# left out.
+
+# The dungeon's creatures outside its bosses' own tables, and the enemy
+# forces each gives as it dies: the season's values as a route addon's
+# data gave them on 2026-10-23, checked against the stored runs (the ten
+# whose logs begin at the entrance sum to 825-851 of the 817, none under;
+# the +15's and the over-time +10's logs begin in the first hall and miss
+# its opening packs, 692 and 711). The creature ids are the runs'. The
+# bosses (Rav'i 259445, The Writhing Coil 259446, Zul'jan 259447) and
+# their own adds are their encounters' and give none. The hostiles the
+# runs killed that the forces data does not list (the affix's Voidbound
+# Emissary among them) give none and are not here.
+forces = 817
+
+# `control = "immune"`: in the twelve runs no stun or incapacitate landed
+# on these five (two Thunderstorms, a knock back, landed on the Chieftain
+# and the Harrower), while the trash beside them took 100 to 160 each
+# (Shockwave, Hammer of Justice, Blinding Light, Shadowfury, Incapacitating
+# Roar). Living Venom took 16 stuns and no incapacitate, too few to say:
+# left at the default until proven.
+
+# The first level: the hall from the entrance to Rav'i.
+[npc.venom-leech]
+name = "Venom Leech"
+creature = [261550]
+role = "add"
+forces = 1
+
+[npc.ravenous-descendant]
+name = "Ravenous Descendant"
+creature = [261553]
+role = "add"
+forces = 5
+
+# On the first level and the third.
+[npc.primal-serpent]
+name = "Primal Serpent"
+creature = [261560]
+role = "add"
+forces = 7
+
+# Four on the first level, two in Zul'jan's guard.
+[npc.ritual-chieftain]
+name = "Ritual Chieftain"
+creature = [270306]
+role = "add"
+control = "immune"
+forces = 25
+
+# Blood Sacrifice raises them from the Chieftain's victims, 30 to 70 a
+# run; none dies.
+[npc.ritual-spirit]
+name = "Ritual Spirit"
+creature = [270378]
+role = "pet"
+owner = "ritual-chieftain"
+
+# Three on the first level, one on the third.
+[npc.twinfang-harrower]
+name = "Twinfang Harrower"
+creature = [261554]
+role = "add"
+control = "immune"
+forces = 25
+
+# The second level: down to The Writhing Coil.
+[npc.bloodletter]
+name = "Bloodletter"
+creature = [261552]
+role = "add"
+forces = 5
+
+# On the second level and the third.
+[npc.high-evolutionist]
+name = "High Evolutionist"
+creature = [261557]
+role = "add"
+forces = 7
+
+# Three, one a pull; the last stands with The Writhing Coil's guard.
+[npc.rattling-writhe]
+name = "Rattling Writhe"
+creature = [262011]
+role = "add"
+control = "immune"
+forces = 25
+
+# Three eggs by the first pack; each casts Hatch as the party nears (180
+# of 200 Hatchlings came within 3 s of one), and none dies.
+[npc.infused-eggs]
+name = "Infused Eggs"
+creature = [264798]
+role = "object"
+
+[npc.hatchling]
+name = "Hatchling"
+creature = [261556]
+role = "pet"
+owner = "infused-eggs"
+
+# The five Uncoiled Writhes of The Writhing Coil's intro, posted once each
+# 7.7 to 8.6 s before every pull as they slither in and become the Coil
+# (they cast Assimilation, 60 on twelve runs, and never die). Nothing to
+# fight: left undrawn.
+[npc.intro-writhe]
+name = "Uncoiled Writhe"
+creature = [270417]
+role = "ignore"
+
+# The third level: from the Ascendant Serpent to Zul'jan.
+[npc.blade-of-the-altar]
+name = "Blade of the Altar"
+creature = [271453]
+role = "add"
+forces = 5
+
+# A lieutenant, one a run.
+[npc.ascendant-serpent]
+name = "Ascendant Serpent"
+creature = [261573]
+role = "add"
+control = "immune"
+forces = 30
+
+# Infest bursts from its carriers as it comes off: all 330 of these
+# Hatchlings were first posted within 3 s of an Infest coming off.
+[npc.infest-hatchling]
+name = "Hatchling"
+creature = [272672]
+role = "pet"
+owner = "ascendant-serpent"
+
+[npc.ulateks-chosen]
+name = "Ula'tek's Chosen"
+creature = [263109]
+role = "add"
+control = "immune"
+forces = 25
+
+[npc.living-venom]
+name = "Living Venom"
+creature = [263112]
+role = "add"
+forces = 1
 
 # The first level (the floors cache's level 1): from the entrance south
 # along the hall to Ravi.
@@ -25,12 +184,56 @@ floor = "altar-of-fangs-L1"
 ground = "walked"
 
 [level.2588.map.area.entrance]
-shape = [{ center = [1870, 2105], radius = 15 }]
+shape = [{ center = [1906, 2116], radius = 15 }]
+
+[level.2588.map.area.entrance-packs]
+name = "The entrance"
+shape = [
+    { center = [1865, 2069], radius = 19 },
+    { center = [1870, 2166], radius = 18 },
+    { center = [1804, 2088], radius = 15 },
+    { center = [1778, 2192], radius = 13 },
+    { center = [1778, 2043], radius = 12 },
+]
+
+[level.2588.map.area.first-harrower]
+name = "The first Twinfang Harrower"
+shape = [{ center = [1774, 2118], radius = 13 }, { center = [1751, 2146], radius = 16 }]
+
+[level.2588.map.area.west-serpents]
+name = "Two Primal Serpents on the west side"
+shape = [{ center = [1806, 2149], radius = 11 }]
+
+[level.2588.map.area.east-serpents]
+name = "Primal Serpents on the east side"
+shape = [{ center = [1753, 2087], radius = 16 }]
+
+[level.2588.map.area.descendants]
+name = "Ravenous Descendants down the hall"
+shape = [{ center = [1727, 2116], radius = 12 }, { center = [1692, 2118], radius = 8 }]
+
+[level.2588.map.area.wall-leeches]
+name = "Venom Leeches by the walls"
+shape = [{ center = [1716, 2086], radius = 17 }, { center = [1715, 2150], radius = 17 }]
+
+[level.2588.map.area.east-chieftain]
+name = "The east Ritual Chieftain"
+shape = [{ center = [1684, 2088], radius = 19 }]
+
+[level.2588.map.area.west-chieftain]
+name = "The west Ritual Chieftain"
+shape = [{ center = [1682, 2155], radius = 18 }]
+
+[level.2588.map.area.harrowers]
+name = "The Twinfang Harrowers before Rav'i"
+shape = [{ center = [1645, 2117], radius = 11 }]
 
 [level.2588.map.area.ravi-court]
 name = "Ravi's court"
 shape = [{ center = [1535, 2117], radius = 32 }]
 encounter = 3456
+# Rav'i (3456): 14 pulls, 225° ×4, 165° ×3, 240° ×3, 180° ×2, 195° ×2
+turn = 225
 
 [level.2588.map.area.departure]
 name = "On to the second level"
@@ -40,14 +243,158 @@ shape = [{ center = [1455, 2115], radius = 12 }]
 from = "entrance"
 to = "ravi-court"
 points = [
-    [1870, 2105], [1780, 2110], [1695, 2110], [1665, 2118],
-    [1600, 2118], [1535, 2117],
+    [1902, 2116], [1780, 2116], [1696, 2116], [1665, 2117],
+    [1618, 2117], [1535, 2117],
 ]
 
 [level.2588.map.path.ravi-to-departure]
 from = "ravi-court"
 to = "departure"
-points = [[1535, 2117], [1500, 2113], [1455, 2115]]
+points = [[1535, 2117], [1491, 2117], [1455, 2115]]
+
+# Pull 1, the entrance: two Ritual Chieftain packs, one by each wall,
+# with the Venom Leeches before them, pulled together in the first 15 s
+# (the Chieftains on 10 and 12 of 12 runs, the middle leeches on 12, the
+# north-east ones on 9, the north-west on 7).
+[level.2588.pull.entrance-packs]
+name = "The entrance"
+order = 1
+area = "entrance-packs"
+npc = [
+    "ritual-chieftain", "ritual-chieftain", "primal-serpent",
+    "primal-serpent", "ravenous-descendant", "ravenous-descendant",
+    "ravenous-descendant", "ravenous-descendant", "venom-leech",
+    "venom-leech", "venom-leech", "venom-leech", "venom-leech",
+    "venom-leech", "venom-leech", "venom-leech", "venom-leech",
+    "venom-leech", "venom-leech", "venom-leech", "venom-leech",
+    "venom-leech", "venom-leech",
+]
+spots = [
+    [1780, 2198.7], [1779.7, 2036.9], [1774.3, 2192.6],
+    [1772.7, 2042.1], [1782, 2046.9], [1781.7, 2188.1],
+    [1777.4, 2188.1], [1776.8, 2046.6], [1879.8, 2172.6],
+    [1873.5, 2167.5], [1870.3, 2155.5], [1868.9, 2067.8],
+    [1868.7, 2058.5], [1866.7, 2081.7], [1862.2, 2160.9],
+    [1861.8, 2171.1], [1860.5, 2062.4], [1859.4, 2072.8],
+    [1809.3, 2080.6], [1807, 2095.7], [1806.2, 2089.2],
+    [1800, 2083.8], [1799.8, 2092.9],
+]
+
+# Pull 2, the hall's middle: a Twinfang Harrower with two Primal Serpents
+# and two Ravenous Descendants, and five more Descendants with three
+# leeches south-west of it, at 13-16 s (11 and 10 runs).
+[level.2588.pull.first-harrower]
+name = "The first Twinfang Harrower"
+order = 2
+area = "first-harrower"
+npc = [
+    "twinfang-harrower", "primal-serpent", "primal-serpent",
+    "ravenous-descendant", "ravenous-descendant", "ravenous-descendant",
+    "ravenous-descendant", "ravenous-descendant", "ravenous-descendant",
+    "ravenous-descendant", "venom-leech", "venom-leech", "venom-leech",
+]
+spots = [
+    [1773.9, 2117.5], [1772.1, 2112.1], [1771.6, 2125.8],
+    [1776.8, 2111.1], [1776.1, 2124.7], [1755.6, 2152.9],
+    [1754.5, 2140.5], [1745.2, 2137.2], [1744.3, 2153.9],
+    [1743.1, 2145.5], [1757.9, 2142.2], [1752.2, 2137.9],
+    [1752, 2156.6],
+]
+
+# Two Primal Serpents by the west wall, between the entrance's west pack
+# and the hall: taken on 8 of 12 runs, about a minute in, often with the
+# west Chieftain's stragglers.
+[level.2588.pull.west-serpents]
+name = "Two Primal Serpents on the west side"
+order = 3
+optional = true
+area = "west-serpents"
+npc = ["primal-serpent", "primal-serpent"]
+spots = [[1806.3, 2154], [1805, 2143.8]]
+
+# Two Primal Serpents and three leeches by the east wall, about two
+# minutes in (11 runs).
+[level.2588.pull.east-serpents]
+name = "Primal Serpents on the east side"
+order = 4
+area = "east-serpents"
+npc = [
+    "primal-serpent", "primal-serpent", "venom-leech", "venom-leech",
+    "venom-leech",
+]
+spots = [
+    [1751.3, 2083.4], [1751.2, 2089.5], [1758.3, 2096.3],
+    [1755.3, 2088.3], [1749, 2079.4],
+]
+
+# Two pairs of Ravenous Descendants down the hall's middle (11 and 7
+# runs), about three minutes in.
+[level.2588.pull.descendants]
+name = "Ravenous Descendants down the hall"
+order = 5
+area = "descendants"
+npc = [
+    "ravenous-descendant", "ravenous-descendant", "ravenous-descendant",
+    "ravenous-descendant",
+]
+spots = [
+    [1727.3, 2109.7], [1727.3, 2122.4], [1693.6, 2120.4],
+    [1690.4, 2116.3],
+]
+
+# Venom Leeches along both walls before the last packs (11 and 10 runs),
+# most often chained into the Chieftains after them.
+[level.2588.pull.wall-leeches]
+name = "Venom Leeches by the walls"
+order = 6
+area = "wall-leeches"
+npc = [
+    "venom-leech", "venom-leech", "venom-leech", "venom-leech",
+    "venom-leech", "venom-leech", "venom-leech",
+]
+spots = [
+    [1723.5, 2082], [1722.7, 2090.6], [1720.2, 2154.3],
+    [1720, 2146.5], [1712.4, 2083.4], [1704.9, 2088.4],
+    [1703.5, 2149.9],
+]
+
+# The last two Ritual Chieftain packs, one by each wall, 4-5 minutes in on
+# every run, each a Chieftain with two Primal Serpents and two Ravenous
+# Descendants.
+[level.2588.pull.east-chieftain]
+name = "The east Ritual Chieftain"
+order = 7
+area = "east-chieftain"
+npc = [
+    "ritual-chieftain", "primal-serpent", "primal-serpent",
+    "ravenous-descendant", "ravenous-descendant",
+]
+spots = [
+    [1680, 2079.4], [1688.9, 2082.1], [1678.7, 2089.2],
+    [1685.6, 2085.9], [1685.3, 2101.2],
+]
+
+[level.2588.pull.west-chieftain]
+name = "The west Ritual Chieftain"
+order = 8
+area = "west-chieftain"
+npc = [
+    "ritual-chieftain", "primal-serpent", "primal-serpent",
+    "ravenous-descendant", "ravenous-descendant",
+]
+spots = [
+    [1679.3, 2154.4], [1683.9, 2147.3], [1674.3, 2161.1],
+    [1685.4, 2145.3], [1684.8, 2167.3],
+]
+
+# Two Twinfang Harrowers before Rav'i's court, the level's last pull on
+# every run.
+[level.2588.pull.harrowers]
+name = "The Twinfang Harrowers before Rav'i"
+order = 9
+area = "harrowers"
+npc = ["twinfang-harrower", "twinfang-harrower"]
+spots = [[1645.5, 2111.3], [1645.4, 2121.8]]
 
 # The second level: The Writhing Coil.
 [level.2589.map]
@@ -58,10 +405,32 @@ ground = "walked"
 name = "From the first level"
 shape = [{ center = [1435, 2114], radius = 12 }]
 
+[level.2589.map.area.first-writhe]
+name = "The first Rattling Writhe"
+shape = [
+    { center = [1363, 2129], radius = 15 },
+    { center = [1381, 2108], radius = 8 },
+    { center = [1393, 2138], radius = 16 },
+]
+
+[level.2589.map.area.bloodletters]
+name = "Bloodletters and a High Evolutionist"
+shape = [{ center = [1354, 2085], radius = 16 }, { center = [1341, 2102], radius = 17 }]
+
+[level.2589.map.area.second-writhe]
+name = "The second Rattling Writhe"
+shape = [{ center = [1368, 2053], radius = 20 }, { center = [1341, 2058], radius = 26 }]
+
+[level.2589.map.area.coil-guard]
+name = "The Writhing Coil's guard"
+shape = [{ center = [1257, 1956], radius = 22 }]
+
 [level.2589.map.area.writhing-coil-court]
 name = "The Writhing Coil's court"
 shape = [{ center = [1276, 1959], radius = 40 }]
 encounter = 3457
+# The Writhing Coil (3457): 13 pulls, 180° ×10, 270° ×2, 90° ×1
+turn = 180
 
 [level.2589.map.area.departure]
 name = "On to the third level"
@@ -80,18 +449,128 @@ from = "writhing-coil-court"
 to = "departure"
 points = [[1276, 1962], [1255, 1975], [1196, 1962]]
 
+# Pull 1 of the second level: a Rattling Writhe and a High Evolutionist
+# where the party comes down (11 runs), with three Bloodletters north-west
+# of them (8) and a Bloodletter and an Evolutionist west (7). The three
+# Infused Eggs beside them hatch as the party nears.
+[level.2589.pull.first-writhe]
+name = "The first Rattling Writhe"
+order = 1
+area = "first-writhe"
+npc = [
+    "rattling-writhe", "high-evolutionist", "high-evolutionist",
+    "bloodletter", "bloodletter", "bloodletter", "bloodletter",
+]
+spots = [
+    [1382.9, 2105.7], [1379.2, 2109.9], [1367, 2136.8],
+    [1401.2, 2132], [1392.4, 2143.3], [1384.8, 2138.8],
+    [1358.6, 2120.3],
+]
+
+# Four Bloodletters and an Evolutionist on the way south (12 and 9 runs).
+[level.2589.pull.bloodletters]
+name = "Bloodletters and a High Evolutionist"
+order = 2
+area = "bloodletters"
+npc = [
+    "high-evolutionist", "bloodletter", "bloodletter", "bloodletter",
+    "bloodletter",
+]
+spots = [
+    [1345.8, 2100.7], [1355.1, 2095.2], [1352.8, 2075.2],
+    [1346.2, 2109.4], [1330.1, 2097.4],
+]
+
+# The second Rattling Writhe with three Bloodletters (12 runs), and two
+# more Bloodletters and an Evolutionist just north of it (8).
+[level.2589.pull.second-writhe]
+name = "The second Rattling Writhe"
+order = 3
+area = "second-writhe"
+npc = [
+    "rattling-writhe", "high-evolutionist", "bloodletter", "bloodletter",
+    "bloodletter", "bloodletter",
+]
+spots = [
+    [1352.1, 2057.8], [1379.3, 2046], [1370.2, 2056.8],
+    [1354.2, 2057.1], [1349.6, 2059.8], [1320.8, 2057.8],
+]
+
+# The Writhing Coil's guard: a Rattling Writhe, two High Evolutionists and
+# three Bloodletters, pulled inside the court a minute before the boss on
+# every run. A pull stands in an area of its own, never the court.
+[level.2589.pull.coil-guard]
+name = "The Writhing Coil's guard"
+order = 4
+area = "coil-guard"
+npc = [
+    "rattling-writhe", "high-evolutionist", "high-evolutionist",
+    "bloodletter", "bloodletter", "bloodletter",
+]
+spots = [
+    [1263, 1955.7], [1271.3, 1946.5], [1255.7, 1960.7],
+    [1253.7, 1956.1], [1253.5, 1950.5], [1247.6, 1967.9],
+]
+
 # The third level: Zul'jan, reached by a loop south and back north.
 [level.2590.map]
 floor = "altar-of-fangs-L3"
+ceiling = 3
+light = "graded"
+exposure = 1.6
+exclude_models = [
+    7319803, 7277145, 7277142, 7319804,
+    7277144, 7277187, 7354104, 7277140,
+    7897713, 7355773, 7355771, 7355772,
+    7277133,
+]
 
 [level.2590.map.area.arrival]
 name = "From the second level"
 shape = [{ center = [1153, 1954], radius = 12 }]
 
+[level.2590.map.area.evolutionists]
+name = "The High Evolutionists' hall"
+shape = [
+    { center = [1142, 1951], radius = 8 },
+    { center = [1127, 1946], radius = 11 },
+    { center = [1105, 1951], radius = 8 },
+    { center = [1105, 1989], radius = 8 },
+    { center = [1139, 1989], radius = 9 },
+]
+
+[level.2590.map.area.ascendant-serpent]
+name = "The Ascendant Serpent"
+shape = [{ center = [1124, 1970], radius = 8 }, { center = [1086, 2004], radius = 17 }]
+
+[level.2590.map.area.chosen]
+name = "Ula'tek's Chosen and its Living Venom"
+shape = [
+    { center = [1141, 2116], radius = 21 },
+    { center = [1141, 2090], radius = 10 },
+    { center = [1182, 2093], radius = 15 },
+]
+
+[level.2590.map.area.last-harrower]
+name = "The last Twinfang Harrower"
+shape = [
+    { center = [1227, 2144], radius = 13 },
+    { center = [1229, 2092], radius = 9 },
+    { center = [1259, 2115], radius = 14 },
+]
+
+[level.2590.map.area.zuljan-guard]
+name = "Zul'jan's guard"
+shape = [{ center = [1403, 2115], radius = 13 }]
+
 [level.2590.map.area.zuljan-court]
 name = "Zul'jan's court"
+ceiling = 10
+far = 1
 shape = [{ center = [1419, 2112], radius = 40 }]
 encounter = 3458
+# Zul'jan (3458): 13 pulls, 0° ×12, 90° ×1
+turn = 0
 
 [level.2590.map.path.arrival-to-zuljan]
 from = "arrival"
@@ -101,3 +580,128 @@ points = [
     [1180, 2097], [1250, 2113], [1300, 2117], [1400, 2117],
     [1419, 2112],
 ]
+
+[level.2590.view]
+zoom = 1.2
+zoom_max = 8
+
+# Pull 1 of the third level: four High Evolutionists and three Blades of
+# the Altar round the hall the party comes into (10-12 runs each),
+# pulled at once.
+[level.2590.pull.evolutionists]
+name = "The High Evolutionists' hall"
+order = 1
+area = "evolutionists"
+npc = [
+    "high-evolutionist", "high-evolutionist", "high-evolutionist",
+    "high-evolutionist", "blade-of-the-altar", "blade-of-the-altar",
+    "blade-of-the-altar",
+]
+spots = [
+    [1143.1, 1989.4], [1142.2, 1951], [1105.3, 1988.8],
+    [1105.1, 1951.4], [1135.4, 1987.8], [1132.8, 1948.7],
+    [1121.9, 1944.3],
+]
+
+# The Ascendant Serpent, a lieutenant, with two Blades south-west of it
+# (12 runs). Its Infest hatches the Hatchlings.
+[level.2590.pull.ascendant-serpent]
+name = "The Ascendant Serpent"
+order = 2
+area = "ascendant-serpent"
+npc = ["ascendant-serpent", "blade-of-the-altar", "blade-of-the-altar"]
+spots = [[1124.5, 1970], [1091.6, 1994.4], [1079.9, 2014.1]]
+
+# Ula'tek's Chosen with six Living Venom (12 runs) and two Blades south of
+# it (12); four more Blades west of those join on 6 of 12 runs. The
+# other two Chosen packs, to the south and to the west, were taken on
+# none and 2 runs, and are not the route.
+[level.2590.pull.chosen]
+name = "Ula'tek's Chosen and its Living Venom"
+order = 3
+area = "chosen"
+npc = [
+    "ulateks-chosen", "blade-of-the-altar", "blade-of-the-altar",
+    "blade-of-the-altar", "blade-of-the-altar", "blade-of-the-altar",
+    "blade-of-the-altar", "living-venom", "living-venom", "living-venom",
+    "living-venom", "living-venom", "living-venom",
+]
+spots = [
+    [1187.8, 2096.1], [1155.1, 2109], [1145.3, 2090.9],
+    [1144.4, 2122.5], [1136.1, 2088.6], [1132.8, 2111.8],
+    [1132.4, 2122.7], [1191.3, 2092.3], [1184, 2101.5],
+    [1183.2, 2086.5], [1178.7, 2087.7], [1177.5, 2098.7],
+    [1172.5, 2091.6],
+]
+
+# The last Twinfang Harrower with two Primal Serpents and two Blades
+# (12 runs), two Blades east of it (12) and two west (7).
+[level.2590.pull.last-harrower]
+name = "The last Twinfang Harrower"
+order = 4
+area = "last-harrower"
+npc = [
+    "twinfang-harrower", "primal-serpent", "primal-serpent",
+    "blade-of-the-altar", "blade-of-the-altar", "blade-of-the-altar",
+    "blade-of-the-altar", "blade-of-the-altar", "blade-of-the-altar",
+]
+spots = [
+    [1257.5, 2115.7], [1262.7, 2110.5], [1261.2, 2119.1],
+    [1258.1, 2107.8], [1253.9, 2122.6], [1234.4, 2139.9],
+    [1231.6, 2094], [1225.5, 2090.7], [1220.5, 2147.4],
+]
+
+# Zul'jan's guard: two Ritual Chieftains, Ula'tek's Chosen and two Blades,
+# pulled in the court a minute before the boss on every run.
+[level.2590.pull.zuljan-guard]
+name = "Zul'jan's guard"
+order = 5
+area = "zuljan-guard"
+npc = [
+    "ritual-chieftain", "ritual-chieftain", "ulateks-chosen",
+    "blade-of-the-altar", "blade-of-the-altar",
+]
+spots = [
+    [1406, 2110.9], [1406, 2119.5], [1401.7, 2115.4],
+    [1401.4, 2122], [1401.1, 2108.4],
+]
+
+# The bosses' rooms: what of each court's floor the fights key on.
+
+# Rav'i's Carrion Piles, the three spots she feeds on: at each Ssscavenging
+# she walks to the nearest one and the log posts her exactly on it (to a
+# tenth of a yard, on 35 feeds over 13 pulls), shielded until the party
+# breaks the shield. A pile Fresh Meat fell on (a Twinfang skewered by
+# Ravenous Stomp's stalactites, which the log never writes) sends her into
+# a Feeding Frenzy, so the tank drags her toward one it missed. Their size
+# is not in the log; 4 yd is drawn.
+[encounter.3456.place.carrion-pile-north]
+name = "Carrion Pile (north)"
+kind = "pool"
+tint = "amber"
+at = [1562.8, 2131.1]
+radius = 4
+
+[encounter.3456.place.carrion-pile-south]
+name = "Carrion Pile (south)"
+kind = "pool"
+tint = "amber"
+at = [1510.7, 2134.6]
+radius = 4
+
+[encounter.3456.place.carrion-pile-east]
+name = "Carrion Pile (east)"
+kind = "pool"
+tint = "amber"
+at = [1540.3, 2095.7]
+radius = 4
+
+# The Writhing Coil forms where its five Writhes reform after each split,
+# on one spot to a tenth of a yard (1256.8, 1958.4) on 20 of 20 splits,
+# and it is pulled from there on 9 of 12 runs.
+[encounter.3457.place.coil-spot]
+name = "Where the Coil forms"
+kind = "spawn"
+tint = "green"
+at = [1256.8, 1958.4]
+radius = 3

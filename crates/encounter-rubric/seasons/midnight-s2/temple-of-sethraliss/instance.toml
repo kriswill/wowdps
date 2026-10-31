@@ -9,8 +9,12 @@ map = 1877
 # render is cut over the ground its parties walked (every stored keystone
 # run's posts on it), as gen-floors drew them from a level posts file.
 
+# Its region frames 810 by 1,187 yd, at 6.75 px a yard; the crop keeps
+# where its parties walk and 80 yd past it (every 10 yd cell with three
+# posts or more), at 8 px a yard, the minimap still under the rest.
 [level.1038.map]
 floor = "temple-of-sethraliss-L1"
+crop = [3158, 3010, 3960, 3570]
 ground = "walked"
 
 [level.1043.map]
