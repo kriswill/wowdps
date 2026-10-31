@@ -257,13 +257,13 @@ pub fn raid_csv(series: &[u64], bucket_ms: u64) -> String {
     out
 }
 
-/// `dps.tsv` (the replay's, beside the seven files): each player's
-/// damage on the meter's grid, the curve the GUI's graph draws for a
-/// player (R12's `Timeline`), a line a player: their whole name as
-/// `units.tsv` names them (`Name-Realm-Region`), the bucket's length in ms
-/// (1 at least) and the buckets, comma separated; no heading. A stored
-/// fight's comes from its details tier, a pull cut from a log from its
-/// meter; both through this writer.
+/// `dps.tsv`, which a client (the replay) lays beside the seven files:
+/// each player's damage on the meter's grid, the curve the GUI's graph
+/// draws for a player (R12's `Timeline`), a line a player: their whole
+/// name as `units.tsv` names them (`Name-Realm-Region`), the bucket's
+/// length in ms (1 at least) and the buckets, comma separated; no heading.
+/// `write_dir` (and so `replay-export`) writes the seven files alone,
+/// never this one.
 pub fn dps_tsv<'a>(players: impl IntoIterator<Item = (&'a str, u32, &'a [u64])>) -> String {
     let mut out = String::new();
     for (name, bucket_ms, buckets) in players {
