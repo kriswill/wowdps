@@ -502,6 +502,8 @@ fn the_files_read_as_the_extractor_wrote_them() {
         log: "WoWCombatLog-100726_200000.txt",
         owner: Some("Player-1-A"),
         order: Some(3),
+        local_ms: None,
+        best_pct: None,
     };
     assert_eq!(
         csv::pull_txt(&cut, &facts),
@@ -509,6 +511,19 @@ fn the_files_read_as_the_extractor_wrote_them() {
          instance = The Venomous Abyss\nkind = raid\nencounter_id = 3000\nmap = 3004\n\
          date = 2026-10-07\nlog = WoWCombatLog-100726_200000.txt\nstart = 1791428460000\n\
          owner = Player-1-A\norder = 3\n"
+    );
+    // The local start and the best, where the cutter knows them.
+    let known = PullFacts {
+        local_ms: Some(1_791_403_260_000),
+        best_pct: Some(0),
+        ..facts
+    };
+    assert!(
+        csv::pull_txt(&cut, &known).ends_with(
+            "start = 1791428460000\nlocal = 1791403260000\nowner = Player-1-A\nbest = 0\norder = 3\n"
+        ),
+        "{}",
+        csv::pull_txt(&cut, &known)
     );
     let named = PullFacts {
         instance: Some("March on Quel'Danas"),

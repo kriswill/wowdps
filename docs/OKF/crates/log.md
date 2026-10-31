@@ -2,6 +2,10 @@
 
 ## 2026-10-30
 
+- **Update** — [wowdps-proto](proto.md), [wowdps-history](history.md):
+  `replay::csv::PullFacts` gains `local_ms` and `best_pct`, and
+  `pull.txt` says `local` and `best` where they are given;
+  `replay-export` gives the card's.
 - **Update** — [wowdps-gui-logic](gui-logic.md): the theme's
   `data.tint_white` and `data.tint_ice`, the encounter rubric's white and
   ice on a replay's map, on every built-in theme (`[themes.<name>.data]`
