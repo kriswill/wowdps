@@ -1,5 +1,12 @@
 # Log
 
+## 2026-10-30
+
+- **Update** — [wowdps-proto](proto.md) holds the generated `placed`
+  table (`placed`, `placed/placed_spells.rs`), moved from the
+  [encounter rubric](encounter-rubric.md); [wowdps-daemon](daemon.md)
+  reads it there and no longer links the rubric.
+
 ## 2026-10-23
 
 - **Update** — macOS support (PR #111): [wowdps-core](core.md) discovers

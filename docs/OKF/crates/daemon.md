@@ -47,7 +47,7 @@ The wowdps daemon: one process owns tail → index → parse → meter → snaps
   the creatures section: [Creature Classifications Come From The Addon](../decisions/creature-classes-come-from-the-addon.md)).
 - `history.rs` — the history store (below).
 - `mine.rs` — whose rows are the reader's (below).
-- `replay.rs` — core's `PlacedTable` over the rubric's generated table.
+- `replay.rs` — core's `PlacedTable` over proto's generated `placed` table.
 - `config.rs` — a section-aware TOML-subset reader of
   `~/.config/wowdps/config.toml`: `logs_dir`, `game_process`,
   `auto_overlay`, `overlay_exit_grace_secs`, `gui_binary`, and the flat
@@ -112,7 +112,7 @@ of the cards (roadmap item 1, [spec](../../spec-history-store.md)).
   ([Stored Pulls Kept Whole](../decisions/stored-pulls-kept-whole.md)).
 - **The replay tier** (v45, R29). Every boss pull and keystone run (never
   an aborted one) is cut into `replay/<id>.bin` (`daemon::replay` over
-  core's cut and the rubric's `placed` table): beside the meter on import
+  core's cut and proto's `placed` table): beside the meter on import
   and regrade (`CutJob::Also`, one parse), as a cut alone after a live close
   once idle (`CutJob::Only`), and by the rewrite queue (`Store::recuts`) for
   a slot lacking a current file — missing, or an older format (format 1,
@@ -186,8 +186,8 @@ out; the store marks a stored fight's when it answers
 ([the Wire decision](../decisions/raid-timeline-and-mine-on-the-wire.md)).
 
 Since v45 the store keeps the REPLAY tier too ([R29](../rulings/r29.md)):
-`replay.rs` implements core's `PlacedTable` over the encounter rubric's
-generated table, the loader cuts a segment beside its meter from one parse
+`replay.rs` implements core's `PlacedTable` over proto's generated
+`placed` table, the loader cuts a segment beside its meter from one parse
 (`CutJob`), a live close queues a cut alone, and retention keeps a replay in
 the details tier's slots and all season for the protected set
 ([why](../decisions/replay-tier-in-the-store.md)) — which since v45 holds

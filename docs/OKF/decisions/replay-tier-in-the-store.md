@@ -23,7 +23,8 @@ parser's `HpHint.pos` and the passive replay events, WORLD_MARKER seeds in
 the index), [`wowdps-proto`](../crates/proto.md) (`replay`: the `WDRP`
 codec and `replay::csv`; `GetReplay` / `Replay`, PROTO_VERSION 45),
 [`wowdps-daemon`](../crates/daemon.md) (`daemon::replay` over
-[`wowdps-encounter-rubric`](../crates/encounter-rubric.md)'s placed table,
+proto's generated placed table, `proto::placed`, the encounter rubric's
+until 2026-10-30,
 the history store's replay slots, `CutJob`), and
 [`wowdps-history`](../crates/history.md) (`replay-export`, `stats`). The
 ruling is [R29](../rulings/r29.md); the fixture

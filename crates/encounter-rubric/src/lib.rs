@@ -74,16 +74,13 @@
 //! `<slug>.txt` gen-floors writes beside each render in the floors cache,
 //! and finds an encounter's render among them. `portraits` does the same
 //! for the NPC portraits: the repository's crops file and the portraits
-//! cache's index. `placed` is the generated table of what players place in
-//! the room (totems, gateways, rings, zones) and how the log tells where
-//! each stands: no encounter's, but read by the extractor's cut and the
-//! replay alike.
+//! cache's index. The generated table of what players place in the room
+//! is proto's (`wowdps_proto::placed`) since 2026-10-30.
 
 mod check;
 pub mod difficulty;
 pub mod floor;
 mod layer;
-pub mod placed;
 pub mod portraits;
 pub mod schema;
 mod stack;

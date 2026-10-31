@@ -7,8 +7,11 @@
 //! from a list curated in tools/extract/src/placegen.rs: the client's
 //! tables prove each entry's name and give its reach and duration, and a
 //! census of real logs (tools/placed-spells-census.csv) shows the log
-//! writing every spell an entry names. The cut (`cut-pull`) keeps the lines
-//! of these spells, and the replay reads them through this table.
+//! writing every spell an entry names. The history store's replay cut
+//! keeps the lines of these spells (core's `replay::cut`, through the
+//! daemon's `PlacedTable` over this table), and the replay draws them by
+//! it: it lives here, beside the store's codecs, because the daemon and a
+//! pure client both read it (CONTRACT.md, R29).
 
 mod placed_spells;
 

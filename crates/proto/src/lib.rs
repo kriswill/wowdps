@@ -15,7 +15,9 @@
 //! `creatures` is the store's `creatures.tsv`: the addon's NPC
 //! classifications (elite, rare, lieutenant), as the replay reads them.
 //! `dirs` resolves the XDG base directories the caches, the store and the
-//! config live under.
+//! config live under. `placed` is the generated table of what players place
+//! in the room (R29): the daemon's replay cut keeps their lines by it and
+//! the replay draws them by it.
 
 pub mod client;
 pub mod creatures;
@@ -24,6 +26,7 @@ pub mod history;
 pub mod json;
 pub mod lua;
 pub mod msg;
+pub mod placed;
 pub mod replay;
 pub mod series;
 pub mod state;

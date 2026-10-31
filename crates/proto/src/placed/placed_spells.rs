@@ -4,10 +4,10 @@
 //!
 //! The spells that place something in the room, by spell id: how the
 //! log tells where each stands, how it is drawn, its reach and how
-//! long it stands (`super::Placed`). Membership is curated in
-//! tools/extract/src/placegen.rs; every name, reach and duration is
-//! the client's (or marked as by hand), and the real-log census
-//! behind each entry sits in placed_spells.expected.md.
+//! long it stands (`wowdps_proto::placed::Placed`). Membership is
+//! curated in tools/extract/src/placegen.rs; every name, reach and
+//! duration is the client's (or marked as by hand), and the real-log
+//! census behind each entry sits in placed_spells.expected.md.
 
 use super::Form::{Area, Gate, Post, Ring};
 use super::Found::{Caster, Target, Thrown, Touch, Trips, Unit};

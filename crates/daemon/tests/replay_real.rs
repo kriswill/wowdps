@@ -13,7 +13,11 @@
 //! says it). Each pull is found in its log's index (its encounter, starting
 //! within 3 s), cut from its seeds and slice as the store cuts it, written
 //! to the tier, read back, and written as files into `OUT/<name>/` with the
-//! tier beside them (`replay.bin`); a line per pull says the sizes.
+//! tier beside them (`replay.bin`); a line per pull says the sizes. Its
+//! `pull.txt` names the cut's zone as the instance and gives no `order`:
+//! the journal's instance name and an encounter's order are the encounter
+//! rubric's, which left wowdps with the replay (2026-10-30), and the cut is
+//! what this test checks.
 //!
 //! With `WOWDPS_REPLAY_KEYS` set, every keystone run each listed log holds
 //! whole is cut too, as the store cuts a key: a line per run says its
@@ -54,23 +58,6 @@ fn tz_of(path: &Path) -> i64 {
         let _ = BufReader::new(f).read_line(&mut first);
     }
     tz_offset_min(&first).map_or(0, i64::from)
-}
-
-/// The rubric's journal: an encounter's instance name and its order.
-fn journal(encounter: u32) -> (Option<String>, Option<u32>) {
-    let Ok(rubric) = wowdps_encounter_rubric::Rubric::embedded() else {
-        return (None, None);
-    };
-    let instance = rubric
-        .encounters()
-        .into_iter()
-        .find(|(id, _, _)| *id == encounter)
-        .map(|(_, _, i)| i.name.clone());
-    let order = rubric
-        .encounter(encounter, None)
-        .and_then(Result::ok)
-        .map(|e| e.order);
-    (instance, order)
 }
 
 #[test]
@@ -214,7 +201,6 @@ fn real_pulls_cut_into_the_replay_tier() {
                 .iter()
                 .find(|s| s.kind == SegmentKind::Encounter)
                 .map(|s| s.raid_timeline(View::Damage));
-            let (instance, order) = journal(p.encounter);
             let dir = PathBuf::from(&out).join(&p.name);
             csv::write_dir(
                 &dir,
@@ -222,10 +208,9 @@ fn real_pulls_cut_into_the_replay_tier() {
                 raid.as_ref()
                     .map(|r| (r.series.as_slice(), u64::from(r.bucket_ms))),
                 &csv::PullFacts {
-                    instance: instance.as_deref(),
                     log,
                     owner,
-                    order,
+                    ..csv::PullFacts::default()
                 },
             )
             .expect("files");
