@@ -2,6 +2,8 @@
 
 ## 2026-10-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): `config::write_atomic`
+  is public, its behavior unchanged.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `icons::halvings`, a
   picture of any size and its alpha-weighted halvings down to the floor
   `icons::level` stops at.

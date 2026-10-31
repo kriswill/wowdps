@@ -44,7 +44,10 @@ cutover changed none of them but their doc comments.
 - `config` — the one reader and writer of `~/.config/wowdps/config.toml`
   for the window and the overlay: every save atomic, and a casual
   gesture's key written alone through `Config::store` / `store_*`, so one
-  surface's launch-time copy never overwrites the other's drag.
+  surface's launch-time copy never overwrites the other's drag. Its
+  `write_atomic` (a sibling temporary file renamed over the target, a
+  symlinked file keeping its link) is public for the clients that keep
+  small files of their own (the replay, the editors).
 - `fold` — accent folding for the row filter and the command palette
   ("akanos" finds Akanôs; Latin-1 and Latin Extended-A only).
 - `fonts` — the window's bundled OFL faces (`crates/gui-logic/fonts/`,
