@@ -2,6 +2,10 @@
 
 ## 2026-10-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): the theme's
+  `data.tint_white` and `data.tint_ice`, the encounter rubric's white and
+  ice on a replay's map, on every built-in theme (`[themes.<name>.data]`
+  sets them); no other token moves.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `config::write_atomic`
   is public, its behavior unchanged.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `icons::halvings`, a
