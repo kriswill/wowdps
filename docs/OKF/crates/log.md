@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-30
+
+- **Update** — [wowdps-gui-logic](gui-logic.md): `spell_tips`, the reader
+  of the per-machine `spell-tips.bin` (format 2: a spell's tooltip words,
+  what a replay's cast lanes ask of it, and the specs whose logs omit the
+  press it is the effect of), landed from the replay branch ahead of the
+  replay's move to its own repository.
+
 ## 2026-10-23
 
 - **Update** — macOS support (PR #111): [wowdps-core](core.md) discovers
