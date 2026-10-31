@@ -174,7 +174,7 @@ function segClose(s) { return (segKind[s] == "Encounter" && segEnd[s] != "") ? s
 # census found 0 mismatches). The row lands on the absorber (actor() of the
 # src / absorber, so a pet's shield would be its owner's; an NPC's is nobody's).
 #
-# Transitions (docs/plan-role-pivots-step5.md §0), every aura line through the
+# Transitions (the role-pivots step 5 plan, §0), every aura line through the
 # passive gate, an absorb after it has opened/extended the segment as combat:
 #   APPLIED  with a trailer opens `applied = remaining = a` (known); without
 #            one opens unknown-applied; an apply while the key is OPEN first

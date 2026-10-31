@@ -11,7 +11,7 @@ live in the private wowdps-replay repository
 (https://github.com/kriswill/wowdps-replay), and the editors (the map
 editor, the portrait editor and the map viewer) in wowdps-editors
 (https://github.com/kriswill/wowdps-editors). Each script's header says
-what it does and how to run it; each has a doc under `docs/OKF/tools/`.
+what it does and how to run it.
 
 ## Rules
 
@@ -59,9 +59,8 @@ what it does and how to run it; each has a doc under `docs/OKF/tools/`.
   replay cut is checked again by wowdps-replay's `tools/extract-check.sh`
   and `tools/spike-check.sh` when its pin moves to it. Every difference
   must be meant.
-- **A new script** carries a header comment (the bundle scaffolds from it):
-  run `okf scaffold`, then bring `docs/OKF/tools/<name>.md` up to the
-  bundle's quality bar.
+- **A new script** carries a header comment that says what it does and
+  how to run it.
 - **`dev-unit.sh` drives the live daemon** (root `AGENTS.md`, "The live
   daemon"). **`skills-update.sh`** is the only way to refresh the vendored
   skills in `.claude/skills/`.

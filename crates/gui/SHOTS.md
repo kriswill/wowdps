@@ -129,8 +129,8 @@ WOWDPS_SHOTS_HISTORY=$S/history-v1 \
 Compare two sets only when they were made from the same inputs. The iced
 GUI's last sets over these inputs (`before/`, `plot-after/`,
 `overlay-iced/`, …) are kept there too; `gui-new-r2/review.html` lays the
-GPUI window's and overlay's pictures beside iced's (`docs/plan-gui-new.md`,
-phase 5's readiness).
+GPUI window's and overlay's pictures beside iced's (the GUI plan, phase 5's
+readiness).
 
 ## Chrome budget — `window::shots::the_chrome_budget_holds_on_the_log`
 

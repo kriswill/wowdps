@@ -1,8 +1,7 @@
 # nix (with flake.nix, devenv.nix, devenv.yaml)
 
 The dev environment both shells import (`nix/dev/`), the flake's packages
-and the home-manager and NixOS modules. Why and how:
-`docs/OKF/decisions/devenv-is-the-reference-shell.md`.
+and the home-manager and NixOS modules.
 
 ## Rules
 
@@ -26,7 +25,7 @@ and the home-manager and NixOS modules. Why and how:
   evaluate stays free-only. Never set `allowUnfree`; another unfree
   package is added to that list by name. (`coderabbit` comes prebuilt
   through its own input.)
-- **Pins agree.** `devenv.yaml`'s nixpkgs, rust-overlay, okf and llm-agents
+- **Pins agree.** `devenv.yaml`'s nixpkgs, rust-overlay and llm-agents
   pins match `flake.lock` (`update-locks.yml` keeps them so weekly).
 - **The toolchain is declared once,** in `rust-toolchain.toml`; never pin a
   Rust version anywhere else.

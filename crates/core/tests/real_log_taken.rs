@@ -1,4 +1,4 @@
-//! R17 over a real log (`docs/plan-role-pivots-step2.md` §8): the
+//! R17 over a real log (the role-pivots step 2 plan, §8): the
 //! taken = dealt identity on every boss pull, a miss-line census (every
 //! `*_MISSED` line must parse to `Missed` or, for an unknown kind, `Other`),
 //! and the wall time of the Taken-bearing parse so a regression shows up

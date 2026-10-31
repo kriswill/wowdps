@@ -12,14 +12,6 @@
     };
     # crane: the two-derivation Rust build (see `packages`).
     crane.url = "github:ipetkov/crane";
-    # okf, the knowledge-bundle CLI (docs/OKF, okflight.toml), ships from
-    # FlakeHub (kriswill/okflight, public); "0" tracks the 0.x release
-    # series — `nix flake update okf` moves to the newest release.
-    # devenv.yaml mirrors this input.
-    okf = {
-      url = "https://flakehub.com/f/kriswill/okflight/0";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     # The CodeRabbit CLI (`coderabbit`, alias `cr`: an AI review of the
     # working tree or a branch, `coderabbit review --agent`) — a prebuilt,
     # unfree binary nixpkgs does not carry, packaged (and updated daily) by
@@ -35,7 +27,6 @@
       nixpkgs,
       rust-overlay,
       crane,
-      okf,
       llm-agents,
       ...
     }:
@@ -55,16 +46,13 @@
       # rust-toolchain.toml — the single declaration (devenv.nix reads the
       # same file), so the two can never drift.
       toolchainFor = pkgs: pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-      # okf, the knowledge-bundle CLI over docs/OKF (okflight.toml), from the
-      # okflight input — on the dev-shell PATH and exported as `.#okf`.
-      okfFor = pkgs: okf.packages.${pkgs.stdenv.hostPlatform.system}.okf;
       # The CodeRabbit CLI, from the llm-agents input — on the dev-shell PATH.
       coderabbitFor = pkgs: llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.coderabbit-cli;
       # BOTH dev shells' contents, declared once: the wrappers, the packages
       # and the environment that `nix develop` and devenv.nix each hand you.
       # Importing the same file is what keeps the twins from drifting; each
-      # shell adds only what it alone plumbs (its toolchain, and the CLIs it
-      # reaches through its own inputs: okf, coderabbit).
+      # shell adds only what it alone plumbs (its toolchain, and the CLI it
+      # reaches through its own input: coderabbit).
       devShellFor = pkgs: import ./nix/dev { inherit pkgs; };
     in
     {
@@ -266,13 +254,9 @@
                 # llvm-tools — everything rust-toolchain.toml lists. devenv reads
                 # the same file through its own `languages.rust`.
                 (toolchainFor pkgs)
-                # okf (scaffold | index | validate | viz) over docs/OKF, the OKF
-                # knowledge bundle — see .claude/skills/knowledge-bundle. It
-                # reaches this shell through the flake's own input and devenv's
+                # coderabbit / cr, the CodeRabbit review CLI. It reaches this
+                # shell through the flake's own llm-agents input and devenv's
                 # through devenv.yaml's, which is why it is not in the shared file.
-                (okfFor pkgs)
-                # coderabbit / cr, the CodeRabbit review CLI — the same split as
-                # okf: this shell's llm-agents input, devenv's mirrored one.
                 (coderabbitFor pkgs)
               ]
               # The clang devenv's languages.rust brings (its setup hook sets

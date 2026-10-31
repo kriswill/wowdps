@@ -10,8 +10,7 @@ tips), seeds the history store's creatures file, reads the store's fights
 encounter rubric's drafts, the floors, the world's geometry, the
 portraits, the level posts, a pull's cut, Warcraft Logs, the stencils,
 sheets and shots) is built on it as a library, by git dependency at a
-pinned revision. Structure: `docs/OKF/crates/extract.md`. The scripts
-that drive it: `tools/AGENTS.md`.
+pinned revision. The scripts that drive it: `tools/AGENTS.md`.
 
 ## Rules
 

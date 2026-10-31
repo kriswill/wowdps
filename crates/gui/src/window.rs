@@ -6,7 +6,7 @@
 //! on show, the filter, the sort, the pointer, the open cards), and every
 //! piece renders from it.
 //!
-//! Built in the redesign's order (`docs/plan-gui-new.md` phase 3): 3.1 the
+//! Built in the redesign's order (the GUI plan's phase 3): 3.1 the
 //! Look — the frame, the top bar, the breakpoints, the zoom and the chrome
 //! — and 3.2 the stage's header, ribbon, tabs and tables. The rail (3.4),
 //! Home (3.5), the inspector (3.3) and the cards over everything (3.6) have

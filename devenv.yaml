@@ -1,19 +1,12 @@
 # Inputs mirror flake.nix, pinned to the exact revs flake.lock has locked —
 # flake.lock is the single source of truth. When bumping: `nix flake update`,
-# copy the new nixpkgs, rust-overlay and okf revs here, then `devenv update`
-# (.github/workflows/update-locks.yml does exactly this weekly).
+# copy the new nixpkgs, rust-overlay and llm-agents revs here, then
+# `devenv update` (.github/workflows/update-locks.yml does exactly this weekly).
 inputs:
   nixpkgs:
     url: github:NixOS/nixpkgs/fe13242281a67641c0102cdb1087f0ebe586c7df
   rust-overlay:
     url: github:oxalica/rust-overlay/550547cefc67e01a6fd11a09e4096a3c844ca840
-    inputs:
-      nixpkgs:
-        follows: nixpkgs
-  # okf, the knowledge-bundle CLI (docs/OKF) — flake.nix tracks the FlakeHub
-  # "0" series; here the rev flake.lock resolved it to.
-  okf:
-    url: github:kriswill/okflight/26b0f908640a541315582fa49aa99ca6659c82a7
     inputs:
       nixpkgs:
         follows: nixpkgs

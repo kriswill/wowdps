@@ -2,10 +2,9 @@
 
 Authoritative expected output for the R19 fixture. **Computed independently of the
 Rust implementation** by `check.awk`'s support arms (the validator's own reading of
-the log grammar under CONTRACT.md R19 and the R2 amendment, as written in
-`docs/plan-role-pivots-step3.md` §0). The machine-readable form is
-`support.expected.tsv`; this file is the same numbers with every derivation shown,
-line by line.
+the log grammar under CONTRACT.md R19 and the R2 amendment). The machine-readable
+form is `support.expected.tsv`; this file is the same numbers with every
+derivation shown, line by line.
 
 Regenerate / check:
 

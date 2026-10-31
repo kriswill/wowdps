@@ -1,6 +1,6 @@
 //! A theme as data (spec §6.1): every colour, face, size and corner a
 //! wowdps GUI draws with, so no surface names a literal. The built-in
-//! `navy` IS the window redesign's Tokens (`docs/design/window-redesign.html`)
+//! `navy` IS the window redesign prototype's Tokens
 //! and the overlay's palette as it has always been; `onyx` and `frost` are
 //! more, and a config may override any of their tokens or define its own
 //! themes on top of them ([`super::Registry`]). The GUI maps whichever is
@@ -125,7 +125,7 @@ tokens! {
 /// The overlay's palette: white and dim on its dark panel, and the yellow
 /// that means live, Σ, crit and "look here" there (and nowhere in the
 /// window). Each role is named for what it marks; `navy`'s values are the
-/// iced overlay's, pixel for pixel (`docs/plan-gui-new.md` phase 2).
+/// iced overlay's, pixel for pixel (the GUI plan's phase 2).
 pub struct OverlayTokens: Color {
     /// The panel's and the tab's fill, drawn at the alpha each surface
     /// asks for (0.92 the panel, 0.85 the tab).

@@ -1,8 +1,8 @@
 //! The window's measures as data (spec §6.1): its type scale and row
 //! pitches, carried by every theme definition so no surface names a size,
 //! the two widths its layout changes at, and the alphas its owner marks and
-//! tab icons are drawn at. The values are the prototype's Tokens
-//! (`docs/design/window-redesign.html`); the overlay names none of them (its
+//! tab icons are drawn at. The values are the redesign prototype's
+//! Tokens; the overlay names none of them (its
 //! sizes are literals it multiplies by its own zoom).
 
 use super::tokens::tokens;

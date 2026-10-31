@@ -18,8 +18,7 @@ updates:
     ignore:
       # DuckDB 2.0 (duckdb / libduckdb-sys 1.20000.0, a semver-minor step
       # from 1.10506) is its own change: a new storage format and a reworked
-      # C API. Bumps within DuckDB 1.x land freely
-      # (docs/OKF/decisions/duckdb-is-bundled-not-system-linked.md).
+      # C API. Bumps within DuckDB 1.x land freely.
       - dependency-name: duckdb
         versions: [">= 1.20000.0"]
       - dependency-name: libduckdb-sys

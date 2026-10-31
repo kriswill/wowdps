@@ -1,4 +1,4 @@
-//! R18 over a real log (`docs/plan-role-pivots-step4.md` §0, the real-log
+//! R18 over a real log (the role-pivots step 4 plan, §0, the real-log
 //! gate): over every segment — pulls and trash alike — no negative span
 //! duration, the capped span list a SUBSET of the uncapped rollup per
 //! (spell, caster) cell (Σ listed durations ≤ the cell's uptime, listed

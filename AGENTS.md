@@ -1,8 +1,7 @@
 # AGENTS.md
 
 How to work in this repository. Each area has its own `AGENTS.md`, loaded
-when you touch that directory; descriptions of how things are built live in
-the knowledge bundle (`docs/OKF/`) and the design docs it links.
+when you touch that directory.
 
 ## What wowdps is
 
@@ -49,8 +48,6 @@ and the dependency policy.
 - `nix/`, `flake.nix`, `devenv.nix`, `devenv.yaml`: the dev shells and
   packages. Read `nix/AGENTS.md` before changing them.
 - `.github/`: CI. Read `.github/AGENTS.md` before changing a workflow.
-- `docs/OKF/`: the knowledge bundle. Read `docs/OKF/AGENTS.md` before
-  editing it.
 
 ## The replay
 
@@ -60,6 +57,14 @@ and the dependency policy.
   replay then bumps its pinned revision.
 - The map editor, the portrait editor and the map viewer live in the
   private repository https://github.com/kriswill/wowdps-editors.
+
+## The suite
+
+This repository is one of three maintained together. Their shared rules,
+records, plans and specs live in a private root repository that holds the
+three as clones under `projects/`. When this checkout sits there, the
+root's `AGENTS.md` loads above this one and adds those rules; without it,
+this file and the ones below it are complete for work here.
 
 ## The live daemon
 
@@ -75,9 +80,16 @@ On a dev machine the live daemon is the `wowdps-dev` systemd user unit
   restarts the daemon and overlay a few seconds later. Warn the user before
   such a build if they may be mid-pull. A stopped unit stays stopped.
 - Never run `wowdps status` while the unit restarts: a one-shot client
-  spawns its own daemon and races the unit.
-- A PROTO_VERSION bump renames the socket. Deploy it with
-  `docs/OKF/playbooks/bump-proto-version.md`.
+  spawns its own daemon and races the unit. Check with
+  `systemctl --user show wowdps-dev -p ActiveState -p MainPID`.
+- A unit stuck in start-limit-hit behind a self-spawned daemon recovers
+  with `systemctl --user reset-failed wowdps-dev; kill <overlay pid>;
+  target/release/wowdps stop; systemctl --user start wowdps-dev`. Query
+  the overlay's pid fresh; never reuse one from earlier output.
+- A PROTO_VERSION bump renames the socket, so the new binary cannot stop
+  the old daemon. Let the unit's restart replace it, remove the stale
+  `wowdps-v<old>.sock` and `.lock` under `$XDG_RUNTIME_DIR/wowdps/`, and
+  restart every client (each session's MCP server, any windowed GUI).
 
 ## Rules
 
@@ -94,9 +106,8 @@ On a dev machine the live daemon is the `wowdps-dev` systemd user unit
   `[skip ci]`; the tag anywhere in a head commit's message skips PR CI, so
   never write it, even quoted, in a code commit. Stage explicit paths:
   another agent may share the checkout.
-- **Knowledge bundle.** After adding a crate, ruling, fixture or generator,
-  or making a decision worth a long commit body, update `docs/OKF/` in the
-  same change (the `knowledge-bundle` skill); `okf validate` must exit 0.
+- **Records.** Decision records, plans and specs are not in this
+  repository. A PR that makes a decision states it in its description.
 - **No real data in the repo.** No real player names, guild names or
   Warcraft Logs report codes in fixtures, tests, docs or commits; inputs
   cut from real logs stay under `~/.local/share/wowdps/`. Extracted game
@@ -132,7 +143,6 @@ wowdps status                       # daemon state, overlay, history store
 wowdps stop                         # stops a daemon; the live one is the unit's
 cargo run --bin wowdps -- --file crates/core/fixtures/sample.txt
 tools/dev-unit.sh status            # the unit's profile, overlay GUI, state
-nix develop -c okf validate         # the bundle (okf is on the shell's PATH)
 coderabbit review --agent           # alias cr; --base main reviews the branch
 wowdps-codeql                       # CodeQL locally; fails on an alert not in the baseline
 ```

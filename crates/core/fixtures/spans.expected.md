@@ -2,10 +2,9 @@
 
 Authoritative expected output for the R18 fixture. **Computed independently of
 the Rust implementation** by `check.awk`'s aura arms (the validator's own
-reading of the log grammar under CONTRACT.md R18 as written in
-`docs/spec-role-pivots.md` §4.2 and `docs/plan-role-pivots-step4.md` §0). The
-machine-readable form is `spans.expected.tsv`; this file is the same numbers with
-every derivation shown, line by line.
+reading of the log grammar under CONTRACT.md R18). The machine-readable form
+is `spans.expected.tsv`; this file is the same numbers with every derivation
+shown, line by line.
 
 Regenerate / check:
 

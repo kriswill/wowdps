@@ -1,4 +1,4 @@
-//! The history store's record codec (roadmap item 1, `docs/spec-history-store.md`).
+//! The history store's record codec (roadmap item 1, the history store's spec).
 //!
 //! The daemon writes one JSON document per file under
 //! `$XDG_DATA_HOME/wowdps/history/v1/`; every reader — the daemon's own
@@ -1514,8 +1514,8 @@ impl TakenOther {
 /// rest in `other`; `taken_sources` is taken-by-attacker-name under the
 /// same cap with its rest in `other_sources` (~5 attackers per player on
 /// a boss pull, but a raid night's Σ listed 74 on one player and would
-/// have cost 345 KB of rows file — the measurement in
-/// `docs/plan-role-pivots-step2b.md`). Both identities hold: Σ kept +
+/// have cost 345 KB of rows file — the measurement in the role-pivots
+/// step 2b plan). Both identities hold: Σ kept +
 /// rollup = the player's Taken row, on either list.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PlayerMitigation {

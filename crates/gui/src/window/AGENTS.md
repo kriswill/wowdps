@@ -1,17 +1,16 @@
 # crates/gui/src/window
 
 The meter window: top bar, pull rail, Home or the stage (fight header,
-ribbon, view tabs, meter, inspector), the palette and the cards. Each
-surface as built: `docs/OKF/crates/gui.md`. The spec is the prototype,
-`docs/design/window-redesign.html`; each step's rationale is linked from
-`docs/OKF/decisions/window-redesign.md`.
+ribbon, view tabs, meter, inspector), the palette and the cards. It was
+built from a design prototype that is not in this repository: its Tokens
+are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
 
 ## Rules
 
-- **The prototype is the spec.** A size, color or behavior comes from it
-  or its Tokens, and the code cites its selector (`.fhead`, `.rail`,
-  `.insp`, `.pal`). A deliberate difference is named in
-  `docs/plan-gui-new.md` or a decision.
+- **The prototype's values stand.** A size, color or behavior came from
+  it or its Tokens, and the code cites its selector (`.fhead`, `.rail`,
+  `.insp`, `.pal`). A deliberate difference is stated in the PR's
+  description.
 - **Draw through `W`** (`w.rs`): tokens, type scale, pitches, accent,
   faces, zoom (`w.z(…)`) and width. The breakpoints are gui-logic's
   `theme::TILE_WINDOW` (1180) and `theme::NARROW_WINDOW` (820), inclusive,

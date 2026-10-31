@@ -1,7 +1,6 @@
 # .github
 
-CI and dependency automation. Rationale:
-`docs/OKF/decisions/devenv-is-the-reference-shell.md`.
+CI and dependency automation.
 
 ## Rules
 

@@ -3,7 +3,7 @@
 The GUI's framework-free half: config, Hyprland IPC, the keymap, history
 pages, the art-cache readers, the fonts, and every model, word and geometry
 the window, the overlay and the talent viewer draw from. Model + proto +
-serde/toml, no UI framework. Module list: `docs/OKF/crates/gui-logic.md`.
+serde/toml, no UI framework.
 
 ## Rules
 

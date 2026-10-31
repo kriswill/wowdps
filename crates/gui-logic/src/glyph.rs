@@ -1,5 +1,5 @@
 //! The window's small line icons as data: the redesign's 16-unit SVG
-//! glyphs (`docs/design/window-redesign.html`, its `IC` table), each a list
+//! glyphs (the redesign prototype's `IC` table), each a list
 //! of shapes in the 16 × 16 box, stroked at [`STROKE`] units with round caps
 //! and joins in one colour by whichever GUI draws them. They replace emoji
 //! the system font may or may not have; no image is decoded for them and no

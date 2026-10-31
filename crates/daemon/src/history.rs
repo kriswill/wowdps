@@ -1,4 +1,4 @@
-//! The history store (roadmap item 1, `docs/spec-history-store.md`): fights
+//! The history store (roadmap item 1, the history store's spec): fights
 //! persist across sessions as per-fight JSON documents under
 //! `$XDG_DATA_HOME/wowdps/history/v1/`, written by this thread, indexed in
 //! memory from their ~400 B cards, and never touched by the hub beyond one
@@ -5469,8 +5469,8 @@ fn uptime_of(blocks: &[PlayerUptime], guid: &str) -> Vec<StoredUptime> {
 /// `amount` / `extra` / `count` + the fold = the player's Taken row. On a
 /// boss pull (~9 abilities, ~5 attackers) nothing folds and `n` is 0; the
 /// cap bites Σ records — and the attacker list of a raid night's Overall
-/// hardest (74 names on one player, measured in
-/// `docs/plan-role-pivots-step2b.md`).
+/// hardest (74 names on one player, measured in the role-pivots step 2b
+/// plan).
 fn cap_taken(mut spells: Vec<Row>) -> (Vec<Row>, TakenOther) {
     spells.sort_by_key(|r| std::cmp::Reverse(r.amount));
     let rest = if spells.len() > TAKEN_SPELLS_CAP {

@@ -1,8 +1,7 @@
 # crates/mcp (wowdps-mcp)
 
 An MCP stdio server exposing the daemon's fight data as tools, reached as
-`wowdps mcp` through the dispatcher's external-command lookup. Tool shapes:
-`docs/OKF/crates/mcp.md`.
+`wowdps mcp` through the dispatcher's external-command lookup.
 
 ## Rules
 

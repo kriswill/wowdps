@@ -1,8 +1,8 @@
-//! The wowdps GUI on Zed's GPUI through GPUI Kit (`docs/spec-gui-new.md`):
+//! The wowdps GUI on Zed's GPUI through GPUI Kit:
 //! a pure rendering client of the wowdps daemon, drawn either as the meter
 //! window (default) or as an overlay tab pinned over the game (`--overlay`,
 //! a wlr-layer-shell surface on Linux, a floating panel on macOS). It
-//! replaced the iced GUI at the cutover (`docs/plan-gui-new.md` phase 5).
+//! replaced the iced GUI at the cutover (the GUI plan's phase 5).
 //!
 //! It depends on `wowdps-model`, `wowdps-proto` and the framework-free
 //! `wowdps-gui-logic` only, never the engine, so it cannot open a combat
