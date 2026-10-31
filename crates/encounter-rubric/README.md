@@ -238,22 +238,22 @@ trash's rules, even to an encounter numbered 0.
 ```toml
 schema = 2
 
-[npc.primal-juggernaut]     # one of the instance's creatures, amended by key
+[npc.stone-brute]           # one of the instance's creatures, amended by key
 still = true
 
-[ability.cinderbolt]
-name = "Cinderbolt"
-spell = [384194, 384197]
-by = "primalist-cinderweaver"   # a key of the instance's [npc]
+[ability.ember-bolt]
+name = "Ember Bolt"
+spell = [900001, 900002]
+by = "flame-caller"         # a key of the instance's [npc]
 marks = ["interrupt"]
 
-[ground.fiery-demise]
-name = "Fiery Demise"
+[ground.cinder-patch]
+name = "Cinder Patch"
 kind = "pool"
 tint = "orange"
-shape = { kind = "circle", radius = 3 }
-at = [{ death = { npc = "scorchling" } }]
-ends = { after = 30 }
+shape = { kind = "circle", radius = 4 }
+at = [{ death = { npc = "ember-imp" } }]
+ends = { after = 20 }
 ```
 
 A trash file gives what a run's creatures are, do and leave: `npc`,
@@ -612,16 +612,16 @@ to = "breath-of-ulatek"     # the NPC it runs to, or "@source": the unit that
 delay = 4                   # strikes this long after; drawn faint until then
 hits = [1284209]            # the spells that hit along it as it strikes
 
-[line.corrosive-spit]       # to the one of several adds alike that marked
-from = { aura_removed = { spell = 1293979 } }   # an aura's trigger, on or off
+[line.acid-spit]            # to the one of several adds alike that marked
+from = { aura_removed = { spell = 900011 } }   # an aura's trigger, on or off
 to = "@source"              # the unit that put that aura on
-hits = [1293295]
+hits = [900012]
 
-[line.unnerving-fixation]   # held while an aura stays on, never struck
+[line.dread-gaze]           # held while an aura stays on, never struck
 hold = true                 # from the aura's carrier, wherever it goes, until
                             # the aura comes off; never with a delay or hits
-from = { aura_applied = { spell = 1285911 } }   # an aura going on alone
-to = "@source"              # the ghost that fixated them
+from = { aura_applied = { spell = 900013 } }   # an aura going on alone
+to = "@source"              # the add that fixated them
 
 [volley.plague-wave]        # projectiles sent out from a spot on fixed bearings
 tint = "green"
@@ -684,12 +684,12 @@ preview = true              # its bearings dashed from the carrier of `from`'s
 spell = [1284452]
 tint = "green"
 
-[knock.pop]                 # players thrown straight out from a middle
-name = "Pop!"
-tint = "blue"
-on = { hit = { spell = 1266340 } }   # each time: throws the unit it is about
-from = "alluring-bubble"    # the place (its `at`) or NPC they fly out from
-within = "island"           # a place with a radius: landing outside it is a
+[knock.burst]               # players thrown straight out from a middle
+name = "Burst"
+tint = "teal"
+on = { hit = { spell = 900051 } }    # each time: throws the unit it is about
+from = "center-pool"        # the place (its `at`) or NPC they fly out from
+within = "platform"         # a place with a radius: landing outside it is a
                             # fault; unsaid, they may land anywhere
 
 [range.marks]               # a circle round NPCs at an aura's reach
@@ -920,7 +920,7 @@ standing `from` the cast's start `at` its landing, gone as it lands:
 ```toml
 [ground.frontal]
 kind = "soak"
-shape = { kind = "cone", angle = 75, length = 30 }
+shape = { kind = "cone", angle = 70, length = 25 }
 at = [{ cast = { spell = 1234567, by = "boss" } }]
 from = { cast_start = { spell = 1234567, by = "boss" } }
 ends = "at"                 # unsaid, it stays the pull; { after = 3.5 }
@@ -955,20 +955,19 @@ fired. What it covers is where it points, for whoever stands in it, a
 `renew`, a hit it ends on and a `sweeps`: the map and the sweep read the
 one footprint.
 
-Nymrissa stands still and blasts the tank for 6 s with Water Jet, and the
-jet follows the tank as the water pushes them out and round her (about 27
-degrees by the jet's end on the Mythic kill's 1:14 jet). The log's cast
-row names no target, but the jet's aura on the tank goes on with the
-cast:
+Say a boss stands still and blasts the tank for 5 s with a beam, and the
+beam follows the tank as the tank is moved round her. The log's cast row
+names no target, but the beam's aura on the tank goes on with the cast
+(the ids here are made up):
 
 ```toml
-[ground.water-jet]
+[ground.tide-beam]
 kind = "pool"
-shape = { kind = "line", width = 6, length = 60 }
-at = [{ cast = { spell = 1281951, by = "nymrissa-wavecaller" } }]
-ends = { after = 6 }
-follows = { aura = 1258901 }   # the jet's 6 s aura on the tank
-sweeps = ["lingering-frost"]
+shape = { kind = "line", width = 5, length = 50 }
+at = [{ cast = { spell = 900021, by = "tide-caller" } }]
+ends = { after = 5 }
+follows = { aura = 900022 }    # the beam's 5 s aura on the tank
+sweeps = ["frost-patch"]
 ```
 
 `check` refuses `follows` on a circle or a ring (no way to point), beside
@@ -1046,17 +1045,17 @@ between their posts either side where those are under 1.5 s apart; the
 mean of their steps, a step whose raid speed is over 8 yd/s left out as
 a knock (a cyst bursting under them, the rush onto one), the bearing
 that mean's, never snapped to a set of bearings. A push whose drift reads
-nothing moves none. Sszorak's Howling Maelstrom brings three gales of
-about 8 s each Dig In, at 1, 9 and 17.5 s after the cast, each a
-different way on each kill; its residue is pushed on three `after`
-clocks that count from each cast (`each`), toward the drift:
+nothing moves none. Say a boss's storm brings three gales of about 6 s
+each, at 2, 7 and 12.5 s after its cast, each a different way each time;
+the slick it leaves is pushed on three `after` clocks that count from
+each cast (`each`), toward the drift (the ids here are made up):
 
 ```toml
 push = { on = [
-    { after = { secs = 1, since = { cast = { spell = 1286033, by = "sszorak" } }, each = true } },
-    { after = { secs = 9, since = { cast = { spell = 1286033, by = "sszorak" } }, each = true } },
-    { after = { secs = 17.5, since = { cast = { spell = 1286033, by = "sszorak" } }, each = true } },
-], toward = "drift", speed = 4, secs = 8 }
+    { after = { secs = 2, since = { cast = { spell = 900100, by = "windlord" } }, each = true } },
+    { after = { secs = 7, since = { cast = { spell = 900100, by = "windlord" } }, each = true } },
+    { after = { secs = 12.5, since = { cast = { spell = 900100, by = "windlord" } }, each = true } },
+], toward = "drift", speed = 3, secs = 6 }
 ```
 
 A ground that `falls` is gone the first moment its spot lies outside the
@@ -1174,9 +1173,8 @@ to the one the log posted last: on Mythic a spectral Ula'tek pours Toxic
 Incubation at the Blightscale Wretch she tore down most lately, while the
 one before still stands. Where several alike stand and the strike comes
 from the one that put an aura on, `to = "@source"` runs it to that unit:
-on The Twin Fangs three Spawn of Vexhul stand at once, and Corrosive
-Spit's mark (aura 1293979) comes off its target as the add that spat it
-lands its cast. The source is the one the aura's row names as `from`
+where three adds alike stand at once, each one's mark comes off its
+target as the add that put it on lands its cast. The source is the one the aura's row names as `from`
 fires; a row naming none (applied, dose or removed) takes the one the
 latest applied or dose row naming one named while the aura stayed on that
 unit, so two applications of it on one unit share it and the later
@@ -1337,20 +1335,20 @@ from `spots` or along parallel ways has bearings round its middle that
 say little of where its slots lie:
 
 ```toml
-[volley.swirling-whirlpools]
-from = { cast = { spell = 1258673, by = "nymrissa-wavecaller" } }
-around = "alluring-bubble"
+[volley.closing-rings]     # the ids here are made up
+from = { cast = { spell = 900041, by = "tide-caller" } }
+around = "center-pool"
 inward = true
-toward = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345]
-speed = 15
-width = 10
-start = 72
-length = 61
-delay = 4.3
+toward = [0, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300, 320, 340]
+speed = 12
+width = 8
+start = 60
+length = 50
+delay = 3
 preview = true
 holes = true
 holes_by = "cluster"
-hits = [1258677]
+hits = [900042]
 ```
 
 A ring's slots are discs (or walls a fixed `front` across) on their
@@ -1663,8 +1661,8 @@ every reader of a transition takes them from.
 
 ### Water
 
-The render pours water over what lies under it by depth (gen-floors:
-`docs/OKF/tools/gen-floors.md`), in the client's own look unless the map
+The render pours water over what lies under it by depth (the replay's
+floor renderer, gen-floors), in the client's own look unless the map
 says otherwise. An arena's or a level's `[map.water]` is that look for the
 floor, written as the floor should show it, its light in it:
 
@@ -1695,8 +1693,8 @@ the CPU and the GPU path can read that hair apart, so such a pixel may
 differ between them. The ripple is the render's either way. `check` holds
 `shallow` and `deep` to 0 to 1, `depth` above 0, `shore` to 0 or more and
 `types` to one id or more; a color is three bytes as it is read.
-`tools/suggest-water.sh` proposes one from the game's light at the floor,
-as TOML to paste and tune against a screenshot.
+The replay's suggest-water tool proposes one from the game's light at the
+floor, as TOML to paste and tune against a screenshot.
 
 ### Pulls
 

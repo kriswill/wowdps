@@ -98,11 +98,11 @@ crops file, `tools/replay-extract/portrait-crops.tsv`, and the portraits cache's
 ([Keep The Extractor's And The GUI's Shared Formats In Rubric And Proto](../decisions/shared-formats-in-rubric-and-proto.md)).
 It also holds `placed`, the GENERATED table of what players place in the
 room (totems, gateways, rings, zones) and how the log tells where each
-stands, which the replay cut keeps the lines of (the history store's; once
-cut-pull's too) and the
-replay draws (gen-placed-spells): the one
-part of the crate that is not per encounter, here because the extractor
-and the GUI both read it.
+stands, which the daemon's replay cut keeps the lines of for the history
+store and the replay draws: the one part of the crate that is not per
+encounter. On main the daemon reads it, through core's
+`replay::PlacedTable`, and gen-placed-spells writes it (the generator
+comes to main with the extractor's library half).
 
 ## Source
 

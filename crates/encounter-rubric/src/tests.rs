@@ -1365,10 +1365,10 @@ fn a_knock_throws_from_a_place_or_an_npc_and_a_bad_one_is_found() {
     let knock = |body: &str| {
         let text = format!(
             "schema = 1\nencounter = 7\nname = \"X\"\n\n[npc.boss]\nname = \"Boss\"\n\n\
-             [place.bubble]\nkind = \"pool\"\nat = [4760, -12085]\nradius = 9\n\n\
-             [place.island]\nkind = \"spawn\"\nat = [4760, -12085]\nradius = 46\n\n\
+             [place.bubble]\nkind = \"pool\"\nat = [100, -200]\nradius = 8\n\n\
+             [place.platform]\nkind = \"spawn\"\nat = [100, -200]\nradius = 40\n\n\
              [place.spot]\nkind = \"spawn\"\nat = [0, 0]\n\n\
-             [knock.pop]\n{body}"
+             [knock.throw]\n{body}"
         );
         Rubric::from_files(files(&[("s/raid/7-x.toml", &text)]))
             .unwrap()
@@ -1376,23 +1376,23 @@ fn a_knock_throws_from_a_place_or_an_npc_and_a_bad_one_is_found() {
             .unwrap()
     };
     let e = knock(
-        "name = \"Pop!\"\ntint = \"blue\"\non = { hit = { spell = 1266340 } }\n\
-         from = \"bubble\"\nwithin = \"island\"\n",
+        "name = \"Throw\"\ntint = \"teal\"\non = { hit = { spell = 900051 } }\n\
+         from = \"bubble\"\nwithin = \"platform\"\n",
     )
     .unwrap();
     assert!(check(&e).is_empty(), "{:?}", check(&e));
     assert_eq!(
-        e.knock["pop"],
+        e.knock["throw"],
         Knock {
             enabled: true,
-            name: Some("Pop!".into()),
-            tint: Some("blue".into()),
+            name: Some("Throw".into()),
+            tint: Some("teal".into()),
             on: Trigger::Hit {
-                spell: 1266340,
+                spell: 900051,
                 lands: false,
             },
             from: "bubble".into(),
-            within: Some("island".into()),
+            within: Some("platform".into()),
             only: Vec::new(),
         }
     );
@@ -1416,32 +1416,32 @@ fn a_knock_throws_from_a_place_or_an_npc_and_a_bad_one_is_found() {
     assert_eq!(
         check(&e),
         [
-            "knock.pop names event \"burst\", which the encounter does not have",
-            "knock.pop throws on Event(\"burst\"), which names no unit to throw",
-            "knock.pop throws from \"nowhere\", which is neither a place nor an NPC",
-            "knock.pop lands within place \"lagoon\", which the encounter does not have",
-            "knock.pop.tint is \"Blue\", which is not a tint (green, red, blue, orange, teal, cyan, purple, pink, gold, yellow, amber, white, ice)",
+            "knock.throw names event \"burst\", which the encounter does not have",
+            "knock.throw throws on Event(\"burst\"), which names no unit to throw",
+            "knock.throw throws from \"nowhere\", which is neither a place nor an NPC",
+            "knock.throw lands within place \"lagoon\", which the encounter does not have",
+            "knock.throw.tint is \"Blue\", which is not a tint (green, red, blue, orange, teal, cyan, purple, pink, gold, yellow, amber, white, ice)",
         ]
     );
     // A place with no radius has no circle to land in.
     let e = knock("on = { hit = { spell = 1 } }\nfrom = \"bubble\"\nwithin = \"spot\"\n").unwrap();
     assert_eq!(
         check(&e),
-        ["knock.pop: place \"spot\" has no radius to land within"]
+        ["knock.throw: place \"spot\" has no radius to land within"]
     );
     // A place kept to other difficulties is none on this one: a knock
     // landing within it, or thrown from it, is refused where it is not.
     let text = "schema = 1\nencounter = 7\nname = \"X\"\n\n[npc.boss]\nname = \"Boss\"\n\n\
          [place.bubble]\nkind = \"pool\"\nat = [0, 0]\nradius = 9\nonly = [\"mythic\"]\n\n\
-         [place.island]\nkind = \"spawn\"\nat = [0, 0]\nradius = 46\nonly = [\"mythic\"]\n\n\
-         [knock.pop]\non = { hit = { spell = 1 } }\nfrom = \"bubble\"\nwithin = \"island\"\n";
+         [place.platform]\nkind = \"spawn\"\nat = [0, 0]\nradius = 40\nonly = [\"mythic\"]\n\n\
+         [knock.throw]\non = { hit = { spell = 1 } }\nfrom = \"bubble\"\nwithin = \"platform\"\n";
     let r = Rubric::from_files(files(&[("s/raid/7-x.toml", text)])).unwrap();
     let heroic = r.encounter(7, Some(15)).unwrap().unwrap();
     assert_eq!(
         check(&heroic),
         [
-            "knock.pop throws from \"bubble\", which is neither a place nor an NPC",
-            "knock.pop lands within place \"island\", which the encounter does not have",
+            "knock.throw throws from \"bubble\", which is neither a place nor an NPC",
+            "knock.throw lands within place \"platform\", which the encounter does not have",
         ]
     );
     let mythic = r.encounter(7, Some(16)).unwrap().unwrap();
@@ -1485,42 +1485,43 @@ fn a_reach_may_say_its_place_absorbs() {
     assert!(!text.contains("absorbs"), "{text}");
 }
 
-/// Sszorak's Caustic Residue as a tune gives it, an inline table whose
-/// list spans lines: blown by three gales a Howling Maelstrom, each an
-/// `after` counting from every cast (`each`), the way the players drifted,
-/// renewed where the wind has taken it and gone as it leaves the platform.
+/// An invented slick laid out as a tuned file would write it, an inline
+/// table whose list spans lines: blown by the three gales of each storm
+/// the boss casts, each an `after` counting from every cast (`each`), the
+/// way the players drifted, renewed where the wind has taken it and gone
+/// as it leaves the platform. Its ids are made up.
 const RESIDUE: &str = r#"
-[ground.caustic-residue]
-name = "Caustic Residue"
+[ground.acid-slick]
+name = "Acid Slick"
 kind = "pool"
-tint = "green"
-shape = { kind = "circle", radius = 6 }
+tint = "teal"
+shape = { kind = "circle", radius = 5 }
 at = [
-    { hit = { spell = 1305998 } },
-    { hit = { spell = 1296667 } },
+    { hit = { spell = 900101 } },
+    { hit = { spell = 900102 } },
 ]
 renew = true
 falls = true
 push = { on = [
-    { after = { secs = 1, since = { cast = { spell = 1286033, by = "sszorak" } }, each = true } },
-    { after = { secs = 9, since = { cast = { spell = 1286033, by = "sszorak" } }, each = true } },
-    { after = { secs = 17.5, since = { cast = { spell = 1286033, by = "sszorak" } }, each = true } },
-], toward = "drift", speed = 4, secs = 8 }
-only = ["heroic", "mythic"]
+    { after = { secs = 2, since = { cast = { spell = 900100, by = "windlord" } }, each = true } },
+    { after = { secs = 7, since = { cast = { spell = 900100, by = "windlord" } }, each = true } },
+    { after = { secs = 12.5, since = { cast = { spell = 900100, by = "windlord" } }, each = true } },
+], toward = "drift", speed = 3, secs = 6 }
+only = ["mythic"]
 "#;
 
-/// Sszorak with `ground` (one or more grounds' text) and a platform for a
+/// The Windlord with `ground` (one or more grounds' text) and a platform for a
 /// stencil where `stencil` says so, read on Mythic.
-fn sszorak(ground: &str, stencil: bool) -> Result<Encounter, String> {
+fn windlord(ground: &str, stencil: bool) -> Result<Encounter, String> {
     let map = if stencil {
         "[map]\nstencil = [{ center = [0, 0], radius = 50 }]\n\n"
     } else {
         ""
     };
     let text = format!(
-        "schema = 2\nencounter = 7\nname = \"Sszorak\"\n\n{map}[npc.sszorak]\nname = \"Sszorak\"\nrole = \"boss\"\n{ground}"
+        "schema = 2\nencounter = 7\nname = \"The Windlord\"\n\n{map}[npc.windlord]\nname = \"The Windlord\"\nrole = \"boss\"\n{ground}"
     );
-    Rubric::from_files(files(&[("s/raid/7-sszorak.toml", &text)]))
+    Rubric::from_files(files(&[("s/raid/7-windlord.toml", &text)]))
         .map_err(|e| format!("{e:?}"))?
         .encounter(7, Some(16))
         .ok_or("no encounter")?
@@ -1533,12 +1534,12 @@ fn sszorak(ground: &str, stencil: bool) -> Result<Encounter, String> {
 /// own layout, written back in the schema's order, and read again alike.
 #[test]
 fn a_tunes_drifting_falling_residue_is_read_written_and_read_again() {
-    let e = sszorak(RESIDUE, true).unwrap();
-    let g = &e.ground["caustic-residue"];
+    let e = windlord(RESIDUE, true).unwrap();
+    let g = &e.ground["acid-slick"];
     assert!(g.renew && g.falls);
     let cast = Trigger::Cast {
-        spell: 1286033,
-        by: Some("sszorak".into()),
+        spell: 900100,
+        by: Some("windlord".into()),
     };
     let gale = |secs: f32| {
         Trigger::After(Clock {
@@ -1551,37 +1552,37 @@ fn a_tunes_drifting_falling_residue_is_read_written_and_read_again() {
     assert_eq!(
         g.push,
         Some(Push {
-            on: vec![gale(1.0), gale(9.0), gale(17.5)],
+            on: vec![gale(2.0), gale(7.0), gale(12.5)],
             toward: Toward::Drift,
-            speed: 4.0,
-            secs: 8.0,
+            speed: 3.0,
+            secs: 6.0,
         })
     );
     assert!(check(&e).is_empty(), "{:?}", check(&e));
     let text = write::draft_text(&e, &BTreeMap::new(), "x").unwrap();
     for line in [
         "\nrenew = true\nfalls = true\n",
-        "\npush = { toward = \"drift\", speed = 4.0, on = [{ after = { secs = 1.0, since = { cast = { spell = 1286033, by = \"sszorak\" } }, each = true } }, ",
-        "{ after = { secs = 17.5, since = { cast = { spell = 1286033, by = \"sszorak\" } }, each = true } }], secs = 8.0 }\n",
+        "\npush = { toward = \"drift\", speed = 3.0, on = [{ after = { secs = 2.0, since = { cast = { spell = 900100, by = \"windlord\" } }, each = true } }, ",
+        "{ after = { secs = 12.5, since = { cast = { spell = 900100, by = \"windlord\" } }, each = true } }], secs = 6.0 }\n",
     ] {
         assert!(text.contains(line), "{line}\n{text}");
     }
-    let back = Rubric::from_files(files(&[("s/raid/7-sszorak.toml", &text)]))
+    let back = Rubric::from_files(files(&[("s/raid/7-windlord.toml", &text)]))
         .unwrap()
         .encounter(7, Some(16))
         .unwrap()
         .unwrap();
-    assert_eq!(back.ground["caustic-residue"], *g);
+    assert_eq!(back.ground["acid-slick"], *g);
     // `falls` unsaid is false and not written; a word for `toward` other
     // than "drift" is refused as it is read.
     let plain = RESIDUE.replace("falls = true\n", "");
-    let e = sszorak(&plain, true).unwrap();
-    assert!(!e.ground["caustic-residue"].falls);
+    let e = windlord(&plain, true).unwrap();
+    assert!(!e.ground["acid-slick"].falls);
     let text = write::draft_text(&e, &BTreeMap::new(), "x").unwrap();
     assert!(!text.contains("falls"), "{text}");
-    let err = sszorak(&RESIDUE.replace("\"drift\"", "\"wind\""), true).unwrap_err();
+    let err = windlord(&RESIDUE.replace("\"drift\"", "\"wind\""), true).unwrap_err();
     assert!(err.contains("wind") && err.contains("drift"), "{err}");
-    let err = sszorak(&RESIDUE.replace("falls = true", "falls = 1"), true).unwrap_err();
+    let err = windlord(&RESIDUE.replace("falls = true", "falls = 1"), true).unwrap_err();
     assert!(err.contains("falls") || err.contains("bool"), "{err}");
 }
 
@@ -1591,8 +1592,8 @@ fn a_tunes_drifting_falling_residue_is_read_written_and_read_again() {
 #[test]
 fn a_ground_that_falls_needs_a_way_to_move_and_a_stencil() {
     let still = "\n[ground.pool]\nkind = \"pool\"\nshape = { kind = \"circle\", radius = 3 }\n\
-                 at = [{ death = { npc = \"sszorak\" } }]\nfalls = true\n";
-    let e = sszorak(still, false).unwrap();
+                 at = [{ death = { npc = \"windlord\" } }]\nfalls = true\n";
+    let e = windlord(still, false).unwrap();
     assert_eq!(
         check(&e),
         [
@@ -1600,16 +1601,16 @@ fn a_ground_that_falls_needs_a_way_to_move_and_a_stencil() {
             "ground.pool falls, but the encounter's map has no stencil to fall off",
         ]
     );
-    let e = sszorak(&RESIDUE.replace("[\"heroic\", \"mythic\"]", "[]"), false).unwrap();
+    let e = windlord(&RESIDUE.replace("[\"mythic\"]", "[]"), false).unwrap();
     assert_eq!(
         check(&e),
-        ["ground.caustic-residue falls, but the encounter's map has no stencil to fall off"]
+        ["ground.acid-slick falls, but the encounter's map has no stencil to fall off"]
     );
     // Circling moves it as a push does.
-    let circling = format!("{still}orbit = {{ around = \"sszorak\", turn = 3 }}\n");
-    assert!(check(&sszorak(&circling, true).unwrap()).is_empty());
+    let circling = format!("{still}orbit = {{ around = \"windlord\", turn = 3 }}\n");
+    assert!(check(&windlord(&circling, true).unwrap()).is_empty());
     assert_eq!(
-        check_trash(&sszorak(&circling, false).unwrap()),
+        check_trash(&windlord(&circling, false).unwrap()),
         ["ground.pool falls, but the trash's map has no stencil to fall off"]
     );
 }
@@ -1620,7 +1621,7 @@ fn a_ground_that_falls_needs_a_way_to_move_and_a_stencil() {
 #[test]
 fn a_clock_counting_from_each_firing_is_read_written_and_kept_from_nth() {
     let event = |on: &str| format!("\n[event.gale]\non = {on}\n");
-    let e = sszorak(
+    let e = windlord(
         &event("{ after = { secs = 9, since = { cast = { spell = 5 } }, each = true } }"),
         false,
     )
@@ -1643,7 +1644,7 @@ fn a_clock_counting_from_each_firing_is_read_written_and_kept_from_nth() {
         "{text}"
     );
     // Said false, it is the first firing alone, and not written.
-    let e = sszorak(
+    let e = windlord(
         &event("{ after = { secs = 9, since = { cast = { spell = 5 } }, each = false } }"),
         false,
     )
@@ -1655,7 +1656,7 @@ fn a_clock_counting_from_each_firing_is_read_written_and_kept_from_nth() {
     );
     // An `nth` written beside it, even the first, is refused.
     for nth in [1, 2] {
-        let e = sszorak(
+        let e = windlord(
             &event(&format!(
                 "{{ after = {{ secs = 9, since = {{ cast = {{ spell = 5 }} }}, nth = {nth}, each = true }} }}"
             )),
@@ -1668,7 +1669,7 @@ fn a_clock_counting_from_each_firing_is_read_written_and_kept_from_nth() {
         );
     }
     // A difficulty's `nth` laid over it key by key is refused alike.
-    let e = sszorak(
+    let e = windlord(
         &(event("{ after = { secs = 9, since = { cast = { spell = 5 } }, each = true } }")
             + "\n[difficulty.mythic.event.gale]\non = { after = { nth = 2 } }\n"),
         false,
@@ -2837,22 +2838,22 @@ name = "Boss"
 
 [place.bubble]
 kind = "pool"
-at = [4760.0, -12085.0]
-radius = 9
+at = [100.0, -200.0]
+radius = 8
 
 [volley.whirlpools]
-from = { cast = { spell = 1258673 } }
+from = { cast = { spell = 900401 } }
 around = "bubble"
 inward = true
 toward = [0, 90]
-speed = 15
-width = 10
-start = 72
-length = 61
-delay = 4.3
+speed = 12
+width = 8
+start = 60
+length = 50
+delay = 3
 preview = true
 holes = true
-hits = [1258677]
+hits = [900402]
 
 [volley.all-in]
 from = { after = { secs = 1, since = { cast = { spell = 1 } }, each = true } }
@@ -2880,26 +2881,26 @@ preview = true
     let w = &e.volley["whirlpools"];
     assert_eq!((w.around.as_deref(), w.inward), (Some("bubble"), true));
     assert!(w.holds() && !e.volley["all-in"].holds());
-    // Along its way: from 0, 15 yd a second, gone past 61 (11 yd off the
-    // middle, 4 s on); all the way in where no length is said.
-    assert_eq!((w.sets_out(), w.reach()), (0.0, Some(61.0)));
+    // Along its way: from 0, 12 yd a second, gone past 50 (10 yd off the
+    // middle, past 4.1 s on); all the way in where no length is said.
+    assert_eq!((w.sets_out(), w.reach()), (0.0, Some(50.0)));
     assert_eq!(w.out(0.0), Some(0.0));
-    assert_eq!(w.out(4.0), Some(60.0));
-    assert_eq!(w.out(4.1), None);
+    assert_eq!(w.out(4.0), Some(48.0));
+    assert_eq!(w.out(4.2), None);
     assert_eq!(e.volley["all-in"].reach(), Some(30.0));
-    // Each way 72 yd out on its bearing, turned round.
+    // Each way 60 yd out on its bearing, turned round.
     let ways = w.ways(1.0, true);
     let near = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4;
     assert_eq!(ways.len(), 2);
-    assert!(near(ways[0].from, [72.0, 0.0]) && near(ways[0].step, [-1.0, 0.0]));
-    assert!(near(ways[1].from, [0.0, 72.0]) && near(ways[1].step, [0.0, -1.0]));
+    assert!(near(ways[0].from, [60.0, 0.0]) && near(ways[0].step, [-1.0, 0.0]));
+    assert!(near(ways[1].from, [0.0, 60.0]) && near(ways[1].step, [0.0, -1.0]));
     assert_eq!((ways[1].spot, ways[1].bearing), (None, 1));
     // Outward, the spot and the bearing: as `origins` and `steps_facing`.
     let out = Volley {
         inward: false,
         ..w.clone()
     };
-    assert_eq!((out.sets_out(), out.reach()), (72.0, Some(133.0)));
+    assert_eq!((out.sets_out(), out.reach()), (60.0, Some(110.0)));
     assert!(near(out.ways(0.0, true)[1].from, [0.0, 0.0]));
     assert!(near(out.ways(0.0, true)[1].step, [0.0, 1.0]));
     assert_eq!(
@@ -2914,7 +2915,7 @@ preview = true
         ]
     );
     let text = write::draft_text(&e, &BTreeMap::new(), "x").unwrap();
-    assert!(text.contains("\nlength = 61.0\ninward = true\n"), "{text}");
+    assert!(text.contains("\nlength = 50.0\ninward = true\n"), "{text}");
     assert!(text.contains("\naround = \"bubble\"\n"), "{text}");
 }
 
@@ -6405,9 +6406,10 @@ fn every_level_resolves_as_its_fixture_says() {
 
 // ---- an instance's trash -----------------------------------------------------
 
-/// The test raid's trash, tuned: an NPC of the instance's amended and one
-/// added, a kick target, a pool at a death, a ringed mark, a flash kept to
-/// Mythic alone, and overrides a keystone reads through its chain.
+/// The test raid's trash, as a tuned file would give it (its ids made
+/// up): an NPC of the instance's amended and one added, a kick target, a
+/// pool at a death, a ringed mark, a flash kept to Mythic alone, and
+/// overrides a keystone reads through its chain.
 const TRASH: &str = r#"
 schema = 1
 
@@ -6418,32 +6420,32 @@ still = true
 name = "Infused Whelp"
 creature = [187894]
 
-[ability.thunder-blast]
-name = "Thunder Blast"
-spell = [392576]
+[ability.arc-bolt]
+name = "Arc Bolt"
+spell = [900302]
 by = "channeler"
 marks = ["interrupt"]
 
 [ground.blaze]
 kind = "pool"
-shape = { kind = "circle", radius = 5 }
+shape = { kind = "circle", radius = 4 }
 at = [{ death = { npc = "juggernaut" } }]
-ends = { after = 15 }
+ends = { after = 12 }
 
 [mark.bomb]
-aura = 373693
-ring = "orange"
+aura = 900303
+ring = "purple"
 label = "left"
 
 [flash.detonation]
-spell = [392399]
+spell = [900304]
 only = ["mythic"]
 
 [difficulty.heroic.mark.bomb]
-ring = "red"
+ring = "gold"
 
 [difficulty.keystone.ground.blaze]
-shape = { radius = 6 }
+shape = { radius = 5 }
 "#;
 
 /// The test raid with its own creatures (`CREATURES`), and `trash` its
@@ -6494,11 +6496,11 @@ fn a_trash_file_resolves_over_the_instances_creatures() {
         (j.still, j.forces, j.creature.as_slice()),
         (true, Some(25), &[188244][..])
     );
-    assert_eq!(e.ability["thunder-blast"].marks, ["interrupt"]);
+    assert_eq!(e.ability["arc-bolt"].marks, ["interrupt"]);
     // A keystone reads its own override and Heroic's through its chain; an
     // `only` is exact, so Mythic's flash is not a keystone's.
-    assert_eq!(e.ground["blaze"].shape, Shape::Circle { radius: 6.0 });
-    assert_eq!(e.mark["bomb"].ring.as_deref(), Some("red"));
+    assert_eq!(e.ground["blaze"].shape, Shape::Circle { radius: 5.0 });
+    assert_eq!(e.mark["bomb"].ring.as_deref(), Some("gold"));
     assert!(e.flash.is_empty());
     // Nothing of a room: no map, view, travel, phase or room.
     assert_eq!(

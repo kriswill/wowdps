@@ -16,7 +16,7 @@ sources:
 
 **Where:** [wowdps-encounter-rubric](../crates/encounter-rubric.md) (`Tier`,
 `Rubric::encounter_at`, `with_tier`, `has_curated`), read by the replay
-spike (`crates/replay/src/`).
+(its own repository).
 
 **Superseded** on 2026-10-09 by
 [Resolve An Encounter Through An Ordered Layer Stack](encounter-rubric-layers.md):

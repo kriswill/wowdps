@@ -16,8 +16,8 @@ sources:
 
 **Where:** [wowdps-encounter-rubric](../crates/encounter-rubric.md) (the instance file's
 `[encounter.<id>]`, `StencilShape`, `Map::stencil_bounds` and
-`stencil_depth`), read by gen-floors and the
-replay spike (`crates/replay/src/`).
+`stencil_depth`), read by gen-floors and the replay (its own
+repository).
 
 ## Context
 
