@@ -356,7 +356,7 @@ pub fn sql(mut a: Args) -> Result<(), String> {
         let out = std::process::Command::new("duckdb")
             .args(["-batch", "-c", sql])
             .output()
-            .map_err(|e| format!("duckdb: {e} (run inside the dev shell, which has it)"))?;
+            .map_err(|e| format!("duckdb: {e} (a duckdb CLI must be on PATH)"))?;
         if out.status.success() {
             Ok(())
         } else {
@@ -457,7 +457,7 @@ pub fn sql(mut a: Args) -> Result<(), String> {
     // The shell is the user's now (exec: no child to wait on).
     use std::os::unix::process::CommandExt;
     Err(format!(
-        "duckdb: {} (run inside the dev shell, which has it)",
+        "duckdb: {} (a duckdb CLI must be on PATH)",
         cmd.exec()
     ))
 }

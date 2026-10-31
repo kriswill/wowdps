@@ -15,7 +15,7 @@
 //! tables as SQL: wowdps-db2) and `wowhead` (seed-creatures: NPC
 //! classifications seeded into the history store's `creatures.tsv`). They
 //! stay stdlib-only by calling CLIs: `curl` (as the `gen-*` scripts do),
-//! and `duckdb` from the dev shell.
+//! and a `duckdb` CLI, which must be on `PATH` (the dev shells carry none).
 //!
 //! It is also the library the replay's extractor builds on
 //! (`wowdps-replay-extract`, in the private wowdps-replay repository): the
