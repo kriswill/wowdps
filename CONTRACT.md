@@ -1086,8 +1086,10 @@ engine in the tree, and it lives in the `wowdps-history` binary only, never in
 the daemon). extract (`wowdps-extract`, the dev-time game-data
 extractor, and the library the replay's extractor builds on): stdlib, plus
 core and proto (the XDG directories its per-machine caches resolve through,
-`proto::dirs`, the creatures file, and the `placed` table's types
-gen-placed-spells writes), with no features and no build script; it names no
+`proto::dirs`; the creatures file, `proto::creatures`; the `placed` table's
+types gen-placed-spells writes, `proto::placed`; and the history store's
+cards, replay tier and JSON its store reader reads, `proto::history`,
+`proto::replay` and `proto::json`), with no features and no build script; it names no
 rubric (the journal's reading hands out its own `journal::SpellFacts`).
 Everything else stdlib unless justified and signed
 off. No chrono (hand-parse the timestamp), no tokio (threads +

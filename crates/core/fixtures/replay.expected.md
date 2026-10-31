@@ -41,8 +41,8 @@ aside); the placed
 spells are the fixtures' own, hard-coded beside check.awk's other tables
 (`PLACE`: Demonic Gateway 111771, Wind Rush Totem 192077, Demonic Circle
 48018; `TELL`: the gateway's trip 113942, Wind Rush 192082, Anti-Magic Zone
-145629, Healing Rain 73921 — a subset of the encounter rubric's generated
-`placed` table).
+145629, Healing Rain 73921 — a subset of proto's generated `placed`
+table).
 
 ## Roster
 

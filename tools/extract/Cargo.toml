@@ -11,8 +11,10 @@ repository.workspace = true
 wowdps-core = { path = "../../crates/core" }
 # Stdlib-only like this crate: the XDG base directories every per-machine
 # cache resolves through (`dirs`), the creatures file seed-creatures
-# writes (`creatures`), and the types of the `placed` table
-# gen-placed-spells writes (`placed`).
+# writes (`creatures`), the types of the `placed` table
+# gen-placed-spells writes (`placed`), and the history store's cards,
+# replay tier and JSON the store reader reads (`history`, `replay`,
+# `json`).
 wowdps-proto = { path = "../../crates/proto" }
 
 [[bin]]
