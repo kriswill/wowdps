@@ -129,7 +129,12 @@ recuts it, as it recuts formats 2 and 3. `replay::csv` writes a `Cut` column for
 column as the extractor's old cutter did, plus `tracks.csv`'s trailing
 `map_id`, `absorb` and `pools`, the boss rows and the buff rows: `units.tsv`, `tracks.csv`, `events.csv`, `placed.csv`,
 `markers.csv`, `raid.csv` (R25's series, never stored twice) and
-`pull.txt`.
+`pull.txt`. `pull.txt` says the pull's `local` start (the log's own
+clock) and its `best` (R16's) where its writer knows them
+(`PullFacts::local_ms`, `best_pct`): `replay-export` gives the card's.
+`dps_tsv` is the writer a client (the replay) lays a replay's `dps.tsv`
+beside them with: each player's R12 damage curve, a line a player.
+`replay-export` writes the seven files alone, never it.
 
 ## Seams
 

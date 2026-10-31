@@ -37,6 +37,7 @@ pub mod sibling;
 pub mod simc;
 pub mod single;
 pub mod spell_icons;
+pub mod spell_tips;
 pub mod surface;
 pub mod table;
 pub mod talent_art;

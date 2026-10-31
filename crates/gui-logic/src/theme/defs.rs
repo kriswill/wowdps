@@ -255,6 +255,12 @@ pub struct DataTokens: Color {
     /// R28 (v44): the line under the inspector's graph — a healer's mana
     /// as a fraction of its max, second by second.
     power,
+    /// The replay's white and ice, two of the encounter rubric's tints
+    /// that the stacked bands hold no hue for: a soft near-white under the
+    /// ink, and a pale blue clear of the aqua band (`stack_3`) and of an
+    /// icy accent.
+    tint_white,
+    tint_ice,
 }
 }
 

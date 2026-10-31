@@ -161,9 +161,10 @@ pub fn class_icon(
     d: gpui_kit::Pixels,
     picked: bool,
 ) -> gpui_kit::AnyElement {
+    let px = w.device(d);
     let art = spec
-        .and_then(|s| crate::images::spec_icon(s.id()))
-        .or_else(|| class.and_then(crate::images::class_icon));
+        .and_then(|s| crate::images::spec_icon(s.id(), px))
+        .or_else(|| class.and_then(|c| crate::images::class_icon(c, px)));
     let face = match art {
         Some(tile) => gpui_kit::img(tile)
             .size(d)
