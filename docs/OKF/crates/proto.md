@@ -82,8 +82,9 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
   `read_player` reads one player's block alone; decode never panics or
   allocates past the bytes in hand.
 - `placed.rs` — the generated table of what players place in the room
-  (`placed/placed_spells.rs`, written by gen-placed-spells with its
-  review twin beside it): each spell's `Found`, `Form`, `Purpose`, reach
+  (`placed/placed_spells.rs`, written by
+  [gen-placed-spells](../tools/gen-placed-spells.md) with its review twin
+  beside it): each spell's `Found`, `Form`, `Purpose`, reach
   and duration, and the lookups (`all`, `placed`, `tells`,
   `Placed::telling`). The daemon's replay cut keeps the lines its spells
   write, through [wowdps-core](core.md)'s `PlacedTable`
