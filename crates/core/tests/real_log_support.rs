@@ -1,4 +1,4 @@
-//! R19 + the R2 amendment over a real log (`docs/plan-role-pivots-step3.md`
+//! R19 + the R2 amendment over a real log (the role-pivots step 3 plan,
 //! §4): on EVERY segment of the log — every support `src` folds to a
 //! player (orphans = 0), Σ effective = Σ damage (with the players whose
 //! received exceeds their damage — the `model::effective` clamp cases —

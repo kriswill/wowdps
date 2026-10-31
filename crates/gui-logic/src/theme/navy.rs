@@ -1,4 +1,4 @@
-//! `navy`: the window redesign's Tokens (`docs/design/window-redesign.html`)
+//! `navy`: the window redesign prototype's Tokens
 //! — tooltip navy, parchment ink, the game's gold — and the overlay as it
 //! has always looked. Called `gold` until there were themes to tell apart;
 //! a config that still says `gold` reads it. Every pixel the window, the

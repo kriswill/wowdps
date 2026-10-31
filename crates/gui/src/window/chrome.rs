@@ -1,5 +1,5 @@
 //! The window's small controls, as the iced window's `nav` draws them
-//! (`docs/design/window-redesign.html`'s `.ibtn`, `kbd`, `.place`,
+//! (the redesign prototype's `.ibtn`, `kbd`, `.place`,
 //! `.badge`, `.tip`): each takes the window's `W` and draws from its
 //! tokens, never a literal colour.
 

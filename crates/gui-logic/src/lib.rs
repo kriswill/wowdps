@@ -4,7 +4,7 @@
 //! from it; the TUI's keybind-parity test reads its chord table.
 //!
 //! Code arrived here MOVED from the iced GUI, never copied, while that GUI
-//! and its GPUI successor coexisted (`docs/spec-gui-new.md` §5): one config
+//! and its GPUI successor coexisted (the GUI spec, §5): one config
 //! writer, one keymap and one takeover socket served both, and the iced
 //! pictures proved each move. Nothing here names a UI framework; a piece
 //! that draws stays in the GUI.

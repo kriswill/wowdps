@@ -15,8 +15,7 @@ repository.workspace = true
 # one signed-off dependency in the workspace: DuckDB, BUNDLED — compiled
 # from the crate's own copy of the DuckDB source on every platform, so the
 # library is the crate's by construction and there is no system library to
-# keep in step (re-decided 2026-10-23; docs/OKF/decisions/
-# duckdb-is-bundled-not-system-linked.md). The JSON and Parquet extensions
+# keep in step (re-decided 2026-10-23). The JSON and Parquet extensions
 # come in as features and are linked in statically. ICU is absent: the cc
 # bundled build ships only core_functions + json + parquet (ICU would need
 # `bundled-cmake` and a duckdb-rs source checkout), and no history query

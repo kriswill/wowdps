@@ -31,7 +31,7 @@ pub struct Config {
     /// The GUI the overlay supervisor spawns as `<it> --overlay`, default
     /// `wowdps-gui`. Unset in an ordinary config; it stays so another build
     /// or a wrapper can stand in for the overlay, as gui-new did while two
-    /// GUIs coexisted (`docs/spec-gui-new.md` §10). Resolved by
+    /// GUIs coexisted (the GUI spec, §10). Resolved by
     /// [`Config::gui_bin`].
     pub gui_binary: String,
     /// History store (roadmap item 1): write fight summaries at all.

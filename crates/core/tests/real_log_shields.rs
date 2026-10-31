@@ -1,4 +1,4 @@
-//! R20 over a real log (`docs/plan-role-pivots-step5.md` §0, the real-log
+//! R20 over a real log (the role-pivots step 5 plan, §0, the real-log
 //! gate): over every segment — pulls and trash alike — Σ rows.consumed =
 //! `absorbed_healing` for every player, `applied >= consumed + wasted` on
 //! every row whose shields all closed with a known size — and `=` on every
