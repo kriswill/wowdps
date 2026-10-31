@@ -17,7 +17,7 @@ sources:
     title: tools/lib.sh — build_extract (the replay's copy adds build_replay_extract)
   - id: contract
     resource: ../../../CONTRACT.md
-    title: CONTRACT.md §Dependencies — extract and replay-extract
+    title: CONTRACT.md §Dependencies — extract
 ---
 
 **Where:** [wowdps-extract](../crates/extract.md) and
@@ -64,8 +64,8 @@ corrected by the modules' actual readers:
   `db2sql` stay; the pictures (`img`, `png`, `deflate`, `atomic`) stay
   because `blp` and `icongen` need them.
 - `rubricgen` (gen-rubric) stays, against the plan's first sort: the
-  drafts it writes are the rubric's base, which main holds under
-  `crates/encounter-rubric/seasons/`, so their generator is public too.
+  drafts it wrote were the rubric's base, which main then held under
+  `crates/encounter-rubric/seasons/`, so their generator was public too.
   (Superseded the same day, below: it followed the rubric to the
   replay.)
   Its census reads the history store through `pulls`, which split: the
@@ -99,8 +99,9 @@ library's generators read is missing from it.
 
 **Features and dependencies follow the code.** `gpu` (wgpu, pollster) and
 `wcl` (ureq) moved to the replay's crate, so a build of
-`wowdps-extract` is stdlib, core, the rubric and proto with no
-features[^contract]. The replay's crate takes extract, core (its `cut`
+`wowdps-extract` was stdlib, core, the rubric and proto with no
+features[^contract] (Superseded the same day, below: the rubric left
+with the replay, and the crate is stdlib, core and proto). The replay's crate takes extract, core (its `cut`
 and `wcl-pull` share the history store's index and replay cut), the
 rubric, proto and gui-logic (the sheets' font). `portrait-crops.tsv` moved beside the replay's
 manifest; gui-shared's `checkout::CROPS` and the rubric's crops test
@@ -164,4 +165,4 @@ without `build_replay_extract`.
 [^library]: `tools/extract/AGENTS.md`: "The library's surface is the replay's".
 [^replay]: `tools/replay-extract/AGENTS.md`: its commands, on the library's command line.
 [^lib]: `tools/lib.sh`: `build_extract`; the replay's copy adds `build_replay_extract`.
-[^contract]: CONTRACT.md §Dependencies: extract and replay-extract.
+[^contract]: CONTRACT.md §Dependencies: extract.
