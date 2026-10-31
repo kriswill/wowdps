@@ -2,7 +2,7 @@
 # mirrors it. Entered via devenv's native cd hook (trust once with `devenv
 # allow`). The environment ITSELF lives in nix/dev/, imported by both; what
 # stays here is only what devenv plumbs differently: its Rust toolchain and
-# its okf and llm-agents inputs. Even the contract `devenv test` asserts is
+# its llm-agents input. Even the contract `devenv test` asserts is
 # shared — it is an executable both shells carry, and it fails if the mirror
 # drifts.
 {
@@ -28,14 +28,10 @@ in
   # fails if the mirror ever stops being exact.
 
   packages = shared.packages ++ [
-    # okf (scaffold | index | validate | viz) over docs/OKF, the OKF
-    # knowledge bundle — the nix-built CLI from the okflight input
-    # (devenv.yaml). The flake shell reaches the same CLI through its own
-    # input, which is why this one package is not in nix/dev/.
-    inputs.okf.packages.${pkgs.stdenv.hostPlatform.system}.okf
     # coderabbit / cr, the CodeRabbit review CLI (`coderabbit review
-    # --agent`), from the llm-agents input — the flake shell reaches it
-    # through its own, as it does okf.
+    # --agent`), from the llm-agents input (devenv.yaml). The flake shell
+    # reaches the same CLI through its own input, which is why this one
+    # package is not in nix/dev/.
     inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.coderabbit-cli
   ];
 

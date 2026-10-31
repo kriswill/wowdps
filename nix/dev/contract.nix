@@ -25,7 +25,7 @@
 pkgs.writeShellScriptBin "wowdps-dev-contract" (
   ''
     set -euo pipefail
-    for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov gawk jq okf coderabbit sccache \
+    for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov gawk jq coderabbit sccache \
                 ${lib.concatStringsSep " " commands}; do
       command -v "$tool" > /dev/null || {
         echo "dev shell contract: $tool missing from PATH" >&2

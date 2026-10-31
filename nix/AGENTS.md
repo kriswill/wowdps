@@ -25,7 +25,7 @@ and the home-manager and NixOS modules.
   evaluate stays free-only. Never set `allowUnfree`; another unfree
   package is added to that list by name. (`coderabbit` comes prebuilt
   through its own input.)
-- **Pins agree.** `devenv.yaml`'s nixpkgs, rust-overlay, okf and llm-agents
+- **Pins agree.** `devenv.yaml`'s nixpkgs, rust-overlay and llm-agents
   pins match `flake.lock` (`update-locks.yml` keeps them so weekly).
 - **The toolchain is declared once,** in `rust-toolchain.toml`; never pin a
   Rust version anywhere else.
