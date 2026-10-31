@@ -41,16 +41,23 @@ and the dependency policy.
 - `crates/history/`: binary `wowdps-history` (`wowdps history`), DuckDB
   over the stored fights. Read `crates/history/AGENTS.md` before changing a
   view or a subcommand.
-- `crates/encounter-rubric/`: the seasonal encounter rubric and the
-  replay's art formats. Read `crates/encounter-rubric/AGENTS.md` before
-  changing it.
 - `tools/`: game-data generators, the extractor, the dev unit. Read
   `tools/AGENTS.md` before running or changing a tool.
+- The replay, the encounter rubric and the editors are not here: they
+  live in the private wowdps-replay and wowdps-editors repositories (the
+  section below).
 - `nix/`, `flake.nix`, `devenv.nix`, `devenv.yaml`: the dev shells and
   packages. Read `nix/AGENTS.md` before changing them.
 - `.github/`: CI. Read `.github/AGENTS.md` before changing a workflow.
 - `docs/OKF/`: the knowledge bundle. Read `docs/OKF/AGENTS.md` before
   editing it.
+
+## The replay
+
+- The fight replay, with the encounter rubric and its extractor, lives in
+  the private repository https://github.com/kriswill/wowdps-replay.
+- A change a replay crate needs in a wowdps crate lands here first; the
+  replay then bumps its pinned revision.
 
 ## The live daemon
 
@@ -77,8 +84,7 @@ On a dev machine the live daemon is the `wowdps-dev` systemd user unit
   wire-shape change bumps `PROTO_VERSION`.
 - **Dependencies.** CONTRACT.md §Dependencies is the policy: model
   zero-dep; core, proto, daemon and mcp stdlib only; no chrono, no tokio, no
-  serde outside gui, gui-logic and encounter-rubric. Anything new needs a
-  sign-off.
+  serde outside gui and gui-logic. Anything new needs a sign-off.
 - **No panics in production code.** Clippy denies `unwrap`, `expect`,
   indexing, `panic!` and friends (`Cargo.toml` lints); tests are exempt
   (`clippy.toml`).

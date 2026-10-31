@@ -30,13 +30,12 @@ short:
     the GPUI crates it pins accepted as one unit; plus serde/toml, and
     `image` only to build GPUI `RenderImage` frames.
   - gui-logic: serde/toml.
-  - encounter-rubric: serde/toml, the one engine-side crate that names them.
   - history: duckdb, bundled (compiled from the crate's own source, JSON and
     Parquet features, no ICU).
 - No `[patch]` and no fork of GPUI or GPUI Kit: a capability GPUI lacks is
   designed around or contributed upstream.
 - No chrono (timestamps are hand-parsed), no tokio (threads + channels), no
-  serde outside gui, gui-logic and encounter-rubric. These rules are for our
+  serde outside gui and gui-logic. These rules are for our
   own code; the GPUI unit may pull them in transitively.
 
 New dependencies anywhere need a strong case.

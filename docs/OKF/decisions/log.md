@@ -2,6 +2,11 @@
 
 ## 2026-10-30
 
+- **Deprecation** — [Resolve An Encounter Through An Ordered Layer Stack](encounter-rubric-layers.md)
+  and [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+  both are the encounter rubric's, which left wowdps with the replay for
+  the private wowdps-replay repository.
+
 - **Update** — [The Replay Tier Lives In The History Store](replay-tier-in-the-store.md):
   the generated `placed` table is proto's (`proto::placed`), no longer the
   encounter rubric's.

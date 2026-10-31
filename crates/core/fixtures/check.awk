@@ -762,7 +762,7 @@ BEGIN {
     # pass-2 reset, and "guid\0" != "guid\0"0 — pet attribution silently vanishes.
     epoch = 0
     # R29 (v45) the replay cut's placed spells — the FIXTURES' ids only (the
-    # Rust table is the encounter rubric's generated `placed` table, of which
+    # Rust table is proto's generated `placed` table, of which
     # these are a subset): what places something, and what tells where.
     PLACE[111771] = 1   # Demonic Gateway
     PLACE[192077] = 1   # Wind Rush Totem
