@@ -19,8 +19,8 @@ their creatures' posts on their own floor; with format 3 every pull gained
 [sample.txt](sample.md)'s and [tree.txt](tree.md)'s players' debuffs on
 their bosses became debuff rows). A finished keystone run's rows
 carry `K<n>` in the segment column, kind `Key`. The placed spells are real
-ids from the encounter rubric's generated table
-([`wowdps-encounter-rubric`](../crates/encounter-rubric.md)), hard-coded in
+ids from the generated `placed` table
+([`wowdps-proto`](../crates/proto.md)'s `proto::placed`), hard-coded in
 check.awk as its other tables are.
 
 ## Rulings exercised

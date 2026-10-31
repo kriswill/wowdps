@@ -17,17 +17,15 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+. "$root/tools/lib.sh"
 wow="${1:-}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Table list must match spellicongen::TABLE (the tool errors on a missing dbd).
-curl -sfL "https://raw.githubusercontent.com/wowdev/WoWDBDefs/master/definitions/SpellMisc.dbd" \
-    -o "$work/SpellMisc.dbd" || { echo "failed to fetch SpellMisc.dbd" >&2; exit 1; }
-curl -sfL "https://raw.githubusercontent.com/wowdev/TACTKeys/master/WoW.txt" \
-    -o "$work/tactkeys.txt" || { echo "failed to fetch TACTKeys" >&2; exit 1; }
+build_extract
+fetch_dbds gen-spell-icons "$work"
+fetch_keys "$work/tactkeys.txt"
 
-cargo build -q --release --manifest-path "$root/Cargo.toml" -p wowdps-extract
-"$root/target/release/wowdps-extract" gen-spell-icons ${wow:+"$wow"} \
+"$extract" gen-spell-icons ${wow:+"$wow"} \
     --dbd-dir "$work" --keys "$work/tactkeys.txt"

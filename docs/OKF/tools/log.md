@@ -1,5 +1,25 @@
 # Log
 
+## 2026-10-30
+
+- **Creation** — wowdps's generators that the replay branch grew, brought
+  with the extractor's library half (Step 0 of the replay's move to its
+  own repository): [gen-spell-tips](gen-spell-tips.md) (`spell-tips.bin`,
+  for the `spell_tips` reader gui-logic gains with its spell tips),
+  [gen-placed-spells](gen-placed-spells.md) and its census
+  [census-placed-spells](census-placed-spells.md) (proto's `placed`
+  table), [seed-creatures](seed-creatures.md) (the store's
+  `creatures.tsv` from Wowhead), [wowdps-db2](wowdps-db2.md) (the game's
+  tables as SQL) and [lib](lib.md), the scripts' shared helpers, without
+  the replay's `build_replay_extract`.
+
+- **Update** — every `gen-*.sh` and `census-proc-spells.sh` sources
+  [lib](lib.md) and fetches the schemas its command names
+  (`wowdps-extract tables COMMAND`), so no script keeps a table list;
+  [gen-icons](gen-icons.md) upscales the art 4x round the extractor (208 px
+  tiles, `--no-upscale` for the game's own 52 px), and
+  [gen-talent-art](gen-talent-art.md)'s record says how its atlases are cut.
+
 ## 2026-10-23
 
 - **Creation** — [codeql](codeql.md): GitHub's CodeQL default-setup run

@@ -6,7 +6,7 @@
 # storage (`wowdps-extract fetch`, keys from wowdev/TACTKeys) — plus the
 # matching WoWDBDefs schema and wago's own CSV export of the same build;
 # extract and compare with `wowdps-extract diffcsv` (exact cells, floats by
-# f32 bits — wago re-formats floats through PHP, see main.rs). A mismatch
+# f32 bits — wago re-formats floats through PHP, see cli/db2.rs). A mismatch
 # means our decoding diverged from the reference pipeline: fail loudly.
 #
 # usage: tools/extract/verify.sh [build]      # default: latest live build

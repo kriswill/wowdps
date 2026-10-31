@@ -174,8 +174,8 @@ use crate::meter::Meter;
 use crate::parser::{self, AuraType, Event as Ev, LogLine, Position, Spell, Unit as LogUnit};
 
 /// Which spells place something in the room, and which tell where one
-/// stands: the encounter rubric's generated `placed` table, which core
-/// cannot name (the daemon implements this over it; a test over its own).
+/// stands: proto's generated `placed` table, which core cannot name (the
+/// daemon implements this over it; a test over its own).
 pub trait PlacedTable {
     /// A cast, summon or create of `spell` places something the replay draws.
     fn places(&self, spell: u32) -> bool;

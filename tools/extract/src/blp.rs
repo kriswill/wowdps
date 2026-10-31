@@ -9,55 +9,67 @@
 //! panic — all reads go through bounds-checked accessors, and a read past a
 //! block's edge (impossible for well-formed data) yields zero.
 
-/// Decoded mip 0.
-#[derive(Debug)]
-pub struct Image {
-    pub width: usize,
-    pub height: usize,
-    /// RGBA, row-major, `width * height * 4` bytes.
-    pub rgba: Vec<u8>,
-}
-
-fn byte(b: &[u8], at: usize) -> u8 {
-    b.get(at).copied().unwrap_or(0)
-}
-
-fn u16at(b: &[u8], at: usize) -> u16 {
-    u16::from_le_bytes([byte(b, at), byte(b, at + 1)])
-}
-
-fn u32at(b: &[u8], at: usize) -> Result<u32, String> {
-    b.get(at..at + 4)
-        .map(|s| u32::from_le_bytes([byte(s, 0), byte(s, 1), byte(s, 2), byte(s, 3)]))
-        .ok_or_else(|| format!("blp: truncated at {at}"))
-}
+use crate::img::Image;
+use crate::raw::{
+    self,
+    zero::{byte, u16_at},
+};
 
 /// Decode a BLP2 file's top mip to RGBA.
 pub fn decode(data: &[u8]) -> Result<Image, String> {
+    decode_level(data, 0)
+}
+
+/// How many mip levels the file stores (1 when it stores none beyond the
+/// top), counting the offsets the header fills in.
+pub fn levels(data: &[u8]) -> usize {
+    if byte(data, 11) == 0 {
+        return 1;
+    }
+    (0..16)
+        .take_while(|l| raw::u32_le(data, 20 + 4 * l, "blp").is_ok_and(|o| o != 0))
+        .count()
+        .max(1)
+}
+
+/// Decode one mip level to RGBA: level 0 is the full image, each level
+/// after it half the size (never under 1 px), as the file stores them.
+pub fn decode_level(data: &[u8], level: usize) -> Result<Image, String> {
     if data.get(..4) != Some(b"BLP2") {
         return Err("blp: bad magic".into());
+    }
+    if level >= 16 {
+        return Err(format!("blp: no mip level {level}"));
     }
     let compression = byte(data, 8);
     let alpha_depth = byte(data, 9);
     let alpha_type = byte(data, 10);
-    let width = u32at(data, 12)? as usize;
-    let height = u32at(data, 16)? as usize;
+    let top_w = raw::u32_le(data, 12, "blp")? as usize;
+    let top_h = raw::u32_le(data, 16, "blp")? as usize;
     // 4096 admits the UI texture atlases (2048×1024 sheets) that the
     // talent-art generator crops; icons stay far below it.
-    if width == 0 || height == 0 || width > 4096 || height > 4096 {
-        return Err(format!("blp: unreasonable size {width}x{height}"));
+    if top_w == 0 || top_h == 0 || top_w > 4096 || top_h > 4096 {
+        return Err(format!("blp: unreasonable size {top_w}x{top_h}"));
     }
-    let offset = u32at(data, 20)? as usize;
-    let size = u32at(data, 84)? as usize;
+    let width = (top_w >> level).max(1);
+    let height = (top_h >> level).max(1);
+    let offset = raw::u32_le(data, 20 + 4 * level, "blp")? as usize;
+    let size = raw::u32_le(data, 84 + 4 * level, "blp")? as usize;
+    if offset == 0 || size == 0 {
+        return Err(format!("blp: no mip level {level}"));
+    }
     let mip = data
         .get(offset..offset.saturating_add(size))
         .ok_or("blp: mip range out of bounds")?;
 
     let rgba = match compression {
         1 => palettized(data, mip, width, height, alpha_depth)?,
+        // Alpha type 7 is DXT5; otherwise alpha deeper than one bit is DXT3
+        // (its 4-bit explicit alpha: the raid target icons are depth 4),
+        // and one bit or none is DXT1.
         2 => match alpha_type {
             7 => dxt(mip, width, height, Dxt::Five)?,
-            1 if alpha_depth == 8 => dxt(mip, width, height, Dxt::Three)?,
+            _ if alpha_depth > 1 => dxt(mip, width, height, Dxt::Three)?,
             _ => dxt(mip, width, height, Dxt::One)?,
         },
         3 => raw_bgra(mip, width, height)?,
@@ -183,8 +195,8 @@ fn dxt(mip: &[u8], w: usize, h: usize, kind: Dxt) -> Result<Vec<u8>, String> {
     let mut out = vec![0u8; w * h * 4];
     for (bi, block) in mip.chunks_exact(block_bytes).take(bw * bh).enumerate() {
         let (bx, by) = (bi % bw, bi / bw);
-        let pal = color_block(u16at(block, c), u16at(block, c + 2), kind != Dxt::One);
-        let color_bits = u32at(block, c + 4).unwrap_or(0);
+        let pal = color_block(u16_at(block, c), u16_at(block, c + 2), kind != Dxt::One);
+        let color_bits = raw::u32_le(block, c + 4, "blp").unwrap_or(0);
         // DXT5's 48 bits of 3-bit alpha indices.
         let (a0, a1) = (byte(block, 0) as u32, byte(block, 1) as u32);
         let alpha_bits = u64::from_le_bytes([
@@ -235,40 +247,6 @@ fn dxt(mip: &[u8], w: usize, h: usize, kind: Dxt) -> Result<Vec<u8>, String> {
         }
     }
     Ok(out)
-}
-
-/// Box-filter an RGBA image down by an integer factor (64→32 uses 2).
-pub fn downscale(img: &Image, factor: usize) -> Image {
-    if factor <= 1 {
-        return Image {
-            width: img.width,
-            height: img.height,
-            rgba: img.rgba.clone(),
-        };
-    }
-    let w = img.width / factor;
-    let h = img.height / factor;
-    let mut out = Vec::with_capacity(w * h * 4);
-    for y in 0..h {
-        for x in 0..w {
-            let mut acc = [0u32; 4];
-            for dy in 0..factor {
-                for dx in 0..factor {
-                    let at = ((y * factor + dy) * img.width + x * factor + dx) * 4;
-                    for (c, a) in acc.iter_mut().enumerate() {
-                        *a += byte(&img.rgba, at + c) as u32;
-                    }
-                }
-            }
-            let n = (factor * factor) as u32;
-            out.extend(acc.iter().map(|a| (a / n) as u8));
-        }
-    }
-    Image {
-        width: w,
-        height: h,
-        rgba: out,
-    }
 }
 
 #[cfg(test)]
@@ -472,6 +450,18 @@ mod tests {
     }
 
     #[test]
+    fn dxt3_at_alpha_depth_4() {
+        // The raid target icons: DXT, alpha depth 4, alpha type 1. A 4-bit
+        // explicit alpha is DXT3's, so the block is 16 bytes, not DXT1's 8.
+        let mut f = header(2, 4, 1, 4, 4, 16);
+        f.extend_from_slice(&[0x0F; 8]);
+        f.extend_from_slice(&[0x00, 0xF8, 0, 0, 0, 0, 0, 0]);
+        let px = pixels(&decode(&f).unwrap());
+        assert_eq!(px[0], [255, 0, 0, 255]);
+        assert_eq!(px[1], [255, 0, 0, 0]);
+    }
+
+    #[test]
     fn dxt3_explicit_alpha() {
         let mut f = header(2, 8, 1, 4, 4, 16);
         // Alpha nibbles 0x0F per byte: even texels opaque, odd transparent.
@@ -527,36 +517,5 @@ mod tests {
         assert_eq!((img.width, img.height), (2, 2));
         assert_eq!(img.rgba.len(), 16);
         assert!(pixels(&img).iter().all(|p| *p == [255, 0, 0, 255]));
-    }
-
-    #[test]
-    fn downscale_by_one_copies() {
-        let img = Image {
-            width: 1,
-            height: 1,
-            rgba: vec![9, 8, 7, 6],
-        };
-        let same = downscale(&img, 1);
-        assert_eq!(
-            (same.width, same.height, same.rgba),
-            (1, 1, vec![9, 8, 7, 6])
-        );
-    }
-
-    #[test]
-    fn downscale_averages_blocks() {
-        let img = Image {
-            width: 2,
-            height: 2,
-            rgba: vec![
-                255, 0, 0, 255, //
-                0, 0, 0, 255, //
-                0, 0, 0, 255, //
-                255, 0, 0, 255,
-            ],
-        };
-        let half = downscale(&img, 2);
-        assert_eq!((half.width, half.height), (1, 1));
-        assert_eq!(&half.rgba, &[127, 0, 0, 255]);
     }
 }

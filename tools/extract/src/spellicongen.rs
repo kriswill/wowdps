@@ -18,11 +18,12 @@
 
 use crate::blp;
 use crate::game::Game;
+use crate::img::downscale_box;
 use crate::table::Csv;
 use std::collections::HashMap;
 
-/// The one table consumed, with its FileDataID.
-pub const TABLE: (&str, u32) = ("SpellMisc", 1003144);
+/// The one table consumed (its FileDataID: `table::FILE_IDS`).
+pub const TABLE: &str = "SpellMisc";
 
 const ICON: usize = 32;
 pub const MAGIC: &[u8; 4] = b"WDPI";
@@ -80,7 +81,7 @@ pub fn generate(game: &Game, misc: &Csv) -> Result<Generated, String> {
             .and_then(|data| blp::decode(&data).map_err(|e| e.to_string()))
             .ok()
             .filter(|img| img.width == img.height && img.width % ICON == 0)
-            .map(|img| blp::downscale(&img, img.width / ICON).rgba);
+            .map(|img| downscale_box(&img, img.width / ICON).rgba);
         match tile {
             Some(rgba) if rgba.len() == ICON * ICON * 4 => {
                 tile_of.insert(fdid, (tiles.len() / (ICON * ICON * 4)) as u32);

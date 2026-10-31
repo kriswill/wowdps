@@ -1,10 +1,15 @@
-//! Bounds-checked reads over raw binary buffers.
+//! Bounds-checked reads over raw binary buffers: every fixed-width read of
+//! untrusted file bytes in this crate, so a truncated or malformed file is
+//! never a panic. Three contracts, for three kinds of reader:
 //!
-//! The formats below (BLTE, CASC `.idx`, TACT manifests, WDC5) are all
-//! fixed-width field soup over untrusted file bytes: a truncated or
-//! malformed file must surface as an error, never a panic. These helpers
-//! are the one place that turns "past the end" into a descriptive
-//! `Err(String)`, so call sites read as ordinary `?` chains.
+//! - The functions here: past the end is a descriptive `Err(String)`, so
+//!   call sites read as ordinary `?` chains (BLTE, CASC `.idx`, TACT
+//!   manifests, WDC5, PNG, BLP headers).
+//! - `zero`: little-endian, a byte past the end reads 0. The geometry files
+//!   (WMO, ADT, WDT, M2) and BLP blocks, whose parsers stop on a count or a
+//!   size rather than at a read: a truncated file reads short.
+//! - `be`: big-endian, `None` past the end. The font's tables, whose
+//!   parser gives up on what it cannot read.
 
 /// Every reader in this crate reports failures as a message string.
 pub type Res<T> = Result<T, String>;
@@ -66,6 +71,56 @@ pub fn uint_be(d: &[u8], off: usize, n: usize, what: &str) -> Res<u64> {
     Ok(s.iter().fold(0u64, |acc, &b| (acc << 8) | u64::from(b)))
 }
 
+/// Little-endian reads where a byte past the end reads 0.
+pub mod zero {
+    pub fn byte(b: &[u8], at: usize) -> u8 {
+        b.get(at).copied().unwrap_or(0)
+    }
+
+    pub fn u16_at(b: &[u8], at: usize) -> u16 {
+        u16::from_le_bytes([byte(b, at), byte(b, at + 1)])
+    }
+
+    pub fn u32_at(b: &[u8], at: usize) -> u32 {
+        u32::from_le_bytes([
+            byte(b, at),
+            byte(b, at + 1),
+            byte(b, at + 2),
+            byte(b, at + 3),
+        ])
+    }
+
+    pub fn f32_at(b: &[u8], at: usize) -> f32 {
+        f32::from_bits(u32_at(b, at))
+    }
+
+    pub fn vec3_at(b: &[u8], at: usize) -> [f32; 3] {
+        [f32_at(b, at), f32_at(b, at + 4), f32_at(b, at + 8)]
+    }
+}
+
+/// Big-endian reads that answer `None` past the end.
+pub mod be {
+    pub fn u16_at(b: &[u8], at: usize) -> Option<u16> {
+        let s = b.get(at..at.checked_add(2)?)?;
+        Some(u16::from_be_bytes([*s.first()?, *s.get(1)?]))
+    }
+
+    pub fn i16_at(b: &[u8], at: usize) -> Option<i16> {
+        u16_at(b, at).map(|v| v as i16)
+    }
+
+    pub fn u32_at(b: &[u8], at: usize) -> Option<u32> {
+        let s = b.get(at..at.checked_add(4)?)?;
+        Some(u32::from_be_bytes([
+            *s.first()?,
+            *s.get(1)?,
+            *s.get(2)?,
+            *s.get(3)?,
+        ]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +138,20 @@ mod tests {
         assert!(take(&d, usize::MAX, 4, "x").is_err());
         assert!(u64_le(&d, 1, "x").is_err());
         assert_eq!(rest(&d, 6, "x").unwrap(), &[7, 8]);
+    }
+
+    #[test]
+    fn lenient_and_optional_reads() {
+        let d = [1u8, 2, 3, 4, 0, 0, 0x80, 0x3f];
+        assert_eq!(zero::u32_at(&d, 0), 0x0403_0201);
+        assert_eq!(zero::u16_at(&d, 7), 0x3f);
+        assert_eq!(zero::byte(&d, 8), 0);
+        assert_eq!(zero::f32_at(&d, 4), 1.0);
+        assert_eq!(zero::vec3_at(&d, 4), [1.0, 0.0, 0.0]);
+        assert_eq!(be::u16_at(&d, 0), Some(0x0102));
+        assert_eq!(be::i16_at(&d, 6), Some(0x803f_u16 as i16));
+        assert_eq!(be::u32_at(&d, 0), Some(0x0102_0304));
+        assert_eq!(be::u32_at(&d, 5), None);
+        assert_eq!(be::u16_at(&d, usize::MAX), None);
     }
 }

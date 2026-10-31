@@ -81,6 +81,17 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
   seconds and varints behind a (guid, offset, length) index so
   `read_player` reads one player's block alone; decode never panics or
   allocates past the bytes in hand.
+- `placed.rs` — the generated table of what players place in the room
+  (`placed/placed_spells.rs`, written by
+  [gen-placed-spells](../tools/gen-placed-spells.md) with its review twin
+  beside it): each spell's `Found`, `Form`, `Purpose`, reach
+  and duration, and the lookups (`all`, `placed`, `tells`,
+  `Placed::telling`). The daemon's replay cut keeps the lines its spells
+  write, through [wowdps-core](core.md)'s `PlacedTable`
+  ([R29](../rulings/r29.md)), and the replay draws them by it, so it
+  lives where both a daemon and a pure client read it. It was the
+  encounter rubric's until the rubric left wowdps with the replay
+  (2026-10-30).
 - `replay.rs`, `varint.rs`, `dirs.rs` — below.
 
 ## Source
@@ -164,8 +175,8 @@ may not hold yet (a view switch still on its way)
 counts as unset, as the spec words it, and `Base::resolve` is the rule as a
 pure function so its tests never touch the process environment.
 `talents::data_path` delegates to it, and
-[`wowdps-encounter-rubric`](encounter-rubric.md) resolves its text sidecars
-through it.
+the encounter rubric (the replay's, since 2026-10-30) resolves its text
+sidecars through it.
 
 ## Contract
 

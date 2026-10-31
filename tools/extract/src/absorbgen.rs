@@ -26,13 +26,12 @@
 //! (`absorb_spells.expected.md`).
 
 use crate::rolegen::Census;
-use crate::table::Csv;
-use std::collections::{BTreeMap, HashMap};
+use crate::table::{Tables, cell};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-/// The tables the generator consumes, with their FileDataIDs
-/// (from wowdev/wow-listfile; stable per file, forever).
-pub const TABLES: [(&str, u32); 2] = [("SpellName", 1990283), ("SpellEffect", 1140088)];
+/// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`).
+pub const TABLES: [&str; 2] = ["SpellName", "SpellEffect"];
 
 /// SpellEffect.EffectAura for SCHOOL_ABSORB.
 const AURA_SCHOOL_ABSORB: &str = "69";
@@ -56,27 +55,9 @@ pub struct Generated {
     pub unknown: Vec<(u32, String, Vec<u64>)>,
 }
 
-/// One cell of a CSV row. The column index comes from `Csv::col`, so a miss
-/// means the row itself is short — a malformed table, not a bug here.
-fn cell<'a>(row: &'a [String], c: usize, what: &str) -> Result<&'a str, String> {
-    row.get(c)
-        .map(String::as_str)
-        .ok_or_else(|| format!("{what}: row has no column {c}"))
-}
-
-pub fn generate(
-    tables: &HashMap<&str, Csv>,
-    census: &Census,
-    build: &str,
-) -> Result<Generated, String> {
-    let get = |name: &str| {
-        tables
-            .get(name)
-            .ok_or_else(|| format!("missing table {name}"))
-    };
-
+pub fn generate(tables: &Tables, census: &Census, build: &str) -> Result<Generated, String> {
     // SpellEffect: every spell with a SCHOOL_ABSORB aura on any difficulty.
-    let se = get("SpellEffect")?;
+    let se = tables.get("SpellEffect")?;
     let (e_spell, e_aura) = (se.col("SpellID")?, se.col("EffectAura")?);
     let mut table: BTreeMap<u32, &str> = BTreeMap::new();
     for row in &se.rows {
@@ -90,7 +71,7 @@ pub fn generate(
     }
 
     // SpellName: the names, for the review twin only (an unnamed id stays).
-    let sn = get("SpellName")?;
+    let sn = tables.get("SpellName")?;
     let (n_id, n_name) = (sn.col("ID")?, sn.col("Name_lang")?);
     for row in &sn.rows {
         let id: u32 = cell(row, n_id, "SpellName")?.parse().unwrap_or(0);
@@ -294,8 +275,8 @@ mod tests {
     use super::*;
     use crate::table::parse_csv;
 
-    fn tables() -> HashMap<&'static str, Csv> {
-        let mut t = HashMap::new();
+    fn tables() -> Tables {
+        let mut t = Tables::default();
         t.insert(
             "SpellName",
             parse_csv(

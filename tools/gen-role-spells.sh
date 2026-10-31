@@ -24,21 +24,17 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+. "$root/tools/lib.sh"
 wow="${1:-}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Table list must match rolegen::TABLES (the tool errors on a missing dbd).
-for t in SpellName SpellEffect; do
-    curl -sfL "https://raw.githubusercontent.com/wowdev/WoWDBDefs/master/definitions/$t.dbd" \
-        -o "$work/$t.dbd" || { echo "failed to fetch $t.dbd" >&2; exit 1; }
-done
-curl -sfL "https://raw.githubusercontent.com/wowdev/TACTKeys/master/WoW.txt" \
-    -o "$work/tactkeys.txt" || { echo "failed to fetch TACTKeys" >&2; exit 1; }
+build_extract
+fetch_dbds gen-role-spells "$work"
+fetch_keys "$work/tactkeys.txt"
 
-cargo build -q --release --manifest-path "$root/Cargo.toml" -p wowdps-extract
-"$root/target/release/wowdps-extract" gen-role-spells ${wow:+"$wow"} \
+"$extract" gen-role-spells ${wow:+"$wow"} \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" \
     --census "$root/tools/role-spells-census.csv" \
     -o "$root/crates/core/src/role_spells.rs"

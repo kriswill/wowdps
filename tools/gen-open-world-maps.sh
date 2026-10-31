@@ -18,17 +18,16 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+. "$root/tools/lib.sh"
 wow="${1:-}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-curl -sfL "https://raw.githubusercontent.com/wowdev/WoWDBDefs/master/definitions/Map.dbd" \
-    -o "$work/Map.dbd" || { echo "failed to fetch Map.dbd" >&2; exit 1; }
-curl -sfL "https://raw.githubusercontent.com/wowdev/TACTKeys/master/WoW.txt" \
-    -o "$work/tactkeys.txt" || { echo "failed to fetch TACTKeys" >&2; exit 1; }
+build_extract
+fetch_dbds gen-open-world-maps "$work"
+fetch_keys "$work/tactkeys.txt"
 
-cargo build -q --release --manifest-path "$root/Cargo.toml" -p wowdps-extract
-"$root/target/release/wowdps-extract" gen-open-world-maps ${wow:+"$wow"} \
+"$extract" gen-open-world-maps ${wow:+"$wow"} \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" \
     -o "$root/crates/core/src/open_world_maps.rs"
