@@ -1731,7 +1731,8 @@ pub fn creature_stats(dir: &Path) -> Json {
 /// tier file for the units, tracks, events, placed things and markers; the
 /// details tier, when the store still keeps it, for `raid.csv` (R25's raid
 /// series: the friendly players' 1 s damage summed, never stored twice);
-/// the card for `pull.txt`'s owner. `pull.txt` names the instance by the
+/// the card for `pull.txt`'s owner, its start on the log's local clock and
+/// its best (R16's, 0 on a kill). `pull.txt` names the instance by the
 /// log's zone (the rubric's journal name is the extractor's) and its log as
 /// `history:<fight id>`: the store knows a log by its identity, not its
 /// file name. A one-line summary of what was written.
@@ -1772,6 +1773,8 @@ pub fn replay_export(dir: &Path, fight_id: &str, out: &Path) -> Result<String, S
         log: &log,
         owner: card.as_ref().and_then(|c| c.owner.as_deref()),
         order: None,
+        local_ms: card.as_ref().map(|c| c.start_local_ms),
+        best_pct: card.as_ref().and_then(|c| c.best_pct),
     };
     wowdps_proto::replay::csv::write_dir(
         out,

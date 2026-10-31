@@ -226,6 +226,8 @@ fn real_pulls_cut_into_the_replay_tier() {
                     log,
                     owner,
                     order,
+                    local_ms: None,
+                    best_pct: None,
                 },
             )
             .expect("files");

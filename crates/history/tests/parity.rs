@@ -5562,6 +5562,15 @@ fn the_replay_tier_exports_offline_and_stats_count_it() {
         pull.contains(&format!("log = history:{}\n", kill.id)),
         "{pull}"
     );
+    // The card's start on the log's own clock, and its best where it says one.
+    assert!(
+        pull.contains(&format!("\nlocal = {}\n", kill.start_local_ms)),
+        "{pull}"
+    );
+    match kill.best_pct {
+        Some(best) => assert!(pull.contains(&format!("\nbest = {best}\n")), "{pull}"),
+        None => assert!(!pull.contains("\nbest = "), "{pull}"),
+    }
     assert!(wowdps_history::replay_export(&hist, "nope", &out).is_err());
 }
 
