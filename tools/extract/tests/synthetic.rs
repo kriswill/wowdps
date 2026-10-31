@@ -285,7 +285,9 @@ $noninline,relation$R
 
     let dbd = Dbd::parse(DBD).unwrap();
     let mut out = Vec::new();
-    table::write_csv(&db2, &dbd, &mut out).unwrap();
+    let written = table::write_csv(&db2, &dbd, &mut out);
+    decodes_as_written(&db2, &dbd, &written, &out);
+    written.unwrap();
     let csv = String::from_utf8(out).unwrap();
 
     let expected = "\
@@ -381,7 +383,9 @@ W<u16>
     let db2 = Db2::parse(b.0).unwrap();
     let dbd = Dbd::parse(DBD).unwrap();
     let mut out = Vec::new();
-    table::write_csv(&db2, &dbd, &mut out).unwrap();
+    let written = table::write_csv(&db2, &dbd, &mut out);
+    decodes_as_written(&db2, &dbd, &written, &out);
+    written.unwrap();
     let csv = String::from_utf8(out).unwrap();
 
     let expected = "\
@@ -590,8 +594,22 @@ fn csv_of(data: Vec<u8>, dbd: &str) -> Result<String, String> {
     let db2 = Db2::parse(data)?;
     let dbd = Dbd::parse(dbd)?;
     let mut out = Vec::new();
-    table::write_csv(&db2, &dbd, &mut out)?;
+    let written = table::write_csv(&db2, &dbd, &mut out);
+    decodes_as_written(&db2, &dbd, &written, &out);
+    written?;
     String::from_utf8(out).map_err(|e| e.to_string())
+}
+
+/// `table::decode` is `parse_csv` of what `write_csv` wrote, and fails
+/// where it failed, with its words.
+fn decodes_as_written(db2: &Db2, dbd: &Dbd, written: &Result<(), String>, out: &[u8]) {
+    let want = match written {
+        Ok(()) => String::from_utf8(out.to_vec())
+            .map_err(|e| e.to_string())
+            .and_then(|text| table::parse_csv(&text)),
+        Err(e) => Err(e.clone()),
+    };
+    assert_eq!(table::decode(db2, dbd), want);
 }
 
 fn u32_none(offset_bits: u16) -> FieldSpec {

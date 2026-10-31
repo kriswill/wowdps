@@ -63,11 +63,10 @@ pub fn locate() -> Result<PathBuf, String> {
 }
 
 /// `logs_dir` from `~/.config/wowdps/config.toml` (top-level keys only,
-/// matching the daemon's section-aware toml-subset reader).
+/// matching the daemon's section-aware toml-subset reader; the config home
+/// through `wowdps_proto::dirs`).
 fn config_logs_dir() -> Option<PathBuf> {
-    let config_home = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    let config_home = wowdps_proto::dirs::config_home()?;
     let text = std::fs::read_to_string(config_home.join("wowdps").join("config.toml")).ok()?;
     logs_dir_from_config(&text).map(PathBuf::from)
 }
@@ -87,12 +86,24 @@ fn logs_dir_from_config(text: &str) -> Option<String> {
     None
 }
 
+/// The build an install holds: its `.build.info`'s row for the `wow`
+/// product.
+pub fn build_info(wow_dir: &Path) -> Result<tact::BuildInfo, String> {
+    let path = wow_dir.join(".build.info");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    tact::BuildInfo::parse(&text, "wow")
+}
+
 #[derive(Debug)]
 pub struct Game {
     store: LocalStore,
     keys: Keys,
     encoding: Vec<u8>,
     root: Vec<u8>,
+    /// The root manifest indexed by FileDataID, made on the first lookup:
+    /// a generator fetches thousands of files, each a walk of the whole
+    /// manifest without it.
+    index: std::sync::OnceLock<Result<tact::RootIndex, String>>,
     pub build: String,
 }
 
@@ -104,7 +115,7 @@ impl Game {
             std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))
         };
 
-        let info = tact::BuildInfo::parse(&read_text(&wow_dir.join(".build.info"))?, "wow")?;
+        let info = build_info(wow_dir)?;
         eprintln!("build {} (config {})", info.version, info.build_key);
 
         let data_dir = wow_dir.join("Data");
@@ -138,6 +149,7 @@ impl Game {
             keys,
             encoding,
             root,
+            index: std::sync::OnceLock::new(),
             build: info.version,
         })
     }
@@ -154,9 +166,16 @@ impl Game {
         blte::decode(&self.store.read(&ekey)?, &self.keys)
     }
 
-    /// Decoded bytes of a FileDataID, preferring `locale_mask` blocks.
+    /// Decoded bytes of a FileDataID, preferring `locale_mask` blocks: the
+    /// record `tact::root_find` picks, through the index.
     pub fn fetch_fdid(&self, fdid: u32, locale_mask: u32) -> Result<Vec<u8>, String> {
-        let m = tact::root_find(&self.root, Some(fdid), None, locale_mask)?
+        let index = self
+            .index
+            .get_or_init(|| tact::RootIndex::new(&self.root))
+            .as_ref()
+            .map_err(String::clone)?;
+        let m = index
+            .find(&self.root, fdid, locale_mask)
             .ok_or_else(|| format!("fdid {fdid} not found in root manifest"))?;
         self.fetch_ckey(&m.ckey)
     }
@@ -165,6 +184,37 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On the real install (`WOWDPS_WOW_DIR`, else found as the generators
+    /// find it): the index picks the scan's record for ids spread over the
+    /// whole manifest, present and absent, in two locales.
+    /// `cargo test --release -p wowdps-extract real_root_index -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs a local install"]
+    fn real_root_index_matches_the_scan() {
+        let game = Game::open(&locate().unwrap(), None).unwrap();
+        let started = std::time::Instant::now();
+        let index = tact::RootIndex::new(game.root()).unwrap();
+        eprintln!("{index:?} in {:.0?}", started.elapsed());
+        let ids: Vec<u32> = (0..400u32).map(|i| i * 17_011 + i % 7).collect();
+        let started = std::time::Instant::now();
+        let mut found = 0;
+        for &fdid in &ids {
+            for mask in [0x2, 0x10] {
+                let scan = tact::root_find(game.root(), Some(fdid), None, mask).unwrap();
+                let fast = index.find(game.root(), fdid, mask);
+                let key = |m: &tact::RootMatch| (m.fdid, m.ckey, m.locale, m.content);
+                assert_eq!(scan.as_ref().map(key), fast.as_ref().map(key), "{fdid}");
+                found += usize::from(scan.is_some());
+            }
+        }
+        eprintln!(
+            "{} lookups ({found} found) by scan and index in {:.1?}",
+            ids.len() * 2,
+            started.elapsed()
+        );
+        assert!(found > 100);
+    }
 
     #[test]
     fn logs_dir_parsing() {

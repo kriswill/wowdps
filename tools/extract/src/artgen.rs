@@ -10,7 +10,10 @@
 //! names each hero tree's medallion element directly
 //! (`UiTextureAtlasElementID` — no name matching), `UiTextureAtlasMember`
 //! holds the committed rectangle, `UiTextureAtlas` the sheet's
-//! FileDataID. Backgrounds are box-downscaled ×2 (1612×774 native, far
+//! FileDataID — read through [`Atlas`], which the replay's extractor
+//! (wowdps-replay-extract) uses too: gen-portraits cuts the replay's
+//! medallion rings with it, and gen-class-power the replay HUD's class
+//! resources (`classpowergen`). Backgrounds are box-downscaled ×2 (1612×774 native, far
 //! more than the pane needs) to keep the cache tens of MB, like the
 //! spell-icon bin.
 //!
@@ -26,13 +29,14 @@ use std::collections::HashMap;
 use crate::blp;
 use crate::classgen;
 use crate::game::Game;
-use crate::table::Csv;
+use crate::img::{Image, downscale_box};
+use crate::table::{Tables, cell};
 
-pub const TABLES: [(&str, u32); 4] = [
-    ("UiTextureAtlas", 897470),
-    ("UiTextureAtlasMember", 897532),
-    ("UiTextureAtlasElement", 1989276),
-    ("TraitSubTree", 5534447),
+pub const TABLES: [&str; 4] = [
+    "UiTextureAtlas",
+    "UiTextureAtlasMember",
+    "UiTextureAtlasElement",
+    "TraitSubTree",
 ];
 
 pub const MAGIC: &[u8; 4] = b"WDTA";
@@ -101,12 +105,6 @@ pub struct Generated {
     pub missing: Vec<String>,
 }
 
-fn cell<'a>(row: &'a [String], c: usize, what: &str) -> Result<&'a str, String> {
-    row.get(c)
-        .map(String::as_str)
-        .ok_or_else(|| format!("{what}: short row"))
-}
-
 fn parse_u32(s: &str, what: &str) -> Result<u32, String> {
     s.parse().map_err(|_| format!("{what}: bad number {s:?}"))
 }
@@ -121,6 +119,7 @@ fn token(name: &str) -> String {
 }
 
 /// One committed atlas rectangle.
+#[derive(Clone, Copy)]
 struct Member {
     atlas_id: u32,
     left: usize,
@@ -129,15 +128,182 @@ struct Member {
     h: usize,
 }
 
+/// The tables an [`Atlas`] reads.
+pub const ATLAS_TABLES: [&str; 3] = [
+    "UiTextureAtlas",
+    "UiTextureAtlasMember",
+    "UiTextureAtlasElement",
+];
+
+/// The client's texture atlases: an element, by its name or its id, cut
+/// out of its sheet (each sheet decoded once). What the talent art and the
+/// replay's medallion rings are cropped with; and every member as its
+/// sheet commits it (`committed`, `cut`), what the replay HUD's class
+/// resources are cut with from a 2x sheet and its 1x twin alike, whose
+/// members share one element.
+pub struct Atlas<'a> {
+    element_by_name: HashMap<String, u32>,
+    name_by_element: HashMap<u32, String>,
+    member_by_element: HashMap<u32, Member>,
+    members: Vec<Committed>,
+    sheets: Sheets<'a>,
+}
+
+/// A member of the atlases as its sheet commits it: its name (lowercase,
+/// a 2x sheet's suffix kept), its sheet (`UiTextureAtlas` id) and that
+/// sheet's canvas (`UiCanvasID`: 1 a 1x sheet, 2 its 2x twin; 0 where the
+/// table has no such column), and its size.
+#[derive(Clone)]
+pub struct Committed {
+    pub name: String,
+    pub atlas: u32,
+    pub canvas: u32,
+    pub w: usize,
+    pub h: usize,
+    member: Member,
+}
+
+impl<'a> Atlas<'a> {
+    pub fn new(game: &'a Game, tables: &Tables) -> Result<Self, String> {
+        // Element name ↔ id.
+        let elements = tables.get("UiTextureAtlasElement")?;
+        let (e_name, e_id) = (elements.col("Name")?, elements.col("ID")?);
+        let mut element_by_name: HashMap<String, u32> = HashMap::new();
+        let mut name_by_element: HashMap<u32, String> = HashMap::new();
+        for row in &elements.rows {
+            let name = cell(row, e_name, "element")?.to_ascii_lowercase();
+            let id = parse_u32(cell(row, e_id, "element")?, "element id")?;
+            element_by_name.insert(name.clone(), id);
+            name_by_element.insert(id, name);
+        }
+
+        // Element id → committed rectangle. Several members can share an
+        // element (canvas variants); first wins, matching the client's lookup.
+        let members = tables.get("UiTextureAtlasMember")?;
+        let (m_el, m_atlas) = (
+            members.col("UiTextureAtlasElementID")?,
+            members.col("UiTextureAtlasID")?,
+        );
+        let (m_w, m_h, m_left, m_top) = (
+            members.col("Width")?,
+            members.col("Height")?,
+            members.col("CommittedLeft")?,
+            members.col("CommittedTop")?,
+        );
+        let m_name = members.col("CommittedName")?;
+        let mut member_by_element: HashMap<u32, Member> = HashMap::new();
+        let mut committed: Vec<(String, Member)> = Vec::new();
+        for row in &members.rows {
+            let el = parse_u32(cell(row, m_el, "member")?, "member element")?;
+            let m = Member {
+                atlas_id: parse_u32(cell(row, m_atlas, "member")?, "member atlas")?,
+                left: parse_u32(cell(row, m_left, "member")?, "member left")? as usize,
+                top: parse_u32(cell(row, m_top, "member")?, "member top")? as usize,
+                w: parse_u32(cell(row, m_w, "member")?, "member width")? as usize,
+                h: parse_u32(cell(row, m_h, "member")?, "member height")? as usize,
+            };
+            if m.w > 0 && m.h > 0 {
+                member_by_element.entry(el).or_insert(m);
+                committed.push((cell(row, m_name, "member")?.to_ascii_lowercase(), m));
+            }
+        }
+
+        // Atlas id → sheet FileDataID, and its canvas where the table
+        // says (1 a 1x sheet, 2 its 2x twin).
+        let atlases = tables.get("UiTextureAtlas")?;
+        let (a_id, a_fdid) = (atlases.col("ID")?, atlases.col("FileDataID")?);
+        let a_canvas = atlases.col("UiCanvasID").ok();
+        let mut fdid_by_atlas: HashMap<u32, u32> = HashMap::new();
+        let mut canvas_by_atlas: HashMap<u32, u32> = HashMap::new();
+        for row in &atlases.rows {
+            let id = parse_u32(cell(row, a_id, "atlas")?, "atlas id")?;
+            let fdid = parse_u32(cell(row, a_fdid, "atlas")?, "atlas fdid")?;
+            fdid_by_atlas.insert(id, fdid);
+            if let Some(c) = a_canvas {
+                let canvas = parse_u32(cell(row, c, "atlas")?, "atlas canvas")?;
+                canvas_by_atlas.insert(id, canvas);
+            }
+        }
+        let members = committed
+            .into_iter()
+            .map(|(name, m)| Committed {
+                name,
+                atlas: m.atlas_id,
+                canvas: canvas_by_atlas.get(&m.atlas_id).copied().unwrap_or(0),
+                w: m.w,
+                h: m.h,
+                member: m,
+            })
+            .collect();
+        Ok(Atlas {
+            element_by_name,
+            name_by_element,
+            member_by_element,
+            members,
+            sheets: Sheets {
+                game,
+                fdid_by_atlas,
+                decoded: HashMap::new(),
+            },
+        })
+    }
+
+    /// An element by its name (any case); `None` when the atlases hold no
+    /// pixels for it.
+    pub fn named(&mut self, name: &str) -> Result<Option<Image>, String> {
+        match self.element_by_name.get(&name.to_ascii_lowercase()) {
+            Some(&el) => self.element(el),
+            None => Ok(None),
+        }
+    }
+
+    /// An element by its id; `None` when no member gives it pixels.
+    pub fn element(&mut self, el: u32) -> Result<Option<Image>, String> {
+        let Some(member) = self.member_by_element.get(&el) else {
+            return Ok(None);
+        };
+        let what = self
+            .name_by_element
+            .get(&el)
+            .cloned()
+            .unwrap_or_else(|| format!("element {el}"));
+        self.sheets.crop(member, &what).map(Some)
+    }
+
+    /// An element's name, for a message.
+    pub fn name(&self, el: u32) -> String {
+        self.name_by_element
+            .get(&el)
+            .cloned()
+            .unwrap_or_else(|| format!("element {el}"))
+    }
+
+    /// Every member whose committed name starts with `prefix` (any case),
+    /// on any sheet, in the member table's order.
+    pub fn committed(&self, prefix: &str) -> Vec<Committed> {
+        let prefix = prefix.to_ascii_lowercase();
+        self.members
+            .iter()
+            .filter(|c| c.name.starts_with(&prefix))
+            .cloned()
+            .collect()
+    }
+
+    /// A committed member cut out of its sheet (each sheet decoded once).
+    pub fn cut(&mut self, c: &Committed) -> Result<Image, String> {
+        self.sheets.crop(&c.member, &c.name)
+    }
+}
+
 /// Crop a member out of its (cached) decoded sheet.
 struct Sheets<'a> {
     game: &'a Game,
     fdid_by_atlas: HashMap<u32, u32>,
-    decoded: HashMap<u32, blp::Image>,
+    decoded: HashMap<u32, Image>,
 }
 
 impl Sheets<'_> {
-    fn crop(&mut self, m: &Member, what: &str) -> Result<blp::Image, String> {
+    fn crop(&mut self, m: &Member, what: &str) -> Result<Image, String> {
         let fdid = *self
             .fdid_by_atlas
             .get(&m.atlas_id)
@@ -157,87 +323,15 @@ impl Sheets<'_> {
                 m.w, m.h, m.left, m.top, sheet.width, sheet.height
             ));
         }
-        let mut rgba = Vec::with_capacity(m.w * m.h * 4);
-        for row in 0..m.h {
-            let start = ((m.top + row) * sheet.width + m.left) * 4;
-            let line = sheet
-                .rgba
-                .get(start..start + m.w * 4)
-                .ok_or_else(|| format!("{what}: crop out of range"))?;
-            rgba.extend_from_slice(line);
-        }
-        Ok(blp::Image {
-            width: m.w,
-            height: m.h,
-            rgba,
-        })
+        sheet
+            .crop(m.left, m.top, m.w, m.h)
+            .ok_or_else(|| format!("{what}: crop out of range"))
     }
 }
 
-pub fn generate(game: &Game, tables: &HashMap<&str, Csv>) -> Result<Generated, String> {
-    let get = |name: &str| -> Result<&Csv, String> {
-        tables
-            .get(name)
-            .ok_or_else(|| format!("missing table {name}"))
-    };
-
-    // Element name ↔ id.
-    let elements = get("UiTextureAtlasElement")?;
-    let (e_name, e_id) = (elements.col("Name")?, elements.col("ID")?);
-    let mut element_by_name: HashMap<String, u32> = HashMap::new();
-    let mut name_by_element: HashMap<u32, String> = HashMap::new();
-    for row in &elements.rows {
-        let name = cell(row, e_name, "element")?.to_ascii_lowercase();
-        let id = parse_u32(cell(row, e_id, "element")?, "element id")?;
-        element_by_name.insert(name.clone(), id);
-        name_by_element.insert(id, name);
-    }
-
-    // Element id → committed rectangle. Several members can share an
-    // element (canvas variants); first wins, matching the client's lookup.
-    let members = get("UiTextureAtlasMember")?;
-    let (m_el, m_atlas) = (
-        members.col("UiTextureAtlasElementID")?,
-        members.col("UiTextureAtlasID")?,
-    );
-    let (m_w, m_h, m_left, m_top) = (
-        members.col("Width")?,
-        members.col("Height")?,
-        members.col("CommittedLeft")?,
-        members.col("CommittedTop")?,
-    );
-    let mut member_by_element: HashMap<u32, Member> = HashMap::new();
-    for row in &members.rows {
-        let el = parse_u32(cell(row, m_el, "member")?, "member element")?;
-        let m = Member {
-            atlas_id: parse_u32(cell(row, m_atlas, "member")?, "member atlas")?,
-            left: parse_u32(cell(row, m_left, "member")?, "member left")? as usize,
-            top: parse_u32(cell(row, m_top, "member")?, "member top")? as usize,
-            w: parse_u32(cell(row, m_w, "member")?, "member width")? as usize,
-            h: parse_u32(cell(row, m_h, "member")?, "member height")? as usize,
-        };
-        if m.w > 0 && m.h > 0 {
-            member_by_element.entry(el).or_insert(m);
-        }
-    }
-
-    // Atlas id → sheet FileDataID.
-    let atlases = get("UiTextureAtlas")?;
-    let (a_id, a_fdid) = (atlases.col("ID")?, atlases.col("FileDataID")?);
-    let mut fdid_by_atlas: HashMap<u32, u32> = HashMap::new();
-    for row in &atlases.rows {
-        fdid_by_atlas.insert(
-            parse_u32(cell(row, a_id, "atlas")?, "atlas id")?,
-            parse_u32(cell(row, a_fdid, "atlas")?, "atlas fdid")?,
-        );
-    }
-    let mut sheets = Sheets {
-        game,
-        fdid_by_atlas,
-        decoded: HashMap::new(),
-    };
-
-    let mut entries: Vec<(u8, u32, blp::Image)> = Vec::new();
+pub fn generate(game: &Game, tables: &Tables) -> Result<Generated, String> {
+    let mut atlas = Atlas::new(game, tables)?;
+    let mut entries: Vec<(u8, u32, Image)> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
 
     // Spec backgrounds: talents-background-<class>-<spec>, halved.
@@ -248,21 +342,17 @@ pub fn generate(game: &Game, tables: &HashMap<&str, Csv>) -> Result<Generated, S
             continue;
         };
         let want = format!("talents-background-{}-{spec_name}", token(class_name));
-        let Some(member) = element_by_name
-            .get(&want)
-            .and_then(|el| member_by_element.get(el))
-        else {
+        let Some(img) = atlas.named(&want)? else {
             missing.push(want);
             continue;
         };
-        let img = sheets.crop(member, &want)?;
-        entries.push((KIND_BACKGROUND, u32::from(spec_id), blp::downscale(&img, 2)));
+        entries.push((KIND_BACKGROUND, u32::from(spec_id), downscale_box(&img, 2)));
     }
 
     // Hero medallions: straight off TraitSubTree's element id. Dev/test
     // subtrees resolve like real ones; they are dropped only when their
     // element has no pixels.
-    let subtrees = get("TraitSubTree")?;
+    let subtrees = tables.get("TraitSubTree")?;
     let (t_id, t_el) = (
         subtrees.col("ID")?,
         subtrees.col("UiTextureAtlasElementID")?,
@@ -270,25 +360,16 @@ pub fn generate(game: &Game, tables: &HashMap<&str, Csv>) -> Result<Generated, S
     for row in &subtrees.rows {
         let sub = parse_u32(cell(row, t_id, "subtree")?, "subtree id")?;
         let el = parse_u32(cell(row, t_el, "subtree")?, "subtree element")?;
-        let Some(member) = member_by_element.get(&el) else {
-            let name = name_by_element
-                .get(&el)
-                .cloned()
-                .unwrap_or_else(|| format!("element {el}"));
-            missing.push(format!("subtree {sub} medallion ({name})"));
+        let Some(img) = atlas.element(el)? else {
+            missing.push(format!("subtree {sub} medallion ({})", atlas.name(el)));
             continue;
         };
-        entries.push((KIND_MEDALLION, sub, sheets.crop(member, "medallion")?));
+        entries.push((KIND_MEDALLION, sub, img));
     }
 
     // Chrome: the golden ring the game draws around the medallion.
-    match element_by_name
-        .get(RING_ELEMENT)
-        .and_then(|el| member_by_element.get(el))
-    {
-        Some(member) => {
-            entries.push((KIND_CHROME, CHROME_RING, sheets.crop(member, RING_ELEMENT)?))
-        }
+    match atlas.named(RING_ELEMENT)? {
+        Some(img) => entries.push((KIND_CHROME, CHROME_RING, img)),
         None => missing.push(RING_ELEMENT.to_string()),
     }
 
@@ -340,6 +421,12 @@ mod tests {
             (KIND_BACKGROUND, KIND_MEDALLION, KIND_CHROME, CHROME_RING),
             (0, 1, 2, 0)
         );
+    }
+
+    /// The talent art reads every table an atlas does.
+    #[test]
+    fn the_talent_art_reads_the_atlas_tables() {
+        assert!(ATLAS_TABLES.iter().all(|t| TABLES.contains(t)));
     }
 
     #[test]

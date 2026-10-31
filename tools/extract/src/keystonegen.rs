@@ -13,11 +13,11 @@
 //! 80%/60% of par (legacy challenge modes use gold/silver/bronze times,
 //! and a few modern rows deviate), so all three are emitted.
 
-use crate::table::Csv;
+use crate::table::{Csv, cell, num};
 use std::fmt::Write as _;
 
-/// The source table with its FileDataID (from wowdev/wow-listfile).
-pub const TABLE: (&str, u32) = ("MapChallengeMode", 801709);
+/// The source table (its FileDataID: `table::FILE_IDS`).
+pub const TABLE: &str = "MapChallengeMode";
 
 #[derive(Debug)]
 pub struct Generated {
@@ -35,23 +35,16 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
 
     // The column indexes come from `Csv::col`, so a miss means the row
     // itself is short — a malformed table, not a bug here.
-    let text = |r: &[String], c: usize| -> Result<String, String> {
-        r.get(c)
-            .cloned()
-            .ok_or_else(|| format!("MapChallengeMode: row has no column {c}"))
-    };
-    let cell = |r: &[String], c: usize| -> Result<i64, String> {
-        let v = text(r, c)?;
-        v.parse().map_err(|_| format!("bad numeric cell {v:?}"))
-    };
+    let text = |r: &[String], c: usize| cell(r, c, "MapChallengeMode").map(str::to_string);
+    let number = |r: &[String], c: usize| num::<i64>(r, c, "MapChallengeMode");
 
     let mut entries: Vec<(u32, u32, i64, i64, i64, String)> = Vec::new();
     for r in &csv.rows {
-        let cid = cell(r, id_c)? as u32;
-        let map_id = cell(r, map_c)? as u32;
-        let par_s = cell(r, par_c)?;
-        let plus2_s = cell(r, plus2_c)?;
-        let plus3_s = cell(r, plus3_c)?;
+        let cid = number(r, id_c)? as u32;
+        let map_id = number(r, map_c)? as u32;
+        let par_s = number(r, par_c)?;
+        let plus2_s = number(r, plus2_c)?;
+        let plus3_s = number(r, plus3_c)?;
         if par_s <= 0 {
             continue;
         }

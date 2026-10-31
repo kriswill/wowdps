@@ -25,19 +25,18 @@
 //! an item marker — so this table only ever has to answer for the spells
 //! nothing else claims.
 
-use crate::table::Csv;
+use crate::table::{Csv, Tables, cell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
-/// The tables the generator consumes, with their FileDataIDs
-/// (from wowdev/wow-listfile; stable per file, forever). ItemSparse is
-/// only for the trinkets' names (R26).
-pub const TABLES: [(&str, u32); 5] = [
-    ("Item", 841626),
-    ("ItemEffect", 969941),
-    ("ItemXItemEffect", 3177687),
-    ("SpellEffect", 1140088),
-    ("ItemSparse", 1572924),
+/// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`).
+/// ItemSparse is only for the trinkets' names (R26).
+pub const TABLES: [&str; 5] = [
+    "Item",
+    "ItemEffect",
+    "ItemXItemEffect",
+    "SpellEffect",
+    "ItemSparse",
 ];
 
 /// Item.InventoryType for an equipped trinket.
@@ -67,14 +66,6 @@ pub struct Generated {
     pub owned: usize,
 }
 
-/// One cell of a CSV row. The column index comes from `Csv::col`, so a miss
-/// means the row itself is short — a malformed table, not a bug here.
-fn cell<'a>(row: &'a [String], c: usize, what: &str) -> Result<&'a str, String> {
-    row.get(c)
-        .map(String::as_str)
-        .ok_or_else(|| format!("{what}: row has no column {c}"))
-}
-
 /// Classify an item by what the client says it is. `None` for everything we
 /// draw no marker for (gear, weapons, quest items…).
 fn classify(class_id: &str, subclass_id: &str, inv_type: &str) -> Option<&'static str> {
@@ -93,12 +84,7 @@ fn classify(class_id: &str, subclass_id: &str, inv_type: &str) -> Option<&'stati
     })
 }
 
-pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, String> {
-    let get = |name: &str| {
-        tables
-            .get(name)
-            .ok_or_else(|| format!("missing table {name}"))
-    };
+pub fn generate(tables: &Tables, build: &str) -> Result<Generated, String> {
     let rank_of: HashMap<&str, usize> = KIND_ORDER
         .iter()
         .enumerate()
@@ -109,7 +95,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     let rank = |k: &str| rank_of.get(k).copied().unwrap_or(KIND_ORDER.len());
 
     // Item -> kind, for the items we care about at all.
-    let item = get("Item")?;
+    let item = tables.get("Item")?;
     let (c_id, c_class, c_sub, c_inv) = (
         item.col("ID")?,
         item.col("ClassID")?,
@@ -129,7 +115,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     }
 
     // ItemEffect -> the spell it casts.
-    let effects = get("ItemEffect")?;
+    let effects = tables.get("ItemEffect")?;
     let (e_id, e_spell) = (effects.col("ID")?, effects.col("SpellID")?);
     let mut effect_spell: HashMap<&str, u32> = HashMap::new();
     for row in &effects.rows {
@@ -141,7 +127,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
 
     // The join: every (item, effect) pair contributes its spell under the
     // item's kind.
-    let xref = get("ItemXItemEffect")?;
+    let xref = tables.get("ItemXItemEffect")?;
     let (x_effect, x_item) = (xref.col("ItemEffectID")?, xref.col("ItemID")?);
     let mut table: BTreeMap<u32, &'static str> = BTreeMap::new();
     let mut trinket_seeds: Vec<u32> = Vec::new();
@@ -169,7 +155,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     let direct = table.len();
 
     // Trinket proc chase: spell -> the spells its effects trigger.
-    let se = get("SpellEffect")?;
+    let se = tables.get("SpellEffect")?;
     let (s_spell, s_trigger) = (se.col("SpellID")?, se.col("EffectTriggerSpell")?);
     let mut triggers: HashMap<u32, Vec<u32>> = HashMap::new();
     for row in &se.rows {
@@ -207,7 +193,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         .map(|(spell, kind)| (*spell, rank(kind) as u8))
         .collect();
 
-    let owners = trinket_owners(&trinket_roots, &triggers, &table, get("ItemSparse")?)?;
+    let owners = trinket_owners(&trinket_roots, &triggers, &table, tables.get("ItemSparse")?)?;
 
     Ok(Generated {
         chased: entries.len() - direct,
@@ -406,8 +392,8 @@ mod tests {
     use super::*;
     use crate::table::parse_csv;
 
-    fn tables() -> HashMap<&'static str, Csv> {
-        let mut t = HashMap::new();
+    fn tables() -> Tables {
+        let mut t = Tables::default();
         t.insert(
             "Item",
             parse_csv(

@@ -9,6 +9,11 @@ repository.workspace = true
 
 [dependencies]
 wowdps-core = { path = "../../crates/core" }
+# Stdlib-only like this crate: the XDG base directories every per-machine
+# cache resolves through (`dirs`), the creatures file seed-creatures
+# writes (`creatures`), and the types of the `placed` table
+# gen-placed-spells writes (`placed`).
+wowdps-proto = { path = "../../crates/proto" }
 
 [[bin]]
 name = "wowdps-extract"

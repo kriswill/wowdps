@@ -32,14 +32,13 @@
 //! Output is two files: the table (`role_spells.rs`) and its review twin
 //! (`role_spells.expected.md`) listing every entry with its census counts.
 
-use crate::table::{Csv, parse_csv};
+use crate::table::{Tables, cell, parse_csv};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use wowdps_core::model::RoleSpellKind;
 
-/// The tables the generator consumes, with their FileDataIDs
-/// (from wowdev/wow-listfile; stable per file, forever).
-pub const TABLES: [(&str, u32); 2] = [("SpellName", 1990283), ("SpellEffect", 1140088)];
+/// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`).
+pub const TABLES: [&str; 2] = ["SpellName", "SpellEffect"];
 
 /// SpellEffect.Effect for APPLY_AURA.
 const EFFECT_APPLY_AURA: &str = "6";
@@ -396,19 +395,7 @@ pub struct Generated {
     pub spells: usize,
 }
 
-/// One cell of a CSV row. The column index comes from `Csv::col`, so a miss
-/// means the row itself is short — a malformed table, not a bug here.
-fn cell<'a>(row: &'a [String], c: usize, what: &str) -> Result<&'a str, String> {
-    row.get(c)
-        .map(String::as_str)
-        .ok_or_else(|| format!("{what}: row has no column {c}"))
-}
-
-pub fn generate(
-    tables: &HashMap<&str, Csv>,
-    census: &Census,
-    build: &str,
-) -> Result<Generated, String> {
+pub fn generate(tables: &Tables, census: &Census, build: &str) -> Result<Generated, String> {
     generate_curated(CURATED, tables, census, build)
 }
 
@@ -424,22 +411,17 @@ enum Evidence<'a> {
 /// handful instead of the real sixty.
 pub fn generate_curated(
     curated: &[Curated],
-    tables: &HashMap<&str, Csv>,
+    tables: &Tables,
     census: &Census,
     build: &str,
 ) -> Result<Generated, String> {
-    let get = |name: &str| {
-        tables
-            .get(name)
-            .ok_or_else(|| format!("missing table {name}"))
-    };
     let wanted: HashSet<u32> = curated.iter().map(|e| e.id).collect();
     if wanted.len() != curated.len() {
         return Err("curated list holds a duplicate id".into());
     }
 
     // SpellName: id -> name, for the curated ids only.
-    let sn = get("SpellName")?;
+    let sn = tables.get("SpellName")?;
     let (n_id, n_name) = (sn.col("ID")?, sn.col("Name_lang")?);
     let mut names: HashMap<u32, &str> = HashMap::new();
     for row in &sn.rows {
@@ -450,7 +432,7 @@ pub fn generate_curated(
     }
 
     // SpellEffect: the curated ids with an APPLY_AURA effect on any difficulty.
-    let se = get("SpellEffect")?;
+    let se = tables.get("SpellEffect")?;
     let (e_spell, e_effect) = (se.col("SpellID")?, se.col("Effect")?);
     let mut applies_aura: HashSet<u32> = HashSet::new();
     for row in &se.rows {
@@ -688,8 +670,8 @@ mod tests {
         Curated::seen(132404, "Shield Block", RoleSpellKind::ActiveMitigation),
     ];
 
-    fn tables() -> HashMap<&'static str, Csv> {
-        let mut t = HashMap::new();
+    fn tables() -> Tables {
+        let mut t = Tables::default();
         t.insert(
             "SpellName",
             parse_csv(
