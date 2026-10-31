@@ -12,10 +12,9 @@
 //! unit, the reader draws it at its last post, so the ground holds the way
 //! it last pointed.
 //!
-//! Nymrissa's Water Jet is cast at the tank, but the log's cast row names
-//! no target: the 6 s aura it puts on the tank goes on with it, 0 to 14 ms
-//! after the cast on the Mythic kill's jets, and names them
-//! (`carrier`).
+//! A beam may be cast at the tank with a cast row that names no target:
+//! the aura it puts on the tank goes on with it, within a few milliseconds
+//! of the cast, and names them (`carrier`).
 
 /// How near its spot (yd) the unit a ground follows has no bearing from
 /// it: a point has no way to itself.

@@ -3,9 +3,9 @@
 //! replay and the editors alike.
 //!
 //! A wind the log never writes moves the players as it moves what lies on
-//! the floor, so their drift is its only witness: during Sszorak's Howling
-//! Maelstrom three gales of about 8 s blow the raid and the Caustic Residue
-//! across the platform. The stretch is cut into steps of `STEP_MS` from its
+//! the floor, so their drift is its only witness: a boss's storm may blow
+//! the raid and the puddles under it across a platform in gales the log
+//! never names. The stretch is cut into steps of `STEP_MS` from its
 //! start, each step whose end is inside it. A player's place at each end of
 //! a step is read between the posts either side of it (the post itself
 //! where one falls on it), only where those posts are under `GAP_MS` apart;

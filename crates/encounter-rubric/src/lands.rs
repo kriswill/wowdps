@@ -1,6 +1,6 @@
 //! A spell's hits as they land, told from its periodic ticks under the
-//! same id: a hit that leaves a damage-over-time aura (Frost Orb, Caustic
-//! Waves) is written once as it lands and again at each tick, every row
+//! same id: a hit that leaves a damage-over-time aura (an orb's touch and
+//! its dot, say) is written once as it lands and again at each tick, every row
 //! the same spell. A `hit` trigger or ending with `lands = true` reads the
 //! landings alone, and so do a volley's `hits` (`landings`): the one
 //! reading for the replay and the editors.
@@ -16,19 +16,18 @@
 //!    long as the aura is still on from the victim's last landing (within
 //!    the spell's `duration` of it, where the tables give one); any other
 //!    lands. Any earlier hit, not only the last: a second landing on a
-//!    victim the aura already ticks on keeps the ticks' cadence (Frost
-//!    Orb's), so the tick after it lies a period after the last tick, not
+//!    victim the aura already ticks on keeps the ticks' cadence, so the
+//!    tick after it lies a period after the last tick, not
 //!    after the landing.
 //! 3. Else, a spell whose aura the log writes on some victim is a tick but
 //!    for rule 1, and one whose aura it never writes lands every time.
 //!
 //! The aura rows alone (rule 3) find too few where the log leaves them out:
-//! a Mythic kill writes 158 Frost Orb hits and only 33 rows of its aura
-//! going on or stacking, and the cadence (rule 2) tells 75 landings from
-//! 83 ticks. The ticks keep their cadence closely: over eight pulls, 1059
-//! of the 1067 Frost Orb hits within 50 ms of one period after an earlier
-//! hit lie within 25 ms of it, and past 50 ms the hits spread evenly (the
-//! landings', about one every 4 ms). A landing that falls within
+//! a kill can write several times as many hits of a spell as rows of its
+//! aura going on or stacking, and the cadence (rule 2) tells its landings
+//! from its ticks. The ticks keep their cadence closely: nearly every hit
+//! within 50 ms of one period after an earlier hit lies within half that
+//! of it, and past 50 ms the hits spread evenly (the landings'). A landing that falls within
 //! `TICK_SLACK_MS` of the cadence by chance is still read as a tick: the
 //! log writes no row as a touch refreshes an aura already on (the cut
 //! keeps only its going on, gaining a stack and coming off), so rule 1
@@ -40,8 +39,7 @@
 pub const LAND_SAME_MS: u32 = 100;
 
 /// How far from one period after an earlier hit a tick may fall (ms): its
-/// cadence keeps within a few hundredths of a second (all but a handful of
-/// 1067 Frost Orb ticks within 25 ms).
+/// cadence keeps within a few hundredths of a second.
 pub const TICK_SLACK_MS: u32 = 50;
 
 /// What the game's tables say of a spell's aura, for its ticks: how often

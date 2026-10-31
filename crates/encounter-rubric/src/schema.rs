@@ -1444,8 +1444,8 @@ pub enum Trigger {
     /// A hostile cast beginning (`SPELL_CAST_START`): one with a cast time,
     /// as its caster starts it, whether it lands or is cut off. An instant
     /// cast has no start. As a ground's `from` beside its landing's `at`,
-    /// a frontal is drawn while it is cast (Sszorak's Mutilate and Ravage,
-    /// 3 s casts).
+    /// a frontal is drawn while it is cast (a boss's cone it casts for a
+    /// few seconds).
     CastStart {
         spell: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1493,7 +1493,7 @@ pub enum Trigger {
 /// 68.5 s after her second Rage of the Shackled on every difficulty, whose
 /// clocks differ), or with `each`, `secs` after every time it fired (`{
 /// after = { secs = 9, since = { cast = … }, each = true } }`: the second
-/// gale of each of Sszorak's Howling Maelstroms, 9 s into it). A pull that
+/// gale of each storm a boss casts, 9 s into it). A pull that
 /// ended first, or where `since` fired fewer times, never strikes it.
 /// Written as a bare number when it counts from the pull, so a later layer
 /// giving a number replaces the whole clock, and one giving `{ secs = … }`
@@ -1803,7 +1803,7 @@ pub struct Ground {
     /// A firing of `at` that lands inside one of it still on the floor
     /// renews that one instead of placing another: a ground the log shows
     /// only as it hurts someone standing in it, whose every tick would
-    /// otherwise place a new one (Sszorak's Caustic Residue). On the floor
+    /// otherwise place a new one (a residue that hurts by ticks). On the floor
     /// is formed and not yet gone: a firing inside one still in its
     /// `delay`, not yet formed, places another. Inside is where a new one
     /// would land (`ahead` of its unit where it says so), within its
@@ -1822,8 +1822,8 @@ pub struct Ground {
     /// `push` has taken them by then: each one is given the pushes under
     /// way or to come as it forms (one under way for the rest of it) as it
     /// is placed, so a renewal finds it
-    /// where it is drawn (Caustic Residue blown across Sszorak's platform:
-    /// a tick inside a puddle where the wind has taken it renews it). One
+    /// where it is drawn (a residue blown across a platform: a tick inside
+    /// a puddle where the wind has taken it renews it). One
     /// that `falls` and is gone is not standing. `check` refuses it beside
     /// a `from` (one would stand before the firing that places it), `ends
     /// = "at"` (each gone as it lands, none stands to renew) and a `seen`
@@ -1833,8 +1833,7 @@ pub struct Ground {
     pub renew: bool,
     /// One that formed inside the encounter's map stencil is gone the first
     /// moment its spot lies outside it, where its `push` or its `orbit` has
-    /// taken it: a puddle blown off the platform (Sszorak's Caustic
-    /// Residue in the Howling Maelstrom's gales). Its end is the first of
+    /// taken it: a puddle blown off the platform by a storm's gales. Its end is the first of
     /// that moment and the one it would have had, and no later renewal
     /// lasts past it. Each `seen` hit that finds it again is a fresh
     /// witness of where it is: formed or last found again outside the
@@ -1863,8 +1862,8 @@ pub struct Ground {
     /// unit's facing as the log posts it (`Follows`). Its spot stays where
     /// it formed, or where a `push` or a `seen` hit takes it, and it follows
     /// the unit it picked as it fired for as long as it stands.
-    /// Nymrissa's Water Jet, a 6 s line she aims at the tank, turns with
-    /// the tank pushed round her. Unsaid, it keeps the way its unit faced
+    /// A beam a boss aims at the tank turns with the tank as it moves round
+    /// the boss. Unsaid, it keeps the way its unit faced
     /// as its trigger fired. `check` refuses it on a circle or a ring,
     /// beside an `orbit` (it turns one way) or an `ahead` (it would turn
     /// about a spot ahead of its unit, not the unit), `"target"` by a
@@ -1891,9 +1890,8 @@ pub struct Ground {
     pub seen: Vec<u32>,
     /// Other grounds (their keys) it sweeps away as it forms: each one of
     /// them standing then whose spot lies inside its footprint is gone from
-    /// that moment. The Coiled Altar's Sever, a tank's frontal cone, destroys
-    /// the Coalesced Venom orbs it lands on, and the log writes no row for
-    /// an orb so destroyed, so without it an orb lasts until its pickup or
+    /// that moment. A tank's frontal cone that destroys the orbs it lands on
+    /// is the case: the log writes no row for an orb so destroyed, so without it an orb lasts until its pickup or
     /// the pull's end. Forms is its `from` moment, after its `delay` (a
     /// renewal is not a forming); standing is formed and not yet gone; its
     /// footprint and their spots as each is drawn then (after `grow` and
@@ -1917,9 +1915,8 @@ pub struct Ground {
     /// drawn then: any overlap, not its spot alone as `clears` reads it.
     /// A still one meets it at the later of the two forming (one formed
     /// under it is gone as it forms); a moving or turning one where they
-    /// first touch. Nymrissa's Water Jet, a 6 s line that follows the tank,
-    /// washes away the Lingering Frost it touches, a puddle 8 yd in radius
-    /// going as the jet reaches its rim. Read and refused as
+    /// first touch. A beam that follows the tank washes away the frost
+    /// patches it touches, a puddle going as the beam reaches its rim. Read and refused as
     /// `clears` is, its keys dropped as it resolves where the difficulty
     /// lacks them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1981,8 +1978,7 @@ pub enum Follows {
     /// the first it goes on from the firing, within
     /// `follow::AURA_WITHIN_MS`, else the latest to take it still carrying
     /// it then. Where the log's cast row names no target but the spell's
-    /// aura on its victim goes on with it (Water Jet's 1258901 on the
-    /// tank).
+    /// aura on its victim goes on with it (a beam's aura on the tank).
     Aura(u32),
 }
 
@@ -2059,8 +2055,8 @@ pub struct Push {
     /// every one a push, in time order across them; one within a second of
     /// the last counted is that push (a hit on five players is one). Read
     /// as one trigger or a list, always written as a list: the three gales
-    /// of Sszorak's Howling Maelstrom, each an `after` counting from its
-    /// cast (`Clock::each`). `check` refuses an empty list.
+    /// of a boss's storm, each an `after` counting from its cast
+    /// (`Clock::each`). `check` refuses an empty list.
     #[serde(deserialize_with = "one_or_many")]
     pub on: Vec<Trigger>,
     /// Which way each push goes (`Toward`).
@@ -2234,8 +2230,8 @@ pub struct Reach {
     pub place: String,
     /// The place takes in a unit that gets there: one the log never posts
     /// again after it got there is drawn sliding to the place's middle and
-    /// gone, counted absorbed rather than dead (a murloc drawn into the
-    /// Alluring Bubble, last posted alive at its edge, with no death).
+    /// gone, counted absorbed rather than dead (an add drawn into a bubble,
+    /// last posted alive at its edge, with no death).
     /// Unsaid, it is not.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub absorbs: bool,
@@ -2257,8 +2253,8 @@ pub enum MarkLabel {
 
 /// A circle round each of some NPCs at the reach of an aura they pulse:
 /// Entombed Sentinels' Marks, each Sentinel marking everyone within 40 yd.
-/// Every unit of an NPC standing is ringed, as each pulses its own: The
-/// Coiled Altar's ten axes a kill, ten rings.
+/// Every unit of an NPC standing is ringed, as each pulses its own: ten
+/// totems standing, ten rings.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Range {
@@ -2356,8 +2352,8 @@ pub struct Line {
     /// the latest applied or dose row naming one named while the aura
     /// stayed on that unit, so two applications of it on one unit share
     /// it and the later applier wins. Only an aura's trigger has a source:
-    /// The Twin Fangs' Corrosive Spit, whose mark comes off as the add that
-    /// spat it lands its cast, three of them standing at once.
+    /// an add's mark that comes off as the add that put it on lands its
+    /// cast, three such adds standing at once.
     pub to: String,
     /// Seconds after `from` it strikes; until then it is drawn faint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2368,9 +2364,8 @@ pub struct Line {
     /// It is held rather than struck: drawn from the unit `from`'s aura
     /// went on, wherever that unit goes, to `to` for as long as the aura
     /// stays on it, gone as it comes off (or at the pull's end, where it
-    /// never does). The Coiled Altar's Unnerving Fixation, put on a player
-    /// by the Manifestation of Dread that fixates them (`to = "@source"`),
-    /// which they must face. `check` refuses it beside a `from` that is no
+    /// never does). A fixation an add puts on a player (`to = "@source"`),
+    /// who must face it. `check` refuses it beside a `from` that is no
     /// `aura_applied` (only an aura going on stays on), a `delay` or
     /// `hits` (it never strikes).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -2413,9 +2408,9 @@ pub struct Volley {
     /// that middle.
     pub from: Trigger,
     /// The middle it sets out round, in place of `from`'s unit: a place's
-    /// spot (its key), or an NPC's unit as `from` fires. Nymrissa's
-    /// Swirling Whirlpools close on the Alluring Bubble from the lagoon's
-    /// rim; the cast that calls them is hers, wherever she stands. A place
+    /// spot (its key), or an NPC's unit as `from` fires. A ring of
+    /// whirlpools closes on a bubble from far out; the cast that calls them
+    /// is the boss's, wherever it stands. A place
     /// that is not there as `from` fires sends none. `check` refuses a
     /// unit's `aim` or a `side` round one where `from` names no unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2510,8 +2505,7 @@ pub struct Volley {
     /// How `holes` are found: every slot a living player stood in the way
     /// of unhit is a hole (`"slot"`, unsaid), or each sending has one, the
     /// slots the largest cluster of those players spans round its middle
-    /// (`"cluster"`: Nymrissa's whirlpools, whose ring leaves the raid one
-    /// gap, where a player crossed unhit elsewhere, under an immunity, made
+    /// (`"cluster"`: a ring of whirlpools that leaves the raid one gap, where a player crossed unhit elsewhere, under an immunity, made
     /// a second). `check` refuses `"cluster"` with no `holes`.
     #[serde(default, skip_serializing_if = "HolesBy::is_slot")]
     pub holes_by: HolesBy,
@@ -2544,8 +2538,8 @@ pub struct Volley {
     /// `delay`, each projectile of its first sending is drawn still at its
     /// start from `from` until it sets out (`Volley::holds`), and a hit
     /// there then is its:
-    /// the whirlpools forming at the lagoon's rim as the cast lands, 4 s
-    /// before they close on the bubble.
+    /// whirlpools forming far out as the cast lands, a while before they
+    /// close on the bubble.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub preview: bool,
     /// Difficulty names it appears on; empty, every one.
@@ -2727,9 +2721,8 @@ pub struct Flash {
 }
 
 /// Units thrown straight out from a middle each time a trigger fires about
-/// them, a knockback: Nymrissa Wavecaller's Pop!, the Alluring Bubble
-/// bursting at the island's middle and throwing everyone it hits 20 to 30
-/// yd out in under 2 s. The log writes the hit and posts the victims
+/// them, a knockback: a bubble bursting at an island's middle and
+/// throwing everyone it hits out. The log writes the hit and posts the victims
 /// through their flight, but never says a throw was one: a reader takes
 /// each victim's throw off their track, from the firing until they stop
 /// going out from the middle.

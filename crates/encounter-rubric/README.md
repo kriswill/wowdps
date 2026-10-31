@@ -798,16 +798,16 @@ victim's last landing is still on (within its `duration`, where the
 tables give one), is a tick and any other lands (any earlier hit, not
 only the last: a second landing mid-dot keeps the ticks' cadence); else,
 a spell whose aura the log writes on no one lands every time and one
-whose aura it writes is a tick but at its aura's rows. Frost Orb's touch
-and its 2 s dot are one id (1313448): a Mythic kill writes 158 hits and
-only 33 rows of its aura going on or stacking, and the cadence tells 75
-landings from 83 ticks, so a tick on someone who walks over another orb
-neither ends it nor places Lingering Frost. The ticks keep their cadence
-to within 25 ms (1059 of 1067 over eight pulls). A touch that refreshes
+whose aura it writes is a tick but at its aura's rows. An orb whose
+touch and dot are one id is the case: a kill writes far more of its hits
+than rows of its aura going on or stacking, and the cadence tells the
+landings from the ticks, so a tick on someone who walks over another orb
+neither ends a ground nor places one a landing would. The ticks keep
+their cadence closely, well inside the ±50 ms. A touch that refreshes
 an aura already on writes no row the cut keeps (it keeps an aura going
 on, gaining a stack and coming off), so one that falls within 50 ms of
 its victim's cadence by chance is read as a tick: about one touch in
-twenty while a dot ticks on its victim. A volley's `hits` are read as
+twenty while a dot with a 2 s period ticks on its victim. A volley's `hits` are read as
 they land by the aura's rows alone, with no period.
 
 **A place can come and go.** It opens each time its `from` fires and
@@ -816,11 +816,10 @@ is open is passed over, and a burst of `until`s (a blow's hits on the
 raid) closes it at its first. Unsaid, `from` opens it at the start and
 `until` keeps it to the end; a `from` that never fires leaves it off the
 whole fight. While it is closed the replay draws no ring, swirl or label
-for it, and a `[reach]` into it is no fault. Nymrissa's Alluring Bubble
-stands from each Alluring Bubble cast until the whirlpools reach it and
-it pops, its Pop! the first hit on the raid: on a Mythic kill, open from
-18 s to 120 s, 128 s to 230 s, 238 s to 340 s and 348 s to the end.
-`Place::windows` reads them, the replay's and the editors' one reading;
+for it, and a `[reach]` into it is no fault. A bubble a boss conjures,
+say, stands from each cast that makes it (`from`) until a volley reaches
+it and it pops (`until`, the pop's first hit on the raid), so it opens
+and closes several times a fight. `Place::windows` reads them, the replay's and the editors' one reading;
 a `from` that fired before the reader's clock starts (a keystone fight,
 read over its own stretch of the run) has it there from the start where
 it is open still. A ground's `orbit` or a volley's `around` a place that
@@ -853,11 +852,11 @@ trigger switched from one kind to another is. To change the form, change
 the ground where it is given, or switch it off and give another.
 
 A ground can end at the first of several endings: `ends = { first = [{
-hit = { spell = 1313448, lands = true } }, { after = 40 }] }`. Each is a
-`hit` or an `after`: it is gone at the first hit of any of its `hit`s on
-someone standing in it, else its earliest `after` past its forming. A
-Frost Orb lies until someone touches it, and one no one touches shatters
-on the raid 40 s after it dropped. A renewal counts its `after` again,
+hit = { spell = N, lands = true } }, { after = 30 }] }`. Each is a `hit`
+or an `after`: it is gone at the first hit of any of its `hit`s on
+someone standing in it, else its earliest `after` past its forming. An
+orb that lies until someone touches it, and that bursts on the raid a
+while after it dropped if no one does, is the case. A renewal counts its `after` again,
 as a lone `after` does. The list is a list, so a layer gives it whole
 again (an `after` in it is never retimed alone), and `first` merges with
 another form into a table naming both, refused as above. `check` refuses
@@ -880,11 +879,11 @@ it first formed (`grow = "stacks"` at its first firing's stacks, its
 across every `at` trigger, the ground's `seen` and ending hits between
 them, each against the grounds as it found them (an ending hit at a
 firing's moment before it, a `seen` hit after), so a firing on the spot
-of one a hit has burst places another. Sszorak's Caustic Residue is
-placed only where it hurts someone, a tick a second on each player
-standing in a puddle: a tick inside a standing pool is that pool, and one
-past every pool's edge starts another, each standing from its first hurt
-to the pull's end, so a spot is a pool or a few, not one per tick. A
+of one a hit has burst places another. A residue the log places only
+where it hurts someone, a tick on each player standing in a puddle, is
+what `renew` is for: a tick inside a standing pool is that pool, and one
+past every pool's edge starts another, so a spot is a pool or a few, not
+one per tick. A
 renewing ground that is also pushed is read where its pushes have taken
 it by each firing: the pushes do not depend on the grounds, so each
 ground is given the ones under way or to come as it forms (one under way
@@ -911,10 +910,9 @@ draws the caster then: part-way to its next post where the posts either
 side are under 1.5 s apart, its last post otherwise; a caster the log
 posts only as the cast lands is held from the start where and as it
 landed. A caster posted during its cast that turns to its target after
-the start leaves such a cone the way it faced before: of a Mythic
-kill's ten Mutilates, Sszorak's 3 s frontal, the soak lands in three
-cones placed at the starts and in all ten placed at the landings. Such
-a frontal is drawn while it is cast, aimed where it lands, as a ground
+the start leaves such a cone the way it faced before, so the soak lands
+outside most cones placed at the starts and inside every cone placed at
+the landings. Such a frontal is drawn while it is cast, aimed where it lands, as a ground
 standing `from` the cast's start `at` its landing, gone as it lands:
 
 ```toml
@@ -956,7 +954,7 @@ fired. What it covers is where it points, for whoever stands in it, a
 one footprint.
 
 Say a boss stands still and blasts the tank for 5 s with a beam, and the
-beam follows the tank as the tank is moved round her. The log's cast row
+beam follows the tank as the tank is moved round the boss. The log's cast row
 names no target, but the beam's aura on the tank goes on with the cast
 (the ids here are made up):
 
@@ -1002,8 +1000,8 @@ aura a duration, a ringed mark carried that long was never taken off.
 
 **A range is a circle round NPCs** at the reach of an aura they pulse, its
 radius the game's for its `spell` unless a `radius` says otherwise, round
-every unit of each NPC standing, as each pulses its own (The Coiled
-Altar's axes, ten a kill, ten rings). With `sides`, two NPCs also get the
+every unit of each NPC standing, as each pulses its own (ten totems
+standing, ten rings). With `sides`, two NPCs also get the
 line halfway between them, between the unit of each the replay places the
 NPC by: the Sentinels' Marks, each marking everyone within 40 yd, split
 the raid along it. An
@@ -1071,10 +1069,9 @@ grounds never fall.
 
 A ground can clear others as it forms: each ground of the keys its
 `clears` names standing then whose spot lies inside its footprint is gone
-from that moment. The Coiled Altar's Sever, Soul Sever and Blighted Sever
-are tank frontals that destroy the Coalesced Venom orbs they land on, and
-the log writes no row for an orb so destroyed: without `clears` an orb
-stands until its pickup or the pull's end. Forming is its `from` moment,
+from that moment. A boss's tank frontals that destroy the orbs they land
+on are the case: the log writes no row for an orb so destroyed, so
+without `clears` an orb stands until its pickup or the pull's end. Forming is its `from` moment,
 after its `delay`; a renewal is not one. Standing is formed and not yet
 gone, and the footprint and the spots are each as it is drawn then
 (`grow` and `spread`, the bearing, where `orbit`, `push` and `seen` have
@@ -1084,16 +1081,15 @@ A ground can sweep others all the while it stands, not only as it forms:
 each ground of the keys its `sweeps` names is gone the first moment its
 own shape meets the sweeper's footprint while both stand, each as drawn
 then. That is any overlap, not its spot alone as `clears` reads it: a
-puddle 8 yd in radius goes as the jet's edge reaches its rim, its middle
-never under the jet. A still one under it as it forms is gone then, one
+puddle goes as a beam's edge reaches its rim, its middle never under the
+beam. A still one under it as it forms is gone then, one
 formed under it is gone as it forms (and a firing there places another,
 gone at once), and a moving or turning one, either way round, is gone
 where they first touch (looked for every 0.1 s, then to the
-millisecond). Nymrissa's Water Jet, a 6 s line that follows the tank,
-washes away the Lingering Frost it turns across. (`sweeps` first
-read a swept ground's spot alone, as `clears` does; with only that tune
-using it, the key changed its meaning rather than another key joining
-it.)
+millisecond). A beam that follows the tank (`follows`) washes away the
+frost patches it turns across. (`sweeps` first read a swept ground's spot
+alone, as `clears` does; with only one tuned file using it, the key
+changed its meaning rather than another key joining it.)
 
 The replay reads a ground after every ground that clears or sweeps it,
 and each clear is a moment in its own reading, in time order with its
@@ -1157,10 +1153,10 @@ posted in the pull's last 5 s is not: the log stops posting every add as
 a wipe or a kill ends the encounter, so it may only have outlived the
 log. Nor is one last posted while the place is gone, where it comes and
 goes: it reached the place while it was there, and is taken in only if
-the place is there still at its last post. Nymrissa
-Wavecaller's Alluring Bubble draws in the murlocs that reach it, each
-last posted alive 8 to 11 yd from its middle with no death row; without
-`absorbs` one reads alive, then dead when the log forgets it. Only one
+the place is there still at its last post. A bubble that draws in the
+adds that reach it is the case: each is last posted alive near its rim
+with no death row; without `absorbs` one reads alive, then dead when the
+log forgets it. Only one
 that came within the radius reached the place, so the radius says who
 is taken in.
 
@@ -1184,11 +1180,10 @@ trigger (`aura_applied`, `aura_removed`) has a source, so `check` refuses
 with `@` too, rather than look for an NPC by it. A line can `hold`
 rather than strike: drawn from the unit its `from` aura went on, wherever
 that unit goes, to `to` for as long as the aura stays on it, gone as it
-comes off (at the pull's end where it never does), steady and faint. The
-Coiled Altar's Unnerving Fixation goes on a player from the Manifestation
-of Dread that fixates them, which they must face: with `to = "@source"`
-it runs to that ghost, which the log posts once as it forms, so to where
-it formed. `check` refuses `hold` beside a `from` that is no
+comes off (at the pull's end where it never does), steady and faint. A
+fixation an add puts on a player, who must face it, is the case: with
+`to = "@source"` it runs to that add, and to where the log last posted
+it, even where that is only once, as it formed. `check` refuses `hold` beside a `from` that is no
 `aura_applied` (only an aura going on stays on), a `delay` or `hits` (it
 never strikes). A `[flash]` is a spell
 whose every hit flashes on its victim. One that hits most of the raid at
@@ -1210,10 +1205,9 @@ flew. One that never goes out that fast, or less than 3 yd, was not
 thrown (a knockback immunity, a root, a blink back in first). A position-only reading of the
 log would take a blink, a leap or a roll for one, so a knock is said, not
 found. With `within`, a throw landing outside that place's circle is a
-fault: Nymrissa Wavecaller's Pop! bursts at the island's middle and
-throws everyone it hits about 30 yd out on Mythic, 20 to 27 on Heroic and
-Normal, and a player standing too far out lands in the lagoon, where the
-Shark bites. `check` refuses a trigger about no one, a `from` that is
+fault: a blow that bursts at an island's middle throws everyone it hits
+out, farther on some difficulties than on others, and a player standing
+too far out lands in the water round it. `check` refuses a trigger about no one, a `from` that is
 neither a place nor an NPC, and a `within` that is no place with a
 radius, each on a difficulty that has the knock: a place kept to other
 difficulties by its `only` is none there, and a knock landing within
@@ -1263,9 +1257,9 @@ picked. A unit the log did place keeps its own spot and its solid disc.
 A trash rubric's volley places none: a keystone run's trash has no room
 of its own to place them in, which the replay says. `guess` is the pick,
 pure geometry, so the editors draw the same guesses; `check` refuses
-`place_kills` with no `destroys`. On a Mythic kill of Vashnik, 96 tumors
-die while the waves are out, each with 10 to 20 candidates inside the
-room, and every one is placed.
+`place_kills` with no `destroys`. On a kill where many adds die while
+the waves are out, each with several candidates inside the room, every
+one is placed.
 
 A volley can be aimed by its unit instead (`aim = "facing"`): its
 bearings turn with the way the unit faced as `from` fired, and its
@@ -1300,13 +1294,11 @@ one geometry for the replay and the editors), so a hit along it, a hole
 and a kill are read as along any other. A `preview` beside a `from` that
 is no aura coming off, with a `delay`, draws each projectile still at
 its start from `from` until it sets out, and a hit there in that time is
-its. Nymrissa's Swirling Whirlpools form on the lagoon's rim as her 4 s
-cast lands, 52-84 yd from the Alluring Bubble (eight hits on eight pulls
-in the 1.5 s after it), then 4.3 s later close on it at about 15 yd a
-second (38 hits 6.5-8.5 s after the landing, r² of their line 0.85),
-reaching its rim, 11 yd out, 8.4 s after the landing, as Pop! bursts at
-9.0 s. The raid stands in the one gap of the ring, 25-35° wide and at
-another bearing each time; its whirlpools' hits fall just outside it. A
+its. Say a ring of whirlpools forms far out round a bubble as a boss's
+cast lands, holds there for its `delay`, then closes on the bubble at a
+`speed` the tune measured from the logs' hits, reaching its rim as the
+bubble pops. The raid stands in the one gap of the ring, at another
+bearing each time, and the whirlpools' hits fall just outside it. A
 ring of slots with `holes` draws that gap where the living players stood
 in a slot's way unhit. Every such slot is a hole, so a player crossed
 unhit away from the raid (a paladin under Divine Shield) made a second
