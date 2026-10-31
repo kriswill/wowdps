@@ -24,11 +24,15 @@ pub const MICHROMA: &str = "Michroma";
 pub const UI_FAMILY: &str = BARLOW;
 pub const TITLE_FAMILY: &str = MARCELLUS;
 
+/// Barlow at 500, the face names and numbers are drawn in: the window's,
+/// and the replay's extractor labels its contact sheets with it.
+pub const BARLOW_MEDIUM: &[u8] = include_bytes!("../fonts/BarlowSemiCondensedTabular-Medium.ttf");
+
 /// Every face the GUI loads: Barlow and Saira at 400, 500 and 600, then
 /// Marcellus and Michroma.
 pub const FONTS: [&[u8]; 8] = [
     include_bytes!("../fonts/BarlowSemiCondensedTabular-Regular.ttf"),
-    include_bytes!("../fonts/BarlowSemiCondensedTabular-Medium.ttf"),
+    BARLOW_MEDIUM,
     include_bytes!("../fonts/BarlowSemiCondensedTabular-SemiBold.ttf"),
     include_bytes!("../fonts/Marcellus-Regular.ttf"),
     include_bytes!("../fonts/SairaTabular-Regular.ttf"),
