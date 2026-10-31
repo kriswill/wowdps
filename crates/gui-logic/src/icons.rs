@@ -132,6 +132,60 @@ fn halve(mut pixels: Vec<u8>, mut edge: u32, k: u32) -> Rgba {
     }
 }
 
+/// Any RGBA tile and its halvings, largest first: each the alpha-weighted
+/// mean of the 2×2 blocks of the one before (an odd side drops its last
+/// row or column), as `halve` makes the class and spec icons' levels, down
+/// to the last whose sides are both at least `MIN_LEVEL`. A square tile
+/// `e` across gets every level `level(e, …)` picks, at the index it
+/// picks; a picture drawn at many sizes (a portrait, a ring, a marker)
+/// keeps them all and draws the one that covers it.
+pub fn halvings(tile: Rgba) -> Vec<Rgba> {
+    let mut out = vec![tile];
+    while let Some(last) = out
+        .last()
+        .filter(|t| t.w / 2 >= MIN_LEVEL && t.h / 2 >= MIN_LEVEL)
+    {
+        let (from, w, h) = (
+            last.w as usize,
+            (last.w / 2) as usize,
+            (last.h / 2) as usize,
+        );
+        let mut pixels = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                let mut sum = [0u32; 4];
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let at = ((2 * y + dy) * from + 2 * x + dx) * 4;
+                    let [r, g, b, a] = last
+                        .pixels
+                        .get(at..at + 4)
+                        .and_then(|p| <[u8; 4]>::try_from(p).ok())
+                        .unwrap_or_default();
+                    let a = u32::from(a);
+                    for (s, v) in sum.iter_mut().zip([r, g, b]) {
+                        *s += u32::from(v) * a;
+                    }
+                    sum[3] += a;
+                }
+                let alpha = sum[3];
+                let color = |s: u32| s.checked_div(alpha).unwrap_or(0) as u8;
+                pixels.extend([
+                    color(sum[0]),
+                    color(sum[1]),
+                    color(sum[2]),
+                    (alpha / 4) as u8,
+                ]);
+            }
+        }
+        out.push(Rgba {
+            w: w as u32,
+            h: h as u32,
+            pixels,
+        });
+    }
+    out
+}
+
 impl<H: Clone> ClassIcons<H> {
     /// The per-machine cache, or `None` without one (or with one this build
     /// cannot read).
@@ -415,5 +469,46 @@ mod tests {
         let f = TempFile::new("sizes", &b);
         let c = open_at(&f.0).expect("a header alone opens");
         assert_eq!(c.sizes(), vec![208, 104, 52, 26, 13]);
+    }
+
+    /// Any tile's halvings are `halve`'s levels: for a square tile, each
+    /// level `level` picks, at the index it picks, the same pixels; a
+    /// rectangle halves both sides, and stops once either would go under
+    /// the floor.
+    #[test]
+    fn a_pictures_halvings_are_the_icons_levels() {
+        let edge = 208u32;
+        let pixels: Vec<u8> = (0..edge * edge * 4)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        let tile = Rgba {
+            w: edge,
+            h: edge,
+            pixels: pixels.clone(),
+        };
+        let levels = halvings(tile.clone());
+        assert_eq!(levels.len() as u32, level(edge, 1.0) + 1);
+        assert_eq!(levels[0], tile);
+        for (k, l) in levels.iter().enumerate() {
+            assert_eq!(*l, halve(pixels.clone(), edge, k as u32), "level {k}");
+        }
+        let wide = halvings(Rgba {
+            w: 40,
+            h: 20,
+            pixels: vec![255; 40 * 20 * 4],
+        });
+        let sizes: Vec<(u32, u32)> = wide.iter().map(|l| (l.w, l.h)).collect();
+        assert_eq!(sizes, vec![(40, 20), (20, 10)]);
+        assert!(wide[1].pixels.iter().all(|&v| v == 255));
+        // A tile under the floor stays whole.
+        assert_eq!(
+            halvings(Rgba {
+                w: 9,
+                h: 9,
+                pixels: vec![0; 9 * 9 * 4]
+            })
+            .len(),
+            1
+        );
     }
 }

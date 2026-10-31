@@ -69,7 +69,9 @@ cutover changed none of them but their doc comments.
   pixels, and `icons` serves the smallest alpha-weighted halving of its
   tile that covers it (`icons::level`; GPUI samples with no mipmaps, so a
   large tile on a small disc would shimmer), each level its own handle,
-  read from the file on first use.
+  read from the file on first use. `icons::halvings` makes the same
+  chain of any picture, for art drawn at many sizes (the replay's
+  portraits, rings and markers).
 - `spell_tips` — the reader of the per-machine spell tips
   (`spell-tips.bin` beside the spell icons, written by
   `tools/gen-spell-tips.sh`, which lands with the extractor's split): a
