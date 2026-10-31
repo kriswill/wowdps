@@ -12,6 +12,7 @@ struct Rec<'a> {
     flags: u8,
     charges: u8,
     strings: [&'a str; 4],
+    marks: &'a [u16],
 }
 
 /// A file of `recs` (in the order given; the index sorted as written).
@@ -25,14 +26,17 @@ fn file(recs: &[Rec]) -> Vec<u8> {
         }
         body.extend_from_slice(&r.duration_ms.to_le_bytes());
         body.extend_from_slice(&r.range_yd.to_le_bytes());
-        body.extend_from_slice(&[r.school, r.flags, r.charges, 0]);
+        body.extend_from_slice(&[r.school, r.flags, r.charges, r.marks.len() as u8]);
         for s in r.strings {
             body.extend_from_slice(&(s.len() as u32).to_le_bytes());
             body.extend_from_slice(s.as_bytes());
         }
+        for m in r.marks {
+            body.extend_from_slice(&m.to_le_bytes());
+        }
     }
     let mut out = b"WDPT".to_vec();
-    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&2u32.to_le_bytes());
     out.extend_from_slice(&0xABCDu64.to_le_bytes());
     out.extend_from_slice(&(index.len() as u32).to_le_bytes());
     for (id, at) in index {
@@ -56,6 +60,7 @@ fn frenzy() -> Vec<u8> {
             flags: 8,
             charges: 0,
             strings: ["Feral Frenzy", "25 energy", "Unleash a furious frenzy.", ""],
+            marks: &[],
         },
         Rec {
             id: 274838,
@@ -68,6 +73,7 @@ fn frenzy() -> Vec<u8> {
             flags: 0,
             charges: 0,
             strings: ["Feral Frenzy", "", "Unleash a furious frenzy.", ""],
+            marks: &[104, 105],
         },
         Rec {
             id: 430589,
@@ -80,6 +86,7 @@ fn frenzy() -> Vec<u8> {
             flags: 2,
             charges: 0,
             strings: ["Atmospheric Exposure", "", "", "The journal says so."],
+            marks: &[],
         },
     ])
 }
@@ -104,6 +111,12 @@ fn a_whole_file_serves_each_spell_and_none_for_another() {
         })
     );
     assert_eq!(effect.duration(), Some(6_000));
+    // A guardian's and a restoration druid's logs omit the press; a feral's
+    // write it, and an unknown spec never omits one.
+    assert_eq!(effect.marks, vec![104, 105]);
+    assert!(effect.omits_press_for(104) && effect.omits_press_for(105));
+    assert!(!effect.omits_press_for(103) && !effect.omits_press_for(0));
+    assert!(!button.omits_press_for(104));
     let proc = tips.get(430589).unwrap();
     assert_eq!(
         proc.parent,
@@ -125,7 +138,7 @@ fn an_absent_or_garbage_file_opens_as_none() {
     assert!(SpellTips::from_bytes(Vec::new()).is_none());
     assert!(SpellTips::from_bytes(b"WDPI\x01\0\0\0".to_vec()).is_none());
     let mut future = frenzy();
-    future[4] = 2;
+    future[4] = 3;
     assert!(SpellTips::from_bytes(future).is_none());
 }
 
@@ -180,6 +193,7 @@ fn the_words_read_as_the_games_tooltips() {
         cost: String::new(),
         desc: String::new(),
         journal: String::new(),
+        marks: Vec::new(),
     };
     assert_eq!(
         base.facts_line(),

@@ -15,16 +15,22 @@
 //! File layout (all LE):
 //!
 //! ```text
-//! "WDPT" | u32 version=1 | u64 stamp | u32 n
+//! "WDPT" | u32 version=2 | u64 stamp | u32 n
 //! n × (u32 spell_id, u32 offset)          sorted by spell_id; offset into the body
 //! body, a record each:
 //!   u32 parent | u32 cast_ms | u32 cooldown_ms | i32 duration_ms | f32 range_yd
-//!   u8 school | u8 flags | u8 charges | u8 0
+//!   u8 school | u8 flags | u8 charges | u8 m
 //!   4 × (u32 len, UTF-8): name, cost, desc, journal
+//!   m × u16: the specs whose logs omit the press it is the effect of
 //! ```
 //!
 //! `flags`: 1 passive, 2 the parent is passive, 4 channeled, 8 a class
-//! spell (R8's table), 16 on the global cooldown, 32 empowered.
+//! spell (R8's table), 16 on the global cooldown, 32 empowered. The specs
+//! (the game's ids) are those whose players, across the history store the
+//! file was made from, put this spell's aura on without a cast of its
+//! parent's name in more fights than with one: a press their logs omit
+//! (a guardian druid's Feral Frenzy), where a replay's lane may mark the
+//! effect.
 
 use std::path::{Path, PathBuf};
 
@@ -34,7 +40,7 @@ use crate::lazy_tiles::le_u32;
 /// The file's name beside the other per-machine caches.
 pub const FILE: &str = "spell-tips.bin";
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const HEAD: usize = 20;
 /// A record's fixed part, before its four strings.
 const FIXED: usize = 24;
@@ -77,6 +83,9 @@ pub struct SpellTip {
     /// The encounter journal's words, where its own description says
     /// little and the journal names it (or a spell it is an effect of).
     pub journal: String,
+    /// The specs (the game's ids) whose logs omit the press it is the
+    /// effect of, ascending (`omits_press_for`).
+    pub marks: Vec<u16>,
 }
 
 /// The tips, read whole.
@@ -167,7 +176,15 @@ impl SpellTips {
         let (name, next) = string_at(b, at + FIXED)?;
         let (cost, next) = string_at(b, next)?;
         let (desc, next) = string_at(b, next)?;
-        let (journal, _) = string_at(b, next)?;
+        let (journal, next) = string_at(b, next)?;
+        let m = usize::from(*fixed.get(23)?);
+        let marks = b
+            .get(next..next.checked_add(2 * m)?)?
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| u16::from_le_bytes(pair))
+            .collect();
         Some(SpellTip {
             id,
             name,
@@ -189,6 +206,7 @@ impl SpellTips {
             cost,
             desc,
             journal,
+            marks,
         })
     }
 }
@@ -301,6 +319,14 @@ impl SpellTip {
     /// out of its instants.
     pub fn passive_success(&self) -> bool {
         self.passive || self.parent.is_some_and(|p| p.passive) && !self.pressed()
+    }
+
+    /// Whether a player of `spec` (the game's id) presses what this is the
+    /// effect of without the log writing it: their spec's logs, across the
+    /// store, omit the press where this shows (a guardian druid's Feral
+    /// Frenzy). A spec unknown (0) never does.
+    pub fn omits_press_for(&self, spec: u32) -> bool {
+        u16::try_from(spec).is_ok_and(|s| s != 0 && self.marks.binary_search(&s).is_ok())
     }
 }
 
