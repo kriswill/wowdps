@@ -1,5 +1,21 @@
 # Log
 
+## 2026-10-30
+
+- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the crate
+  at the replay branch's state, its base included and its curated set
+  left out: the schema's growth (a dungeon's creatures and forces, its
+  levels' pulls, areas that cut and bound a render, water, swirls, pushes
+  on a list that follow the players' drift, grounds that renew, fall and
+  clear, lines that hold, knocks, a season's keystone rules), the layer
+  stack's ways in (`with_curated_dir`, `with_curated_tree`, `from_dir`,
+  `from_tree`, `TreeFiles`, an instance's trash), the pure modules
+  (`turn`, `swirl`, `guess`, `drift`, `follow`, `lands`, `tint`), the base
+  season and instance files and the goldens. `build.rs` warns on a tuned
+  or trash file left in `seasons/` and a test refuses one: the curated
+  set is the replay's, private
+  ([decision](../decisions/curated-set-leaves-the-rubric-tree.md)).
+
 ## 2026-10-23
 
 - **Update** — macOS support (PR #111): [wowdps-core](core.md) discovers

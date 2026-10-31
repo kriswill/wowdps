@@ -138,6 +138,12 @@ exists.
   have no provenance trace; `check_level` cannot see whether an area's
   `encounter` is its instance's or posted on its level (the embedded test
   holds both).
+- The every-room pass used it on every room of both seasons and found
+  where it falls short ("Walk Every Room Once And Say Only What The
+  Rubric Can", the replay's record): the resolved-maps test now
+  holds an encounter's paths and crop apart with its areas, and an
+  instance file's later edit to a key the snapshot had (Melidrussa
+  Chillworn's stencil) is written into its line.
 - The vocabulary landed in `a47e2d9` and the first levels in `f6083a3`;
   the review's fixes (altitudes filled before they are checked, an
   ordered crop, the fade, court and spell checks, an arena's `travel`,
@@ -145,3 +151,12 @@ exists.
 
 [^readme]: `crates/encounter-rubric/README.md`: A dungeon's levels, Areas, Paths, Transitions.
 [^snapshot]: `crates/encounter-rubric/fixtures/resolved-maps.txt`, held by `every_map_and_view_resolves_as_before_the_map_vocabulary`.
+
+**Update (2026-10-30): an area cuts and bounds the render.** An area's
+`ceiling`, written since the vocabulary landed and read by nothing, is
+read over its shapes (the lowest where areas overlap); an area gains a
+`stencil`, which with its level's paths' corridors (a path's `width`,
+else 8 yd) bounds a level's render; and a map and an area gain a `hang`,
+leaving out what hangs over the walk. An area's `shape` still frames the
+camera alone. No schema bump, no pinned hash moved ("Cut And Bound A Level's Render
+Area By Area", the replay's record).

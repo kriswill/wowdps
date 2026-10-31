@@ -1,5 +1,32 @@
 # Log
 
+## 2026-10-30
+
+- **Creation** — five records about the encounter rubric's own design,
+  brought from the replay branch with the crate's growth (Step 0 of the
+  replay's move to its own repository); links to the replay's records,
+  which stay with it, are plain text:
+  [Keep The Encounter Rubric As Reviewed TOML](encounter-rubric-toml.md),
+  [Keep An Encounter's Map In The Base, Cut To A Stencil](encounter-map-in-the-base.md),
+  [Keep The Extractor's And The GUI's Shared Formats In Rubric And Proto](shared-formats-in-rubric-and-proto.md),
+  [Keep The Rubric's Base Apart From Its Curated Layer](rubric-base-and-curated.md)
+  (deprecated, superseded by the layer stack) and
+  [Keep The Curated Set Out Of The Rubric Crate's Tree](curated-set-leaves-the-rubric-tree.md)
+  (the tuned and trash files left the crate's `seasons/` for the replay's
+  `curated/seasons/`; main's crate holds the base alone, which its
+  `build.rs` and a test hold it to).
+
+- **Update** — [Resolve An Encounter Through An Ordered Layer Stack](encounter-rubric-layers.md):
+  the branch's amendments come to main with the code they describe: a
+  checkout's tuned files in the embedded ones' place (2026-10-13), an
+  instance's trash as a subject of its own, a checkout's whole tree in the
+  build's place and a level's pull tables (2026-10-17), and the curated
+  set outside the crate (2026-10-30).
+
+- **Update** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+  the every-room pass's findings and an area's ceiling, stencil and hang
+  cutting and bounding a level's render (2026-10-30).
+
 ## 2026-10-23
 
 - **Update** — [devenv Is The Reference Shell, And The Flake Shell Mirrors It](devenv-is-the-reference-shell.md):
