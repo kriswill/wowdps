@@ -14,11 +14,13 @@
 //! A tile can be far larger than the disc it is drawn on (32 px from this
 //! repository's gen-icons, 208 px from an upscaled cut of the same art),
 //! and GPUI samples an image with no mipmaps: a 208 px tile drawn as an
-//! 18 px disc would shimmer. So a lookup names the
-//! size it is drawn at, in device pixels, and gets the tile halved to the
-//! smallest level that still covers it (`level`): never minified more than
-//! 2:1. Like the spell-icon cache, tiles are read from the file on first
-//! use, each level made once.
+//! 18 px disc would shimmer. So a lookup names the size it is drawn at, in
+//! device pixels, and gets the tile halved to the smallest level that still
+//! covers it (`level`), so a disc is drawn minified by less than 2:1 — but
+//! no level is halved under `MIN_LEVEL` (8 px), so a disc smaller than half
+//! the smallest level draws that level minified further (a 13 px level on a
+//! 4 px disc). Like the spell-icon cache, tiles are read from the file on
+//! first use, each level made once.
 
 use std::fs::File;
 use std::io::Read;
