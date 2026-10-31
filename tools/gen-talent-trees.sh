@@ -22,27 +22,11 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+. "$root/tools/lib.sh"
 wow="${1:-}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-
-# Table list must match talentgen::TABLES (the tool errors on a missing dbd).
-for t in ChrSpecialization SkillLine SkillLineXTraitTree \
-         TraitTreeLoadout TraitNode TraitNodeXTraitNodeEntry \
-         TraitNodeEntry TraitDefinition TraitEdge TraitSubTree TraitCond \
-         TraitNodeGroupXTraitNode TraitNodeGroupXTraitCond TraitNodeXTraitCond \
-         TraitNodeEntryXTraitCond SpecSetMember TraitCost TraitNodeXTraitCost \
-         TraitNodeGroupXTraitCost TraitCurrency TraitTreeXTraitCurrency \
-         TraitCurrencySource SpellName SpellMisc \
-         Spell SpellEffect SpellPower SpellRange SpellCastTimes SpellDuration \
-         SpellRadius SpellDescriptionVariables SpellXDescriptionVariables \
-         SpellAuraOptions; do
-    curl -sfL "https://raw.githubusercontent.com/wowdev/WoWDBDefs/master/definitions/$t.dbd" \
-        -o "$work/$t.dbd" || { echo "failed to fetch $t.dbd" >&2; exit 1; }
-done
-curl -sfL "https://raw.githubusercontent.com/wowdev/TACTKeys/master/WoW.txt" \
-    -o "$work/tactkeys.txt" || { echo "failed to fetch TACTKeys" >&2; exit 1; }
 
 # The icons subset of the community listfile (fdid;interface/icons/...),
 # cached across runs: icon names for existing fdids never change, so a
@@ -57,6 +41,9 @@ if ! [ -s "$icons" ] || [ -n "$(find "$icons" -mtime +7 2>/dev/null)" ]; then
         || { echo "failed to fetch community listfile" >&2; exit 1; }
 fi
 
-cargo build -q --release --manifest-path "$root/Cargo.toml" -p wowdps-extract
-"$root/target/release/wowdps-extract" gen-talent-trees ${wow:+"$wow"} \
+build_extract
+fetch_dbds gen-talent-trees "$work"
+fetch_keys "$work/tactkeys.txt"
+
+"$extract" gen-talent-trees ${wow:+"$wow"} \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" --listfile "$icons"
