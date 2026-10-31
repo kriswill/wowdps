@@ -6,7 +6,6 @@ The Cargo workspace members — the engine, the wire protocol, the daemon, the t
 
 * [wowdps-core](core.md) - WoW combat-log engine: parser, meter, structural index, file tailer.
 * [wowdps-daemon](daemon.md) - Headless wowdps daemon: tails the combat log and serves meter snapshots over a unix socket.
-* [wowdps-encounter-rubric](encounter-rubric.md) _(deprecated)_ - Deprecated 2026-10-30: the seasonal encounter rubric (per-encounter TOML, its layer stack and resolver, the base season files) left wowdps with the replay for the private wowdps-replay repository; wowdps keeps only the generated placed table, now proto's.
 * [wowdps-extract](extract.md) - DB2/CASC extractor generating wowdps game-data tables from a local WoW install, and the game-data library the replay's extractor builds on.
 * [wowdps-gui-logic](gui-logic.md) - The GUI's framework-free half — config, Hyprland IPC, the keymap, history pages, the art-cache readers and fonts (wave A), then every model, word and geometry of the overlay, the window, the inspector, the rail, Home, the palette and the talent viewer (wave B) — moved out of the iced GUI, never copied, while it and its GPUI successor coexisted.
 * [wowdps-gui-new](gui-new.md) _(deprecated)_ - Deprecated: the name the GPUI GUI was built under (crates/gui-new, binary wowdps-gui-new) beside the iced wowdps-gui; at the cutover it became crates/gui and took the wowdps-gui name, so its record is wowdps-gui.

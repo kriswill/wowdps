@@ -7,10 +7,13 @@
   (with its 2026-10-30 update), brought from the replay branch with the
   extractor's library half.
 
-- **Deprecation** — [Resolve An Encounter Through An Ordered Layer Stack](encounter-rubric-layers.md)
-  and [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
-  both are the encounter rubric's, which left wowdps with the replay for
-  the private wowdps-replay repository.
+- **Removal** — Resolve An Encounter Through An Ordered Layer Stack and
+  Give The Map A Vocabulary Per Level And Per Area: both are the
+  encounter rubric's, which left wowdps with the replay for the private
+  wowdps-replay repository; on 2026-10-31 the repository's history was
+  rewritten without the two records and the crate (the format and its
+  curated layer are the paid product's). The entries below that name
+  them keep their text, their links gone with the records.
 
 - **Update** — [The Replay Tier Lives In The History Store](replay-tier-in-the-store.md):
   the generated `placed` table is proto's (`proto::placed`), no longer the
@@ -59,14 +62,14 @@
 
 ## 2026-10-12
 
-- **Update** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+- **Update** — Give The Map A Vocabulary Per Level And Per Area:
   after review — altitudes filled from the view before they are checked
   (`Area::altitudes`), an ordered crop, fade, court and spell checks, an
   arena's own `travel`, a levels fixture, Echo of Doragosa's court posted
   on 2097 though its draft says 2099; and the base rule narrowed to what
   holds: a set may amend an arena's map and view, never a level's.
 
-- **Creation** — [Give The Map A Vocabulary Per Level And Per Area](map-vocabulary-per-level-and-area.md):
+- **Creation** — Give The Map A Vocabulary Per Level And Per Area:
   a dungeon level is an instance file's `[level.<ui_map>]`, the same `Map`
   an arena's is; any map names its areas (with altitudes), paths (with a
   mode) and a transition, and the render's crop, include, fade, ground and
@@ -152,7 +155,7 @@
 - **Creation** — [A Progression Wipe Is Kept Whole Until The First Kill](progression-kept-whole.md):
   a wipe on a boss no stored card killed at that difficulty is kept whole as
   a kill is, until the first kill there; `history_keep_progression_whole`.
-- **Creation** — [Resolve An Encounter Through An Ordered Layer Stack](encounter-rubric-layers.md):
+- **Creation** — Resolve An Encounter Through An Ordered Layer Stack:
   the encounter rubric, brought to main as `wowdps-encounter-rubric` with
   the base alone, resolves through base, curated and user tiers: the base's
   four sources, each curated set in the order laid (embedded, then

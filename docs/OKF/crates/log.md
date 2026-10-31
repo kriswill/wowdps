@@ -15,14 +15,18 @@
   rubric's drafter) lives in wowdps-replay
   ([decision](../decisions/replay-extract-splits-from-extract.md)).
 
-- **Deprecation** — [wowdps-encounter-rubric](encounter-rubric.md): the
-  crate left wowdps with the replay for the private wowdps-replay
-  repository, its base season files, curated set and gen-rubric with it;
-  wowdps keeps its `placed` table in [wowdps-proto](proto.md).
+- **Removal** — wowdps-encounter-rubric: the crate left wowdps with the
+  replay for the private wowdps-replay repository, its base season files,
+  curated set and gen-rubric with it, and on 2026-10-31 the repository's
+  history was rewritten without the crate, its earlier `rubric/` tree and
+  its record (the format and its curated layer are the paid product's);
+  wowdps keeps its `placed` table in [wowdps-proto](proto.md). The
+  entries below that name the crate keep their text, their links gone
+  with the record.
 
 - **Update** — [wowdps-proto](proto.md) holds the generated `placed`
   table (`placed`, `placed/placed_spells.rs`), moved from the
-  [encounter rubric](encounter-rubric.md); [wowdps-daemon](daemon.md)
+  encounter rubric; [wowdps-daemon](daemon.md)
   reads it there and no longer links the rubric.
 - **Update** — [wowdps-proto](proto.md): `replay::csv::dps_tsv`, the one
   writer of a replay's `dps.tsv` (each player's damage curve on the
@@ -112,7 +116,7 @@
 
 ## 2026-10-12
 
-- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the render
+- **Update** — wowdps-encounter-rubric: the render
   keys read — a sidecar's `params` and `made` (`Params`, `RenderOptions`),
   `Map::params_hash`, `Map::level_params`, `Encounter::floor_params`,
   `Floors::stale`; a dungeon level's sidecars (`Floors::levels`,
@@ -120,12 +124,12 @@
   season dungeon's terrain level says `ground = "walked"`; `write::ORDER`
   is public.
 
-- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): after review
+- **Update** — wowdps-encounter-rubric: after review
   — `Area::altitudes`, `travel` in `INSTANCE_TABLES`,
   `fixtures/resolved-levels.txt`; a set may amend an arena's map, never a
   level's.
 
-- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): a dungeon's
+- **Update** — wowdps-encounter-rubric: a dungeon's
   levels (`[level.<ui_map>]`, `Level`, `Rubric::level`, `levels`,
   `check_level`) and the map's areas, paths, transition and render tweaks;
   `gate_map`; `fixtures/resolved-maps.txt`.
@@ -198,23 +202,23 @@
   carried moves here — the GUI as built, surface by surface; core's modules
   and gates; proto's and the daemon's modules and the store's tiers; mcp's
   tools; history's views and subcommands — so the instructions (AGENTS.md
-  per area) can stay rules. [wowdps-encounter-rubric](encounter-rubric.md):
+  per area) can stay rules. wowdps-encounter-rubric:
   the daemon reads its `placed` table since v45.
 - **Update** — [wowdps-core](core.md), [wowdps-model](model.md),
   [wowdps-proto](proto.md), [wowdps-daemon](daemon.md),
   [wowdps-history](history.md): the replay tier (R29, v45) — the cut, its
   rows, the `WDRP` codec and the CSV writer, the store's replay slots and
   `GetReplay`, `replay-export`; and the daemon's progression rule.
-- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): the seasons
+- **Update** — wowdps-encounter-rubric: the seasons
   and the schema README live inside the crate (`seasons/<season>/…`,
   `README.md`); the repository-root `rubric/` is gone, and every layer's
   paths stay `<season>/<instance>/<file>` relative to `seasons/`.
-- **Update** — [wowdps-encounter-rubric](encounter-rubric.md): an ordered layer
+- **Update** — wowdps-encounter-rubric: an ordered layer
   stack in three tiers (`Tier::User` the default), `Source` / `Origin`,
   `with_curated`, `with_user`, `with_user_dir` and `user_errors`,
   `encounter_traced` with its `Provenance`, `layers_of` / `has_user`
-  ([decision](../decisions/encounter-rubric-layers.md)).
-- **Creation** — [wowdps-encounter-rubric](encounter-rubric.md): the seasonal
+  (its decision record left with it).
+- **Creation** — wowdps-encounter-rubric: the seasonal
   encounter rubric brought to main from the replay branch under its new name
   (it was `wowdps-rubric` there), with the generated drafts, the instance and
   season files, and none of the hand-tuned curated files; `proto::dirs`
