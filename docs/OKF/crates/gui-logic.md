@@ -44,7 +44,10 @@ cutover changed none of them but their doc comments.
 - `config` — the one reader and writer of `~/.config/wowdps/config.toml`
   for the window and the overlay: every save atomic, and a casual
   gesture's key written alone through `Config::store` / `store_*`, so one
-  surface's launch-time copy never overwrites the other's drag.
+  surface's launch-time copy never overwrites the other's drag. Its
+  `write_atomic` (a sibling temporary file renamed over the target, a
+  symlinked file keeping its link) is public for the clients that keep
+  small files of their own (the replay, the editors).
 - `fold` — accent folding for the row filter and the command palette
   ("akanos" finds Akanôs; Latin-1 and Latin Extended-A only).
 - `fonts` — the window's bundled OFL faces (`crates/gui-logic/fonts/`,
@@ -64,7 +67,25 @@ cutover changed none of them but their doc comments.
   garbage files answer `None`, never a panic. Each reader is generic over
   the handle a GUI makes of a tile (`Rgba` in, `H` out), memoized per
   tile, so the renderer is handed one image per tile, not a new one each
-  frame; the GUI's handle is an `Arc<RenderImage>`, held in a static.
+  frame; the GUI's handle is an `Arc<RenderImage>`, held in a static. A
+  class crest or spec icon is asked for at the size it is drawn, in device
+  pixels, and `icons` serves the smallest alpha-weighted halving of its
+  tile that covers it (`icons::level`; GPUI samples with no mipmaps, so a
+  large tile on a small disc would shimmer), each level its own handle,
+  read from the file on first use. `icons::halvings` makes the same
+  chain of any picture, for art drawn at many sizes (the replay's
+  portraits, rings and markers).
+- `spell_tips` — the reader of the per-machine spell tips
+  (`spell-tips.bin` beside the spell icons, written by the replay's
+  spell-tips generator, which arrives with the extractor's split): a
+  spell's tooltip words (`SpellTip::facts_line`, the school's name through
+  `drill::school_name`) and what a replay's cast lanes ask of it
+  (`pressed`, `passive_success`, `duration`, its parent, and since format
+  2 the specs whose logs omit the press it is the effect of: `marks`,
+  `omits_press_for`). Read whole once, a record decoded when asked;
+  absent, truncated or garbage files (or a file of another format)
+  answer `None`. Nothing on this side draws a tip yet: the replay reads
+  it, and the window can the day it wants tooltips.
 - `keys` — the keymap as data: `ACTIONS`, each `Chord` (a typed
   character, a Ctrl chord, a named key) and its core `Action`, which
   [the TUI's parity test](tui.md) iterates; the `?` sheet's `BINDINGS`

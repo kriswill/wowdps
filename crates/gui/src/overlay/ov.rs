@@ -34,6 +34,9 @@ pub struct Ov {
     pub fx: Effects,
     /// The colours that carry data: the graph's marks.
     pub data: DataTokens,
+    /// Device pixels per logical pixel (the display's scale factor): what
+    /// a piece of art is chosen by, the drawn size of it.
+    pub scale: f32,
 }
 
 impl Ov {
@@ -48,7 +51,18 @@ impl Ov {
             bars: look.def.bars,
             fx: look.def.effects,
             data: look.def.data,
+            scale: 1.0,
         }
+    }
+
+    /// At the display's scale factor (`Window::scale_factor`), 1 until said.
+    pub fn at_scale(self, scale: f32) -> Self {
+        Self { scale, ..self }
+    }
+
+    /// `d` (already zoomed) in device pixels: the size art is picked for.
+    pub fn device(&self, d: Pixels) -> f32 {
+        f32::from(d) * self.scale
     }
 
     /// `v` logical pixels at the overlay's zoom.

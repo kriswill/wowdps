@@ -4,6 +4,11 @@
 
 - **Update** — [R29 The replay cut](r29.md): the daemon's `PlacedTable` is
   over proto's generated `placed` table, moved from the encounter rubric.
+- **Update** — [R29 The replay cut](r29.md): `csv::dps_tsv`, the
+  writer of a replay's `dps.tsv` beside the seven files.
+- **Update** — [R29 The replay cut](r29.md): `replay-export`'s
+  `pull.txt` says the pull's `local` start and its `best` where the card
+  says them.
 
 ## 2026-10-17
 
