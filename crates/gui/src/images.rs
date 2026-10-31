@@ -66,14 +66,17 @@ fn spell_icons() -> Option<&'static SpellIcons<Tile>> {
     art_on().then(|| CACHE.get_or_init(SpellIcons::open).as_ref())?
 }
 
-/// The class crest, or `None` without a cache.
-pub fn class_icon(class: Class) -> Option<Tile> {
-    class_icons()?.class(class, make)
+/// The class crest for a disc `px` device pixels across (the cache's
+/// level that covers it: GPUI samples without mipmaps), or `None` without
+/// a cache.
+pub fn class_icon(class: Class, px: f32) -> Option<Tile> {
+    class_icons()?.class(class, px, make)
 }
 
-/// The spec's own icon, by Blizzard specID.
-pub fn spec_icon(spec_id: u32) -> Option<Tile> {
-    class_icons()?.spec(spec_id, make)
+/// The spec's own icon, by Blizzard specID, for a disc `px` device pixels
+/// across.
+pub fn spec_icon(spec_id: u32, px: f32) -> Option<Tile> {
+    class_icons()?.spec(spec_id, px, make)
 }
 
 /// An ability's icon, read from the spell cache on first use.
@@ -125,11 +128,18 @@ mod tests {
     /// one texture per tile. Skipped where the machine has no cache.
     #[test]
     fn a_tile_is_one_image_across_lookups() {
-        let Some(first) = class_icon(Class::Mage) else {
+        let Some(first) = class_icon(Class::Mage, 40.0) else {
             return;
         };
-        let again = class_icon(Class::Mage).expect("the cache answered once");
+        let again = class_icon(Class::Mage, 40.0).expect("the cache answered once");
         assert!(Arc::ptr_eq(&first, &again));
         assert_eq!(first.id, again.id);
+        // A disc five times larger is drawn from a larger level of the same
+        // tile, an image of its own — unless the cache holds no larger one
+        // (a 32 px cache from before the upscale).
+        let large = class_icon(Class::Mage, 200.0).expect("the same cache");
+        let (small_w, large_w) = (first.size(0).width, large.size(0).width);
+        assert!(large_w >= small_w);
+        assert_eq!(Arc::ptr_eq(&first, &large), large_w == small_w);
     }
 }

@@ -43,6 +43,11 @@ pub const DATA: DataTokens = DataTokens {
     mark_healing_cd: Color::rgb(0.55, 1.0, 0.45),
     // The game's own mana blue, lifted to read on the dark panels.
     power: Color::hex(0x4C8DF6),
+    // A rubric's white and ice on the replay's map: a soft near-white, a
+    // cooler step off the parchment ink, and a pale blue well clear of the
+    // aqua band.
+    tint_white: Color::hex(0xE6E9EE),
+    tint_ice: Color::hex(0xA9D6F5),
 };
 
 /// The window redesign's Tokens and the overlay as it has always looked.

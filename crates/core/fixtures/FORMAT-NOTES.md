@@ -136,7 +136,11 @@ damage/heal suffix by two columns.
 > a counted pool, so a Restoration shaman's Mana Spring (`0,250000` in the
 > suffix) on an elemental shaman, whose blocks name maelstrom, opens none.
 
-Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
+Position: after a spell prefix → offsets 12-30 (every `SPELL_*` that carries a block,
+`RANGE_DAMAGE`, `DAMAGE_SPLIT`, `DAMAGE_SHIELD`, and `SWING_DAMAGE_LANDED_SUPPORT`,
+which carries its support buff's spell prefix). With no prefix → offsets 9-27
+(`SWING_DAMAGE`, `SWING_DAMAGE_LANDED`, and `ENVIRONMENTAL_DAMAGE`, whose environment
+type comes *after* the block, at 28).
 
 > **v45 (R29, the replay cut) — fields 14–18 and `DAMAGE_SPLIT`.** The parser now
 > reads the block's place: `x`, `y` (two decimals: `1500.25,-3.50`), `ui_map_id`
@@ -159,18 +163,73 @@ Position: `SPELL_*`/`RANGE_*` → offsets 12-30. `SWING_*` → offsets 9-27.
 
 ### Which unit the advanced block describes  ← attribution-critical
 
-| event | block describes |
-|---|---|
-| `SWING_DAMAGE` | **source** |
-| `SWING_DAMAGE_LANDED` | target |
-| `SPELL_DAMAGE`, `SPELL_PERIODIC_DAMAGE`, `RANGE_DAMAGE` | target |
-| `SPELL_HEAL`, `SPELL_PERIODIC_HEAL` | target |
+**`info_guid` names the unit, and the position is that unit's.** Measured by a census
+of 11 real logs (the role-spell census's eight and three nights of the 12.1 raid,
+builds 12.0.7 and 12.1.0, 54.2 M lines): `census-advanced-block.sh`, one of the
+replay's tools and kept with them, finds a block by its shape on every line, whatever
+the event, and compares `info_guid` with the line's source and destination. Its output,
+`advanced-block-census.csv`, sits beside it.
 
-**Consequence for pet attribution:** `owner_guid` is only usable when the block
-describes the pet. A pet's `SWING_DAMAGE` carries `owner_guid` = the player. A pet's
-`SPELL_DAMAGE` describes the *target*, so `owner_guid` there is `0000000000000000` and
-tells you nothing. Pet spell damage must be attributed via `SPELL_SUMMON` (or a
-remembered owner from an earlier swing / the `0x1000` Pet unit flag).
+| event | offset | block describes | lines |
+|---|---|---|---|
+| `SWING_DAMAGE` | 9 | **source** (the attacker) | 1,069,461 |
+| `SPELL_CAST_SUCCESS` | 12 | **source** (the caster, also when the log hides it: below) | 2,568,369 |
+| `SWING_DAMAGE_LANDED` | 9 | target | 1,281,865 |
+| `SPELL_DAMAGE`, `SPELL_PERIODIC_DAMAGE`, `RANGE_DAMAGE` | 12 | target | 13,122,392 |
+| `DAMAGE_SPLIT`, `DAMAGE_SHIELD` | 12 | target | 257,487 |
+| `ENVIRONMENTAL_DAMAGE` | 9 | target (the source is always nil) | 1,826 |
+| `SPELL_HEAL`, `SPELL_PERIODIC_HEAL` | 12 | target | 11,256,853 |
+| `SPELL_ENERGIZE`, `SPELL_PERIODIC_ENERGIZE` | 12 | target (the one given the power) | 1,914,089 |
+| `SPELL_DRAIN` | 12 | the one unit (every drain seen has source = target) | 3,435 |
+| every `*_SUPPORT` family with a block (damage, periodic damage, landed swing, heal, periodic heal) | 12 | target, never the supporter (the line's trailing GUID) | 15,626 |
+
+`SPELL_LEECH`, the periodic drain and leech, and `SPELL_BUILDING_*` appear in none of
+the eleven logs.
+
+- **Nothing else.** On a line with a source, the block never names a third unit.
+  Where the source is the destination (a self heal, most energizes) it is that one
+  unit.
+- **A hidden caster.** `SPELL_CAST_SUCCESS` sometimes writes its source as
+  `0000000000000000,nil` (4,707 lines: Anti-Magic Zone's applications, one line per
+  player inside it; a hostile creature's spear; a creature's own Pop!). The block still
+  names the caster. On every line of one Anti-Magic Zone it is the same Death Knight,
+  whoever the destination is. Read it as the source the log left out (311 of those
+  lines have the caster as destination: the Death Knight inside their own zone).
+- **The position is the named unit's own,** not merely its GUID. Where a line's source
+  and destination stand 10 yd or more apart, the census compares the block's x, y with
+  the named unit's latest post from the *other* side (its own swing or cast when this
+  line hits it, and the reverse) and the other unit's latest post, both within 0.5 s.
+  The block lies nearer the named unit on 99.80 % of the 3.75 M lines tested, and on
+  99.2 % or more in every family with a thousand tested (swings the lowest;
+  `DAMAGE_SHIELD`, 52 of 53). What is left is
+  units that really moved in that half second: charges, knockbacks, imps flung out.
+- **No block, no position** (22.7 M lines): every aura family (`SPELL_AURA_APPLIED`,
+  `_REMOVED`, `_REFRESH`, both `_DOSE`s, `_BROKEN`, `_BROKEN_SPELL`),
+  `SPELL_CAST_START`, `SPELL_CAST_FAILED`, the empower trio, every `*_MISSED`,
+  `SPELL_ABSORBED` (and its `_SUPPORT`), `SPELL_HEAL_ABSORBED`, `SPELL_SUMMON`,
+  `SPELL_CREATE`, `SPELL_INSTAKILL`, `SPELL_INTERRUPT`, `SPELL_DISPEL`, `SPELL_STOLEN`,
+  `SPELL_EXTRA_ATTACKS`, `SPELL_RESURRECT`, `UNIT_DIED`, `PARTY_KILL`, `STAGGER_*`, and
+  every line that is not a unit's event. A cast begun, a miss, a summon or a death is
+  placed by the unit's latest post, and an aura between two units (a tether) by both
+  units' latest posts.
+- **A block naming no unit.** 79 lines, every one a `SPELL_DAMAGE_SUPPORT` of
+  Bombardments (434481), carry `info_guid` and `owner_guid` nil and every number 0,
+  x and y 0.00, **but the map field still set**. Test the GUID before trusting the map.
+- **Unplaced.** 794 blocks name a unit (mostly creatures) on map 0 at 0.00, 0.00: no
+  position.
+- **Names hold commas** ("Zadu, Fist of Nalorakk", "Invoke Xuen, the White Tiger",
+  "First In, Last Out"; 12,025 lines, 372 of them with a block). Split honoring the
+  quotes, or every field after the name shifts, the block with it.
+
+**`owner_guid` is the owner of the unit the block describes,** whoever that is. It is
+never set on a player (16.4 M blocks), set on a pet (995 k, 4 without), and set on a
+guardian or an NPC another NPC spawned (3.7 M of 11.3 M creature blocks; 280 k of
+2.9 M vehicle blocks). **Consequence for pet attribution:** it says who owns the pet
+only when the block describes the pet. A pet's `SWING_DAMAGE` carries `owner_guid` =
+the player. A pet's `SPELL_DAMAGE` describes its *target*, so `owner_guid` there is
+the target's owner (`0000000000000000` for a boss) and says nothing of the pet. Pet
+spell damage must be attributed via `SPELL_SUMMON` (or a remembered owner from an
+earlier swing / the `0x1000` Pet unit flag).
 
 ## Suffix layouts
 
@@ -441,10 +500,12 @@ as cancels on the spell's row.
 - `WORLD_MARKER_PLACED,mapID,marker,x,y` and `WORLD_MARKER_REMOVED,marker` — the
   raid's ground markers, short lines with no unit block: `mapID` the instance map
   (ENCOUNTER_START's last field), `marker` 0–7 (square … skull: the game's world
-  marker n + 1; `0` is a marker, not "all"), x/y two decimals. A removal names no
-  map. A raid night writes a few dozen. `MarkerPlaced` / `MarkerRemoved` (v45),
-  passive, and every one an index seed, so a pull knows the markers standing at
-  its start.
+  marker n + 1; `0` is a marker, not "all"), x/y two decimals, world coordinates on
+  the same frame as the advanced block's position. A removal names no map. A raid
+  night writes a few dozen. The numbering was checked on 2026-10-04: all eight
+  placed around Ula'tek's platform, read clockwise, match an in-game screenshot of
+  them. `MarkerPlaced` / `MarkerRemoved` (v45), passive, and every one an index
+  seed, so a pull knows the markers standing at its start.
 - `ENCOUNTER_START` — `id, "name", difficultyID, groupSize, instanceID`
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
 - `CHALLENGE_MODE_START` — `"dungeon name", mapID, challengeModeID, keystoneLevel,

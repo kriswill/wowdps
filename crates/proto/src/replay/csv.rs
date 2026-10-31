@@ -257,23 +257,44 @@ pub fn raid_csv(series: &[u64], bucket_ms: u64) -> String {
     out
 }
 
+/// `dps.tsv`, which a client (the replay) lays beside the seven files:
+/// each player's damage on the meter's grid, the curve the GUI's graph
+/// draws for a player (R12's `Timeline`), a line a player: their whole
+/// name as `units.tsv` names them (`Name-Realm-Region`), the bucket's
+/// length in ms (1 at least) and the buckets, comma separated; no heading.
+/// `write_dir` (and so `replay-export`) writes the seven files alone,
+/// never this one.
+pub fn dps_tsv<'a>(players: impl IntoIterator<Item = (&'a str, u32, &'a [u64])>) -> String {
+    let mut out = String::new();
+    for (name, bucket_ms, buckets) in players {
+        let values: Vec<String> = buckets.iter().map(u64::to_string).collect();
+        let _ = writeln!(out, "{name}\t{}\t{}", bucket_ms.max(1), values.join(","));
+    }
+    out
+}
+
 /// What `pull.txt` takes from beyond the cut: the instance as the journal
 /// names it (else the cut's zone), the log it was cut from, its owner and
-/// its order among the instance's encounters.
+/// its order among the instance's encounters; and, where the cutter knows
+/// them, the pull's start on the log's own (local) clock and its best:
+/// the boss's lowest health on a wipe, whole percent (0 on a kill), as
+/// the meter grades it (R16).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PullFacts<'a> {
     pub instance: Option<&'a str>,
     pub log: &'a str,
     pub owner: Option<&'a str>,
     pub order: Option<u32>,
+    pub local_ms: Option<i64>,
+    pub best_pct: Option<u16>,
 }
 
 /// `pull.txt`: the header's words (`title`, `detail`, `outcome`,
 /// `instance`, `kind`, `encounter_id`, `affixes`, `map`, `date`), then the
-/// pull's identity (`log`, `start`, `owner`) and its `order`. A keystone
-/// run's (a cut with no encounter at its head) says its dungeon and level,
-/// timed or over, and names no encounter. `affixes` is written only for a
-/// key that names some.
+/// pull's identity (`log`, `start`, `local` where known, `owner`), its
+/// `best` where known and its `order`. A keystone run's (a cut with no
+/// encounter at its head) says its dungeon and level, timed or over, and
+/// names no encounter. `affixes` is written only for a key that names some.
 pub fn pull_txt(cut: &Cut, facts: &PullFacts<'_>) -> String {
     let h = &cut.head;
     let players = cut
@@ -344,8 +365,14 @@ pub fn pull_txt(cut: &Cut, facts: &PullFacts<'_>) -> String {
         "map = {}\ndate = {y:04}-{m:02}-{d:02}\nlog = {}\nstart = {}\n",
         h.map, facts.log, h.start_utc_ms
     );
+    if let Some(local) = facts.local_ms {
+        let _ = writeln!(out, "local = {local}");
+    }
     if let Some(owner) = facts.owner.filter(|o| !o.is_empty() && *o != "-") {
         let _ = writeln!(out, "owner = {owner}");
+    }
+    if let Some(best) = facts.best_pct {
+        let _ = writeln!(out, "best = {best}");
     }
     if let Some(order) = facts.order {
         let _ = writeln!(out, "order = {order}");

@@ -939,7 +939,7 @@ impl Render for Gui {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let zoom = self.cfg.zoom;
         self.width = f32::from(window.viewport_size().width) / zoom;
-        let w = W::new(zoom, self.width, cx);
+        let w = W::new(zoom, self.width, cx).at_scale(window.scale_factor());
         let root = div()
             .id("window")
             .track_focus(&self.focus)

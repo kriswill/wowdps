@@ -24,6 +24,34 @@
   table (`placed`, `placed/placed_spells.rs`), moved from the
   [encounter rubric](encounter-rubric.md); [wowdps-daemon](daemon.md)
   reads it there and no longer links the rubric.
+- **Update** — [wowdps-proto](proto.md): `replay::csv::dps_tsv`, the one
+  writer of a replay's `dps.tsv` (each player's damage curve on the
+  meter's grid).
+- **Update** — [wowdps-proto](proto.md), [wowdps-history](history.md):
+  `replay::csv::PullFacts` gains `local_ms` and `best_pct`, and
+  `pull.txt` says `local` and `best` where they are given;
+  `replay-export` gives the card's.
+- **Update** — [wowdps-gui-logic](gui-logic.md): the theme's
+  `data.tint_white` and `data.tint_ice`, the encounter rubric's white and
+  ice on a replay's map, on every built-in theme (`[themes.<name>.data]`
+  sets them); no other token moves.
+- **Update** — [wowdps-gui-logic](gui-logic.md): `config::write_atomic`
+  is public; a link whose target does not exist yet stays a link, the
+  first write creating the file it names.
+- **Update** — [wowdps-gui-logic](gui-logic.md): `icons::halvings`, a
+  picture of any size and its alpha-weighted halvings down to the floor
+  `icons::level` stops at.
+- **Update** — [wowdps-gui-logic](gui-logic.md): `icons` serves a class
+  crest or spec icon at the halving that covers its drawn size
+  (`icons::level`, `ClassIcons::sizes`; `class` and `spec` take the size
+  in device pixels) and reads tiles lazily; [wowdps-gui](gui.md) asks at
+  the zoomed size times the display's scale factor (`W::device`,
+  `Ov::device`, the talent viewer's `Paint::scale`).
+- **Update** — [wowdps-gui-logic](gui-logic.md): `spell_tips`, the reader
+  of the per-machine `spell-tips.bin` (format 2: a spell's tooltip words,
+  what a replay's cast lanes ask of it, and the specs whose logs omit the
+  press it is the effect of), landed from the replay branch ahead of the
+  replay's move to its own repository.
 
 ## 2026-10-23
 

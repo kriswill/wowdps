@@ -123,6 +123,9 @@ pub static ONYX: LazyLock<Def> = LazyLock::new(|| Def {
     data: DataTokens {
         stack_other: Color::hex(0x2A2D32),
         stack_other_edge: Color::hex(0xA4A8AF),
+        // A rubric's white a step under the lume, so it stays apart from
+        // its amber, which is the accent's pure white here.
+        tint_white: Color::hex(0xDCDFE4),
         ..DATA
     },
     faces: Faces {

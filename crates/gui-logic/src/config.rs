@@ -380,13 +380,16 @@ impl Config {
 /// Write `text` to `path` so no reader ever sees half of it: into a sibling
 /// temporary file, then renamed over the target — the daemon's
 /// `cache::write_atomic`, the pattern every durable file here follows. The
-/// window and the overlay share this file, and a read-modify-write that
+/// window and the overlay share the config, and a read-modify-write that
 /// caught the other mid-`write` read a truncated file as the defaults.
-/// A config that is a symlink (a dotfiles checkout) keeps its link: the
-/// rename lands on what the link points at.
-fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+/// A file that is a symlink (a config in a dotfiles checkout) keeps its
+/// link: the rename lands on what the link points at, even before that
+/// file exists (one level of link is followed then). Public for the
+/// clients beside the GUI (the replay, the editors), which keep small
+/// files of their own the same way.
+pub fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let target = write_target(path);
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut name = target.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".{}-{seq}.tmp", std::process::id()));
@@ -396,6 +399,24 @@ fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
         let _ = std::fs::remove_file(&tmp);
     }
     written
+}
+
+/// The file a write to `path` lands on: the path with every link resolved;
+/// for a link whose target does not exist yet (`canonicalize` fails), the
+/// target it names, read relative to the link's directory, so the rename
+/// never replaces the link itself; otherwise `path` as given.
+fn write_target(path: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    match is_link.then(|| std::fs::read_link(path)) {
+        Some(Ok(to)) => match path.parent() {
+            Some(dir) => dir.join(to),
+            None => to,
+        },
+        _ => path.to_path_buf(),
+    }
 }
 
 #[cfg(test)]
@@ -659,6 +680,34 @@ mod tests {
             names.iter().all(|n| !n.ends_with(".tmp")),
             "no temporary left: {names:?}"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A link whose target does not exist yet (a dotfiles checkout's link
+    /// to a file not written) stays a link: the first write creates the
+    /// file it names, relative to the link's directory.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_is_written_through() {
+        let dir = temp_path("dangling");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("config.toml");
+        std::os::unix::fs::symlink("real.toml", &link).unwrap();
+        write_atomic(&link, "offset = 42\n").unwrap();
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link is still a link"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("real.toml")).unwrap(),
+            "offset = 42\n",
+            "the file it names was written"
+        );
+        assert_eq!(Config::load_from(&link).offset, 42, "read through it");
         std::fs::remove_dir_all(&dir).ok();
     }
 

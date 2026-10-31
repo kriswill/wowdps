@@ -502,6 +502,8 @@ fn the_files_read_as_the_extractor_wrote_them() {
         log: "WoWCombatLog-100726_200000.txt",
         owner: Some("Player-1-A"),
         order: Some(3),
+        local_ms: None,
+        best_pct: None,
     };
     assert_eq!(
         csv::pull_txt(&cut, &facts),
@@ -509,6 +511,19 @@ fn the_files_read_as_the_extractor_wrote_them() {
          instance = The Venomous Abyss\nkind = raid\nencounter_id = 3000\nmap = 3004\n\
          date = 2026-10-07\nlog = WoWCombatLog-100726_200000.txt\nstart = 1791428460000\n\
          owner = Player-1-A\norder = 3\n"
+    );
+    // The local start and the best, where the cutter knows them.
+    let known = PullFacts {
+        local_ms: Some(1_791_403_260_000),
+        best_pct: Some(0),
+        ..facts
+    };
+    assert!(
+        csv::pull_txt(&cut, &known).ends_with(
+            "start = 1791428460000\nlocal = 1791403260000\nowner = Player-1-A\nbest = 0\norder = 3\n"
+        ),
+        "{}",
+        csv::pull_txt(&cut, &known)
     );
     let named = PullFacts {
         instance: Some("March on Quel'Danas"),
@@ -1062,6 +1077,21 @@ fn the_files_carry_the_shields_pools_and_buff_rows() {
          11000,death,0,,,,,\n\
          30000,boss_killed,,3000,Ula'tek,,,\n"
     );
+}
+
+/// `dps.tsv`: a line a player, their whole name, the bucket (1 ms at
+/// least) and the buckets; a player with none keeps their line.
+#[test]
+fn the_players_curves_are_a_line_each() {
+    let curve = [100, 0, 2_500];
+    assert_eq!(
+        csv::dps_tsv([
+            ("Tank-Realm-US", 1000, &curve[..]),
+            ("Heals-Realm-US", 0, &[][..]),
+        ]),
+        "Tank-Realm-US\t1000\t100,0,2500\nHeals-Realm-US\t1\t\n"
+    );
+    assert_eq!(csv::dps_tsv([]), "");
 }
 
 /// Tracks moving between floors, a unit never on the head's floor, a head

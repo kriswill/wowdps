@@ -196,11 +196,11 @@ fn real_pulls_cut_into_the_replay_tier() {
             let back = replay::decode(&bytes).expect("decodes");
             assert!(back == cut, "{}: the tier round-trips", p.name);
             let meter = text.meter();
-            let raid = meter
+            let seg = meter
                 .segments()
                 .iter()
-                .find(|s| s.kind == SegmentKind::Encounter)
-                .map(|s| s.raid_timeline(View::Damage));
+                .find(|s| s.kind == SegmentKind::Encounter);
+            let raid = seg.map(|s| s.raid_timeline(View::Damage));
             let dir = PathBuf::from(&out).join(&p.name);
             csv::write_dir(
                 &dir,
@@ -210,6 +210,10 @@ fn real_pulls_cut_into_the_replay_tier() {
                 &csv::PullFacts {
                     log,
                     owner,
+                    // As the store's card says them: the segment's start on
+                    // the log's own clock and R16's best.
+                    local_ms: seg.map(|s| s.start_ms),
+                    best_pct: seg.and_then(|s| s.best_pct()),
                     ..csv::PullFacts::default()
                 },
             )
