@@ -14,7 +14,8 @@
   ice on a replay's map, on every built-in theme (`[themes.<name>.data]`
   sets them); no other token moves.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `config::write_atomic`
-  is public, its behavior unchanged.
+  is public; a link whose target does not exist yet stays a link, the
+  first write creating the file it names.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `icons::halvings`, a
   picture of any size and its alpha-weighted halvings down to the floor
   `icons::level` stops at.
