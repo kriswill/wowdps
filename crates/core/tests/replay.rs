@@ -22,7 +22,7 @@ const GATED: [&str; 9] = [
 ];
 
 /// The fixtures' placed spells — check.awk's `PLACE` / `TELL`, a subset of
-/// the encounter rubric's generated table.
+/// proto's generated `placed` table.
 struct Fixtures;
 
 impl PlacedTable for Fixtures {

@@ -1070,14 +1070,14 @@ false`, the version `gpui-pre-wgpu` locks) named only to build GPUI
 `RenderImage` frames. No `[patch]` of any `gpui-pre*` or Kit crate and no fork
 of GPUI: a capability GPUI lacks is designed around or contributed upstream.
 gui-logic (the framework-free GUI logic the gui draws from): model + proto +
-serde/toml. encounter-rubric (`wowdps-encounter-rubric`, the seasonal
-encounter rubric, signed off 2026-10-05): serde (derive) + toml, the one
-non-GUI crate that names them, plus proto for the XDG directories
-(`proto::dirs`) its per-machine text sidecars and the user's rubric files
-resolve through; the rubric is reviewed as TOML files under the crate's own
-`seasons/` and embedded at build time, and every reader reads and writes it through this
-crate, never naming serde/toml itself. No engine crate links it: the daemon's replay cut
-reads proto's generated `placed` table (`proto::placed`), the rubric's until 2026-10-30.
+serde/toml. The replay (`wowdps-replay`, with the encounter rubric, the
+replay's extractor and `wowdps-gui-shared`) and the editors live in their own
+private repositories, wowdps-replay (https://github.com/kriswill/wowdps-replay)
+and wowdps-editors (https://github.com/kriswill/wowdps-editors), which take
+wowdps's crates as git dependencies at one pinned `rev`; what each of their
+crates may use is in their own contracts, among them the encounter rubric's
+serde/toml, signed off here on 2026-10-05 until the rubric left wowdps with
+the replay (2026-10-30).
 history: model + proto + duckdb
 (`bundled`: compiled from the crate's own DuckDB source on every platform,
 with the `json` and `parquet` features and no ICU — signed off 2026-09-02 for
@@ -1085,8 +1085,8 @@ roadmap item 1 and re-decided 2026-10-23 for bundling; the one analytical
 engine in the tree, and it lives in the `wowdps-history` binary only, never in
 the daemon). Everything else stdlib unless justified and signed
 off. No chrono (hand-parse the timestamp), no tokio (threads +
-channels), no serde outside the gui crates (gui, gui-logic) and
-encounter-rubric — rules for our own code; a GUI framework accepted as a unit above may pull any of
+channels), no serde outside the gui crates (gui, gui-logic) — rules for our
+own code; a GUI framework accepted as a unit above may pull any of
 them transitively, and our code still never names them.
 
 Dev-dependencies (tests only, never linked into a binary): the gui may use

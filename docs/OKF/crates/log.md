@@ -2,6 +2,11 @@
 
 ## 2026-10-30
 
+- **Deprecation** — [wowdps-encounter-rubric](encounter-rubric.md): the
+  crate left wowdps with the replay for the private wowdps-replay
+  repository, its base season files, curated set and gen-rubric with it;
+  wowdps keeps its `placed` table in [wowdps-proto](proto.md).
+
 - **Update** — [wowdps-proto](proto.md) holds the generated `placed`
   table (`placed`, `placed/placed_spells.rs`), moved from the
   [encounter rubric](encounter-rubric.md); [wowdps-daemon](daemon.md)
