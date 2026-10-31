@@ -2,6 +2,9 @@
 
 ## 2026-10-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): `icons::halvings`, a
+  picture of any size and its alpha-weighted halvings down to the floor
+  `icons::level` stops at.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `icons` serves a class
   crest or spec icon at the halving that covers its drawn size
   (`icons::level`, `ClassIcons::sizes`; `class` and `spec` take the size
