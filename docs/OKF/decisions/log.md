@@ -1,5 +1,11 @@
 # Log
 
+## 2026-10-30
+
+- **Update** — [The Replay Tier Lives In The History Store](replay-tier-in-the-store.md):
+  the generated `placed` table is proto's (`proto::placed`), no longer the
+  encounter rubric's.
+
 ## 2026-10-23
 
 - **Update** — [devenv Is The Reference Shell, And The Flake Shell Mirrors It](devenv-is-the-reference-shell.md):

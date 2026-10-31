@@ -1,5 +1,10 @@
 # Log
 
+## 2026-10-30
+
+- **Update** — [replay.txt](replay.md): its placed spells come from
+  proto's generated `placed` table, moved from the encounter rubric.
+
 ## 2026-10-17
 
 - **Update** — [replay.txt](replay.md): format 6 — the keystone run's

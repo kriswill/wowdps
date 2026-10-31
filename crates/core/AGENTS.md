@@ -37,7 +37,7 @@ ruling before changing what it governs; each has a doc under
   never opens a segment.
 - **The replay cut is passive** (`replay.rs`, R29): it moves no meter
   number and shares the meter's parse (`cut_and_meter`). Core cannot name
-  the rubric; the daemon implements `PlacedTable`.
+  proto's `placed` table; the daemon implements `PlacedTable` over it.
 - **Generated tables are never hand-edited.** `class_spells.rs`,
   `item_spells.rs`, `keystone_timers.rs`, `open_world_maps.rs`,
   `role_spells.rs`, `absorb_spells.rs` and `proc_spells.rs` come from

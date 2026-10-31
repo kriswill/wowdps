@@ -1,8 +1,8 @@
 # crates/proto (wowdps-proto)
 
 The wire codec, `DaemonClient`, `ClientState`, the history store's record
-codecs and binary tiers, and the shared client extras (`json`, `talents`,
-`lua`, `dirs`). Depends on model alone, never the engine. Module map:
+codecs and binary tiers, the generated `placed` table, and the shared client
+extras (`json`, `talents`, `lua`, `dirs`). Depends on model alone, never the engine. Module map:
 `docs/OKF/crates/proto.md`. Wire spec: CONTRACT.md, "Wire protocol".
 
 ## Rules
@@ -38,6 +38,12 @@ codecs and binary tiers, and the shared client extras (`json`, `talents`,
   a reader takes older formats and refuses newer ones, and a format bump
   needs the daemon's rewrite queue to bring old files forward. Both code
   through the crate-private `varint.rs`.
+- **`placed` is generated.** `placed/placed_spells.rs` and its review twin
+  come from `tools/gen-placed-spells.sh` (`placegen.rs` in
+  `tools/extract`); never hand-edit them. The daemon's replay cut keeps
+  the lines of its spells (core's `PlacedTable`) and the replay draws
+  them by it, so a new entry changes the cut (`tools/AGENTS.md`). It is a
+  stored table, not a message: changing it moves no `PROTO_VERSION`.
 - **`lua.rs` reads serializer output** (the game's `SavedVariables`); it is
   never an interpreter.
 - **`dirs.rs` is the one XDG resolver.** An empty or relative variable

@@ -22,8 +22,9 @@ and the dependency policy.
   generated tables, fixtures). Read `crates/core/AGENTS.md` before changing
   parsing, metering, segmentation or a fixture.
 - `crates/proto/`: the wire, `DaemonClient`, `ClientState`, the history
-  codecs and binary tiers. Read `crates/proto/AGENTS.md` before changing a
-  message, the client state or a stored format.
+  codecs and binary tiers, the generated `placed` table. Read
+  `crates/proto/AGENTS.md` before changing a message, the client state or
+  a stored format.
 - `crates/daemon/`: hub, engine, loaders, history store, overlay
   supervisor, addon, config, mock. Read `crates/daemon/AGENTS.md` before
   changing the daemon, the store or `addon/`.

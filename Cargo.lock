@@ -9810,7 +9810,6 @@ name = "wowdps-daemon"
 version = "0.1.0"
 dependencies = [
  "wowdps-core",
- "wowdps-encounter-rubric",
  "wowdps-model",
  "wowdps-proto",
 ]
