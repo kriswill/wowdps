@@ -2,6 +2,12 @@
 
 ## 2026-10-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): `icons` serves a class
+  crest or spec icon at the halving that covers its drawn size
+  (`icons::level`, `ClassIcons::sizes`; `class` and `spec` take the size
+  in device pixels) and reads tiles lazily; [wowdps-gui](gui.md) asks at
+  the zoomed size times the display's scale factor (`W::device`,
+  `Ov::device`, the talent viewer's `Paint::scale`).
 - **Update** — [wowdps-gui-logic](gui-logic.md): `spell_tips`, the reader
   of the per-machine `spell-tips.bin` (format 2: a spell's tooltip words,
   what a replay's cast lanes ask of it, and the specs whose logs omit the

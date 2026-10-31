@@ -64,7 +64,12 @@ cutover changed none of them but their doc comments.
   garbage files answer `None`, never a panic. Each reader is generic over
   the handle a GUI makes of a tile (`Rgba` in, `H` out), memoized per
   tile, so the renderer is handed one image per tile, not a new one each
-  frame; the GUI's handle is an `Arc<RenderImage>`, held in a static.
+  frame; the GUI's handle is an `Arc<RenderImage>`, held in a static. A
+  class crest or spec icon is asked for at the size it is drawn, in device
+  pixels, and `icons` serves the smallest alpha-weighted halving of its
+  tile that covers it (`icons::level`; GPUI samples with no mipmaps, so a
+  large tile on a small disc would shimmer), each level its own handle,
+  read from the file on first use.
 - `spell_tips` — the reader of the per-machine spell tips
   (`spell-tips.bin` beside the spell icons, written by
   `tools/gen-spell-tips.sh`, which lands with the extractor's split): a
