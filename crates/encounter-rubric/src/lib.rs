@@ -81,13 +81,19 @@
 
 mod check;
 pub mod difficulty;
+pub mod drift;
 pub mod floor;
+pub mod follow;
+pub mod guess;
+pub mod lands;
 mod layer;
 pub mod placed;
 pub mod portraits;
 pub mod schema;
 mod stack;
 pub mod text;
+pub mod tint;
+pub mod turn;
 pub mod write;
 
 use std::collections::BTreeMap;
@@ -102,6 +108,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 pub use stack::user_dir;
 use toml::{Table, Value};
+pub use turn::{
+    ROOM_TURN_GUARD_YD, ROOM_TURN_WINDOW_MS, ROOM_WALL_SHARE, midpoint, plane, room_turn,
+};
 
 /// The rubric format this build reads and writes. A file in an older one is
 /// migrated forward on load (`migrate`); a newer one is refused.
