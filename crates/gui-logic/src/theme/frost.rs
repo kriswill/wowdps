@@ -3,8 +3,8 @@
 //! overlay keep their meanings and their colours.
 
 use super::color::Color;
-use super::defs::{Def, WindowTokens};
-use super::navy::NAVY;
+use super::defs::{DataTokens, Def, WindowTokens};
+use super::navy::{DATA, NAVY};
 use super::talent_tokens::TALENTS_FROST;
 use super::text::Text;
 use std::sync::LazyLock;
@@ -40,5 +40,12 @@ pub static FROST: LazyLock<Def> = LazyLock::new(|| Def {
         ..NAVY.window
     },
     talents: TALENTS_FROST,
+    // A rubric's ice paler than the icy accent (its amber here), and its
+    // white over the frost-white ink.
+    data: DataTokens {
+        tint_white: Color::hex(0xF2F5F8),
+        tint_ice: Color::hex(0xCFE6FA),
+        ..DATA
+    },
     ..NAVY.clone()
 });

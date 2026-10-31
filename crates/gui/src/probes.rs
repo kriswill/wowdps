@@ -94,14 +94,16 @@ fn s6_fonts() {
 struct Icons;
 
 impl Render for Icons {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Each drawn 32 px across.
+        let at = 32.0 * window.scale_factor();
         let classes = wowdps_gui_logic::theme::CLASSES
             .iter()
-            .filter_map(|c| crate::images::class_icon(*c));
+            .filter_map(|c| crate::images::class_icon(*c, at));
         // Fire, Frost DK, Holy Priest, Brewmaster, Devastation.
         let specs = [63, 251, 257, 268, 1467]
             .into_iter()
-            .filter_map(crate::images::spec_icon);
+            .filter_map(|s| crate::images::spec_icon(s, at));
         // Fireball, Frostbolt, Power Word: Shield, Shadow Word: Pain, Bloodlust.
         let spells = [133, 116, 17, 589, 2825]
             .into_iter()
@@ -226,7 +228,10 @@ impl Render for Plot {
                         window,
                         cx,
                     );
-                    if let Some(icon) = crate::images::class_icon(wowdps_model::Class::Mage) {
+                    if let Some(icon) = crate::images::class_icon(
+                        wowdps_model::Class::Mage,
+                        24.0 * window.scale_factor(),
+                    ) {
                         let at = pts[5];
                         let image = gpui_kit::Bounds::new(
                             point(at.x - px(12.), at.y - px(12.)),

@@ -30,8 +30,8 @@ pub fn row_id(key: &str) -> ElementId {
 #[cfg(test)]
 pub fn badge(class: Option<Class>, spec: Option<Spec>, side: Pixels) -> AnyElement {
     let art = spec
-        .and_then(|s| images::spec_icon(s.id()))
-        .or_else(|| class.and_then(images::class_icon));
+        .and_then(|s| images::spec_icon(s.id(), f32::from(side)))
+        .or_else(|| class.and_then(|c| images::class_icon(c, f32::from(side))));
     match art {
         Some(tile) => img(tile).size(side).flex_none().into_any_element(),
         None => {

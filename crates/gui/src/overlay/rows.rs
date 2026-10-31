@@ -111,9 +111,10 @@ pub fn class_icon(
     picked: bool,
     d: Pixels,
 ) -> AnyElement {
+    let px = ov.device(d);
     let art = spec
-        .and_then(|s| images::spec_icon(s.id()))
-        .or_else(|| class.and_then(images::class_icon));
+        .and_then(|s| images::spec_icon(s.id(), px))
+        .or_else(|| class.and_then(|c| images::class_icon(c, px)));
     let ring = picked.then(|| ring(d, ov.c(|t| t.picked)));
     let base = match art {
         Some(tile) => img(tile)

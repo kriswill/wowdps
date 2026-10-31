@@ -308,6 +308,9 @@ pub(crate) struct Paint {
     pub t: TalentTokens,
     /// The trees' scale: 1 when they fit, less (to `MIN_FIT`) when not.
     pub s: f32,
+    /// Device pixels per logical pixel (the display's scale factor): what
+    /// a crest is chosen by, the drawn size of it.
+    pub scale: f32,
 }
 
 impl Paint {
@@ -412,6 +415,7 @@ impl Render for TalentViewer {
             def: std::sync::Arc::clone(&def),
             t,
             s,
+            scale: window.scale_factor(),
         };
         let motion = self.motion(window, cx);
         let ui = &self.ui;
@@ -692,6 +696,8 @@ impl TalentViewer {
                 viewer: viewer.clone(),
             })
         };
+        // A pane's crest, 20 px across at the trees' scale.
+        let crest = 20. * s * p.scale;
         let header = |icon: Option<crate::images::Tile>, name: &str, model: &PaneModel| {
             let (label, full) = logic::points_label(model.points, model.cap);
             div()
@@ -727,7 +733,7 @@ impl TalentViewer {
                     .flex_col()
                     .gap(px(4.))
                     .child(header(
-                        class.and_then(art::class_icon),
+                        class.and_then(|c| art::class_icon(c, crest)),
                         &b.class_name,
                         &b.class_pane,
                     ))
@@ -748,7 +754,7 @@ impl TalentViewer {
                 .flex_col()
                 .gap(px(4.))
                 .child(header(
-                    art::spec_icon(b.spec_id),
+                    art::spec_icon(b.spec_id, crest),
                     &b.spec_name,
                     &b.spec_pane,
                 ))

@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-30
+
+- **Update** — [R29 The replay cut](r29.md): `csv::dps_tsv`, the
+  writer of a replay's `dps.tsv` beside the seven files.
+- **Update** — [R29 The replay cut](r29.md): `replay-export`'s
+  `pull.txt` says the pull's `local` start and its `best` where the card
+  says them.
+
 ## 2026-10-17
 
 - **Update** — [R10 Visits & Overall](r10.md): a key's affixes are kept
