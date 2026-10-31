@@ -28,6 +28,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+. "$root/tools/lib.sh"
 out=/dev/stdout
 if [ "${1:-}" = "-o" ]; then
     out="$2"
@@ -38,8 +39,8 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-cargo build -q --release --manifest-path "$root/Cargo.toml" -p wowdps-extract
-"$root/target/release/wowdps-extract" proc-pairs > "$work/pairs.tsv"
+build_extract
+"$extract" proc-pairs > "$work/pairs.tsv"
 
 i=0
 for log in "$@"; do
