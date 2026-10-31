@@ -76,8 +76,8 @@ cutover changed none of them but their doc comments.
   chain of any picture, for art drawn at many sizes (the replay's
   portraits, rings and markers).
 - `spell_tips` — the reader of the per-machine spell tips
-  (`spell-tips.bin` beside the spell icons, written by
-  `tools/gen-spell-tips.sh`, which lands with the extractor's split): a
+  (`spell-tips.bin` beside the spell icons, written by the replay's
+  spell-tips generator, which arrives with the extractor's split): a
   spell's tooltip words (`SpellTip::facts_line`, the school's name through
   `drill::school_name`) and what a replay's cast lanes ask of it
   (`pressed`, `passive_success`, `duration`, its parent, and since format
