@@ -380,11 +380,13 @@ impl Config {
 /// Write `text` to `path` so no reader ever sees half of it: into a sibling
 /// temporary file, then renamed over the target — the daemon's
 /// `cache::write_atomic`, the pattern every durable file here follows. The
-/// window and the overlay share this file, and a read-modify-write that
+/// window and the overlay share the config, and a read-modify-write that
 /// caught the other mid-`write` read a truncated file as the defaults.
-/// A config that is a symlink (a dotfiles checkout) keeps its link: the
-/// rename lands on what the link points at.
-fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+/// A file that is a symlink (a config in a dotfiles checkout) keeps its
+/// link: the rename lands on what the link points at. Public for the
+/// clients beside the GUI (the replay, the editors), which keep small
+/// files of their own the same way.
+pub fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
