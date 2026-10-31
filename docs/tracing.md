@@ -138,7 +138,8 @@ support shapes it:
    window does through its `W` (`w.z(…)`).
 
 A runtime `set_margin` for layer surfaces would retire the strip; it is to be
-contributed upstream, never patched in (`docs/OKF/decisions/no-gpui-forks.md`).
+contributed upstream, never patched in (`crates/gui/AGENTS.md`, "Stock GPUI
+only").
 
 ## Real-log gates
 

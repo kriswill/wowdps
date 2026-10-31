@@ -1,6 +1,6 @@
 # History store — worked queries
 
-The recipe list `docs/spec-role-pivots.md` §9 promised: one statement per
+The recipe list the role-pivots spec (§9) promised: one statement per
 question over the views `wowdps history` defines (`wowdps history views`
 lists the ones your lake has — a rows-tier view exists only once a file
 carries the field, typed; `wowdps history regrade --kind all` back-fills

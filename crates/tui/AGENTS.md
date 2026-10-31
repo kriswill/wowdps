@@ -2,8 +2,7 @@
 
 The `wowdps` binary: the dispatcher (`wowdps <cmd>`, external commands such
 as `wowdps mcp` and `wowdps history` found as siblings), the daemon entry
-(`wowdps daemon`), the launcher and the terminal meter. Structure:
-`docs/OKF/crates/tui.md`.
+(`wowdps daemon`), the launcher and the terminal meter.
 
 ## Rules
 

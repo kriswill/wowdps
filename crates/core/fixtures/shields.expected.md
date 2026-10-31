@@ -2,10 +2,9 @@
 
 Authoritative expected output for the R20 fixture. **Computed independently of
 the Rust implementation** by `check.awk`'s shield ledger (the validator's own
-reading of the log grammar under CONTRACT.md R20 as written in
-`docs/spec-role-pivots.md` §4.4 and `docs/plan-role-pivots-step5.md` §0). The
-machine-readable form is `shields.expected.tsv`; this file is the same numbers
-with every derivation shown, shield by shield.
+reading of the log grammar under CONTRACT.md R20). The machine-readable form
+is `shields.expected.tsv`; this file is the same numbers with every derivation
+shown, shield by shield.
 
 Regenerate / check:
 

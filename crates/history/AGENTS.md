@@ -1,8 +1,7 @@
 # crates/history (wowdps-history)
 
 `wowdps history`: DuckDB over the history store's files, for the ad hoc
-questions; the daemon answers the fixed ones from its card index. Views and
-subcommands: `docs/OKF/crates/history.md`. Recipes:
+questions; the daemon answers the fixed ones from its card index. Recipes:
 `docs/history-queries.md`.
 
 ## Rules

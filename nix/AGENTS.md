@@ -1,8 +1,7 @@
 # nix (with flake.nix, devenv.nix, devenv.yaml)
 
 The dev environment both shells import (`nix/dev/`), the flake's packages
-and the home-manager and NixOS modules. Why and how:
-`docs/OKF/decisions/devenv-is-the-reference-shell.md`.
+and the home-manager and NixOS modules.
 
 ## Rules
 

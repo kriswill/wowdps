@@ -1,10 +1,8 @@
 # crates/core (wowdps-core)
 
 The engine: parser, meter, index, tail, the replay cut and the generated
-tables. Only the daemon runs it. Module map: `docs/OKF/crates/core.md`.
-Binding text: `CONTRACT.md` (signatures, rulings, §Fixtures). Read the
-ruling before changing what it governs; each has a doc under
-`docs/OKF/rulings/`.
+tables. Only the daemon runs it. Binding text: `CONTRACT.md` (signatures,
+rulings, §Fixtures). Read the ruling before changing what it governs.
 
 ## Rules
 
@@ -54,8 +52,7 @@ ruling before changing what it governs; each has a doc under
 - A new modeled metric gets a `check.awk` metric and its rows in every
   gated fixture's TSV.
 - A new fixture brings its `.expected.md` and `.tsv`, a `check.awk` block,
-  a test under `tests/`, a CONTRACT.md §Fixtures entry and
-  `docs/OKF/fixtures/<name>.md`.
+  a test under `tests/` and a CONTRACT.md §Fixtures entry.
 - Invent every name: no real player, guild or realm.
 - `fixtures/FORMAT-NOTES.md` documents the log format.
 

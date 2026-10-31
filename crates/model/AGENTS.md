@@ -2,7 +2,7 @@
 
 The domain vocabulary: plain data, no I/O, no parser. Frontends and the
 wire bind to these types while the engine stays out of their build;
-`wowdps-core` re-exports them. Structure: `docs/OKF/crates/model.md`.
+`wowdps-core` re-exports them.
 
 ## Rules
 

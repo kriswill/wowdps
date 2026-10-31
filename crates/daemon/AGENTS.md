@@ -2,8 +2,7 @@
 
 One process owns tail → index → parse → meter → snapshots for every
 client, plus the history store, the overlay supervisor and the addon.
-Threads and channels, no async runtime. Module map and the store tier by
-tier: `docs/OKF/crates/daemon.md`. Operations: `docs/tracing.md`.
+Threads and channels, no async runtime. Operations: `docs/tracing.md`.
 
 ## Rules
 

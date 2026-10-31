@@ -3,8 +3,7 @@
 The meter window and, with `--overlay`, an overlay surface over the game —
 a wlr-layer-shell surface on Linux, a floating panel on macOS — on
 Zed's GPUI through GPUI Kit. A pure client of model, proto and gui-logic:
-it cannot parse a log. As built, surface by surface:
-`docs/OKF/crates/gui.md`. Changing a window surface or the talent viewer:
+it cannot parse a log. Changing a window surface or the talent viewer:
 read `crates/gui/src/window/AGENTS.md` too.
 
 Read before the work it covers:
@@ -12,10 +11,7 @@ Read before the work it covers:
 - `docs/gpui/README.md` before any GPUI work. Its mirror under
   `docs/gpui/` is gitignored, so ripgrep skips it: `grep -rn … docs/gpui/src/`.
   `tools/fetch-gpui-docs.sh [kit-version]` regenerates it.
-- `docs/design/window-redesign.html`: the window's spec (its CSS values and
-  JS behavior). `docs/spec-gui-new.md`: the design. `docs/plan-gui-new.md`:
-  the as-built notes and the review log of traps. `crates/gui/SHOTS.md`:
-  the shot tests and the render guard.
+- `crates/gui/SHOTS.md`: the shot tests and the render guard.
 
 ## Rules
 

@@ -2,8 +2,8 @@
 
 The wire codec, `DaemonClient`, `ClientState`, the history store's record
 codecs and binary tiers, the generated `placed` table, and the shared client
-extras (`json`, `talents`, `lua`, `dirs`). Depends on model alone, never the engine. Module map:
-`docs/OKF/crates/proto.md`. Wire spec: CONTRACT.md, "Wire protocol".
+extras (`json`, `talents`, `lua`, `dirs`). Depends on model alone, never
+the engine. Wire spec: CONTRACT.md, "Wire protocol".
 
 ## Rules
 
@@ -14,8 +14,9 @@ extras (`json`, `talents`, `lua`, `dirs`). Depends on model alone, never the eng
   golden bytes in `tests/codec.rs` and CONTRACT.md's wire section, with the
   number in its heading, in one change; bump once per branch, however many
   shapes move. A diff in the goldens is a wire change, never a fixture to
-  refresh. The socket and lockfile names embed the version, so deploy with
-  `docs/OKF/playbooks/bump-proto-version.md`.
+  refresh. The socket and lockfile names embed the version, so a deploy
+  replaces the old daemon and restarts every client (root `AGENTS.md`,
+  "The live daemon").
 - **`ClientState` changes only by opt-in.** `set_follow`, `open_death` and
   `select_player` are the window's; the TUI calls none of them. A new
   capability for one frontend is opt-in too, and every other frontend keeps

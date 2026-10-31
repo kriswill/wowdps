@@ -876,7 +876,7 @@ carries every key it does not own through a save untouched.
 Persistence is exactly two things. The index-checkpoint cache in
 `$XDG_CACHE_HOME/wowdps/index` — never parsed meters, which is how a cache
 would become an event store by accident. And the **history store** (roadmap
-item 1, `docs/spec-history-store.md`): per-fight JSON documents under
+item 1, the history store's spec): per-fight JSON documents under
 `$XDG_DATA_HOME/wowdps/history/v1/` (`fights/<id>.json` card — per player the
 damage / healing totals and rates, deaths, since v22 the R17 tank measures
 `taken` / `mitigated` / `prevented` / `dtps` with `mitigated_pct` derived on
@@ -1057,7 +1057,7 @@ talent codec live in proto — `proto::json` / `proto::talents` — so the gui's
 talent viewer reads the same code, and mcp re-exports them; `proto::history` is
 the history store's record codec, one JSON document per file, shared by the
 daemon that writes and every reader that parses). tui: ratatui + crossterm.
-gui (the GUI on GPUI, signed off 2026-09-30, `docs/spec-gui-new.md` §4; it
+gui (the GUI on GPUI, signed off 2026-09-30, the GUI spec's §4; it
 replaced the iced GUI at the cutover, spec §10): `gpui-kit` pinned exactly
 (`=`), with its default features (`component`, `assets`) and no
 `tree-sitter*` feature — the

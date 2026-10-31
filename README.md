@@ -170,8 +170,6 @@ are stdlib only. The TUI uses ratatui and crossterm; the GUI uses GPUI
 through GPUI Kit, pinned exactly and never forked. No tokio, no chrono, no
 serde outside the GUI.
 
-`docs/roadmap.md` lists what comes next.
-
 ## AI use
 
 This project was built with [Claude Code](https://claude.com/claude-code).
