@@ -219,15 +219,20 @@ pub struct RootMatch {
     pub content: u32,
 }
 
-/// Scan the decoded root manifest for a FileDataID or a name hash. The
-/// manifest is block-structured; this walks every block rather than
-/// building a map of all ~6M files.
-pub fn root_find(
-    d: &[u8],
-    want_fdid: Option<u32>,
-    want_name: Option<u64>,
-    locale_mask: u32,
-) -> Result<Option<RootMatch>, String> {
+/// One block of the root manifest: its flags and its records' three
+/// arrays (`ckeys_at` is where the content keys start in the manifest).
+struct RootBlock<'a> {
+    locale: u32,
+    content: u32,
+    deltas: &'a [u8],
+    ckeys: &'a [u8],
+    ckeys_at: usize,
+    names: Option<&'a [u8]>,
+}
+
+/// Every block of a decoded root manifest, in file order; an error for a
+/// manifest that is not one, or whose blocks run past its end.
+fn root_blocks(d: &[u8]) -> Result<Vec<RootBlock<'_>>, String> {
     let head: [u8; 24] =
         raw::array(d, 0, "root: header").map_err(|_| "root: not an MFST manifest".to_string())?;
     if &head[..4] != b"TSFM" {
@@ -245,7 +250,7 @@ pub fn root_find(
     let named = u32::from_le_bytes([head[16], head[17], head[18], head[19]]);
     let allow_unnamed = total != named;
 
-    let mut candidates: Vec<RootMatch> = Vec::new();
+    let mut blocks = Vec::new();
     let mut pos = header_size;
     while pos < d.len() {
         let take = |p: usize, n: usize| -> Result<&[u8], String> {
@@ -271,6 +276,7 @@ pub fn root_find(
         };
         let deltas = take(pos, num * 4)?;
         pos += num * 4;
+        let ckeys_at = pos;
         let ckeys = take(pos, num * 16)?;
         pos += num * 16;
         let names = if allow_unnamed && content & CONTENT_NO_NAME_HASH != 0 {
@@ -280,36 +286,171 @@ pub fn root_find(
             pos += num * 8;
             Some(n)
         };
+        blocks.push(RootBlock {
+            locale,
+            content,
+            deltas,
+            ckeys,
+            ckeys_at,
+            names,
+        });
+    }
+    Ok(blocks)
+}
 
-        let mut fdid: i64 = -1;
-        for i in 0..num {
-            let delta = raw::i32_le(deltas, i * 4, "root: fdid delta")?;
-            fdid += i64::from(delta) + 1;
+/// A block's FileDataIDs, in order: each record's delta from the one
+/// before, plus one, from -1. A damaged manifest can run them out of u32,
+/// where no lookup finds them.
+fn block_fdids(b: &RootBlock) -> impl Iterator<Item = i64> {
+    b.deltas.as_chunks::<4>().0.iter().scan(-1i64, |fdid, d| {
+        *fdid += i64::from(i32::from_le_bytes(*d)) + 1;
+        Some(*fdid)
+    })
+}
+
+/// Which of several records for one file a lookup prefers, least first:
+/// the wanted locale, and non-low-violence content within it. Of equals,
+/// the first in file order.
+fn root_rank(locale: u32, content: u32, locale_mask: u32) -> (bool, bool) {
+    (
+        locale & locale_mask == 0,
+        content & CONTENT_LOW_VIOLENCE != 0,
+    )
+}
+
+/// Scan the decoded root manifest for a FileDataID or a name hash. The
+/// manifest is block-structured; this walks every block rather than
+/// building a map of all ~6M files (`RootIndex` is that map, for a caller
+/// that looks up many).
+pub fn root_find(
+    d: &[u8],
+    want_fdid: Option<u32>,
+    want_name: Option<u64>,
+    locale_mask: u32,
+) -> Result<Option<RootMatch>, String> {
+    let mut candidates: Vec<RootMatch> = Vec::new();
+    for b in root_blocks(d)? {
+        for (i, fdid) in block_fdids(&b).enumerate() {
             let hit = want_fdid.is_some_and(|w| i64::from(w) == fdid)
                 || want_name.is_some_and(|w| {
-                    names.is_some_and(|n| {
+                    b.names.is_some_and(|n| {
                         raw::u64_le(n, i * 8, "root: name hash").is_ok_and(|h| h == w)
                     })
                 });
             if hit {
                 candidates.push(RootMatch {
                     fdid: fdid as u32,
-                    ckey: raw::array(ckeys, i * 16, "root: record ckey")?,
-                    locale,
-                    content,
+                    ckey: raw::array(b.ckeys, i * 16, "root: record ckey")?,
+                    locale: b.locale,
+                    content: b.content,
                 });
             }
         }
     }
 
     // Prefer the wanted locale, and non-low-violence content within it.
-    candidates.sort_by_key(|c| {
-        (
-            c.locale & locale_mask == 0,
-            c.content & CONTENT_LOW_VIOLENCE != 0,
-        )
-    });
+    candidates.sort_by_key(|c| root_rank(c.locale, c.content, locale_mask));
     Ok(candidates.into_iter().next())
+}
+
+/// The root manifest's FileDataIDs, read once: each block's flags, its ids
+/// in file order and where its content keys lie, so a lookup visits only
+/// the blocks whose range holds the id instead of walking all ~67 MB of the
+/// manifest, as `root_find` does on every call. `find` picks exactly the
+/// record `root_find` picks.
+pub struct RootIndex {
+    blocks: Vec<IndexBlock>,
+    /// Every record's FileDataID, block after block.
+    fdids: Vec<i64>,
+}
+
+struct IndexBlock {
+    locale: u32,
+    content: u32,
+    /// The block's records: `fdids[first..first + len]`, their content
+    /// keys 16 bytes each from `ckeys_at` in the manifest.
+    first: usize,
+    len: usize,
+    ckeys_at: usize,
+    /// The least and greatest id in it.
+    lo: i64,
+    hi: i64,
+    /// Its ids never fall, so a lookup can search it by halves.
+    sorted: bool,
+}
+
+impl std::fmt::Debug for RootIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "RootIndex({} blocks, {} records)",
+            self.blocks.len(),
+            self.fdids.len()
+        )
+    }
+}
+
+impl RootIndex {
+    /// Index a decoded root manifest; the error `root_find` would give for
+    /// it, for one that does not read.
+    pub fn new(d: &[u8]) -> Result<RootIndex, String> {
+        let blocks = root_blocks(d)?;
+        let mut fdids = Vec::with_capacity(blocks.iter().map(|b| b.deltas.len() / 4).sum());
+        let mut index = Vec::with_capacity(blocks.len());
+        for b in &blocks {
+            let first = fdids.len();
+            fdids.extend(block_fdids(b));
+            let ids = fdids.get(first..).unwrap_or_default();
+            index.push(IndexBlock {
+                locale: b.locale,
+                content: b.content,
+                first,
+                len: ids.len(),
+                ckeys_at: b.ckeys_at,
+                lo: ids.iter().copied().min().unwrap_or(i64::MAX),
+                hi: ids.iter().copied().max().unwrap_or(i64::MIN),
+                sorted: ids.is_sorted(),
+            });
+        }
+        Ok(RootIndex {
+            blocks: index,
+            fdids,
+        })
+    }
+
+    /// The record for `fdid` that `root_find` picks, preferring
+    /// `locale_mask`; `d` is the manifest this index was made from.
+    pub fn find(&self, d: &[u8], fdid: u32, locale_mask: u32) -> Option<RootMatch> {
+        let want = i64::from(fdid);
+        let mut best: Option<((bool, bool), &IndexBlock, usize)> = None;
+        for b in &self.blocks {
+            if want < b.lo || want > b.hi {
+                continue;
+            }
+            let ids = self.fdids.get(b.first..b.first + b.len)?;
+            let rank = root_rank(b.locale, b.content, locale_mask);
+            // Strictly better only: of equals, the first in file order.
+            if best.is_some_and(|(r, _, _)| r <= rank) {
+                continue;
+            }
+            let at = if b.sorted {
+                let i = ids.partition_point(|&f| f < want);
+                (ids.get(i) == Some(&want)).then_some(i)
+            } else {
+                ids.iter().position(|&f| f == want)
+            };
+            if let Some(i) = at {
+                best = Some((rank, b, i));
+            }
+        }
+        let (_, b, i) = best?;
+        Some(RootMatch {
+            fdid,
+            ckey: raw::array(d, b.ckeys_at + i * 16, "root: record ckey").ok()?,
+            locale: b.locale,
+            content: b.content,
+        })
+    }
 }
 
 // ---- TACT keys ----
@@ -511,6 +652,80 @@ us|1|dddd|1.15.0.1|	|wow_classic";
         assert_eq!(m.fdid, 7);
 
         assert!(root_find(&d, Some(999), None, 0x2).unwrap().is_none());
+    }
+
+    /// The index picks what the scan picks, record for record: across
+    /// locales and low-violence copies, of equals the first in file order,
+    /// in blocks whose ids fall or repeat, and in a version 1 manifest.
+    #[test]
+    fn the_root_index_picks_what_the_scan_picks() {
+        let ck = |n: u8| [n; 16];
+        const LV: u32 = CONTENT_LOW_VIOLENCE;
+        let v2 = root_v2(&[
+            (0x2, 0, vec![(5, ck(1), Some(1)), (1, ck(2), Some(2))]),
+            (0x10, CONTENT_NO_NAME_HASH, vec![(7, ck(3), None)]),
+            // Low violence, enUS: loses to the plain enUS copy of 7.
+            (0x2, LV, vec![(7, ck(4), Some(3)), (2, ck(5), Some(4))]),
+            // Ids that fall (9, then 4) and repeat (4, 4): searched in order.
+            (
+                0x2,
+                0,
+                vec![
+                    (9, ck(6), Some(5)),
+                    (-6, ck(7), Some(6)),
+                    (-1, ck(8), Some(7)),
+                ],
+            ),
+            // A second plain enUS copy of 5: the first one still wins.
+            (0x2, 0, vec![(5, ck(9), Some(8))]),
+            (0x2, 0, vec![]),
+            // Both locales at once, and an id past every other.
+            (0x12, 0, vec![(40, ck(10), Some(9)), (0, ck(11), Some(10))]),
+        ]);
+        let mut v1 = Vec::new();
+        v1.extend_from_slice(b"TSFM");
+        for n in [24u32, 1, 2, 2, 0] {
+            v1.extend_from_slice(&n.to_le_bytes());
+        }
+        v1.extend_from_slice(&2u32.to_le_bytes());
+        v1.extend_from_slice(&LV.to_le_bytes());
+        v1.extend_from_slice(&0x2u32.to_le_bytes());
+        for d in [41i32, 3] {
+            v1.extend_from_slice(&d.to_le_bytes());
+        }
+        v1.extend_from_slice(&ck(12));
+        v1.extend_from_slice(&ck(13));
+        v1.extend_from_slice(&[0u8; 16]);
+        for d in [&v2, &v1] {
+            let index = RootIndex::new(d).unwrap();
+            let mut found = 0;
+            for fdid in (0..60).chain([u32::MAX]) {
+                for mask in [0, 0x2, 0x10, 0x12, u32::MAX] {
+                    let scan = root_find(d, Some(fdid), None, mask).unwrap();
+                    let fast = index.find(d, fdid, mask);
+                    let key = |m: &RootMatch| (m.fdid, m.ckey, m.locale, m.content);
+                    assert_eq!(
+                        scan.as_ref().map(key),
+                        fast.as_ref().map(key),
+                        "fdid {fdid} mask {mask:#x}"
+                    );
+                    found += usize::from(scan.is_some());
+                }
+            }
+            assert!(found > 0);
+        }
+        let index = RootIndex::new(&v2).unwrap();
+        assert_eq!(index.find(&v2, 7, 0x2).unwrap().ckey, ck(2));
+        assert_eq!(index.find(&v2, 4, 0x2).unwrap().ckey, ck(7));
+        assert_eq!(index.find(&v2, 5, 0x2).unwrap().ckey, ck(1));
+        // A manifest the scan refuses, the index refuses alike.
+        let mut short = root_v2(&[(0x2, 0, vec![(5, ck(1), Some(1))])]);
+        short.truncate(short.len() - 4);
+        assert_eq!(
+            RootIndex::new(&short).unwrap_err(),
+            root_find(&short, Some(5), None, 0x2).unwrap_err()
+        );
+        assert!(RootIndex::new(b"TSF").unwrap_err().contains("MFST"));
     }
 
     #[test]

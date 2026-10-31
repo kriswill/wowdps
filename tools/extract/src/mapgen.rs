@@ -12,11 +12,11 @@
 //! from an instance; a map the table does not know (a newer patch) keeps the
 //! old reading, its difficulty.
 
-use crate::table::Csv;
+use crate::table::{Csv, cell, num};
 use std::fmt::Write as _;
 
-/// The source table with its FileDataID (from wowdev/wow-listfile).
-pub const TABLE: (&str, u32) = ("Map", 1349477);
+/// The source table (its FileDataID: `table::FILE_IDS`).
+pub const TABLE: &str = "Map";
 
 #[derive(Debug)]
 pub struct Generated {
@@ -31,21 +31,13 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
 
     // The column indexes come from `Csv::col`, so a miss means the row
     // itself is short — a malformed table, not a bug here.
-    let text = |r: &[String], c: usize| -> Result<String, String> {
-        r.get(c)
-            .cloned()
-            .ok_or_else(|| format!("Map: row has no column {c}"))
-    };
-    let cell = |r: &[String], c: usize| -> Result<i64, String> {
-        let v = text(r, c)?;
-        v.parse()
-            .map_err(|_| format!("Map: bad numeric cell {v:?}"))
-    };
+    let text = |r: &[String], c: usize| cell(r, c, "Map").map(str::to_string);
+    let number = |r: &[String], c: usize| num::<i64>(r, c, "Map");
 
     let mut entries: Vec<(u32, String)> = Vec::new();
     for r in &csv.rows {
-        let id = cell(r, id_c)?;
-        let kind = cell(r, type_c)?;
+        let id = number(r, id_c)?;
+        let kind = number(r, type_c)?;
         // 0 open world, 1 party, 2 raid, 3 pvp, 4 arena, 5 scenario and a
         // few newer kinds past it; anything outside a byte means the column
         // moved under us.

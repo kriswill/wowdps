@@ -35,17 +35,12 @@
 //! (`proc_spells.expected.md`) with every entry's evidence.
 
 use crate::spelltip::ids_in;
-use crate::table::{Csv, parse_csv};
+use crate::table::{Tables, cell, parse_csv};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
-/// The tables the generator consumes, with their FileDataIDs
-/// (from wowdev/wow-listfile; stable per file, forever).
-pub const TABLES: [(&str, u32); 3] = [
-    ("SpellName", 1990283),
-    ("Spell", 1140089),
-    ("SpellEffect", 1140088),
-];
+/// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`).
+pub const TABLES: [&str; 3] = ["SpellName", "Spell", "SpellEffect"];
 
 /// The share of a pair's census the better metric must reach.
 pub const THRESHOLD: f64 = 0.9;
@@ -352,39 +347,22 @@ enum Evidence {
     Exempt(&'static str, Counts),
 }
 
-/// One cell of a CSV row. The column index comes from `Csv::col`, so a miss
-/// means the row itself is short — a malformed table, not a bug here.
-fn cell<'a>(row: &'a [String], c: usize, what: &str) -> Result<&'a str, String> {
-    row.get(c)
-        .map(String::as_str)
-        .ok_or_else(|| format!("{what}: row has no column {c}"))
-}
-
-pub fn generate(
-    tables: &HashMap<&str, Csv>,
-    census: &Census,
-    build: &str,
-) -> Result<Generated, String> {
+pub fn generate(tables: &Tables, census: &Census, build: &str) -> Result<Generated, String> {
     generate_curated(CURATED, tables, census, build)
 }
 
 pub fn generate_curated(
     curated: &[Curated],
-    tables: &HashMap<&str, Csv>,
+    tables: &Tables,
     census: &Census,
     build: &str,
 ) -> Result<Generated, String> {
-    let get = |name: &str| {
-        tables
-            .get(name)
-            .ok_or_else(|| format!("missing table {name}"))
-    };
     let ids: HashSet<u32> = curated.iter().map(|c| c.id).collect();
     if ids.len() != curated.len() {
         return Err("curated list holds a duplicate proc id".into());
     }
 
-    let sn = get("SpellName")?;
+    let sn = tables.get("SpellName")?;
     let (n_id, n_name) = (sn.col("ID")?, sn.col("Name_lang")?);
     let mut names: HashMap<u32, &str> = HashMap::new();
     for row in &sn.rows {
@@ -392,7 +370,7 @@ pub fn generate_curated(
         names.insert(id, cell(row, n_name, "SpellName")?);
     }
 
-    let sp = get("Spell")?;
+    let sp = tables.get("Spell")?;
     let (d_id, d_text) = (sp.col("ID")?, sp.col("Description_lang")?);
     let mut descs: HashMap<u32, &str> = HashMap::new();
     for row in &sp.rows {
@@ -401,7 +379,7 @@ pub fn generate_curated(
     }
 
     // SpellEffect: spell → the spells its effects trigger.
-    let se = get("SpellEffect")?;
+    let se = tables.get("SpellEffect")?;
     let (e_spell, e_trig) = (se.col("SpellID")?, se.col("EffectTriggerSpell")?);
     let mut triggers: HashMap<u32, BTreeSet<u32>> = HashMap::new();
     for row in &se.rows {
@@ -738,8 +716,8 @@ mod tests {
         ),
     ];
 
-    fn tables() -> HashMap<&'static str, Csv> {
-        let mut t = HashMap::new();
+    fn tables() -> Tables {
+        let mut t = Tables::default();
         t.insert(
             "SpellName",
             parse_csv(

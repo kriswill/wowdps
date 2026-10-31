@@ -14,21 +14,20 @@
 //! evidence). A spell keeps a spec only when spec sources name exactly one
 //! spec AND no class-wide source (class skill line) also grants it.
 
-use crate::table::Csv;
+use crate::table::{Tables, cell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
-/// The tables the generator consumes, with their FileDataIDs
-/// (from wowdev/wow-listfile; stable per file, forever).
-pub const TABLES: [(&str, u32); 8] = [
-    ("SkillLine", 1240935),
-    ("SkillLineAbility", 1266278),
-    ("SpecializationSpells", 1240335),
-    ("TraitDefinition", 4420327),
-    ("TraitNodeEntry", 4420298),
-    ("TraitNodeXTraitNodeEntry", 4420304),
-    ("TraitNode", 4420297),
-    ("TraitTreeLoadout", 4669507),
+/// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`).
+pub const TABLES: [&str; 8] = [
+    "SkillLine",
+    "SkillLineAbility",
+    "SpecializationSpells",
+    "TraitDefinition",
+    "TraitNodeEntry",
+    "TraitNodeXTraitNodeEntry",
+    "TraitNode",
+    "TraitTreeLoadout",
 ];
 
 /// Class skill lines are matched by DisplayName so a renumbering patch
@@ -122,20 +121,7 @@ pub struct Generated {
     pub ambiguous: usize,
 }
 
-/// One cell of a CSV row. The column index comes from `Csv::col`, so a miss
-/// means the row itself is short — a malformed table, not a bug here.
-fn cell<'a>(row: &'a [String], c: usize, what: &str) -> Result<&'a str, String> {
-    row.get(c)
-        .map(String::as_str)
-        .ok_or_else(|| format!("{what}: row has no column {c}"))
-}
-
-pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, String> {
-    let get = |name: &str| {
-        tables
-            .get(name)
-            .ok_or_else(|| format!("missing table {name}"))
-    };
+pub fn generate(tables: &Tables, build: &str) -> Result<Generated, String> {
     let spec_class: HashMap<u16, &str> = SPEC_CLASS.into_iter().collect();
     let class_code: HashMap<&str, u8> = CLASS_ORDER
         .iter()
@@ -144,7 +130,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         .collect();
 
     // SkillLine id (as text) -> class name.
-    let sl = get("SkillLine")?;
+    let sl = tables.get("SkillLine")?;
     let (id_c, cat_c, name_c) = (
         sl.col("ID")?,
         sl.col("CategoryID")?,
@@ -176,7 +162,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
             .map_err(|_| format!("bad numeric cell {cell:?}"))
     };
 
-    let sla = get("SkillLineAbility")?;
+    let sla = tables.get("SkillLineAbility")?;
     let (line_c, spell_c) = (sla.col("SkillLine")?, sla.col("Spell")?);
     for r in &sla.rows {
         if let Some(&cls) = class_lines.get(cell(r, line_c, "SkillLineAbility.SkillLine")?) {
@@ -186,7 +172,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         }
     }
 
-    let ss = get("SpecializationSpells")?;
+    let ss = tables.get("SpecializationSpells")?;
     let (spec_c, spell_c) = (ss.col("SpecID")?, ss.col("SpellID")?);
     for r in &ss.rows {
         let Ok(spec) = cell(r, spec_c, "SpecializationSpells.SpecID")?.parse::<u16>() else {
@@ -200,7 +186,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     }
 
     // Trait chain: definition -> entries -> nodes -> trees -> specs.
-    let td = get("TraitDefinition")?;
+    let td = tables.get("TraitDefinition")?;
     let (id_c, spell_c) = (td.col("ID")?, td.col("SpellID")?);
     let mut def_spell: HashMap<&str, u32> = HashMap::new();
     for r in &td.rows {
@@ -211,7 +197,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         def_spell.insert(cell(r, id_c, "TraitDefinition.ID")?, parse_u32(spell)?);
     }
 
-    let te = get("TraitNodeEntry")?;
+    let te = tables.get("TraitNodeEntry")?;
     let (id_c, def_c) = (te.col("ID")?, te.col("TraitDefinitionID")?);
     let mut entry_def: HashMap<&str, &str> = HashMap::new();
     for r in &te.rows {
@@ -221,7 +207,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         );
     }
 
-    let tx = get("TraitNodeXTraitNodeEntry")?;
+    let tx = tables.get("TraitNodeXTraitNodeEntry")?;
     let (node_c, entry_c) = (tx.col("TraitNodeID")?, tx.col("TraitNodeEntryID")?);
     let mut node_entries: HashMap<&str, Vec<&str>> = HashMap::new();
     for r in &tx.rows {
@@ -235,7 +221,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
             )?);
     }
 
-    let tn = get("TraitNode")?;
+    let tn = tables.get("TraitNode")?;
     let (id_c, tree_c) = (tn.col("ID")?, tn.col("TraitTreeID")?);
     let mut node_tree: HashMap<&str, &str> = HashMap::new();
     for r in &tn.rows {
@@ -245,7 +231,7 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         );
     }
 
-    let tl = get("TraitTreeLoadout")?;
+    let tl = tables.get("TraitTreeLoadout")?;
     let (tree_c, spec_c) = (tl.col("TraitTreeID")?, tl.col("ChrSpecializationID")?);
     let mut tree_specs: HashMap<&str, BTreeSet<u16>> = HashMap::new();
     for r in &tl.rows {
@@ -383,13 +369,13 @@ fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::table::parse_csv;
+    use crate::table::{Csv, parse_csv};
 
     fn csv(text: &str) -> Csv {
         parse_csv(text).unwrap()
     }
 
-    fn base_tables() -> HashMap<&'static str, Csv> {
+    fn base_tables() -> Tables {
         // All 13 class skill lines (ids 100..112), plus a pet line and an
         // unrelated category that must both be ignored.
         let mut skill_line = String::from("ID,CategoryID,DisplayName_lang\n");
@@ -398,7 +384,7 @@ mod tests {
         }
         skill_line.push_str("200,7,Pet - Ferocity\n201,9,Cooking\n");
 
-        let mut t = HashMap::new();
+        let mut t = Tables::default();
         t.insert("SkillLine", csv(&skill_line));
         t.insert(
             "SkillLineAbility",

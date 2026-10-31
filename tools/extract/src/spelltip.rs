@@ -8,11 +8,20 @@
 //! $d durations, $t periods, cross-spell $12345s1 references, ${...}
 //! arithmetic, $l singular:plural; picks, $?cond[a][b] takes the first
 //! branch, |c…|r color and |T…|t texture markup is stripped); anything
-//! else is left in place rather than guessed at.
+//! else is left in place rather than guessed at. Values read at base
+//! values: an effect that scales with a stat has no base points and reads
+//! 0, and so does a stat an expression names (`$AP`, `$MHP`, mastery,
+//! versatility); a duration inside an expression is its seconds, and a
+//! product with a 0 in it is 0 whatever else it holds (`eval_expr`).
+//!
+//! The encounter journal's texts (`journal`, for gen-rubric) speak the same
+//! language read at one difficulty: `$?diff16[a][b]` takes the branch that
+//! difficulty would, a `$[!16 …$]` block shows only off the difficulties it
+//! names (`$[16 …$]` only on them), and a |H…|h link is its text.
 
 use std::collections::{HashMap, HashSet};
 
-use crate::table::Csv;
+use crate::table::{Csv, Tables, text};
 
 /// One spell's tooltip lines. Empty strings mean "no such line".
 #[derive(Debug, Clone, Default)]
@@ -28,22 +37,24 @@ pub struct Tip {
 }
 
 /// One spell effect: (index, base points, aura period ms, radius yd).
-type Effect = (u32, f64, u32, f64);
+pub(crate) type Effect = (u32, f64, u32, f64);
 
-struct Ctx {
+/// The spell tables a text is read against: `collect` builds one from the
+/// base rows, gen-rubric one per difficulty.
+pub struct Ctx {
     /// spell → effects, ascending by index.
-    effects: HashMap<u32, Vec<Effect>>,
+    pub(crate) effects: HashMap<u32, Vec<Effect>>,
     /// spell → duration ms (-1 = until cancelled).
-    durations: HashMap<u32, i64>,
-    names: HashMap<u32, String>,
+    pub(crate) durations: HashMap<u32, i64>,
+    pub(crate) names: HashMap<u32, String>,
     /// Raw descriptions of cross-referenced spells, for `$@spelldesc<id>`.
-    descs: HashMap<u32, String>,
+    pub(crate) descs: HashMap<u32, String>,
     /// spell → its description variables (`$dmg=…` definitions), used by
     /// `$<dmg>` and bare `$dmg` references.
-    vars: HashMap<u32, HashMap<String, String>>,
+    pub(crate) vars: HashMap<u32, HashMap<String, String>>,
     /// spell → (proc chance %, max stacks, proc icd ms) from
     /// SpellAuraOptions, for `$h`, `$u` and `$proccooldown`.
-    aura: HashMap<u32, (f64, u32, u32)>,
+    pub(crate) aura: HashMap<u32, (f64, u32, u32)>,
 }
 
 impl Ctx {
@@ -86,10 +97,6 @@ impl Ctx {
     }
 }
 
-fn cell(row: &[String], c: usize) -> &str {
-    row.get(c).map(String::as_str).unwrap_or("")
-}
-
 fn num(s: &str) -> f64 {
     s.parse().unwrap_or(0.0)
 }
@@ -120,76 +127,211 @@ fn fmt_duration(ms: i64) -> String {
     }
 }
 
-/// Evaluate `a op b op c` with * and / before + and -; None on anything
-/// that is not plain arithmetic over numbers.
-fn eval_arith(s: &str) -> Option<f64> {
-    let mut terms: Vec<f64> = Vec::new();
-    let mut term: Option<f64> = None;
-    let mut pending_mul: Option<char> = None;
-    let mut pending_add: Option<char> = None;
-    for tok in tokenize_arith(s)? {
-        match tok {
-            ArithTok::Num(v) => {
-                let v = match pending_mul.take() {
-                    Some('*') => term.take()? * v,
-                    Some('/') => {
-                        let t = term.take()?;
-                        if v == 0.0 {
-                            return None;
-                        }
-                        t / v
+/// A `${…}` expression's text (substituted) with each duration a `$d`
+/// wrote in it ("18 sec", "1.5 min", "1 hr") read as its seconds, as the
+/// game reads `$d` inside arithmetic (Agony's `${$s1*$d/$t1*$u}` is "18
+/// sec" long, 18 in the sum).
+fn seconds_in(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while !rest.is_empty() {
+        // A number (not the tail of one), a space, a unit, and no letter
+        // after the unit.
+        let found = rest.char_indices().find_map(|(at, c)| {
+            let before = rest.get(..at)?;
+            if !c.is_ascii_digit() || before.ends_with(|p: char| p.is_ascii_digit() || p == '.') {
+                return None;
+            }
+            let from = rest.get(at..)?;
+            let digits = from
+                .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .unwrap_or(from.len());
+            let (number, after) = (from.get(..digits)?, from.get(digits..)?);
+            [(" sec", 1.0), (" min", 60.0), (" hr", 3600.0)]
+                .into_iter()
+                .find_map(|(unit, k)| {
+                    let tail = after.strip_prefix(unit)?;
+                    if tail.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                        return None;
                     }
-                    _ => v,
-                };
-                term = Some(v);
+                    let v: f64 = number.parse().ok()?;
+                    Some((at, at + digits + unit.len(), v * k))
+                })
+        });
+        match found.and_then(|(from, to, secs)| Some((rest.get(..from)?, rest.get(to..)?, secs))) {
+            Some((head, tail, secs)) => {
+                out.push_str(head);
+                out.push_str(&fmt_number(secs));
+                rest = tail;
             }
-            ArithTok::Op(op @ ('*' | '/')) => {
-                pending_mul = Some(op);
+            None => {
+                out.push_str(rest);
+                break;
             }
-            ArithTok::Op(op @ ('+' | '-')) => {
-                let t = term.take()?;
-                terms.push(if pending_add == Some('-') { -t } else { t });
-                pending_add = Some(op);
-            }
-            ArithTok::Op(_) => return None,
         }
     }
-    let t = term?;
-    terms.push(if pending_add == Some('-') { -t } else { t });
-    Some(terms.iter().sum())
+    out
 }
 
-enum ArithTok {
+/// A number as the arithmetic reads it back: whole, else to the thousandth.
+fn fmt_number(v: f64) -> String {
+    if (v - v.round()).abs() < 1e-9 {
+        format!("{}", v.round() as i64)
+    } else {
+        format!("{v:.3}")
+    }
+}
+
+/// The stat variables a description's arithmetic may name (spell power,
+/// attack power, the most health, a primary stat, mastery, versatility),
+/// lower case: each reads 0 at base values, as a value that scales with a
+/// stat does everywhere in these tooltips (an effect scaled by attack
+/// power has no base points, so its `$s1` reads 0, as the talent viewer
+/// shows it).
+const STAT_VARS: [&str; 14] = [
+    "sp",
+    "sps",
+    "ap",
+    "rap",
+    "oap",
+    "mhp",
+    "str",
+    "agi",
+    "int",
+    "sta",
+    "pri",
+    "mas",
+    "versadmg",
+    "@versadmg",
+];
+
+/// A value in a `${…}` expression read at base values: a number, or one
+/// the tables cannot give (the player's level, an unresolved spell's
+/// value, a function over one).
+#[derive(Clone, Copy, PartialEq)]
+enum Val {
     Num(f64),
-    Op(char),
+    Unknown,
 }
 
-fn tokenize_arith(s: &str) -> Option<Vec<ArithTok>> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    for c in s.chars() {
-        match c {
-            '0'..='9' | '.' => cur.push(c),
-            '+' | '-' | '*' | '/' => {
-                if !cur.is_empty() {
-                    out.push(ArithTok::Num(cur.parse().ok()?));
-                    cur.clear();
-                }
-                out.push(ArithTok::Op(c));
+/// A `${…}` expression (substituted, its durations in seconds:
+/// `seconds_in`) as the game would show it at base values: `+ - * /`
+/// with `*` and `/` first, parentheses, a stat variable as 0
+/// (`STAT_VARS`), and a product with a 0 in it 0 whatever else it holds
+/// (an attack-power-scaled base of 0 times a level formula is 0). None
+/// where the value cannot be known (a sum with an unknown in it), on a
+/// division by 0, a sign before a number, or anything but arithmetic.
+fn eval_expr(s: &str) -> Option<f64> {
+    let chars: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut at = 0usize;
+    let v = expr_sum(&chars, &mut at)?;
+    if at != chars.len() {
+        return None;
+    }
+    match v {
+        Val::Num(n) => Some(n),
+        Val::Unknown => None,
+    }
+}
+
+fn expr_sum(c: &[char], at: &mut usize) -> Option<Val> {
+    let mut v = expr_product(c, at)?;
+    while let Some(&op @ ('+' | '-')) = c.get(*at) {
+        *at += 1;
+        let r = expr_product(c, at)?;
+        v = match (v, r) {
+            (Val::Num(a), Val::Num(b)) => Val::Num(if op == '+' { a + b } else { a - b }),
+            _ => Val::Unknown,
+        };
+    }
+    Some(v)
+}
+
+fn expr_product(c: &[char], at: &mut usize) -> Option<Val> {
+    let mut v = expr_atom(c, at)?;
+    while let Some(&op @ ('*' | '/')) = c.get(*at) {
+        *at += 1;
+        let r = expr_atom(c, at)?;
+        v = match (op, v, r) {
+            ('/', _, Val::Num(0.0)) => return None,
+            ('*', Val::Num(0.0), _) | ('*', _, Val::Num(0.0)) | ('/', Val::Num(0.0), _) => {
+                Val::Num(0.0)
             }
-            ' ' => {
-                if !cur.is_empty() {
-                    out.push(ArithTok::Num(cur.parse().ok()?));
-                    cur.clear();
-                }
-            }
-            _ => return None,
+            ('*', Val::Num(a), Val::Num(b)) => Val::Num(a * b),
+            ('/', Val::Num(a), Val::Num(b)) => Val::Num(a / b),
+            _ => Val::Unknown,
+        };
+    }
+    Some(v)
+}
+
+fn expr_atom(c: &[char], at: &mut usize) -> Option<Val> {
+    match c.get(*at)? {
+        '(' => {
+            *at += 1;
+            let v = expr_sum(c, at)?;
+            (c.get(*at) == Some(&')')).then_some(())?;
+            *at += 1;
+            Some(v)
         }
+        d if d.is_ascii_digit() || *d == '.' => {
+            let from = *at;
+            while c.get(*at).is_some_and(|d| d.is_ascii_digit() || *d == '.') {
+                *at += 1;
+            }
+            let n: String = c.get(from..*at)?.iter().collect();
+            n.parse().ok().map(Val::Num)
+        }
+        // A token the substitution left: a stat variable reads 0; any other
+        // (with its arguments or its braces) is a value the tables cannot
+        // give.
+        '$' => {
+            *at += 1;
+            // A description variable no definition gave (`$<pvp>`).
+            if c.get(*at) == Some(&'<') {
+                while c.get(*at).is_some_and(|d| *d != '>') {
+                    *at += 1;
+                }
+                (c.get(*at) == Some(&'>')).then_some(())?;
+                *at += 1;
+                return Some(Val::Unknown);
+            }
+            let from = *at;
+            if c.get(*at) == Some(&'@') {
+                *at += 1;
+            }
+            while c.get(*at).is_some_and(|d| d.is_ascii_alphanumeric()) {
+                *at += 1;
+            }
+            let word: String = c.get(from..*at)?.iter().collect::<String>().to_lowercase();
+            if let Some(open @ ('(' | '{')) = c.get(*at).copied() {
+                let close = if open == '(' { ')' } else { '}' };
+                let mut depth = 0u32;
+                while let Some(&d) = c.get(*at) {
+                    *at += 1;
+                    if d == open {
+                        depth += 1;
+                    } else if d == close {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
+                (depth == 0).then_some(())?;
+                return Some(Val::Unknown);
+            }
+            if word.is_empty() {
+                return None;
+            }
+            Some(if STAT_VARS.contains(&word.as_str()) {
+                Val::Num(0.0)
+            } else {
+                Val::Unknown
+            })
+        }
+        _ => None,
     }
-    if !cur.is_empty() {
-        out.push(ArithTok::Num(cur.parse().ok()?));
-    }
-    (!out.is_empty()).then_some(out)
 }
 
 /// Evaluate one of the description language's built-in functions over its
@@ -212,9 +354,10 @@ fn eval_function(name: &str, args: &str) -> Option<f64> {
             last.push(c);
         }
     }
+    // Each argument read as a `${…}` expression is (`eval_expr`).
     let vals: Vec<f64> = parts
         .iter()
-        .map(|p| eval_arith(p.trim()))
+        .map(|p| eval_expr(&seconds_in(p.trim())))
         .collect::<Option<Vec<f64>>>()?;
     let arg = |i: usize| vals.get(i).copied();
     match (name, vals.len()) {
@@ -265,6 +408,51 @@ fn substitute(text: &str, spell: u32, ctx: &Ctx, depth: u32) -> String {
 /// by `mult` — how rank N of a multi-rank talent words its numbers.
 /// Cross-spell references are never scaled.
 fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -> String {
+    expand(text, spell, ctx, depth, mult, None)
+}
+
+/// An encounter journal's text read at a difficulty id: its `$` tokens
+/// filled in from `ctx` (that difficulty's rows), its markup gone, no
+/// line ending in a space.
+pub fn journal(text: &str, spell: u32, ctx: &Ctx, difficulty: u32) -> String {
+    polish(expand(text, spell, ctx, 0, 1.0, Some(difficulty)))
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+/// Whether a `$?` condition holds for a journal read at `difficulty`. Its
+/// `|`-separated terms are `diffN` (any case, a stray `?` or spaces
+/// around, `!` to negate), true on that difficulty; any other term (a
+/// spell the reader knows) holds, as a tooltip takes the first branch.
+fn holds(cond: &str, difficulty: u32) -> bool {
+    cond.split('|').any(|term| {
+        let term = term.trim().trim_start_matches('?').trim();
+        let (not, term) = match term.strip_prefix('!') {
+            Some(t) => (true, t.trim()),
+            None => (false, term),
+        };
+        let lower = term.to_ascii_lowercase();
+        match lower.strip_prefix("diff").map(str::parse::<u32>) {
+            Some(Ok(n)) => (n == difficulty) != not,
+            _ => !term.is_empty(),
+        }
+    })
+}
+
+/// The substitution itself; `journal` is the difficulty a journal text is
+/// read at (`None`: a tooltip), which turns on the journal's own markup.
+fn expand(
+    text: &str,
+    spell: u32,
+    ctx: &Ctx,
+    depth: u32,
+    mult: f64,
+    journal: Option<u32>,
+) -> String {
     if depth > 4 {
         return text.to_string();
     }
@@ -316,6 +504,31 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
                     i = (j + 2).min(chars.len());
                     continue;
                 }
+                // A journal's link, |H<link>|h[text]|h: its text, without
+                // the brackets a link wears.
+                Some('H') if journal.is_some() => {
+                    let bar_h = |from: usize| {
+                        (from..chars.len())
+                            .find(|&j| chars.get(j) == Some(&'|') && chars.get(j + 1) == Some(&'h'))
+                    };
+                    if let Some(open) = bar_h(i + 2)
+                        && let Some(close) = bar_h(open + 2)
+                    {
+                        let shown: String =
+                            chars.get(open + 2..close).unwrap_or(&[]).iter().collect();
+                        out.push_str(
+                            shown
+                                .strip_prefix('[')
+                                .and_then(|s| s.strip_suffix(']'))
+                                .unwrap_or(&shown),
+                        );
+                        i = close + 2;
+                    } else {
+                        out.push(c);
+                        i += 1;
+                    }
+                    continue;
+                }
                 _ => {
                     out.push(c);
                     i += 1;
@@ -335,6 +548,51 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
         if chars.get(i) == Some(&'$') {
             out.push('$');
             i += 1;
+            continue;
+        }
+        // A journal's $[ids …$] shows only on the difficulty ids it names,
+        // $[!ids …$] only off them. One left open runs to the text's end,
+        // less the `]` its writer closed it with.
+        if let Some(difficulty) = journal
+            && chars.get(i) == Some(&'[')
+        {
+            let mut j = i + 1;
+            let not = chars.get(j) == Some(&'!');
+            if not {
+                j += 1;
+            }
+            let mut ids = Vec::new();
+            let mut n = 0u32;
+            let mut any = false;
+            while let Some(&cc) = chars.get(j) {
+                if let Some(d) = cc.to_digit(10) {
+                    n = n * 10 + d;
+                    any = true;
+                } else if cc == ',' || cc == ' ' {
+                    if any {
+                        ids.push(n);
+                    }
+                    (n, any) = (0, false);
+                } else {
+                    break;
+                }
+                j += 1;
+            }
+            if any {
+                ids.push(n);
+            }
+            let close = (j..chars.len())
+                .find(|&k| chars.get(k) == Some(&'$') && chars.get(k + 1) == Some(&']'));
+            let (end, next) = match close {
+                Some(k) => (k, k + 2),
+                None if chars.last() == Some(&']') => (chars.len() - 1, chars.len()),
+                None => (chars.len(), chars.len()),
+            };
+            if ids.contains(&difficulty) != not {
+                let inner: String = chars.get(j..end).unwrap_or(&[]).iter().collect();
+                out.push_str(&expand(&inner, spell, ctx, depth + 1, mult, journal));
+            }
+            i = next;
             continue;
         }
         // ${expr}[.N]
@@ -368,8 +626,11 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
                 precision = Some(d as usize);
                 end += 2;
             }
-            let substituted = substitute_scaled(&inner, spell, ctx, depth + 1, mult);
-            match eval_arith(&substituted) {
+            let substituted = expand(&inner, spell, ctx, depth + 1, mult, journal);
+            // Read as the game would at base values: its durations in
+            // seconds, a stat as 0, a product with a 0 in it 0
+            // (`eval_expr`); what cannot be known is left as written.
+            match eval_expr(&seconds_in(&substituted)) {
                 Some(v) => {
                     last_number = v;
                     match precision {
@@ -387,7 +648,8 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
             i = end;
             continue;
         }
-        // $?cond[a]…[b] — take the first branch, drop the rest.
+        // $?cond[a]…[b] — take the first branch, drop the rest; a journal
+        // takes the first whose condition holds at its difficulty.
         if chars.get(i) == Some(&'?') {
             let mut j = i + 1;
             while j < chars.len() && chars.get(j) != Some(&'[') {
@@ -397,6 +659,11 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
                 out.push('$');
                 continue;
             };
+            let cond = |from: usize, to: usize| -> String {
+                chars.get(from..to).unwrap_or(&[]).iter().collect()
+            };
+            // (condition, branch); the else branch has none.
+            let mut branches = vec![(Some(cond(i + 1, j)), first)];
             // Consume else-chains: ?cond[x] and bare [x].
             loop {
                 if chars.get(k) == Some(&'?') {
@@ -405,19 +672,33 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
                         m += 1;
                     }
                     match bracket(&chars, m) {
-                        Some((_, next)) => k = next,
+                        Some((b, next)) => {
+                            branches.push((Some(cond(k + 1, m)), b));
+                            k = next;
+                        }
                         None => break,
                     }
                 } else if chars.get(k) == Some(&'[') {
                     match bracket(&chars, k) {
-                        Some((_, next)) => k = next,
+                        Some((b, next)) => {
+                            branches.push((None, b));
+                            k = next;
+                        }
                         None => break,
                     }
                 } else {
                     break;
                 }
             }
-            out.push_str(&substitute_scaled(&first, spell, ctx, depth + 1, mult));
+            let taken = match journal {
+                None => branches.first(),
+                Some(d) => branches
+                    .iter()
+                    .find(|(c, _)| c.as_deref().is_none_or(|c| holds(c, d))),
+            };
+            if let Some((_, branch)) = taken {
+                out.push_str(&expand(branch, spell, ctx, depth + 1, mult, journal));
+            }
             i = k;
             continue;
         }
@@ -478,7 +759,7 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
             // Embed the referenced spell's own (substituted) description.
             if any && matches!(word.as_str(), "spelldesc" | "spelltooltip" | "spellaura") {
                 if let Some(text) = ctx.descs.get(&id) {
-                    out.push_str(substitute(text, id, ctx, depth + 1).trim());
+                    out.push_str(expand(text, id, ctx, depth + 1, 1.0, journal).trim());
                 }
                 i = j;
                 continue;
@@ -504,7 +785,7 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
             if chars.get(j) == Some(&'>')
                 && let Some(expr) = ctx.vars.get(&spell).and_then(|m| m.get(&name))
             {
-                out.push_str(substitute_scaled(&expr.clone(), spell, ctx, depth + 1, mult).trim());
+                out.push_str(expand(&expr.clone(), spell, ctx, depth + 1, mult, journal).trim());
                 i = j + 1;
                 continue;
             }
@@ -535,7 +816,7 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
         // single letters. Longer unknown words are left untouched rather
         // than half-parsed.
         if !has_ref && let Some(expr) = ctx.vars.get(&spell).and_then(|m| m.get(&word)) {
-            out.push_str(substitute_scaled(&expr.clone(), spell, ctx, depth + 1, mult).trim());
+            out.push_str(expand(&expr.clone(), spell, ctx, depth + 1, mult, journal).trim());
             i = j;
             continue;
         }
@@ -565,7 +846,7 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
                 k += 1;
             }
             if par == 0 {
-                let substituted = substitute_scaled(&inner, spell, ctx, depth + 1, mult);
+                let substituted = expand(&inner, spell, ctx, depth + 1, mult, journal);
                 if let Some(v) = eval_function(&word, &substituted) {
                     last_number = v.abs();
                     out.push_str(&fmt_value(v));
@@ -662,8 +943,99 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
 }
 
 /// Column index by name, tolerating either of two spellings.
-fn col2(csv: &Csv, a: &str, b: &str) -> Result<usize, String> {
+pub(crate) fn col2(csv: &Csv, a: &str, b: &str) -> Result<usize, String> {
     csv.col(a).or_else(|_| csv.col(b))
+}
+
+/// Every spell's raw description: Description wins, the aura text fills in
+/// for pure passives.
+pub(crate) fn descriptions(tables: &Tables) -> Result<HashMap<u32, String>, String> {
+    let spell = tables.get("Spell")?;
+    let (s_id, s_desc, s_aura) = (
+        spell.col("ID")?,
+        spell.col("Description_lang")?,
+        spell.col("AuraDescription_lang")?,
+    );
+    let mut all_descs: HashMap<u32, String> = HashMap::new();
+    for r in &spell.rows {
+        let Ok(id) = text(r, s_id).parse::<u32>() else {
+            continue;
+        };
+        let desc = text(r, s_desc);
+        let text = if desc.is_empty() {
+            text(r, s_aura)
+        } else {
+            desc
+        };
+        if !text.is_empty() {
+            all_descs.insert(id, text.to_string());
+        }
+    }
+    Ok(all_descs)
+}
+
+/// Description variables: `$dmg=…` definitions attached per spell,
+/// referenced from the text as `$<dmg>` or bare `$dmg`.
+pub(crate) fn variables(
+    tables: &Tables,
+    needed: &HashSet<u32>,
+) -> Result<HashMap<u32, HashMap<String, String>>, String> {
+    Ok(variables_of(&variable_texts(tables)?, needed))
+}
+
+/// Every spell's description variables, unparsed: the set the last of
+/// its `SpellXDescriptionVariables` rows names that exists. Read once by
+/// a caller that asks `variables_of` for many spell sets.
+pub(crate) fn variable_texts(tables: &Tables) -> Result<HashMap<u32, &str>, String> {
+    let sdv = tables.get("SpellDescriptionVariables")?;
+    let (v_id, v_text) = (sdv.col("ID")?, sdv.col("Variables")?);
+    let var_sets: HashMap<u32, &str> = sdv
+        .rows
+        .iter()
+        .filter_map(|r| Some((text(r, v_id).parse().ok()?, text(r, v_text))))
+        .collect();
+    let sxdv = tables.get("SpellXDescriptionVariables")?;
+    let (x_spell, x_vars) = (
+        sxdv.col("SpellID")?,
+        sxdv.col("SpellDescriptionVariablesID")?,
+    );
+    let mut texts: HashMap<u32, &str> = HashMap::new();
+    for r in &sxdv.rows {
+        let Ok(id) = text(r, x_spell).parse::<u32>() else {
+            continue;
+        };
+        let Some(text) = text(r, x_vars)
+            .parse::<u32>()
+            .ok()
+            .and_then(|v| var_sets.get(&v))
+        else {
+            continue;
+        };
+        texts.insert(id, text);
+    }
+    Ok(texts)
+}
+
+/// The description variables of the spells in `needed`, parsed, from
+/// `variable_texts`.
+pub(crate) fn variables_of(
+    texts: &HashMap<u32, &str>,
+    needed: &HashSet<u32>,
+) -> HashMap<u32, HashMap<String, String>> {
+    needed
+        .iter()
+        .filter_map(|id| Some((*id, parse_variables(texts.get(id)?))))
+        .collect()
+}
+
+/// A substituted text's line endings normalized and its doubled spaces
+/// (what a dropped dead-reference token leaves behind) collapsed.
+fn polish(s: String) -> String {
+    let mut s = s.replace("\r\n", "\n").replace('\r', "\n");
+    while s.contains("  ") {
+        s = s.replace("  ", " ");
+    }
+    s
 }
 
 /// Parse a SpellDescriptionVariables blob: `$name=expr` per definition,
@@ -703,7 +1075,7 @@ fn parse_variables(text: &str) -> HashMap<String, String> {
 /// digit-length heuristic left their tokens unsubstituted in the output.
 /// Effect indexes (`$s1`) harvest tiny spurious ids; harmless, they gate
 /// table rows, never the output.
-pub(crate) fn ids_in(text: &str, out: &mut HashSet<u32>) {
+pub fn ids_in(text: &str, out: &mut HashSet<u32>) {
     let mut digits = String::new();
     let mut in_token = false;
     for c in text.chars().chain(std::iter::once(' ')) {
@@ -731,45 +1103,73 @@ pub(crate) fn ids_in(text: &str, out: &mut HashSet<u32>) {
     }
 }
 
+/// The spells a text names, in order: a `$1284506a1` reference to another
+/// spell's numbers, a `$@spellname…`, a `|Hspell:…|h` link, and a
+/// description it embeds (`$@spelldesc…`, `…tooltip`, `…aura`: `true`
+/// beside these, whose own text names more). Unlike [`ids_in`], never an
+/// effect index or a condition's spell: only where a spell must stand.
+pub fn spell_refs(text: &str) -> Vec<(u32, bool)> {
+    let chars: Vec<char> = text.chars().collect();
+    let run = |mut j: usize, f: fn(&char) -> bool| {
+        let mut s = String::new();
+        while let Some(c) = chars.get(j).filter(|c| f(c)) {
+            s.push(*c);
+            j += 1;
+        }
+        (s, j)
+    };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        i += 1;
+        if c == '|' && chars.get(i) == Some(&'H') {
+            let (link, _) = run(i + 1, |c| *c != '|');
+            if let Some(id) = link
+                .strip_prefix("spell:")
+                .and_then(|l| l.split(':').next())
+                .and_then(|n| n.parse().ok())
+            {
+                out.push((id, false));
+            }
+            continue;
+        }
+        if c != '$' {
+            continue;
+        }
+        if chars.get(i) == Some(&'@') {
+            let (word, j) = run(i + 1, char::is_ascii_alphabetic);
+            let (digits, _) = run(j, char::is_ascii_digit);
+            let embeds = match word.as_str() {
+                "spellname" => false,
+                "spelldesc" | "spelltooltip" | "spellaura" => true,
+                _ => continue,
+            };
+            if let Ok(id) = digits.parse() {
+                out.push((id, embeds));
+            }
+            continue;
+        }
+        let (digits, j) = run(i, char::is_ascii_digit);
+        if chars.get(j).is_some_and(char::is_ascii_alphabetic)
+            && let Ok(id) = digits.parse()
+        {
+            out.push((id, false));
+        }
+    }
+    out
+}
+
 /// Build tooltip lines for every wanted spell. `ranks` names each spell's
 /// talent max-rank; spells ranked above 1 also get per-rank descriptions.
 pub fn collect(
-    tables: &HashMap<&str, Csv>,
+    tables: &Tables,
     wanted: &HashSet<u32>,
     names: &HashMap<u32, String>,
     ranks: &HashMap<u32, u32>,
 ) -> Result<HashMap<u32, Tip>, String> {
-    let get = |name: &str| -> Result<&Csv, String> {
-        tables
-            .get(name)
-            .ok_or_else(|| format!("missing table {name}"))
-    };
-
-    // Raw descriptions for the wanted spells; Description wins, the aura
-    // text fills in for pure passives.
-    let spell = get("Spell")?;
-    let (s_id, s_desc, s_aura) = (
-        spell.col("ID")?,
-        spell.col("Description_lang")?,
-        spell.col("AuraDescription_lang")?,
-    );
     // Every spell's text stays available: `$@spelldesc<id>` embeds other
     // spells' descriptions, and those can reference further spells.
-    let mut all_descs: HashMap<u32, String> = HashMap::new();
-    for r in &spell.rows {
-        let Ok(id) = cell(r, s_id).parse::<u32>() else {
-            continue;
-        };
-        let desc = cell(r, s_desc);
-        let text = if desc.is_empty() {
-            cell(r, s_aura)
-        } else {
-            desc
-        };
-        if !text.is_empty() {
-            all_descs.insert(id, text.to_string());
-        }
-    }
+    let all_descs = descriptions(tables)?;
     let raw: HashMap<u32, String> = wanted
         .iter()
         .filter_map(|id| Some((*id, all_descs.get(id)?.clone())))
@@ -788,7 +1188,7 @@ pub fn collect(
     needed.extend(level1);
 
     // SpellMisc: duration / range / cast indexes (base difficulty wins).
-    let sm = get("SpellMisc")?;
+    let sm = tables.get("SpellMisc")?;
     let (m_spell, m_dur, m_range, m_cast) = (
         sm.col("SpellID")?,
         sm.col("DurationIndex")?,
@@ -798,27 +1198,27 @@ pub fn collect(
     let m_diff = sm.col("DifficultyID").ok();
     let mut misc: HashMap<u32, (u32, u32, u32)> = HashMap::new();
     for r in &sm.rows {
-        let Ok(id) = cell(r, m_spell).parse::<u32>() else {
+        let Ok(id) = text(r, m_spell).parse::<u32>() else {
             continue;
         };
         if !needed.contains(&id) {
             continue;
         }
-        let base = m_diff.map(|c| cell(r, c)).is_none_or(|d| d == "0");
+        let base = m_diff.map(|c| text(r, c)).is_none_or(|d| d == "0");
         if base || !misc.contains_key(&id) {
             misc.insert(
                 id,
                 (
-                    num(cell(r, m_dur)) as u32,
-                    num(cell(r, m_range)) as u32,
-                    num(cell(r, m_cast)) as u32,
+                    num(text(r, m_dur)) as u32,
+                    num(text(r, m_range)) as u32,
+                    num(text(r, m_cast)) as u32,
                 ),
             );
         }
     }
 
     // SpellRadius: index → yards (RadiusMax fills in for min/max pairs).
-    let sradius = get("SpellRadius")?;
+    let sradius = tables.get("SpellRadius")?;
     let (ra_id, ra_r, ra_max) = (
         sradius.col("ID")?,
         sradius.col("Radius")?,
@@ -828,14 +1228,14 @@ pub fn collect(
         .rows
         .iter()
         .filter_map(|r| {
-            let v = num(cell(r, ra_r));
-            let v = if v > 0.0 { v } else { num(cell(r, ra_max)) };
-            Some((cell(r, ra_id).parse().ok()?, v))
+            let v = num(text(r, ra_r));
+            let v = if v > 0.0 { v } else { num(text(r, ra_max)) };
+            Some((text(r, ra_id).parse().ok()?, v))
         })
         .collect();
 
     // SpellEffect: base points, aura periods and radii by effect index.
-    let se = get("SpellEffect")?;
+    let se = tables.get("SpellEffect")?;
     let (e_spell, e_index, e_period) = (
         se.col("SpellID")?,
         se.col("EffectIndex")?,
@@ -849,26 +1249,26 @@ pub fn collect(
     let e_diff = se.col("DifficultyID").ok();
     let mut effects: HashMap<u32, Vec<Effect>> = HashMap::new();
     for r in &se.rows {
-        let Ok(id) = cell(r, e_spell).parse::<u32>() else {
+        let Ok(id) = text(r, e_spell).parse::<u32>() else {
             continue;
         };
         if !needed.contains(&id) {
             continue;
         }
         if e_diff
-            .map(|c| cell(r, c))
+            .map(|c| text(r, c))
             .is_some_and(|d| !d.is_empty() && d != "0")
         {
             continue;
         }
-        let rad_ix = match num(cell(r, e_rad0)) as u32 {
-            0 => num(cell(r, e_rad1)) as u32,
+        let rad_ix = match num(text(r, e_rad0)) as u32 {
+            0 => num(text(r, e_rad1)) as u32,
             ix => ix,
         };
         effects.entry(id).or_default().push((
-            num(cell(r, e_index)) as u32,
-            num(cell(r, e_points)),
-            num(cell(r, e_period)) as u32,
+            num(text(r, e_index)) as u32,
+            num(text(r, e_points)),
+            num(text(r, e_period)) as u32,
             radius_yd.get(&rad_ix).copied().unwrap_or(0.0),
         ));
     }
@@ -877,47 +1277,47 @@ pub fn collect(
     }
 
     // Duration / range / cast lookup tables.
-    let sd = get("SpellDuration")?;
+    let sd = tables.get("SpellDuration")?;
     let (d_id, d_ms) = (sd.col("ID")?, sd.col("Duration")?);
     let dur_by_index: HashMap<u32, i64> = sd
         .rows
         .iter()
         .filter_map(|r| {
             Some((
-                cell(r, d_id).parse().ok()?,
-                cell(r, d_ms).parse::<i64>().ok()?,
+                text(r, d_id).parse().ok()?,
+                text(r, d_ms).parse::<i64>().ok()?,
             ))
         })
         .collect();
 
-    let sr = get("SpellRange")?;
+    let sr = tables.get("SpellRange")?;
     let (r_id, r_max0, r_max1) = (sr.col("ID")?, sr.col("RangeMax_0")?, sr.col("RangeMax_1")?);
     let range_by_index: HashMap<u32, f64> = sr
         .rows
         .iter()
         .filter_map(|r| {
             Some((
-                cell(r, r_id).parse().ok()?,
-                num(cell(r, r_max0)).max(num(cell(r, r_max1))),
+                text(r, r_id).parse().ok()?,
+                num(text(r, r_max0)).max(num(text(r, r_max1))),
             ))
         })
         .collect();
 
-    let sc = get("SpellCastTimes")?;
+    let sc = tables.get("SpellCastTimes")?;
     let (c_id, c_base) = (sc.col("ID")?, sc.col("Base")?);
     let cast_by_index: HashMap<u32, i64> = sc
         .rows
         .iter()
         .filter_map(|r| {
             Some((
-                cell(r, c_id).parse().ok()?,
-                cell(r, c_base).parse::<i64>().ok()?,
+                text(r, c_id).parse().ok()?,
+                text(r, c_base).parse::<i64>().ok()?,
             ))
         })
         .collect();
 
     // SpellPower: the first nonzero cost line.
-    let sp = get("SpellPower")?;
+    let sp = tables.get("SpellPower")?;
     let (p_spell, p_mana, p_pct, p_type) = (
         sp.col("SpellID")?,
         sp.col("ManaCost")?,
@@ -926,22 +1326,22 @@ pub fn collect(
     );
     let mut costs: HashMap<u32, String> = HashMap::new();
     for r in &sp.rows {
-        let Ok(id) = cell(r, p_spell).parse::<u32>() else {
+        let Ok(id) = text(r, p_spell).parse::<u32>() else {
             continue;
         };
         if !wanted.contains(&id) || costs.contains_key(&id) {
             continue;
         }
-        let power = power_name(num(cell(r, p_type)) as i64);
-        let pct = num(cell(r, p_pct));
-        let flat = num(cell(r, p_mana));
+        let power = power_name(num(text(r, p_type)) as i64);
+        let pct = num(text(r, p_pct));
+        let flat = num(text(r, p_mana));
         let line = if pct > 0.0 {
             format!("{}% of base {power}", fmt_value(pct))
         } else if flat > 0.0 {
             // Whole-unit resources store ×10 (shards) or ×100 (insanity).
             format!(
                 "{} {power}",
-                fmt_value(flat / power_scale(num(cell(r, p_type)) as i64))
+                fmt_value(flat / power_scale(num(text(r, p_type)) as i64))
             )
         } else {
             continue;
@@ -955,40 +1355,10 @@ pub fn collect(
         .filter_map(|(spell, (dur, _, _))| Some((*spell, *dur_by_index.get(dur)?)))
         .collect();
 
-    // Description variables: `$dmg=…` definitions attached per spell,
-    // referenced from the text as `$<dmg>` or bare `$dmg`.
-    let sdv = get("SpellDescriptionVariables")?;
-    let (v_id, v_text) = (sdv.col("ID")?, sdv.col("Variables")?);
-    let var_sets: HashMap<u32, &str> = sdv
-        .rows
-        .iter()
-        .filter_map(|r| Some((cell(r, v_id).parse().ok()?, cell(r, v_text))))
-        .collect();
-    let sxdv = get("SpellXDescriptionVariables")?;
-    let (x_spell, x_vars) = (
-        sxdv.col("SpellID")?,
-        sxdv.col("SpellDescriptionVariablesID")?,
-    );
-    let mut vars: HashMap<u32, HashMap<String, String>> = HashMap::new();
-    for r in &sxdv.rows {
-        let Ok(id) = cell(r, x_spell).parse::<u32>() else {
-            continue;
-        };
-        if !needed.contains(&id) {
-            continue;
-        }
-        let Some(text) = cell(r, x_vars)
-            .parse::<u32>()
-            .ok()
-            .and_then(|v| var_sets.get(&v))
-        else {
-            continue;
-        };
-        vars.insert(id, parse_variables(text));
-    }
+    let vars = variables(tables, &needed)?;
 
     // SpellAuraOptions: proc chance, max stacks, proc cooldown.
-    let sao = get("SpellAuraOptions")?;
+    let sao = tables.get("SpellAuraOptions")?;
     let (o_spell, o_chance, o_stacks, o_icd) = (
         sao.col("SpellID")?,
         sao.col("ProcChance")?,
@@ -998,14 +1368,14 @@ pub fn collect(
     let o_diff = sao.col("DifficultyID").ok();
     let mut aura: HashMap<u32, (f64, u32, u32)> = HashMap::new();
     for r in &sao.rows {
-        let Ok(id) = cell(r, o_spell).parse::<u32>() else {
+        let Ok(id) = text(r, o_spell).parse::<u32>() else {
             continue;
         };
         if !needed.contains(&id) || aura.contains_key(&id) {
             continue;
         }
         if o_diff
-            .map(|c| cell(r, c))
+            .map(|c| text(r, c))
             .is_some_and(|d| !d.is_empty() && d != "0")
         {
             continue;
@@ -1013,9 +1383,9 @@ pub fn collect(
         aura.insert(
             id,
             (
-                num(cell(r, o_chance)),
-                num(cell(r, o_stacks)) as u32,
-                num(cell(r, o_icd)) as u32,
+                num(text(r, o_chance)),
+                num(text(r, o_stacks)) as u32,
+                num(text(r, o_icd)) as u32,
             ),
         );
     }
@@ -1032,14 +1402,6 @@ pub fn collect(
     let mut out = HashMap::new();
     for spell_id in wanted {
         let mut tip = Tip::default();
-        let polish = |s: String| -> String {
-            let mut s = s.replace("\r\n", "\n").replace('\r', "\n");
-            // Dropped dead-reference tokens leave doubled spaces behind.
-            while s.contains("  ") {
-                s = s.replace("  ", " ");
-            }
-            s
-        };
         if let Some(text) = raw.get(spell_id) {
             tip.desc = polish(substitute(text, *spell_id, &ctx, 0));
             // Rank variants, values scaled by the rank.
@@ -1232,9 +1594,9 @@ mod tests {
         assert_eq!(fmt_duration(1500), "1.5 sec");
         assert_eq!(fmt_duration(90000), "1.5 min");
         assert_eq!(fmt_duration(-1), "until cancelled");
-        assert_eq!(eval_arith("50/10"), Some(5.0));
-        assert_eq!(eval_arith("2+3*4"), Some(14.0));
-        assert_eq!(eval_arith("50%"), None);
+        assert_eq!(eval_expr("50/10"), Some(5.0));
+        assert_eq!(eval_expr("2+3*4"), Some(14.0));
+        assert_eq!(eval_expr("50%"), None);
     }
 
     #[test]
@@ -1277,13 +1639,13 @@ mod tests {
         assert_eq!(fmt_duration(7_200_000), "2 hr");
         assert_eq!(fmt_value(0.04), "0");
         // Division by zero, malformed numbers, whitespace, dangling ops.
-        assert_eq!(eval_arith("5/0"), None);
-        assert_eq!(eval_arith("1.2.3+1"), None);
-        assert_eq!(eval_arith("1+1.2.3"), None);
-        assert_eq!(eval_arith("2 + 3 * 4"), Some(14.0));
-        assert_eq!(eval_arith("10 - 4 - 3"), Some(3.0));
-        assert_eq!(eval_arith("+"), None);
-        assert_eq!(eval_arith(""), None);
+        assert_eq!(eval_expr("5/0"), None);
+        assert_eq!(eval_expr("1.2.3+1"), None);
+        assert_eq!(eval_expr("1+1.2.3"), None);
+        assert_eq!(eval_expr("2 + 3 * 4"), Some(14.0));
+        assert_eq!(eval_expr("10 - 4 - 3"), Some(3.0));
+        assert_eq!(eval_expr("+"), None);
+        assert_eq!(eval_expr(""), None);
         // Every built-in, plus the arity/name misses.
         assert_eq!(eval_function("abs", "0-3"), Some(3.0));
         assert_eq!(eval_function("floor", "2.7"), Some(2.0));
@@ -1294,7 +1656,8 @@ mod tests {
         assert_eq!(eval_function("cond", "0, 7, 9"), Some(9.0));
         assert_eq!(eval_function("min", "1, 2, 3"), None);
         assert_eq!(eval_function("sqrt", "4"), None);
-        assert_eq!(eval_function("max", "(1), 2"), None);
+        // An argument in parentheses reads as an expression does.
+        assert_eq!(eval_function("max", "(1), 2"), Some(2.0));
     }
 
     #[test]
@@ -1330,10 +1693,60 @@ mod tests {
         assert_eq!(substitute("${abc}", 100, &c, 0), "abc");
         // Unterminated brace: the `$` is kept and the rest reparsed.
         assert_eq!(substitute("${$s1", 100, &c, 0), "${50");
-        // Function with unbalanced parens is left as written.
+        // A function with unbalanced parens, or of the wrong arity, is left
+        // as written; one whose argument wears parentheses is worked.
         assert_eq!(substitute("$max(1,2", 200, &c, 0), "$max(1,2");
-        assert_eq!(substitute("$max((1),2)", 200, &c, 0), "$max((1),2)");
         assert_eq!(substitute("$min(1,2,3)", 200, &c, 0), "$min(1,2,3)");
+        assert_eq!(substitute("$max((1),2)", 200, &c, 0), "2");
+    }
+
+    /// An expression reads as the game would show it at base values: a
+    /// duration in it in seconds, parentheses, a stat as 0, a product with
+    /// a 0 in it 0; what cannot be known stays as written.
+    #[test]
+    fn expressions_read_at_base_values() {
+        let mut c = ctx();
+        // Agony: a stat-scaled effect (no base points) ticking every 2 sec
+        // for 18 sec, 8 stacks at most.
+        c.effects.insert(300, vec![(0, 0.0, 2000, 0.0)]);
+        c.durations.insert(300, 18_000);
+        c.aura.insert(300, (0.0, 8, 0));
+        let at = |s: &str| substitute(s, 300, &c, 0);
+        assert_eq!(
+            at("causing up to ${$s1*$d/$t1*$u} Shadow damage over $d."),
+            "causing up to 0 Shadow damage over 18 sec."
+        );
+        assert_eq!(at("Restores ${$s1*$d/5} health"), "Restores 0 health");
+        assert_eq!(at("in ${$d/$t1+1} waves"), "in 10 waves");
+        assert_eq!(at("${$d*2} long"), "36 long");
+        // 1.5 min is 90 seconds.
+        assert_eq!(substitute("${$200d/3}", 100, &c, 0), "30");
+        assert_eq!(at("${(1+15/100)*20}"), "23");
+        assert_eq!(at("${100*(1-(100/(100+34)))}%"), "25.4%");
+        // A product with a 0 in it, whatever else it holds.
+        assert_eq!(at("causes ${$s1*(1+15/100)} damage"), "causes 0 damage");
+        assert_eq!(at("${$s1*($max(0,$min($pl-10,10))*11+260)/370}"), "0");
+        // An expression left inside one (its spells beyond the tables).
+        assert_eq!(
+            eval_expr("0*${1+$132158s2/100}*${1+$16870s2/100}"),
+            Some(0.0)
+        );
+        // A stat reads 0, versatility and mastery among them.
+        assert_eq!(
+            at("absorbing ${35/100*$MHP*(1+$@versadmg)} damage"),
+            "absorbing 0 damage"
+        );
+        assert_eq!(at("${30*(1+$mas/100)}"), "30");
+        // What cannot be known, a sign before a number, a division by 0:
+        // left as written.
+        assert_eq!(at("${$SPS*50/100+$pl} yd"), "$SPS*50/100+$pl yd");
+        assert_eq!(substitute("${$s2*-2}%", 100, &c, 0), "12*-2%");
+        assert_eq!(at("${$d/0}"), "18 sec/0");
+        // A unit's word that runs on is no duration.
+        assert_eq!(
+            seconds_in("3 seconds, 2 sec, 1.5 min, 1 hr"),
+            "3 seconds, 2, 90, 3600"
+        );
     }
 
     #[test]
@@ -1399,6 +1812,58 @@ mod tests {
     }
 
     #[test]
+    fn a_journal_reads_its_text_at_a_difficulty() {
+        let c = ctx();
+        let text = "Bursts within $a1 yds$?diff16|DIFF8[, twice][]$?DIFF17[ (weakly)].\
+                    $[!16,8\r\n\r\nOn Mythic, |cFF2959D3|Hspell:200|h[Corruption]|h|r bursts twice.  $]";
+        assert_eq!(
+            journal(text, 100, &c, 15),
+            "Bursts within 8 yds.\n\nOn Mythic, Corruption bursts twice."
+        );
+        assert_eq!(journal(text, 100, &c, 16), "Bursts within 8 yds, twice.");
+        assert_eq!(
+            journal(text, 100, &c, 17).lines().next(),
+            Some("Bursts within 8 yds (weakly).")
+        );
+        // $[ids …$] shows only on the ids; one left open runs to the end,
+        // less its stray `]`; spaces and a `?` round a condition's terms.
+        assert_eq!(journal("A $[ 16 B$]", 100, &c, 16), "A B");
+        assert_eq!(journal("A$[16 B$]", 100, &c, 15), "A");
+        assert_eq!(journal("A $[!16 B.]", 100, &c, 15), "A B.");
+        assert_eq!(journal("$? DIFF23 | DIFF8 [k][n]", 100, &c, 8), "k");
+        assert_eq!(journal("$?DIFF8|?DIFF23[][n]", 100, &c, 23), "");
+        assert_eq!(journal("$?!diff16[n][m]", 100, &c, 14), "n");
+        // A condition on anything but a difficulty holds, as a tooltip's
+        // first branch; an else-chain's bare branch is the fallback.
+        assert_eq!(journal("$?s137046[a][b]", 100, &c, 14), "a");
+        assert_eq!(journal("$?diff1[a]?diff2[b][c]", 100, &c, 2), "b");
+        assert_eq!(journal("$?diff1[a]?diff2[b][c]", 100, &c, 8), "c");
+        // A tooltip never reads the journal's markup.
+        assert_eq!(
+            substitute("$[!16 x$] |Hspell:1|h[y]|h", 100, &c, 0),
+            "$[!16 x$] |Hspell:1|h[y]|h"
+        );
+        assert_eq!(substitute("$?diff16[a][b]", 100, &c, 0), "a");
+    }
+
+    #[test]
+    fn spell_refs_are_where_a_spell_must_stand() {
+        assert_eq!(
+            spell_refs(
+                "within $1284506A1 yds, $s1 dmg, $@spellname77 and $@spelldesc88 \
+                 ${$12s1*2} $?s137001[x][y] $@spellicon5 |Hspell:99|h[z]|h $$5 $"
+            ),
+            [
+                (1284506, false),
+                (77, false),
+                (88, true),
+                (12, false),
+                (99, false)
+            ]
+        );
+    }
+
+    #[test]
     fn recursion_is_bounded() {
         let mut c = ctx();
         c.vars.insert(300, parse_variables("$again=$again"));
@@ -1458,8 +1923,8 @@ mod tests {
 
     /// Spell tables for five wanted spells. `points_col` picks the
     /// SpellEffect base-points spelling (both are seen in the wild).
-    fn tables(points_col: &str) -> HashMap<&'static str, Csv> {
-        let mut t = HashMap::new();
+    fn tables(points_col: &str) -> Tables {
+        let mut t = Tables::default();
         t.insert(
             "Spell",
             csv("ID,Description_lang,AuraDescription_lang\n\

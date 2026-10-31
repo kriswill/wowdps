@@ -15,49 +15,48 @@
 //! the icon caches: this is a per-machine file, regenerated once per patch.
 //! Output is deterministic: same build in, same bytes out.
 
-use crate::table::Csv;
+use crate::table::{Tables, cell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
-/// The tables the generator consumes, with their FileDataIDs
-/// (from wowdev/wow-listfile; stable per file, forever).
-pub const TABLES: [(&str, u32); 34] = [
-    ("ChrSpecialization", 1343390),
-    ("SkillLine", 1240935),
-    ("SkillLineXTraitTree", 4505477),
-    ("TraitTreeLoadout", 4669507),
-    ("TraitNode", 4420297),
-    ("TraitNodeXTraitNodeEntry", 4420304),
-    ("TraitNodeEntry", 4420298),
-    ("TraitDefinition", 4420327),
-    ("TraitEdge", 4420308),
-    ("TraitSubTree", 5534447),
-    ("TraitCond", 4543085),
-    ("TraitNodeGroupXTraitNode", 4420302),
-    ("TraitNodeGroupXTraitCond", 4543090),
-    ("TraitNodeXTraitCond", 4543092),
-    ("TraitNodeEntryXTraitCond", 4543088),
-    ("SpecSetMember", 2057624),
-    ("TraitCost", 4420295),
-    ("TraitNodeXTraitCost", 4420303),
-    ("TraitNodeGroupXTraitCost", 4420301),
-    ("TraitCurrency", 4524216),
-    ("TraitTreeXTraitCurrency", 4524218),
-    ("TraitCurrencySource", 4539393),
-    ("SpellName", 1990283),
-    ("SpellMisc", 1003144),
+/// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`).
+pub const TABLES: [&str; 34] = [
+    "ChrSpecialization",
+    "SkillLine",
+    "SkillLineXTraitTree",
+    "TraitTreeLoadout",
+    "TraitNode",
+    "TraitNodeXTraitNodeEntry",
+    "TraitNodeEntry",
+    "TraitDefinition",
+    "TraitEdge",
+    "TraitSubTree",
+    "TraitCond",
+    "TraitNodeGroupXTraitNode",
+    "TraitNodeGroupXTraitCond",
+    "TraitNodeXTraitCond",
+    "TraitNodeEntryXTraitCond",
+    "SpecSetMember",
+    "TraitCost",
+    "TraitNodeXTraitCost",
+    "TraitNodeGroupXTraitCost",
+    "TraitCurrency",
+    "TraitTreeXTraitCurrency",
+    "TraitCurrencySource",
+    "SpellName",
+    "SpellMisc",
     // The tooltip tables (spelltip.rs): descriptions with their $-token
     // values, costs, ranges and cast times.
-    ("Spell", 1140089),
-    ("SpellEffect", 1140088),
-    ("SpellPower", 982806),
-    ("SpellRange", 1146820),
-    ("SpellCastTimes", 1134089),
-    ("SpellDuration", 1137828),
-    ("SpellRadius", 1134584),
-    ("SpellDescriptionVariables", 1140004),
-    ("SpellXDescriptionVariables", 1724949),
-    ("SpellAuraOptions", 1139952),
+    "Spell",
+    "SpellEffect",
+    "SpellPower",
+    "SpellRange",
+    "SpellCastTimes",
+    "SpellDuration",
+    "SpellRadius",
+    "SpellDescriptionVariables",
+    "SpellXDescriptionVariables",
+    "SpellAuraOptions",
 ];
 
 /// ChrClasses ids; spelled out so an unexpected class id fails loudly.
@@ -101,14 +100,6 @@ pub struct Generated {
     pub nodes: usize,
     /// Trait spells whose name was not found in SpellName.
     pub nameless: usize,
-}
-
-/// One cell of a CSV row. The column index comes from `Csv::col`, so a miss
-/// means the row itself is short — a malformed table, not a bug here.
-fn cell<'a>(row: &'a [String], c: usize, what: &str) -> Result<&'a str, String> {
-    row.get(c)
-        .map(String::as_str)
-        .ok_or_else(|| format!("{what}: row has no column {c}"))
 }
 
 fn parse_u32(cell: &str) -> Result<u32, String> {
@@ -180,19 +171,14 @@ struct Definition {
 }
 
 pub fn generate(
-    tables: &HashMap<&str, Csv>,
+    tables: &Tables,
     icon_names: &HashMap<u32, String>,
     build: &str,
 ) -> Result<Generated, String> {
-    let get = |name: &str| {
-        tables
-            .get(name)
-            .ok_or_else(|| format!("missing table {name}"))
-    };
     let class_names: HashMap<u32, &str> = CLASS_NAMES.into_iter().collect();
 
     // Spec metadata: id -> (name, class id, role).
-    let chr = get("ChrSpecialization")?;
+    let chr = tables.get("ChrSpecialization")?;
     let (id_c, name_c, class_c, role_c) = (
         chr.col("ID")?,
         chr.col("Name_lang")?,
@@ -236,7 +222,7 @@ pub fn generate(
     ]
     .into_iter()
     .collect();
-    let sl = get("SkillLine")?;
+    let sl = tables.get("SkillLine")?;
     let (id_c, cat_c, name_c) = (
         sl.col("ID")?,
         sl.col("CategoryID")?,
@@ -251,7 +237,7 @@ pub fn generate(
             line_class.insert(parse_u32(cell(r, id_c, "SkillLine.ID")?)?, class_id);
         }
     }
-    let sx = get("SkillLineXTraitTree")?;
+    let sx = tables.get("SkillLineXTraitTree")?;
     let (line_c, tree_c) = (sx.col("SkillLineID")?, sx.col("TraitTreeID")?);
     let mut tree_class: BTreeMap<u32, u32> = BTreeMap::new();
     for r in &sx.rows {
@@ -271,7 +257,7 @@ pub fn generate(
     }
 
     // Tree -> specs, active class trees only.
-    let tl = get("TraitTreeLoadout")?;
+    let tl = tables.get("TraitTreeLoadout")?;
     let (tree_c, spec_c) = (tl.col("TraitTreeID")?, tl.col("ChrSpecializationID")?);
     let mut tree_specs: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
     for r in &tl.rows {
@@ -283,7 +269,7 @@ pub fn generate(
     }
 
     // Nodes.
-    let tn = get("TraitNode")?;
+    let tn = tables.get("TraitNode")?;
     let (id_c, tree_c, x_c, y_c, type_c, sub_c) = (
         tn.col("ID")?,
         tn.col("TraitTreeID")?,
@@ -312,7 +298,7 @@ pub fn generate(
 
     // Node -> entries, in client (Index) order — the choice-entry order the
     // import string's 2-bit choiceEntryIndex refers to.
-    let tx = get("TraitNodeXTraitNodeEntry")?;
+    let tx = tables.get("TraitNodeXTraitNodeEntry")?;
     let (node_c, entry_c, idx_c) = (
         tx.col("TraitNodeID")?,
         tx.col("TraitNodeEntryID")?,
@@ -337,7 +323,7 @@ pub fn generate(
         list.sort_unstable();
     }
 
-    let te = get("TraitNodeEntry")?;
+    let te = tables.get("TraitNodeEntry")?;
     let (id_c, def_c, ranks_c, type_c, sub_c) = (
         te.col("ID")?,
         te.col("TraitDefinitionID")?,
@@ -358,7 +344,7 @@ pub fn generate(
         );
     }
 
-    let td = get("TraitDefinition")?;
+    let td = tables.get("TraitDefinition")?;
     let (id_c, spell_c, oname_c, oicon_c) = (
         td.col("ID")?,
         td.col("SpellID")?,
@@ -378,7 +364,7 @@ pub fn generate(
     }
 
     // Edges.
-    let ted = get("TraitEdge")?;
+    let ted = tables.get("TraitEdge")?;
     let (l_c, r_c) = (ted.col("LeftTraitNodeID")?, ted.col("RightTraitNodeID")?);
     let mut next: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
     let mut prev: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
@@ -392,7 +378,7 @@ pub fn generate(
     }
 
     // Hero subtrees.
-    let ts = get("TraitSubTree")?;
+    let ts = tables.get("TraitSubTree")?;
     let (id_c, name_c, tree_c) = (ts.col("ID")?, ts.col("Name_lang")?, ts.col("TraitTreeID")?);
     let mut sub_trees: BTreeMap<u32, (String, u32)> = BTreeMap::new();
     for r in &ts.rows {
@@ -406,7 +392,7 @@ pub fn generate(
     }
 
     // Conditions and their attachments (via groups, nodes, entries).
-    let tc = get("TraitCond")?;
+    let tc = tables.get("TraitCond")?;
     let (id_c, type_c, set_c, granted_c, spent_c) = (
         tc.col("ID")?,
         tc.col("CondType")?,
@@ -427,7 +413,7 @@ pub fn generate(
         );
     }
 
-    let ssm = get("SpecSetMember")?;
+    let ssm = tables.get("SpecSetMember")?;
     let (spec_c, set_c) = (ssm.col("ChrSpecializationID")?, ssm.col("SpecSet")?);
     let mut spec_sets: HashMap<u32, BTreeSet<u32>> = HashMap::new();
     for r in &ssm.rows {
@@ -442,7 +428,7 @@ pub fn generate(
     }
 
     let two_col = |name: &str, a: &str, b: &str| -> Result<Vec<(u32, u32)>, String> {
-        let t = get(name)?;
+        let t = tables.get(name)?;
         let (a_c, b_c) = (t.col(a)?, t.col(b)?);
         t.rows
             .iter()
@@ -487,7 +473,7 @@ pub fn generate(
     }
 
     // Costs: node -> [(currency, amount)], direct and via groups.
-    let tco = get("TraitCost")?;
+    let tco = tables.get("TraitCost")?;
     let (id_c, amt_c, cur_c) = (
         tco.col("ID")?,
         tco.col("Amount")?,
@@ -525,7 +511,7 @@ pub fn generate(
     }
 
     // Tree -> ordered currencies (index 0 class points, 1 spec points, …).
-    let tt = get("TraitTreeXTraitCurrency")?;
+    let tt = tables.get("TraitTreeXTraitCurrency")?;
     let (tree_c, cur_c, idx_c) = (
         tt.col("TraitTreeID")?,
         tt.col("TraitCurrencyID")?,
@@ -558,14 +544,14 @@ pub fn generate(
     }
     // Unfiltered: the tooltip engine resolves $@spellname references to
     // spells outside the trees.
-    let sn = get("SpellName")?;
+    let sn = tables.get("SpellName")?;
     let (id_c, name_c) = (sn.col("ID")?, sn.col("Name_lang")?);
     let mut spell_names: HashMap<u32, String> = HashMap::new();
     for r in &sn.rows {
         let id = parse_u32(cell(r, id_c, "SpellName.ID")?)?;
         spell_names.insert(id, cell(r, name_c, "SpellName.Name_lang")?.to_string());
     }
-    let sm = get("SpellMisc")?;
+    let sm = tables.get("SpellMisc")?;
     let (spell_c, icon_c) = (sm.col("SpellID")?, sm.col("SpellIconFileDataID")?);
     let diff_c = sm.col("DifficultyID").ok();
     let mut spell_icons: HashMap<u32, (u32, bool)> = HashMap::new();
@@ -603,7 +589,7 @@ pub fn generate(
         "SpellAuraOptions",
     ];
     let tips: HashMap<u32, crate::spelltip::Tip> =
-        if tip_tables.iter().all(|t| tables.contains_key(t)) {
+        if tip_tables.iter().all(|t| tables.find(t).is_some()) {
             let wanted: std::collections::HashSet<u32> = wanted_spells.iter().copied().collect();
             // Talent max-ranks per spell, for the per-rank desc variants.
             let mut spell_ranks: HashMap<u32, u32> = HashMap::new();
@@ -626,7 +612,7 @@ pub fn generate(
     // Per-currency point caps at max level: the sum of every grant the
     // TraitCurrencySource table lists for the currency (levels, quests).
     let mut currency_max: HashMap<u32, u64> = HashMap::new();
-    if let Some(tcs) = tables.get("TraitCurrencySource") {
+    if let Some(tcs) = tables.find("TraitCurrencySource") {
         let (c_cur, c_amt) = (tcs.col("TraitCurrencyID")?, tcs.col("Amount")?);
         for r in &tcs.rows {
             if let (Some(cur), Some(amt)) = (
@@ -955,7 +941,7 @@ pub fn generate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::table::parse_csv;
+    use crate::table::{Csv, parse_csv};
 
     fn csv(text: &str) -> Csv {
         parse_csv(text).unwrap()
@@ -966,8 +952,8 @@ mod tests {
     /// order comes from Index, a spec-gated node (4, spec 62 only, behind an
     /// 8-point gate), and a hero subtree 77 selectable by both specs via
     /// subtree-selection node 5.
-    fn base_tables() -> HashMap<&'static str, Csv> {
-        let mut t = HashMap::new();
+    fn base_tables() -> Tables {
+        let mut t = Tables::default();
         t.insert(
             "ChrSpecialization",
             csv("ID,Name_lang,ClassID,Role\n62,Arcane,8,2\n63,Fire,8,2\n74,Ferocity,0,2\n"),
@@ -1177,7 +1163,7 @@ mod tests {
     /// override name needing escapes, a non-base icon row that must lose
     /// to the base row, TraitCurrencySource caps, and the spell tables
     /// that make tooltips appear.
-    fn rich_tables() -> HashMap<&'static str, Csv> {
+    fn rich_tables() -> Tables {
         let mut t = base_tables();
         t.insert(
             "ChrSpecialization",

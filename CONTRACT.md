@@ -1083,7 +1083,13 @@ history: model + proto + duckdb
 with the `json` and `parquet` features and no ICU — signed off 2026-09-02 for
 roadmap item 1 and re-decided 2026-10-23 for bundling; the one analytical
 engine in the tree, and it lives in the `wowdps-history` binary only, never in
-the daemon). Everything else stdlib unless justified and signed
+the daemon). extract (`wowdps-extract`, the dev-time game-data
+extractor, and the library the replay's extractor builds on): stdlib, plus
+core and proto (the XDG directories its per-machine caches resolve through,
+`proto::dirs`, the creatures file, and the `placed` table's types
+gen-placed-spells writes), with no features and no build script; it names no
+rubric (the journal's reading hands out its own `journal::SpellFacts`).
+Everything else stdlib unless justified and signed
 off. No chrono (hand-parse the timestamp), no tokio (threads +
 channels), no serde outside the gui crates (gui, gui-logic) — rules for our
 own code; a GUI framework accepted as a unit above may pull any of
