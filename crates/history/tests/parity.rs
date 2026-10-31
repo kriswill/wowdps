@@ -5562,15 +5562,25 @@ fn the_replay_tier_exports_offline_and_stats_count_it() {
         pull.contains(&format!("log = history:{}\n", kill.id)),
         "{pull}"
     );
-    // The card's start on the log's own clock, and its best where it says one.
+    // The card's start on the log's own clock, and its best (R16: 0 on a
+    // kill).
     assert!(
         pull.contains(&format!("\nlocal = {}\n", kill.start_local_ms)),
         "{pull}"
     );
-    match kill.best_pct {
-        Some(best) => assert!(pull.contains(&format!("\nbest = {best}\n")), "{pull}"),
-        None => assert!(!pull.contains("\nbest = "), "{pull}"),
-    }
+    assert_eq!(kill.best_pct, Some(0), "R16: a kill's best is 0");
+    assert!(pull.contains("\nbest = 0\n"), "{pull}");
+    // The wipe's best is its own, not a default: Verkath was last seen at 98%.
+    let wipe = cards.iter().find(|c| c.success == Some(false)).unwrap();
+    assert_eq!(wipe.best_pct, Some(98));
+    let wiped = tmp.0.join("export-wipe");
+    wowdps_history::replay_export(&hist, &wipe.id, &wiped).unwrap();
+    let pull = std::fs::read_to_string(wiped.join("pull.txt")).unwrap();
+    assert!(
+        pull.contains(&format!("\nlocal = {}\n", wipe.start_local_ms)),
+        "{pull}"
+    );
+    assert!(pull.contains("\nbest = 98\n"), "{pull}");
     assert!(wowdps_history::replay_export(&hist, "nope", &out).is_err());
 }
 
