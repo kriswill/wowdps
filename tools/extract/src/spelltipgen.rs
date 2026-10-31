@@ -53,7 +53,8 @@
 //!   are a proc's. The census is the store's: a press the log writes
 //!   for a spec is no mark for it.
 //!
-//! File layout (all LE), read by `crates/gui-logic/src/spell_tips.rs`:
+//! File layout (all LE), read by gui-logic's `spell_tips`, the reader it
+//! gains with its spell tips:
 //!
 //! ```text
 //! "WDPT" | u32 version=2 | u64 stamp | u32 n

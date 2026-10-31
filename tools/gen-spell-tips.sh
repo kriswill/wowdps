@@ -2,19 +2,20 @@
 # Regenerate the replay's spell tips from the LOCAL game install.
 #
 # Every spell the history store's replays name, and every spell the
-# curated tables in crates/core/src list, with what the replay spike's
-# tooltips say of it and what its cast lanes ask of it: its
-# name, school, cast time, range, cooldown, cost, the duration of the aura
-# it applies, whether it is passive, channeled or empowered, whether it
-# starts the global cooldown, the spell whose effect it is (its trigger
+# curated tables in crates/core/src list, with what the replay's tooltips
+# say of it and what its cast lanes ask of it: its name, school, cast
+# time, range, cooldown, cost, the duration of the aura it applies,
+# whether it is passive, channeled or empowered, whether it starts the
+# global cooldown, the spell whose effect it is (its trigger
 # parent, or the spell its description embeds, followed to the press made
 # or to the passive that made it), its description with its values
 # resolved at base values, the specs whose logs omit the press it is the
 # effect of (a census of the stored replays), and for an encounter spell
 # whose description says little, the journal's words. Written to
 # $XDG_DATA_HOME/wowdps/spell-tips.bin beside spell-icons.bin: a
-# PER-MACHINE CACHE of Blizzard's words, never committed. The spike draws
-# name-only tooltips without it.
+# PER-MACHINE CACHE of Blizzard's words, never committed. gui-logic's
+# spell_tips, the reader it gains with its spell tips, reads it; a reader
+# without the file shows names alone.
 #
 # A rerun finds the file current when the build, the spells asked for and
 # the stored players' casts and auras have not changed since, and decodes

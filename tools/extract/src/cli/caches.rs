@@ -3,7 +3,7 @@
 //! out of the repository): the class crests and spec icons
 //! (`gen-icons`), every spell's icon (`gen-spell-icons`), the talent trees
 //! (`gen-talent-trees`), the talent UI's art (`gen-talent-art`) and the
-//! spell tips gui-logic reads (`gen-spell-tips`).
+//! spell tips for the reader gui-logic gains with them (`gen-spell-tips`).
 
 use std::path::Path;
 
