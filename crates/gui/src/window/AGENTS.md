@@ -3,8 +3,7 @@
 The meter window: top bar, pull rail, Home or the stage (fight header,
 ribbon, view tabs, meter, inspector), the palette and the cards. It was
 built from a design prototype that is not in this repository: its Tokens
-are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`), and the code
-cites its selectors.
+are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
 
 ## Rules
 

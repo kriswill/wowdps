@@ -80,7 +80,12 @@ On a dev machine the live daemon is the `wowdps-dev` systemd user unit
   restarts the daemon and overlay a few seconds later. Warn the user before
   such a build if they may be mid-pull. A stopped unit stays stopped.
 - Never run `wowdps status` while the unit restarts: a one-shot client
-  spawns its own daemon and races the unit.
+  spawns its own daemon and races the unit. Check with
+  `systemctl --user show wowdps-dev -p ActiveState -p MainPID`.
+- A unit stuck in start-limit-hit behind a self-spawned daemon recovers
+  with `systemctl --user reset-failed wowdps-dev; kill <overlay pid>;
+  target/release/wowdps stop; systemctl --user start wowdps-dev`. Query
+  the overlay's pid fresh; never reuse one from earlier output.
 - A PROTO_VERSION bump renames the socket, so the new binary cannot stop
   the old daemon. Let the unit's restart replace it, remove the stale
   `wowdps-v<old>.sock` and `.lock` under `$XDG_RUNTIME_DIR/wowdps/`, and
