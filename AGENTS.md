@@ -15,41 +15,24 @@ and the dependency policy.
 
 ## Map
 
-- `crates/model/`: zero-dependency domain types. Read
-  `crates/model/AGENTS.md` before changing a type.
-- `crates/core/`: the engine (parser, meter, index, tail, replay cut,
-  generated tables, fixtures). Read `crates/core/AGENTS.md` before changing
-  parsing, metering, segmentation or a fixture.
-- `crates/proto/`: the wire, `DaemonClient`, `ClientState`, the history
-  codecs and binary tiers, the generated `placed` table. Read
-  `crates/proto/AGENTS.md` before changing a message, the client state or
-  a stored format.
-- `crates/daemon/`: hub, engine, loaders, history store, overlay
-  supervisor, addon, config, mock. Read `crates/daemon/AGENTS.md` before
-  changing the daemon, the store or `addon/`.
-- `crates/tui/`: binary `wowdps` (dispatcher, launcher, TUI). Read
-  `crates/tui/AGENTS.md` before changing the TUI or its keys.
-- `crates/gui/`: binary `wowdps-gui`, the window and the `--overlay` on
-  GPUI. Read `crates/gui/AGENTS.md` before any GUI change, and
-  `crates/gui/src/window/AGENTS.md` before changing a window surface or
-  the talent viewer.
-- `crates/gui-logic/`: the GUI's framework-free half. Read
-  `crates/gui-logic/AGENTS.md` before changing it.
-- `crates/mcp/`: binary `wowdps-mcp` (`wowdps mcp`), fight data as MCP
-  tools. Read `crates/mcp/AGENTS.md` before changing a tool.
-- `crates/history/`: binary `wowdps-history` (`wowdps history`), DuckDB
-  over the stored fights. Read `crates/history/AGENTS.md` before changing a
-  view or a subcommand.
-- `tools/`: game-data generators, the extractor, the dev unit. Read
-  `tools/AGENTS.md` before running or changing a tool.
-- The replay, the encounter rubric and the editors are not here: they
-  live in the private wowdps-replay and wowdps-editors repositories (the
-  section below).
-- `nix/`, `flake.nix`, `devenv.nix`, `devenv.yaml`: the dev shells and
-  packages. Read `nix/AGENTS.md` before changing them.
-- `.github/`: CI. Read `.github/AGENTS.md` before changing a workflow.
+| Path | What | Read |
+| --- | --- | --- |
+| `crates/model/` | zero-dependency domain types | `crates/model/AGENTS.md` before changing a type |
+| `crates/core/` | the engine (parser, meter, index, tail, replay cut, generated tables, fixtures) | `crates/core/AGENTS.md` before changing parsing, metering, segmentation or a fixture |
+| `crates/proto/` | the wire, `DaemonClient`, `ClientState`, the history codecs and binary tiers, the generated `placed` table | `crates/proto/AGENTS.md` before changing a message, the client state or a stored format |
+| `crates/daemon/` | hub, engine, loaders, history store, overlay supervisor, addon, config, mock | `crates/daemon/AGENTS.md` before changing the daemon, the store or `addon/` |
+| `crates/tui/` | binary `wowdps` (dispatcher, launcher, TUI) | `crates/tui/AGENTS.md` before changing the TUI or its keys |
+| `crates/gui/` | binary `wowdps-gui`, the window and the `--overlay` on GPUI | `crates/gui/AGENTS.md` before any GUI change, and `crates/gui/src/window/AGENTS.md` before changing a window surface or the talent viewer |
+| `crates/gui-logic/` | the GUI's framework-free half | `crates/gui-logic/AGENTS.md` before changing it |
+| `crates/mcp/` | binary `wowdps-mcp` (`wowdps mcp`), fight data as MCP tools | `crates/mcp/AGENTS.md` before changing a tool |
+| `crates/history/` | binary `wowdps-history` (`wowdps history`), DuckDB over the stored fights | `crates/history/AGENTS.md` before changing a view or a subcommand |
+| `tools/` | game-data generators, the extractor, the dev unit | `tools/AGENTS.md` before running or changing a tool |
+| `nix/`, `flake.nix`, `devenv.nix`, `devenv.yaml` | the dev shells and packages | `nix/AGENTS.md` before changing them |
+| `.github/` | CI | `.github/AGENTS.md` before changing a workflow |
 
 ## The replay
+
+The replay, the encounter rubric and the editors are not here:
 
 - The fight replay, with the encounter rubric and its extractor, lives in
   the private repository https://github.com/kriswill/wowdps-replay.
@@ -144,25 +127,19 @@ wowdps stop                         # stops a daemon; the live one is the unit's
 cargo run --bin wowdps -- --file crates/core/fixtures/sample.txt
 tools/dev-unit.sh status            # the unit's profile, overlay GUI, state
 coderabbit review --agent           # alias cr; --base main reviews the branch
-wowdps-codeql                       # CodeQL locally; fails on an alert not in the baseline
+wowdps-codeql                       # CodeQL locally, minutes on every core; fails on an alert not in the baseline
 ```
 
 - `--file` refuses to attach to a daemon following another source. With
   the unit up, ask before stopping it to run a fixture.
-- CodeRabbit: `.claude/settings.json`'s SessionStart hook puts the dev
-  shell's `coderabbit` on PATH. Never `coderabbit update`: the store is
-  read-only and the weekly lock update moves it. `/code-rabbit-review` is
-  CodeRabbit's skill; `/code-review` is the plugin's.
-- The CodeRabbit skills in `.claude/skills/` are vendored from upstream.
-  Never edit them alone: a local fix is a patch in
-  `.claude/skills/patches/`, and `tools/skills-update.sh` refreshes them and
-  reapplies every patch (never `bunx skills update`).
-- CodeQL: CI's scan is GitHub's default setup (the repository's settings,
-  no workflow file), run on every PR. `wowdps-codeql [--accept]
-  [rust|actions]` runs the same languages, suites and query packs locally
-  (`tools/codeql.sh`) and, as GitHub fails a PR only on an alert not open
-  on main, fails only on an alert missing from `tools/codeql-baseline.txt`;
-  `--accept` rewrites that baseline. A run takes minutes on every core.
+- CodeRabbit: `coderabbit` is on PATH from `.claude/settings.json`'s
+  SessionStart hook. Never `coderabbit update`: the store is read-only
+  and the weekly lock update moves it. `/code-rabbit-review` is
+  CodeRabbit's skill; `/code-review` is the plugin's. Never edit the
+  vendored skills in `.claude/skills/` alone: a local fix is a patch in
+  `.claude/skills/patches/`, which `tools/skills-update.sh` reapplies on
+  every refresh (never `bunx skills update`). `tools/AGENTS.md` has the
+  full CodeRabbit and vendored-skill rules, and CodeQL's baseline gate.
 - Debugging: `docs/tracing.md`. A frozen meter is usually the game's
   multi-minute log flush; check the log file's mtime before suspecting the
   tail.

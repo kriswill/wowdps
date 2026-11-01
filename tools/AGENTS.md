@@ -62,12 +62,25 @@ what it does and how to run it.
 - **A new script** carries a header comment that says what it does and
   how to run it.
 - **`dev-unit.sh` drives the live daemon** (root `AGENTS.md`, "The live
-  daemon"). **`skills-update.sh`** is the only way to refresh the vendored
-  skills in `.claude/skills/`.
-- **`codeql.sh` mirrors GitHub's CodeQL run** (rust and actions, the
-  default suites, pinned query packs) and fails only on an alert missing
-  from `codeql-baseline.txt`, which `--accept` rewrites. Run it as
-  `wowdps-codeql`: the dev shells carry the CLI.
+  daemon").
+- **`skills-update.sh` is the only way to refresh the vendored skills in
+  `.claude/skills/`** (CodeRabbit's, vendored from upstream; never `bunx
+  skills update`): it refreshes them and reapplies every patch. Never edit
+  them alone: a local fix is a patch in `.claude/skills/patches/`.
+  `/code-rabbit-review` is CodeRabbit's skill; `/code-review` is the
+  plugin's.
+- **`coderabbit` is the dev shell's:** `.claude/settings.json`'s
+  SessionStart hook puts it on PATH. Never `coderabbit update`: the store
+  is read-only and the weekly lock update moves it.
+- **`codeql.sh` mirrors GitHub's CodeQL run.** CI's scan is GitHub's
+  default setup (the repository's settings, no workflow file;
+  `.github/AGENTS.md`), run on every PR. `wowdps-codeql [--accept]
+  [rust|actions]` runs the same languages (rust and actions), the default
+  suites and the pinned query packs locally and, as GitHub fails a PR only
+  on an alert not open on main, fails only on an alert missing from
+  `codeql-baseline.txt`; `--accept` rewrites that baseline. Run it as
+  `wowdps-codeql`: the dev shells carry the CLI. A run takes minutes on
+  every core.
 
 ## Game tables and caches
 
