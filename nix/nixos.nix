@@ -2,10 +2,10 @@
 # users who run user units without home-manager. NixOS declares user services
 # in its own option shape (unit options at the top level, `serviceConfig`
 # for the [Service] section) — keep the two modules' semantics in lockstep:
-# graphical-session.target as ordering, stop-propagation AND hard
-# precondition, since the overlay supervisor needs a compositor to spawn
-# into. The WAYLAND_DISPLAY sharp edge documented in nix/home-manager.nix
-# applies here identically.
+# graphical-session.target as the target that starts it, ordering,
+# stop-propagation AND hard precondition, since the overlay supervisor needs
+# a compositor to spawn into. The WAYLAND_DISPLAY sharp edge documented in
+# nix/home-manager.nix applies here identically.
 {
   config,
   lib,
@@ -46,7 +46,13 @@ in
       # Hard precondition, not just ordering: without a graphical session
       # there is no compositor for the overlay supervisor to spawn into.
       requisite = [ "graphical-session.target" ];
-      wantedBy = [ "default.target" ];
+      # Wanted by the session target, not default.target: the user manager
+      # reaches default.target at login, seconds before the compositor starts
+      # graphical-session.target, so Requisite= failed that start with result
+      # 'dependency', and Restart= never retries a job that never ran. The
+      # session's own start pulls the daemon in at every login instead; inside
+      # that start the Requisite= check merges with the target's start job.
+      wantedBy = [ "graphical-session.target" ];
       path = guiPath;
       serviceConfig = {
         # A clean exit (`wowdps stop`) stays down by design; use

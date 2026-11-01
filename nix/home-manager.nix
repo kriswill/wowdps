@@ -62,7 +62,13 @@ in
         Restart = "on-failure";
         Environment = lib.optional (guiPath != [ ]) "PATH=${lib.makeBinPath guiPath}";
       };
-      Install.WantedBy = [ "default.target" ];
+      # Wanted by the session target, not default.target: the user manager
+      # reaches default.target at login, seconds before the compositor starts
+      # graphical-session.target, so Requisite= failed that start with result
+      # 'dependency', and Restart= never retries a job that never ran. The
+      # session's own start pulls the daemon in at every login instead; inside
+      # that start the Requisite= check merges with the target's start job.
+      Install.WantedBy = [ "graphical-session.target" ];
     };
   };
 }

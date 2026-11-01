@@ -18,6 +18,9 @@
 # changed — so a debug build never bounces a release daemon, a build of a
 # GUI the daemon does not spawn (a `gui_binary` naming another) bounces
 # nothing, and a `systemctl --user stop wowdps-dev` stays stopped.
+# The graphical session owns the service: graphical-session.target starts
+# it at each login and stops it at logout (tools/dev-unit/wowdps-dev.service
+# says why).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -165,7 +168,9 @@ cmd_install() {
     sed "s|@ROOT@|$root|g" "$root/tools/dev-unit/$u" >"$unit_dir/$u"
   done
   systemctl --user daemon-reload
-  systemctl --user enable wowdps-dev.path wowdps-dev.service
+  # reenable, not enable: it also drops the links an older [Install] made
+  # (the service was once wanted by default.target, which starts it too early).
+  systemctl --user reenable wowdps-dev.path wowdps-dev.service
   systemctl --user start wowdps-dev.path
   if [ "${1:-}" = "--no-start" ]; then
     echo "dev-unit: installed and enabled; start with: systemctl --user start wowdps-dev"
