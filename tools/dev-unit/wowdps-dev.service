@@ -4,6 +4,19 @@
 # binary. Installed by `tools/dev-unit.sh install`; @ROOT@ is the checkout.
 # The packaged twin is nix/home-manager.nix — this one exists so dev work
 # replaces the live daemon without anyone remembering to.
+#
+# It lives with the graphical session (the overlay it spawns is a Wayland
+# client):
+# - WantedBy=graphical-session.target: the session's start pulls it in, at
+#   every login. Not default.target: the user manager reaches that at login,
+#   seconds before the compositor starts the session target, so the
+#   Requisite= check failed that start with result 'dependency', which
+#   Restart= never retries, and the unit never came up on boot.
+# - After=: it starts once the target is up (under uwsm, only after the
+#   compositor has exported WAYLAND_DISPLAY to the user manager).
+# - PartOf=: it stops when the target stops, at logout.
+# - Requisite=: a start with no session up fails at once; inside the
+#   target's own start the check merges into that start job.
 [Unit]
 Description=wowdps combat-log daemon (dev build from @ROOT@)
 After=graphical-session.target
@@ -25,4 +38,4 @@ RestartSec=3
 RestartPreventExitStatus=78
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

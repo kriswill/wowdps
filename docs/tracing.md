@@ -183,6 +183,9 @@ systemd user units from `tools/dev-unit/` with the checkout path baked in:
   daemon if it is running). On start it stops any daemon already answering
   the socket, so a self-spawned one is replaced rather than fought over the
   lockfile. `ExecStop` is `wowdps stop` — the daemon takes no signals.
+  `graphical-session.target` pulls it in at each login and it starts after
+  the target, so the overlay finds the Wayland display; it stops at logout,
+  and a start with no session up fails at once.
 - `wowdps-dev.path` — watches `target/{debug,release}/wowdps{,-gui}` and
   fires `wowdps-dev-reload.service`, which waits for cargo's writes to settle
   and restarts the daemon only when the ACTIVE profile's stamp changed: the
