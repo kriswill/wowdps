@@ -4,9 +4,8 @@
 # and environment variable written out twice, with a comment on each copy
 # asking the next person to remember the other one. This directory is that
 # agreement, and each shell adds only what it alone can plumb: its Rust
-# toolchain, and its `coderabbit` (the two reach it through different inputs).
-# devenv is the reference shell, locally and in CI; the flake shell also
-# mirrors what devenv's languages.rust adds on its own (env.nix).
+# toolchain. devenv is the reference shell, locally and in CI; the flake
+# shell also mirrors what devenv's languages.rust adds on its own (env.nix).
 #
 #   wrappers.nix  the commands about this repo — generators, workspace binaries,
 #                 the extractor's dev tool
@@ -50,7 +49,7 @@ in
   # a shellHook that also exports the linker devenv names.
   inherit (env) flakeShellHook flakePackages;
 
-  # Everything both shells install EXCEPT the Rust toolchain and coderabbit.
+  # Everything both shells install EXCEPT the Rust toolchain.
   packages =
     wrappers.packages
     ++ codeql.packages

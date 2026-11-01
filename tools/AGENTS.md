@@ -2,10 +2,9 @@
 
 Dev-time tools: the game-data generators (`gen-*.sh`) and their censuses
 (`census-*.sh`), the creatures seed, the dev unit, the overlay replay, the
-GPUI docs fetcher, the skills updater and the local CodeQL check. The
-extractor behind most of them is `tools/extract/` (`wowdps-extract`: the
-game-data library and wowdps's own tables and caches), with its own
-`AGENTS.md`. The replay's tools (the rubric's drafts, the floors,
+GPUI docs fetcher and the local CodeQL check. The extractor behind most of
+them is `tools/extract/` (`wowdps-extract`: the game-data library and
+wowdps's own tables and caches), with its own `AGENTS.md`. The replay's tools (the rubric's drafts, the floors,
 portraits, level posts, cuts, Warcraft Logs, the extract and spike checks)
 live in the private wowdps-replay repository
 (https://github.com/kriswill/wowdps-replay), and the editors (the map
@@ -63,15 +62,6 @@ what it does and how to run it.
   how to run it.
 - **`dev-unit.sh` drives the live daemon** (root `AGENTS.md`, "The live
   daemon").
-- **`skills-update.sh` is the only way to refresh the vendored skills in
-  `.claude/skills/`** (CodeRabbit's, vendored from upstream; never `bunx
-  skills update`): it refreshes them and reapplies every patch. Never edit
-  them alone: a local fix is a patch in `.claude/skills/patches/`.
-  `/code-rabbit-review` is CodeRabbit's skill; `/code-review` is the
-  plugin's.
-- **`coderabbit` is the dev shell's:** `.claude/settings.json`'s
-  SessionStart hook puts it on PATH. Never `coderabbit update`: the store
-  is read-only and the weekly lock update moves it.
 - **`codeql.sh` mirrors GitHub's CodeQL run.** CI's scan is GitHub's
   default setup (the repository's settings, no workflow file;
   `.github/AGENTS.md`), run on every PR. `wowdps-codeql [--accept]
@@ -107,6 +97,5 @@ tools/seed-creatures.sh        # NPC classifications from Wowhead into the store
 tools/extract/verify.sh [--game "$WOW_DIR"]    # the DB2 decoder vs wago.tools (network)
 tools/dev-unit.sh install | status | profile debug | profile release | uninstall
 tools/fetch-gpui-docs.sh [kit-version]         # the gitignored docs/gpui mirror
-tools/skills-update.sh
 wowdps-codeql [--accept] [rust|actions]        # tools/codeql.sh, gated on codeql-baseline.txt
 ```

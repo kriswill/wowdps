@@ -126,20 +126,12 @@ wowdps status                       # daemon state, overlay, history store
 wowdps stop                         # stops a daemon; the live one is the unit's
 cargo run --bin wowdps -- --file crates/core/fixtures/sample.txt
 tools/dev-unit.sh status            # the unit's profile, overlay GUI, state
-coderabbit review --agent           # alias cr; --base main reviews the branch
 wowdps-codeql                       # CodeQL locally, minutes on every core; fails on an alert not in the baseline
 ```
 
 - `--file` refuses to attach to a daemon following another source. With
   the unit up, ask before stopping it to run a fixture.
-- CodeRabbit: `coderabbit` is on PATH from `.claude/settings.json`'s
-  SessionStart hook. Never `coderabbit update`: the store is read-only
-  and the weekly lock update moves it. `/code-rabbit-review` is
-  CodeRabbit's skill; `/code-review` is the plugin's. Never edit the
-  vendored skills in `.claude/skills/` alone: a local fix is a patch in
-  `.claude/skills/patches/`, which `tools/skills-update.sh` reapplies on
-  every refresh (never `bunx skills update`). `tools/AGENTS.md` has the
-  full CodeRabbit and vendored-skill rules, and CodeQL's baseline gate.
+- CodeQL's baseline gate: `tools/AGENTS.md`.
 - Debugging: `docs/tracing.md`. A frozen meter is usually the game's
   multi-minute log flush; check the log file's mtime before suspecting the
   tail.

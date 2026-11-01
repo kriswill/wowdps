@@ -23,10 +23,9 @@ and the home-manager and NixOS modules.
   taken from nixpkgs: `nix/dev/codeql.nix` imports nixpkgs again with an
   `allowUnfreePredicate` naming it alone, so the nixpkgs both shells
   evaluate stays free-only. Never set `allowUnfree`; another unfree
-  package is added to that list by name. (`coderabbit` comes prebuilt
-  through its own input.)
-- **Pins agree.** `devenv.yaml`'s nixpkgs, rust-overlay and llm-agents
-  pins match `flake.lock` (`update-locks.yml` keeps them so weekly).
+  package is added to that list by name.
+- **Pins agree.** `devenv.yaml`'s nixpkgs and rust-overlay pins match
+  `flake.lock` (`update-locks.yml` keeps them so weekly).
 - **The toolchain is declared once,** in `rust-toolchain.toml`; never pin a
   Rust version anywhere else.
 - **The two modules move together.** `nix/home-manager.nix` and

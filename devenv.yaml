@@ -1,6 +1,6 @@
 # Inputs mirror flake.nix, pinned to the exact revs flake.lock has locked —
 # flake.lock is the single source of truth. When bumping: `nix flake update`,
-# copy the new nixpkgs, rust-overlay and llm-agents revs here, then
+# copy the new nixpkgs and rust-overlay revs here, then
 # `devenv update` (.github/workflows/update-locks.yml does exactly this weekly).
 inputs:
   nixpkgs:
@@ -10,8 +10,3 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
-  # The CodeRabbit CLI (coderabbit / cr), from numtide's llm-agents.nix —
-  # flake.nix tracks its main branch; here the rev flake.lock resolved it to.
-  # It keeps its own nixpkgs: its package set needs a newer one than ours.
-  llm-agents:
-    url: github:numtide/llm-agents.nix/8fa7ff4193be923056b342d48d5bb38466791fe1

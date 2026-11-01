@@ -1,14 +1,12 @@
 # The reference dev shell, locally and in CI; flake.nix's devShells.default
 # mirrors it. Entered via devenv's native cd hook (trust once with `devenv
 # allow`). The environment ITSELF lives in nix/dev/, imported by both; what
-# stays here is only what devenv plumbs differently: its Rust toolchain and
-# its llm-agents input. Even the contract `devenv test` asserts is
-# shared — it is an executable both shells carry, and it fails if the mirror
-# drifts.
+# stays here is only what devenv plumbs differently: its Rust toolchain.
+# Even the contract `devenv test` asserts is shared — it is an executable
+# both shells carry, and it fails if the mirror drifts.
 {
   pkgs,
   lib,
-  inputs,
   ...
 }:
 let
@@ -27,13 +25,7 @@ in
   # flake.nix mirrors both (nix/dev/env.nix, `rustLinker`), and the contract
   # fails if the mirror ever stops being exact.
 
-  packages = shared.packages ++ [
-    # coderabbit / cr, the CodeRabbit review CLI (`coderabbit review
-    # --agent`), from the llm-agents input (devenv.yaml). The flake shell
-    # reaches the same CLI through its own input, which is why this one
-    # package is not in nix/dev/.
-    inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.coderabbit-cli
-  ];
+  packages = shared.packages;
 
   env = shared.env;
 
