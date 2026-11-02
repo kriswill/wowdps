@@ -4,9 +4,9 @@
 # `devenv update` (.github/workflows/update-locks.yml does exactly this weekly).
 inputs:
   nixpkgs:
-    url: github:NixOS/nixpkgs/fe13242281a67641c0102cdb1087f0ebe586c7df
+    url: github:NixOS/nixpkgs/0bb2eedc20e4739f29e8045034f2828ad7054f8f
   rust-overlay:
-    url: github:oxalica/rust-overlay/550547cefc67e01a6fd11a09e4096a3c844ca840
+    url: github:oxalica/rust-overlay/6b29b8e8d3cc8ebda9342fbbcc7ac06eff58e2fb
     inputs:
       nixpkgs:
         follows: nixpkgs
