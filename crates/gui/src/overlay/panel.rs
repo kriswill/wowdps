@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Div, ElementId, Entity, MouseButton, ScrollWheelEvent, SharedString,
+    AnyElement, App, Context, Div, ElementId, Entity, MouseButton, ScrollEvent, SharedString,
     Subscription, TestSupportExt as _, Window, div, px, relative,
 };
 use wowdps_gui_logic::config::Config;
@@ -490,7 +490,7 @@ impl Overlay {
         cx.notify();
     }
 
-    fn zoom(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+    fn zoom(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
         let old = self.cfg.zoom;
         let new = (old + 0.05 * notches(event)).clamp(0.6, 2.5);
         if (new - old).abs() < 0.001 {
@@ -619,7 +619,7 @@ impl Overlay {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.grip_up(cx)),
             )
-            .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| this.zoom(e, cx)))
+            .on_scroll(cx.listener(|this, e: &ScrollEvent, _, cx| this.zoom(e, cx)))
     }
 }
 
@@ -729,7 +729,7 @@ impl Overlay {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.grip_up(cx)),
             )
-            .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| this.zoom(e, cx)))
+            .on_scroll(cx.listener(|this, e: &ScrollEvent, _, cx| this.zoom(e, cx)))
     }
 
     /// The strip over the visit (`instance::strip`): a press goes to its
@@ -766,7 +766,7 @@ impl Overlay {
             .test_support()
             .px(px(8.))
             .child(fan)
-            .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, e: &ScrollEvent, _, cx| {
                 this.strip_scroll(notches(e), cx);
                 cx.stop_propagation();
             }))
@@ -1312,7 +1312,7 @@ impl Overlay {
 }
 
 /// A wheel event in notches: a line each, or 40 px of a touchpad's.
-fn notches(event: &ScrollWheelEvent) -> f32 {
+fn notches(event: &ScrollEvent) -> f32 {
     match event.delta {
         gpui_kit::ScrollDelta::Lines(l) => l.y,
         gpui_kit::ScrollDelta::Pixels(p) => f32::from(p.y) / 40.0,

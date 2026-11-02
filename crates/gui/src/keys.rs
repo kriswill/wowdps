@@ -11,7 +11,9 @@
 //! bind as written and `ctrl-+` fires on Ctrl+Shift+=. A capital letter
 //! (`K`) parses as Shift plus the letter, which a typed Shift+K matches.
 
-use gpui_kit::{App, KeyBinding};
+use std::rc::Rc;
+
+use gpui_kit::{App, KeyBinding, KeyBindingContextPredicate};
 use wowdps_gui_logic::keys::{ACTIONS, Chord, Named, ZOOM_CHORDS, Zoom, zoom_for};
 use wowdps_model::Action;
 
@@ -100,16 +102,36 @@ pub fn keystroke(chord: Chord<'_>) -> String {
     }
 }
 
+/// A binding for a keystroke string built at run time. `KeyBinding::new`
+/// takes only a `&'static str` since gpui-pre 0.3.10; `load` takes any,
+/// and without key equivalents it binds as `new` does on Linux and macOS
+/// (the OS only resolves `secondary-`, which no table holds). Where `new`
+/// would panic on a chord or a context it cannot parse, this binds nothing,
+/// and `every_chord_fires_its_action_as_linux_types_it` fails.
+fn built(
+    keys: &str,
+    action: impl gpui_kit::Action,
+    context: Option<&str>,
+    cx: &App,
+) -> Option<KeyBinding> {
+    let context = context
+        .map(KeyBindingContextPredicate::parse)
+        .transpose()
+        .ok()?
+        .map(Rc::new);
+    KeyBinding::load(keys, Box::new(action), context, false, None, cx).ok()
+}
+
 /// Every binding the tables define.
-pub fn bindings() -> Vec<KeyBinding> {
+pub fn bindings(cx: &App) -> Vec<KeyBinding> {
     let meter = ACTIONS
         .iter()
-        .map(|&(chord, action)| KeyBinding::new(&keystroke(chord), Do(action), Some(METER_KEYS)));
+        .filter_map(|&(chord, action)| built(&keystroke(chord), Do(action), Some(METER_KEYS), cx));
     let local = GESTURES
         .iter()
         .map(|&(chord, gesture)| KeyBinding::new(chord, Go(gesture), Some(METER_KEYS)));
     let zoom = ZOOM_CHORDS.iter().filter_map(|&chord| {
-        zoom_for(chord).map(|zoom| KeyBinding::new(&keystroke(chord), ZoomTo(zoom), None))
+        zoom_for(chord).and_then(|zoom| built(&keystroke(chord), ZoomTo(zoom), None, cx))
     });
     let over_menu = std::iter::once(KeyBinding::new("ctrl-k", Go(Gesture::Jump), Some(MODAL)));
     meter.chain(local).chain(zoom).chain(over_menu).collect()
@@ -118,7 +140,8 @@ pub fn bindings() -> Vec<KeyBinding> {
 /// Register the keymap — the meter's, the window's own and the talent
 /// viewer's. Call once, before the first window opens.
 pub fn bind(cx: &mut App) {
-    cx.bind_keys(bindings());
+    let keys = bindings(cx);
+    cx.bind_keys(keys);
     cx.bind_keys(crate::talents::bindings());
     cx.bind_keys(crate::window::bindings());
 }
