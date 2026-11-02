@@ -20,7 +20,7 @@ use super::field::Field;
 use gpui_kit::base::{Easing, Spring, Transition, spring, transition};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Context, Div, ElementId, Focusable as _, MouseButton, ScrollWheelEvent, SharedString,
+    Context, Div, ElementId, Focusable as _, MouseButton, ScrollEvent, SharedString,
     TestSupportExt as _, Window, div, linear_color_stop, linear_gradient, point, px,
 };
 use wowdps_gui_logic::glyph::Glyph;
@@ -146,7 +146,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> imp
         .children(underline)
         .when(cut_left, |d| d.child(fade(true)))
         .when(cut_right, |d| d.child(fade(false)))
-        .on_scroll_wheel(move |e: &ScrollWheelEvent, window, _| {
+        .on_scroll(move |e: &ScrollEvent, window, _| {
             // A notch down moves the strip along to its later tabs.
             let along = match e.delta {
                 gpui_kit::ScrollDelta::Lines(l) => l.y * LINE,
