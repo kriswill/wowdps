@@ -18,6 +18,7 @@ use crate::meter::{
     is_friendly_source, is_hostile_target, trash_name,
 };
 use crate::parser::{is_damage_event, is_guid, parse_timestamp};
+use crate::tables::Tables;
 use wowdps_model::Encounter;
 
 /// One segment as seen by the scanner: everything the list screen shows, plus
@@ -166,8 +167,51 @@ pub struct ScanState {
     /// R13: standing in a decided arena at `offset` (match ended, not yet
     /// teleported out) — trash opened here is noise and never counts.
     pub arena_over: bool,
+    /// The PROJECT_ID of the last COMBAT_LOG_VERSION line before `offset`
+    /// (0 before any), mirroring `Meter`'s: the edition whose generated
+    /// tables the scan reads (R10's open-world maps and keystone timers).
+    /// A checkpoint persisted without it gets it back from the log with
+    /// [`project_id_at`].
+    pub project_id: u8,
     /// File offset the state describes; resume reading here.
     pub offset: u64,
+}
+
+/// The PROJECT_ID in force where a checkpoint stands: the one the LAST
+/// COMBAT_LOG_VERSION line among its `seeds` names (every version line is
+/// a seed), read back from `log`; 0 when no version line came before it.
+/// What a reader that persisted a [`ScanState`] without its `project_id`
+/// sets it from before resuming. Reads the head of one seed line at a
+/// time, newest first, and stops at the first version line.
+pub fn project_id_at<R: Read + Seek>(log: &mut R, seeds: &[(u64, u64)]) -> io::Result<u8> {
+    // A version line is under a hundred bytes; the head of a longer seed (a
+    // COMBATANT_INFO) is enough to tell it is none, and a range that came
+    // off disk never sizes an allocation past this.
+    const HEAD: u64 = 256;
+    for &(start, end) in seeds.iter().rev() {
+        log.seek(SeekFrom::Start(start))?;
+        let mut bytes = vec![0u8; end.saturating_sub(start).min(HEAD) as usize];
+        log.read_exact(&mut bytes)?;
+        let line = bytes.split(|&b| b == b'\n').next().unwrap_or_default();
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some((_, rest)) = split_prefix(line) else {
+            continue;
+        };
+        if rest.split(|&b| b == b',').next() == Some(&b"COMBAT_LOG_VERSION"[..]) {
+            return Ok(version_project_id(rest));
+        }
+    }
+    Ok(0)
+}
+
+/// A COMBAT_LOG_VERSION line's PROJECT_ID (`rest` from its event on), read
+/// as the parser reads it: field 7 as a `u8`, 0 when absent or not one.
+fn version_project_id(rest: &[u8]) -> u8 {
+    split_fields(rest, 8)
+        .get(7)
+        .and_then(|f| std::str::from_utf8(f).ok())
+        .and_then(|f| f.parse().ok())
+        .unwrap_or(0)
 }
 
 /// One segment's raw text, owned once and read as borrowed lines, in two
@@ -283,6 +327,7 @@ pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
         arena_home: None,
         arena_factions: Default::default(),
         arena_over: state.arena_over,
+        project_id: state.project_id,
         ckpt: Ckpt::default(),
     };
     sc.ckpt = Ckpt {
@@ -295,6 +340,7 @@ pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
         last_zone: sc.last_zone.clone(),
         last_zone_map: sc.last_zone_map,
         arena_over: sc.arena_over,
+        project_id: sc.project_id,
         offset: base,
     };
     let mut buf: Vec<u8> = Vec::with_capacity(2 * CHUNK);
@@ -398,6 +444,7 @@ struct Ckpt {
     last_zone: Option<String>,
     last_zone_map: Option<u32>,
     arena_over: bool,
+    project_id: u8,
     offset: u64,
 }
 
@@ -430,10 +477,20 @@ struct Scanner {
     /// region with NO open segment (END → teleport out), so it must travel
     /// in checkpoints.
     arena_over: bool,
+    /// Mirrors `Meter::project_id`: the latest version line's edition,
+    /// whose tables the scan reads (`Scanner::tables`). Spans regions with
+    /// no open segment, so it travels in checkpoints.
+    project_id: u8,
     ckpt: Ckpt,
 }
 
 impl Scanner {
+    /// The generated tables of the edition the scan is in, as
+    /// `Meter::tables` gives the meter its own: the two read one edition's.
+    fn tables(&self) -> &'static Tables {
+        Tables::of_project(self.project_id)
+    }
+
     /// `off`/`end` are the file offsets of the line's first byte and one past
     /// its newline; `line` has the newline (and any `\r`) stripped.
     fn line(&mut self, off: u64, end: u64, line: &[u8]) {
@@ -454,6 +511,9 @@ impl Scanner {
                 // must not split the key.
                 if let Some(ts) = ts_of(prefix) {
                     self.close(ts, None, end);
+                    // Mirrors `Meter`: the edition the line names is the one
+                    // every later line is read by.
+                    self.project_id = version_project_id(rest);
                     if let Some(v) = self.visit.as_mut() {
                         v.zoned_in = false;
                     }
@@ -497,8 +557,11 @@ impl Scanner {
                 let f = split_fields(rest, 4);
                 let map_id = f.get(1).map_or(0, |s| ascii_u32(s));
                 // R10 mirror of `Meter`: an open-world door is zoned out.
-                let difficulty =
-                    crate::meter::door_difficulty(map_id, f.get(3).map_or(0, |s| ascii_u32(s)));
+                let difficulty = crate::meter::door_difficulty(
+                    self.tables(),
+                    map_id,
+                    f.get(3).map_or(0, |s| ascii_u32(s)),
+                );
                 // R13: any teleport ends the dead-arena window.
                 self.arena_over = false;
                 // R13 mirror of `Meter::last_zone`: every difficulty; R10's
@@ -558,8 +621,9 @@ impl Scanner {
                 self.close_trash(ts, off);
                 self.close_visit(Some(ts), off);
                 self.open_visit_state(map_id, difficulty, name, Some(key_level), ts, off, seed_n);
+                let pars_ms = self.tables().pars_ms(challenge_id);
                 if let Some(v) = self.visit.as_mut() {
-                    v.pars_ms = crate::keystone_timers::pars_ms(challenge_id);
+                    v.pars_ms = pars_ms;
                 }
             }
             "CHALLENGE_MODE_END" => {
@@ -569,6 +633,7 @@ impl Scanner {
                 let success = f.get(2).is_some_and(|s| truthy_bytes(s));
                 let key_level = f.get(3).map_or(0, |s| ascii_u32(s));
                 let total_ms = f.get(4).map_or(0, |s| ascii_u32(s)) as i64;
+                let tables = self.tables();
                 let finished = if let Some(v) = self
                     .visit
                     .as_mut()
@@ -581,7 +646,7 @@ impl Scanner {
                         v.keyed = true;
                         v.joined = true;
                         v.key_level = Some(key_level);
-                        v.pars_ms = crate::keystone_timers::pars_for_map(map_id);
+                        v.pars_ms = tables.pars_for_map(map_id);
                     }
                     v.completed = Some(success);
                     v.official_ms = (total_ms > 0).then_some(total_ms);
@@ -885,6 +950,7 @@ impl Scanner {
     fn encounter_visit(&mut self, ts: i64, off: u64, instance_id: u32, difficulty: u32) -> bool {
         if self.visit.as_ref().is_some_and(|v| v.zoned_in)
             || !crate::meter::instanced_difficulty(crate::meter::door_difficulty(
+                self.tables(),
                 instance_id,
                 difficulty,
             ))
@@ -930,6 +996,7 @@ impl Scanner {
                 last_zone: self.last_zone.clone(),
                 last_zone_map: self.last_zone_map,
                 arena_over: self.arena_over,
+                project_id: self.project_id,
                 offset: end,
             };
         }
@@ -971,6 +1038,7 @@ impl Scanner {
             last_zone: self.ckpt.last_zone,
             last_zone_map: self.ckpt.last_zone_map,
             arena_over: self.ckpt.arena_over,
+            project_id: self.ckpt.project_id,
             offset: self.ckpt.offset,
         };
         Index {
@@ -1862,6 +1930,54 @@ mod tests {
             rows.len(),
         );
         assert!(load_ms < 1_000, "lazy load took {load_ms} ms");
+    }
+
+    /// `project_id_at` reads the edition back from the seeds: the LAST
+    /// version line's (Retail's 1, then Forever's 18), CRLF endings
+    /// stripped, a seed that is no version line passed over, 0 with none,
+    /// the parser's 0 for a line naming no id, and an error, never a
+    /// guess, when a seed's range runs past the log's end.
+    #[test]
+    fn the_edition_is_read_back_from_the_last_version_seed() {
+        let lines = [
+            "1/1/2026 10:00:00.000-8  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1\r\n",
+            "1/1/2026 10:00:01.000-8  SPELL_SUMMON,Player-1-A,\"Ana\",0x511,0x0,Creature-0-1,\"Imp\",0x1111,0x0,688,\"Summon Imp\",0x20\r\n",
+            "1/1/2026 10:00:02.000-8  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18\r\n",
+            "1/1/2026 10:00:03.000-8  ZONE_CHANGE,48,\"Blackfathom Deeps\",1\r\n",
+            "1/1/2026 10:00:04.000-8  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1\r\n",
+        ];
+        let mut log = Vec::new();
+        let mut seeds = Vec::new();
+        for l in lines {
+            let start = log.len() as u64;
+            log.extend_from_slice(l.as_bytes());
+            seeds.push((start, log.len() as u64));
+        }
+        let mut cur = std::io::Cursor::new(&log);
+        let at = |cur: &mut std::io::Cursor<&Vec<u8>>, seeds: &[(u64, u64)]| {
+            project_id_at(cur, seeds).unwrap()
+        };
+        assert_eq!(
+            at(&mut cur, &seeds[..4]),
+            18,
+            "the last version line, the zone after it passed over"
+        );
+        assert_eq!(at(&mut cur, &seeds[..2]), 1, "the summon passed over");
+        assert_eq!(at(&mut cur, &seeds[1..2]), 0, "no version line");
+        assert_eq!(at(&mut cur, &[]), 0, "no seed");
+        assert_eq!(
+            at(&mut cur, &seeds),
+            0,
+            "a version line naming no id, as the parser reads it"
+        );
+        let past = (log.len() as u64 - 10, log.len() as u64 + 40);
+        assert!(
+            project_id_at(&mut cur, &[past]).is_err(),
+            "a seed past the end"
+        );
+        let truncated = &log[..log.len() - 30];
+        let mut cut = std::io::Cursor::new(truncated);
+        assert!(project_id_at(&mut cut, &seeds).is_err(), "a truncated log");
     }
 
     /// The word-at-a-time kernel must agree with the byte-at-a-time one it

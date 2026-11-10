@@ -98,6 +98,11 @@
 //! block has named it, so a shaman's Mana Spring on an elemental shaman
 //! opens no mana pool. Nothing between two lines is inferred.
 //!
+//! THE TABLES: every generated table the cut reads is the edition's the
+//! log names (its COMBAT_LOG_VERSION's `PROJECT_ID`, a seed): R8's classes,
+//! R18's roles and the placed spells ([`PlacedTable`] is asked with it), as
+//! the meter reads them, so the cut and the meter of one pull agree.
+//!
 //! THE PLACED THINGS ([`PlacedTable`] says which spells): a player's landed
 //! cast of a placing spell (where they stood) and its aim; their summon or
 //! create of one and the unit it made; a telling spell reaching a unit
@@ -168,29 +173,32 @@ use wowdps_model::replay::{
     Cut, EncounterHead, Event, EventKind, Head, KeyHead, Marker, MarkerKind, Placed, PlacedKind,
     Post, Power, Unit, UnitId, UnitKind, set_pool,
 };
-use wowdps_model::{Class, RoleSpellKind, Spec};
+use wowdps_model::{Class, Edition, RoleSpellKind, Spec};
 
 use crate::meter::Meter;
 use crate::parser::{self, AuraType, Event as Ev, LogLine, Position, Spell, Unit as LogUnit};
+use crate::tables::Tables;
 
 /// Which spells place something in the room, and which tell where one
 /// stands: proto's generated `placed` table, which core cannot name (the
-/// daemon implements this over it; a test over its own).
+/// daemon implements this over it; a test over its own). Each question
+/// names the edition of the game the log was written by, whose table
+/// answers it; an edition with no table places nothing and tells nothing.
 pub trait PlacedTable {
     /// A cast, summon or create of `spell` places something the replay draws.
-    fn places(&self, spell: u32) -> bool;
+    fn places(&self, edition: Edition, spell: u32) -> bool;
     /// `spell` reaching a unit tells where a placed thing stands.
-    fn tells(&self, spell: u32) -> bool;
+    fn tells(&self, edition: Edition, spell: u32) -> bool;
 }
 
 /// No placed spells at all: a cut with no `placed.csv` rows.
 pub struct NoPlaced;
 
 impl PlacedTable for NoPlaced {
-    fn places(&self, _: u32) -> bool {
+    fn places(&self, _: Edition, _: u32) -> bool {
         false
     }
-    fn tells(&self, _: u32) -> bool {
+    fn tells(&self, _: Edition, _: u32) -> bool {
         false
     }
 }
@@ -383,6 +391,9 @@ struct Cutter {
     /// Who summoned each unit (`SPELL_SUMMON`, seeds and slice; a version
     /// line resets it): R22's fold, so a totem or guardian of ours is ours.
     summoned: HashMap<String, String>,
+    /// The latest version line's PROJECT_ID (seeds and slice; 0 before
+    /// any): the edition whose tables the cut reads, as the meter's.
+    project_id: u8,
     /// The slice: its start (local ms) and first line's facts.
     start: Option<i64>,
     head: Head,
@@ -402,6 +413,16 @@ struct Cutter {
 }
 
 impl Cutter {
+    /// The edition the log names, as the meter reads it.
+    fn edition(&self) -> Edition {
+        Edition::from_project_id(self.project_id)
+    }
+
+    /// That edition's generated tables.
+    fn tables(&self) -> &'static Tables {
+        Tables::of(self.edition())
+    }
+
     fn gix(&mut self, guid: &str) -> Gix {
         if let Some(&g) = self.index.get(guid) {
             return g;
@@ -462,7 +483,10 @@ impl Cutter {
     fn seed(&mut self, line: &LogLine) {
         match &line.event {
             Ev::Summon { owner, pet, .. } => self.summon(owner, pet),
-            Ev::Version { .. } => self.summoned.clear(),
+            Ev::Version { project_id, .. } => {
+                self.summoned.clear();
+                self.project_id = *project_id;
+            }
             Ev::CombatantInfo {
                 guid,
                 spec_id: Some(id),
@@ -710,7 +734,10 @@ impl Cutter {
                 }
             }
             Ev::Summon { owner, pet, .. } => self.summon(owner, pet),
-            Ev::Version { .. } => self.summoned.clear(),
+            Ev::Version { project_id, .. } => {
+                self.summoned.clear();
+                self.project_id = *project_id;
+            }
             _ => {}
         }
     }
@@ -741,7 +768,7 @@ impl Cutter {
         if !unit.is_player() {
             return;
         }
-        let Some((class, spec)) = crate::class_spells::resolve(spell.id) else {
+        let Some((class, spec)) = self.tables().class(spell.id) else {
             return;
         };
         let e = self
@@ -952,7 +979,9 @@ impl Cutter {
             }
             // A defensive, a tank's mitigation, an external, a major or a
             // healing cooldown: R18's curated table, its support buffs aside.
-            let fights = crate::role_spells::role_kind(spell.id)
+            let fights = self
+                .tables()
+                .role_kind(spell.id)
                 .is_some_and(|k| k != RoleSpellKind::SupportBuff);
             let kinds = [
                 EventKind::BuffApplied,
@@ -1054,8 +1083,9 @@ impl Cutter {
                 .filter(|h| h.unit_guid == guid)
                 .and_then(|h| h.pos)
         };
+        let edition = self.edition();
         let draft = match &line.event {
-            Ev::Cast { src, dst, spell } if is_player(src) && placed.places(spell.id) => {
+            Ev::Cast { src, dst, spell } if is_player(src) && placed.places(edition, spell.id) => {
                 DraftPlaced::Cast {
                     t,
                     src: self.gix(&src.guid),
@@ -1072,7 +1102,7 @@ impl Cutter {
                 spell,
             }
             | Ev::Create { src, dst, spell }
-                if is_player(src) && placed.places(spell.id) =>
+                if is_player(src) && placed.places(edition, spell.id) =>
             {
                 DraftPlaced::Summon {
                     t,
@@ -1085,7 +1115,7 @@ impl Cutter {
             }
             Ev::AuraApplied {
                 src, dst, spell, ..
-            } if placed.tells(spell.id) => DraftPlaced::Aura {
+            } if placed.tells(edition, spell.id) => DraftPlaced::Aura {
                 t,
                 unit: self.gix(&dst.guid),
                 spell_id: spell.id,
@@ -1094,7 +1124,7 @@ impl Cutter {
             },
             Ev::Heal {
                 src, dst, spell, ..
-            } if placed.tells(spell.id) => {
+            } if placed.tells(edition, spell.id) => {
                 let Some(at) = block(&dst.guid) else { return };
                 DraftPlaced::Heal {
                     t,

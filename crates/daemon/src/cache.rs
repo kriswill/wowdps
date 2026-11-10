@@ -6,6 +6,13 @@
 //! Deliberately NOT cached: parsed segment `Meter`s. They rebuild from the
 //! log in milliseconds, and serializing per-actor hashmaps is how a cache
 //! becomes an event store by accident.
+//!
+//! Nor is the edition the scan stood in at the checkpoint
+//! (`ScanState::project_id`, which picks the tables a resumed scan reads):
+//! the last version line among the checkpoint's seeds names it, so a resume
+//! reads it back from the log (`index::project_id_at`) and the entries keep
+//! their layout (`MAGIC` moved to retire checkpoints scanned before the
+//! tables were per edition).
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -45,7 +52,11 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // \x13: (v45, R29) every WORLD_MARKER line is a seed — a checkpoint scanned
 // by the old rule holds none, and a pull cut over it would start with no
 // markers standing.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x13";
+// \x14: (R8) the scan reads its log's own edition's tables — a checkpoint
+// scanned by the old rule read a Forever log's doors and keys by Retail's
+// open-world and keystone tables, so its visits may differ. The layout is
+// as it was (the edition is read back from the seeds, not stored).
+const MAGIC: &[u8; 8] = b"WDPSIDX\x14";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -110,7 +121,18 @@ impl IndexCache {
         file.seek(SeekFrom::Start(start)).ok()?;
         let mut window = vec![0u8; check_len as usize];
         file.read_exact(&mut window).ok()?;
-        (fnv64(&window) == checksum).then_some(state)
+        if fnv64(&window) != checksum {
+            return None;
+        }
+        // The edition the scan was in, read back from the seed lines the
+        // checkpoint names (the checksum covers only the window before the
+        // offset, not every seed); a log that cannot give it back is scanned
+        // whole.
+        let project_id = index::project_id_at(file, &state.seeds).ok()?;
+        Some(ScanState {
+            project_id,
+            ..state
+        })
     }
 
     fn store(&self, path: &Path, file: &mut File, state: &ScanState) {
@@ -214,6 +236,8 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
             last_zone,
             last_zone_map,
             arena_over,
+            // Not stored: `resume_state` reads it back from the log.
+            project_id: 0,
             offset,
         },
     ))
@@ -405,6 +429,37 @@ mod tests {
         let resumed = cache.scan_file(&log, &mut File::open(&log).unwrap());
         let full = index::scan(&mut File::open(&log).unwrap());
         assert_eq!(resumed, full);
+    }
+
+    /// The edition a checkpoint stood in is not stored, yet a warm start
+    /// reads the tail by its tables: a Forever log's door onto a map only
+    /// Forever's table calls open world (2980) is zoned out after the
+    /// resume as in a full scan, where Retail's table would have opened a
+    /// second visit. The entry stores no edition: its layout is as it was.
+    #[test]
+    fn a_warm_start_reads_the_tail_by_the_logs_own_edition() {
+        let tmp = Temp::new("edition");
+        let log = tmp.0.join("WoWCombatLog.txt");
+        let head = "11/1/2026 19:00:00.000-8  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18\n\
+                    11/1/2026 19:00:01.000-8  ZONE_CHANGE,48,\"Blackfathom Deeps\",1\n";
+        std::fs::write(&log, head).unwrap();
+        let cache = IndexCache::new(tmp.0.join("cache"));
+        let cold = cache.scan_file(&log, &mut File::open(&log).unwrap());
+        assert_eq!(cold.checkpoint.project_id, 18);
+        assert_eq!(cold.checkpoint.offset, head.len() as u64);
+        let stored = std::fs::read(cache.cache_path(&log)).unwrap();
+        let (_, _, _, _, decoded) = decode(&stored).unwrap();
+        assert_eq!(decoded.project_id, 0, "not stored");
+
+        let door = "11/1/2026 19:30:00.000-8  ZONE_CHANGE,2980,\"Dalaran City\",1\n";
+        let mut f = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+        f.write_all(door.as_bytes()).unwrap();
+        drop(f);
+        let warm = cache.scan_file(&log, &mut File::open(&log).unwrap());
+        let full = index::scan(&mut File::open(&log).unwrap());
+        assert_eq!(warm, full);
+        assert_eq!(full.checkpoint.visit_count, 1, "the door zoned out");
+        assert_eq!(warm.checkpoint.project_id, 18);
     }
 
     #[test]

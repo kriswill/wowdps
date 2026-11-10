@@ -104,9 +104,12 @@ mod tests {
 
     /// Every generator refuses another product's output where Retail's
     /// lives before it reads anything (the install, a census, the store,
-    /// the network): with no `-o` (its own committed table or data-home
-    /// cache), and with an `-o` naming any committed table or review twin,
-    /// not only its own.
+    /// the network): with no `-o` where it has no table of that product's
+    /// own (its own committed table or data-home cache is Retail's), and
+    /// with an `-o` naming any of Retail's committed tables or review
+    /// twins, not only its own. A generator with a Forever table goes
+    /// through with no `-o`, as far as the absent install, and writes
+    /// nothing.
     #[test]
     fn every_generator_keeps_another_product_off_retails_outputs() {
         let gens: Vec<_> = EXTRACT
@@ -118,24 +121,38 @@ mod tests {
             committed("crates/core/src/item_spells.rs"),
             committed("crates/core/src/proc_spells.expected.md"),
         ];
+        let absent = ["--wow-dir", "/nonexistent", "--dbd-dir", "/nonexistent"];
+        let forevers = [
+            "gen-class-spells",
+            "gen-item-spells",
+            "gen-keystone-timers",
+            "gen-open-world-maps",
+        ];
         for c in gens {
-            let e = run(c.name, &["--product", "wowf", "--dbd-dir", "/nonexistent"]);
-            assert!(e.ends_with(REFUSED), "{}: {e}", c.name);
+            let e = run(c.name, &[&["--product", "wowf"][..], &absent[..]].concat());
+            if forevers.contains(&c.name) {
+                assert!(
+                    e.contains(".build.info") && !e.contains("needs -o"),
+                    "{}: {e}",
+                    c.name
+                );
+            } else {
+                assert!(e.ends_with(REFUSED), "{}: {e}", c.name);
+            }
             for other in &others {
                 let other = other.as_str();
-                let words = [
-                    "--product",
-                    "wowf",
-                    "-o",
-                    other,
-                    "--dbd-dir",
-                    "/nonexistent",
-                ];
+                let words = [&["--product", "wowf", "-o", other][..], &absent[..]].concat();
                 let e = run(c.name, &words);
                 assert!(e.starts_with(&format!("-o {other}: ")), "{}: {e}", c.name);
                 assert!(e.ends_with(REFUSED), "{}: {e}", c.name);
             }
         }
+        assert!(
+            !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("crates")
+                .exists(),
+            "nothing written under the working directory"
+        );
     }
 
     /// An `-o` elsewhere lets another product through, as far as the
@@ -173,6 +190,55 @@ mod tests {
         let e = run("gen-icons", &with(&words));
         assert!(through(&e), "{e}");
         assert!(!std::path::Path::new(elsewhere).exists(), "nothing written");
+    }
+
+    /// `-o` wins over `--checkout`: the scripts pass the checkout and then
+    /// the caller's words, so a caller's `-o` is the place checked (and,
+    /// past the absent install, written). With the checkout alone a run
+    /// goes to its own edition's table, or is refused where it has none.
+    #[test]
+    fn an_o_wins_over_the_checkout() {
+        let checkout = committed("");
+        let forever = committed("crates/core/src/forever/class_spells.rs");
+        let elsewhere = std::env::temp_dir()
+            .join(format!("wowdps-extract-checkout-{}", std::process::id()))
+            .join("out");
+        let elsewhere = elsewhere.display().to_string();
+        let absent = ["--wow-dir", "/nonexistent", "--dbd-dir", "/nonexistent"];
+        let with = |words: &[&str]| -> Vec<String> {
+            let mut all: Vec<String> = ["--checkout", checkout.as_str()]
+                .iter()
+                .map(|w| w.to_string())
+                .collect();
+            all.extend(words.iter().map(|w| w.to_string()));
+            all.extend(absent.iter().map(|w| w.to_string()));
+            all
+        };
+        let go = |name: &str, words: &[&str]| {
+            let words = with(words);
+            let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+            run(name, &refs)
+        };
+        let through = |e: &str| e.contains(".build.info") && !e.contains("needs -o");
+        let e = go("gen-class-spells", &["-o", &forever]);
+        assert!(
+            e.ends_with("is Forever's (product wowf); product wow needs -o naming another place"),
+            "{e}"
+        );
+        let e = go("gen-class-spells", &["--product", "wowf", "-o", &elsewhere]);
+        assert!(through(&e), "{e}");
+        let e = go("gen-class-spells", &["--product", "wowf"]);
+        assert!(through(&e), "{e}");
+        let e = go("gen-class-spells", &[]);
+        assert!(through(&e), "{e}");
+        let e = go("gen-open-world-maps", &["--product", "wowf"]);
+        assert!(through(&e), "{e}");
+        let e = go("gen-role-spells", &["--product", "wowf"]);
+        assert!(e.ends_with(REFUSED), "{e}");
+        assert!(
+            !std::path::Path::new(&elsewhere).exists(),
+            "nothing written"
+        );
     }
 
     /// A census-backed generator writes its review twin beside `-o`, its
@@ -216,7 +282,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&scratch);
-        let mark = scratch.join(cli::retail::CHECKOUT_MARK);
+        let mark = scratch.join(cli::owners::CHECKOUT_MARK);
         std::fs::create_dir_all(mark.parent().unwrap()).unwrap();
         std::fs::write(&mark, "").unwrap();
         let path = scratch.join("crates/core/src/proc_spells");
@@ -230,15 +296,21 @@ mod tests {
         std::fs::remove_dir_all(&scratch).unwrap();
     }
 
-    /// Every table generator is refused its own committed table and twin,
-    /// found by the header the generator writes into the table rather than
-    /// by `tablegen`'s list of them, so a generator added without its entry
-    /// there fails here; and every generated table in the checkout is one.
+    /// Every generated table in the checkout, found by the header its
+    /// generator writes into it rather than by `tablegen`'s list (so a
+    /// table added without its entry there fails here), is claimed by
+    /// exactly one edition's entry in that list, and its header names that
+    /// edition's product where it is not Retail's; every table generator
+    /// has its one Retail table. Each table and twin is refused to every
+    /// other edition's run, and its own goes through to the (absent)
+    /// install.
     #[test]
-    fn every_table_generator_is_refused_its_own_committed_files() {
+    fn every_generated_table_is_one_editions() {
         use std::io::BufRead;
+        use wowdps_core::model::Edition;
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        // (first line, path) of every generated Rust file under crates/.
+        // (first line, second line, path) of every generated Rust file
+        // under crates/.
         let mut generated = Vec::new();
         let mut dirs = vec![root.join("crates")];
         while let Some(dir) = dirs.pop() {
@@ -249,10 +321,11 @@ mod tests {
                     dirs.push(path);
                 } else if path.extension().is_some_and(|x| x == "rs") {
                     let file = std::fs::File::open(&path).unwrap();
-                    let first = std::io::BufReader::new(file).lines().next();
-                    let first = first.and_then(Result::ok).unwrap_or_default();
+                    let mut lines = std::io::BufReader::new(file).lines();
+                    let first = lines.next().and_then(Result::ok).unwrap_or_default();
+                    let second = lines.next().and_then(Result::ok).unwrap_or_default();
                     if first.starts_with("//! GENERATED by tools/gen-") {
-                        generated.push((first, path));
+                        generated.push((first, second, path));
                     }
                 }
             }
@@ -261,28 +334,69 @@ mod tests {
             .iter()
             .filter(|c| c.name.starts_with("gen-"))
             .collect();
-        assert_eq!(generated.len(), gens.len(), "{generated:?}");
         let committed = tablegen::committed();
-        for c in gens {
-            let header = format!("//! GENERATED by tools/{}.sh ", c.name);
-            let own: Vec<_> = generated
+        let tables = committed
+            .iter()
+            .filter(|(_, rel)| rel.extension().is_some_and(|x| x == "rs"));
+        assert_eq!(generated.len(), tables.count(), "{generated:?}");
+        let editions = [Edition::Retail, Edition::Forever];
+        let absent = ["--wow-dir", "/nonexistent", "--dbd-dir", "/nonexistent"];
+        for (first, second, table) in &generated {
+            let claims: Vec<_> = committed
                 .iter()
-                .filter(|(first, _)| first.starts_with(&header))
+                .filter(|(_, rel)| table.ends_with(rel))
                 .collect();
-            assert_eq!(own.len(), 1, "{}: {own:?}", c.name);
-            let table = own[0].1.clone();
+            assert_eq!(claims.len(), 1, "{}: {claims:?}", table.display());
+            let owner = claims[0].0;
+            let product = owner.product().unwrap();
+            let named = second.contains(&format!("(product {product})"));
+            assert_eq!(
+                named,
+                owner != Edition::Retail,
+                "{}: {second}",
+                table.display()
+            );
+            let c = gens
+                .iter()
+                .find(|c| first.starts_with(&format!("//! GENERATED by tools/{}.sh ", c.name)))
+                .unwrap();
             let twin = table.with_extension("expected.md");
-            let files = [Some(table), twin.is_file().then_some(twin)];
+            let files = [Some(table.clone()), twin.is_file().then_some(twin)];
             for file in files.into_iter().flatten() {
-                let listed = committed.iter().any(|rel| file.ends_with(rel));
+                let listed = committed
+                    .iter()
+                    .any(|(e, rel)| *e == owner && file.ends_with(rel));
                 assert!(listed, "{}: {} not listed", c.name, file.display());
                 let f = file.display().to_string();
-                let e = run(
-                    c.name,
-                    &["--product", "wowf", "-o", &f, "--dbd-dir", "/nonexistent"],
-                );
-                assert!(e.ends_with(REFUSED), "{}: {e}", c.name);
+                for e in editions {
+                    let mine = e.product().unwrap();
+                    let words = [&["--product", mine, "-o", &f][..], &absent[..]].concat();
+                    let err = run(c.name, &words);
+                    if e == owner {
+                        // Through the guard: to the absent install, or for
+                        // a census-backed table to the census it lacks.
+                        let through =
+                            err.contains(".build.info") || err.contains("requires --census");
+                        assert!(through && !err.contains("needs -o"), "{}: {err}", c.name);
+                    } else {
+                        let tail = format!(
+                            "is {}'s (product {product}); product {mine} needs -o naming another place",
+                            owner.label()
+                        );
+                        assert!(err.ends_with(&tail), "{}: {err}", c.name);
+                    }
+                }
             }
+        }
+        for c in gens {
+            let header = format!("//! GENERATED by tools/{}.sh ", c.name);
+            let retail = generated
+                .iter()
+                .filter(|(first, second, _)| {
+                    first.starts_with(&header) && !second.contains("(product ")
+                })
+                .count();
+            assert_eq!(retail, 1, "{}", c.name);
         }
     }
 }

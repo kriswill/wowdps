@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
+use crate::tables::Tables;
 use wowdps_model::series::{
     SeriesCell, SeriesRow, SpellTallies, SpellTargets, TargetTally, target_rows, target_stack,
     window_rows,
@@ -470,8 +471,9 @@ fn tree_key(spell: &str, pet: Option<&str>) -> String {
 
 /// R26: what a pet's rows hang under — the spell that summoned it, the
 /// trinket that did, or (no SUMMON seen, or a hunter's "Call Pet N", which
-/// names a button rather than the pet) the pet itself.
-fn pet_group(pet: &str, summon: Option<&Summon>) -> SpellGroup {
+/// names a button rather than the pet) the pet itself. `tables` are the
+/// segment's edition's (`Segment::tables`).
+fn pet_group(tables: &Tables, pet: &str, summon: Option<&Summon>) -> SpellGroup {
     let by_pet = |spell_id| SpellGroup {
         key: format!("pet:{pet}"),
         label: pet.to_string(),
@@ -481,7 +483,7 @@ fn pet_group(pet: &str, summon: Option<&Summon>) -> SpellGroup {
     let Some(s) = summon else {
         return by_pet(0);
     };
-    if let Some(g) = item_group(s.id, s.id) {
+    if let Some(g) = item_group(tables, s.id, s.id) {
         return g;
     }
     if s.name.starts_with("Call Pet") {
@@ -508,13 +510,14 @@ fn spell_group(driver: &str, icon: u32) -> SpellGroup {
 
 /// R26: the trinket `spell_id` comes from, as a group — `None` for a
 /// spell a class can cast (`class_spells` vetoes first, as R12's marks do)
-/// or one no single trinket grants. `icon` is the group's own spell id, 0
-/// for "draw its first member's".
-fn item_group(spell_id: u32, icon: u32) -> Option<SpellGroup> {
-    if spell_id == 0 || crate::class_spells::resolve(spell_id).is_some() {
+/// or one no single trinket grants, both by the segment's edition's
+/// `tables`. `icon` is the group's own spell id, 0 for "draw its first
+/// member's".
+fn item_group(tables: &Tables, spell_id: u32, icon: u32) -> Option<SpellGroup> {
+    if spell_id == 0 || tables.class(spell_id).is_some() {
         return None;
     }
-    let (item, name) = crate::item_spells::trinket_of(spell_id)?;
+    let (item, name) = tables.trinket_of(spell_id)?;
     Some(SpellGroup {
         key: format!("item:{item}"),
         label: name.to_string(),
@@ -622,10 +625,11 @@ pub(crate) fn instanced_difficulty(difficulty: u32) -> bool {
 /// instance with the difficulty it just left — a hearth out of a Heroic raid
 /// logs `ZONE_CHANGE,0,"Silvermoon City",15`, the end of a key
 /// `ZONE_CHANGE,2444,"The Waking Shores",8` — so a door onto a map Map.db2
-/// calls open world (the generated `open_world_maps.rs`) is read as 0, zoned
-/// out. A map the table does not know keeps the door's own difficulty.
-pub(crate) fn door_difficulty(map_id: u32, difficulty: u32) -> u32 {
-    if crate::open_world_maps::open_world(map_id) {
+/// calls open world (the generated `open_world_maps.rs` of the log's edition,
+/// `tables`) is read as 0, zoned out. A map the table does not know, and
+/// every map of an edition with no table, keeps the door's own difficulty.
+pub(crate) fn door_difficulty(tables: &Tables, map_id: u32, difficulty: u32) -> u32 {
+    if tables.open_world(map_id) {
         0
     } else {
         difficulty
@@ -785,7 +789,9 @@ pub struct Segment {
     /// lazy loads carry it); zeros before any version line.
     pub build: (u16, u16, u16),
     /// PROJECT_ID from the same line, the game edition the log names
-    /// (`Edition::from_project_id`: 1 = Retail); 0 before any.
+    /// (`Edition::from_project_id`: 1 = Retail); 0 before any. Every
+    /// generated table the segment reads is that edition's
+    /// (`Segment::tables`).
     pub project_id: u8,
     /// The log format version from the same line; 0 before any.
     pub log_version: u32,
@@ -1283,6 +1289,12 @@ struct AbsMark {
 }
 
 impl Segment {
+    /// The generated tables of the edition this segment was logged in: what
+    /// every lookup it makes reads, never another edition's.
+    fn tables(&self) -> &'static Tables {
+        Tables::of_project(self.project_id)
+    }
+
     /// A segment opening now, seeded with what the meter already knows —
     /// owners, names, flags, classes, specs, loadouts, summons — so a pet
     /// summoned in an earlier segment still resolves here. Lazy loads
@@ -3174,11 +3186,13 @@ impl Segment {
     /// under the pet's own name when none was seen or the summon is a
     /// hunter's "Call Pet N"; a spell only a trinket grants — `class_spells`
     /// vetoes first, as R12's marks do — hangs under the item, and so do
-    /// the rows of a pet a trinket summoned.
+    /// the rows of a pet a trinket summoned. Every table read is the
+    /// segment's edition's.
     pub fn spell_tree(&self, player_guid: &str, view: View) -> SpellTree {
         if !matches!(view, View::Damage | View::Healing) {
             return SpellTree::default();
         }
+        let tables = self.tables();
         // The player's summons by pet name — the lowest summon id when two
         // of their units summoned one name, so the answer is order-free.
         let mut summoned: HashMap<&str, &Summon> = HashMap::new();
@@ -3217,8 +3231,8 @@ impl Segment {
                 }
                 if acc.group.is_empty() {
                     let g = match pet.as_deref() {
-                        Some(name) => Some(pet_group(name, summoned.get(name).copied())),
-                        None => item_group(slot.id, 0),
+                        Some(name) => Some(pet_group(tables, name, summoned.get(name).copied())),
+                        None => item_group(tables, slot.id, 0),
                     };
                     if let Some(g) = g {
                         acc.group.clone_from(&g.key);
@@ -3237,11 +3251,7 @@ impl Segment {
             .iter()
             .filter(|(key, acc)| acc.group.is_empty() && !key.contains('\u{0}'))
             .filter_map(|(key, acc)| {
-                let driver = acc
-                    .slot
-                    .parts
-                    .iter()
-                    .find_map(|p| crate::proc_spells::driver_of(p.id))?;
+                let driver = acc.slot.parts.iter().find_map(|p| tables.driver_of(p.id))?;
                 Some((key.clone(), driver))
             })
             .collect();
@@ -5115,10 +5125,11 @@ impl Segment {
         // R18: externals (the Bloodlust family, Power Infusion — a priest
         // spell the class-spells veto below would eat) now come from the
         // role table and open a SPAN at the call site, before this runs.
-        if crate::class_spells::resolve(spell.id).is_some() {
+        let tables = self.tables();
+        if tables.class(spell.id).is_some() {
             return false;
         }
-        let Some(item) = crate::item_spells::item_kind(spell.id) else {
+        let Some(item) = tables.item_kind(spell.id) else {
             return false;
         };
         let kind = match (item, cast) {
@@ -5320,6 +5331,14 @@ impl Meter {
         Self::default()
     }
 
+    /// The generated tables of the edition the latest COMBAT_LOG_VERSION
+    /// names (Retail's before any): what the lines fed now are read by. A
+    /// version line closes the open segment, so the edition never changes
+    /// under a segment, and every segment's own tables are these.
+    fn tables(&self) -> &'static Tables {
+        Tables::of_project(self.project_id)
+    }
+
     /// Remember a unit's display name and flags, globally and in the open segment.
     /// Called before segment creation so a freshly opened segment inherits it.
     fn learn(&mut self, u: &Unit) {
@@ -5371,7 +5390,7 @@ impl Meter {
         if has_spec && s.classes.contains_key(&unit.guid) {
             return;
         }
-        let Some((class, spec)) = crate::class_spells::resolve(spell.id) else {
+        let Some((class, spec)) = s.tables().class(spell.id) else {
             return;
         };
         let class = *s.classes.entry(unit.guid.clone()).or_insert(class);
@@ -5886,7 +5905,7 @@ impl Meter {
     /// does. The scanner mirrors this and seeds every START that zones in.
     fn encounter_visit(&mut self, ts: i64, instance_id: u32, difficulty: u32) {
         if self.zoned_in
-            || !instanced_difficulty(door_difficulty(instance_id, difficulty))
+            || !instanced_difficulty(door_difficulty(self.tables(), instance_id, difficulty))
             || self.last_zone_map != Some(instance_id)
         {
             return;
@@ -6507,7 +6526,7 @@ impl Meter {
                 // span and mark paths below. Never on the trailer alone:
                 // Feast of Souls and every `BUFF,0,0` carry one.
                 if *aura_type == AuraType::Buff
-                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && self.tables().is_absorb_spell(spell.id)
                     && let Some(s) = self.open_segment_for_passive(ts)
                     && s.controlled(&src.guid)
                 {
@@ -6558,7 +6577,7 @@ impl Meter {
                 // reached the closed segment unguarded — the R12 hole this
                 // closes).
                 if *aura_type == AuraType::Buff && span_target(dst) {
-                    let role = crate::role_spells::role_kind(spell.id);
+                    let role = self.tables().role_kind(spell.id);
                     if let Some(s) = self.open_segment_for_passive(ts) {
                         let guid = dst.guid.clone();
                         match role {
@@ -6603,7 +6622,7 @@ impl Meter {
                 self.dot_aura(ts, src, dst, spell, *aura_type, true);
                 // R20: the trailer is the shield's new running total.
                 if *aura_type == AuraType::Buff
-                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && self.tables().is_absorb_spell(spell.id)
                     && let Some(s) = self.open_segment_for_passive(ts)
                     && s.controlled(&src.guid)
                 {
@@ -6627,7 +6646,7 @@ impl Meter {
                 }
                 if *aura_type == AuraType::Buff
                     && span_target(dst)
-                    && let Some(kind) = crate::role_spells::role_kind(spell.id)
+                    && let Some(kind) = self.tables().role_kind(spell.id)
                     && let Some(s) = self.open_segment_for_passive(ts)
                 {
                     let guid = dst.guid.clone();
@@ -6651,7 +6670,7 @@ impl Meter {
                 self.dot_aura(ts, src, dst, spell, *aura_type, false);
                 // R20: the trailer is what remained — the waste.
                 if *aura_type == AuraType::Buff
-                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && self.tables().is_absorb_spell(spell.id)
                     && let Some(s) = self.open_segment_for_passive(ts)
                     && s.controlled(&src.guid)
                 {
@@ -6677,7 +6696,7 @@ impl Meter {
                 // none is open); anything else closes an item mark. Through
                 // the passive gate, like the apply.
                 if *aura_type == AuraType::Buff && span_target(dst) {
-                    let role = crate::role_spells::role_kind(spell.id);
+                    let role = self.tables().role_kind(spell.id);
                     if let Some(s) = self.open_segment_for_passive(ts) {
                         let guid = dst.guid.clone();
                         match role {
@@ -6859,7 +6878,7 @@ impl Meter {
                 name,
                 difficulty,
             } => {
-                let difficulty = &door_difficulty(*map_id, *difficulty);
+                let difficulty = &door_difficulty(self.tables(), *map_id, *difficulty);
                 self.close_trash(ts);
                 // R13: any teleport ends the dead-arena window.
                 self.arena_over = false;
@@ -6924,6 +6943,7 @@ impl Meter {
                 name: start_name,
                 affixes,
             } => {
+                let tables = self.tables();
                 let standing = self
                     .current_visit
                     .and_then(|i| self.visits.get(i as usize))
@@ -6950,7 +6970,7 @@ impl Meter {
                     end_ms: None,
                     completed: None,
                     official_ms: None,
-                    pars_ms: crate::keystone_timers::pars_ms(*challenge_id),
+                    pars_ms: tables.pars_ms(*challenge_id),
                     affixes: affixes.clone(),
                 });
                 self.current_visit = Some(self.visits.len() as u32 - 1);
@@ -6986,6 +7006,7 @@ impl Meter {
                 key_level,
                 total_ms,
             } => {
+                let tables = self.tables();
                 let finished = self
                     .current_visit
                     .and_then(|i| self.visits.get_mut(i as usize))
@@ -6996,7 +7017,7 @@ impl Meter {
                             v.keyed = true;
                             v.joined = true;
                             v.key_level = Some(*key_level);
-                            v.pars_ms = crate::keystone_timers::pars_for_map(*map_id);
+                            v.pars_ms = tables.pars_for_map(*map_id);
                         }
                         v.completed = Some(*success);
                         v.official_ms = (*total_ms > 0).then_some(*total_ms);
@@ -7210,11 +7231,18 @@ impl Meter {
             .iter()
             .filter(|s| s.visit == Some(ordinal))
             .peekable();
-        members.peek()?;
+        let first = *members.peek()?;
         // The Σ knows what its members knew and nothing more: seeded from
         // the meter, a pet whose owner a line after a key's END named folded
         // into a full replay's Σ alone (65,856 damage on a real +13).
         let mut out = Segment::empty(SegmentKind::Overall, v.display_name(), v.start_ms, self);
+        // Its game is its members' (R8: the tables it reads), the first's,
+        // never the meter's latest version line: a full replay stands past
+        // the visit (a later version line, maybe of another edition) where
+        // a lazy load of the visit stands at its end.
+        out.build = first.build;
+        out.project_id = first.project_id;
+        out.log_version = first.log_version;
         out.visit = Some(ordinal);
         out.end_ms = v.end_ms;
         out.key = v.keyed;

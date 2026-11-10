@@ -13,13 +13,68 @@
 //! A spell attributed to more than one class is dropped (not class
 //! evidence). A spell keeps a spec only when spec sources name exactly one
 //! spec AND no class-wide source (class skill line) also grants it.
+//!
+//! Those are Retail's rules ([`Rules::Specs`]). Forever's client names its
+//! classes otherwise ([`Rules::Masks`], [`generate_masks`]): its class
+//! skill lines are named for talent trees, each ability row carries its
+//! class as a bit mask, and its specializations hold no spell. Which rules
+//! a run reads by is the product's ([`Rules::for_product`]).
 
 use crate::table::{Tables, cell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
+use wowdps_core::model::Edition;
 
-/// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`).
-pub const TABLES: [&str; 8] = [
+/// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`):
+/// every table either rules read ([`Rules::tables`]), whose schemas are
+/// fetched for any run.
+pub const TABLES: [&str; 9] = [
+    "SkillLine",
+    "SkillLineAbility",
+    "SpecializationSpells",
+    "TraitDefinition",
+    "TraitNodeEntry",
+    "TraitNodeXTraitNodeEntry",
+    "TraitNode",
+    "TraitTreeLoadout",
+    "ChrClasses",
+];
+
+/// How a client's tables say which class a spell is: the rules a product's
+/// run reads by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rules {
+    /// Retail's ([`generate`]): the 13 class skill lines by name, then the
+    /// specializations' spells and the trait trees' specs.
+    Specs,
+    /// Forever's ([`generate_masks`]): each class skill line ability's
+    /// class mask, and no spec.
+    Masks,
+}
+
+impl Rules {
+    /// The rules of the client `product` (`.build.info`'s row) holds:
+    /// Forever's class masks for its product, Retail's for every other (a
+    /// client whose tables do not hold them fails loudly there).
+    pub fn for_product(product: &str) -> Rules {
+        if Edition::Forever.product() == Some(product) {
+            Rules::Masks
+        } else {
+            Rules::Specs
+        }
+    }
+
+    /// The client tables these rules read, a part of [`TABLES`].
+    pub fn tables(self) -> &'static [&'static str] {
+        match self {
+            Rules::Specs => &SPEC_TABLES,
+            Rules::Masks => &MASK_TABLES,
+        }
+    }
+}
+
+/// The tables Retail's rules read.
+const SPEC_TABLES: [&str; 8] = [
     "SkillLine",
     "SkillLineAbility",
     "SpecializationSpells",
@@ -29,6 +84,14 @@ pub const TABLES: [&str; 8] = [
     "TraitNode",
     "TraitTreeLoadout",
 ];
+
+/// The tables the class-mask rules read.
+const MASK_TABLES: [&str; 3] = ["SkillLine", "SkillLineAbility", "ChrClasses"];
+
+/// The class-mask rules' pet lines that are no "Pet - ..." line: the
+/// hunter's Beast Training, whose rows carry the hunter's bit but teach a
+/// pet its abilities.
+const PET_TRAINING: &str = "Beast Training";
 
 /// Class skill lines are matched by DisplayName so a renumbering patch
 /// fails loudly here instead of silently shrinking the table. CategoryID 7
@@ -119,6 +182,9 @@ pub struct Generated {
     pub spells: usize,
     pub spec_unique: usize,
     pub ambiguous: usize,
+    /// The class-mask rules' rows on a class skill line whose mask names no
+    /// class (0), which name no spell's class; 0 under Retail's rules.
+    pub unclassed: usize,
 }
 
 pub fn generate(tables: &Tables, build: &str) -> Result<Generated, String> {
@@ -293,14 +359,160 @@ pub fn generate(tables: &Tables, build: &str) -> Result<Generated, String> {
 
     let spec_unique = table.iter().filter(|(_, _, s)| *s != 0).count();
     Ok(Generated {
-        content: emit(&table, ambiguous, build)?,
+        content: emit(&table, ambiguous, build, Rules::Specs)?,
         spells: table.len(),
         spec_unique,
         ambiguous,
+        unclassed: 0,
     })
 }
 
-fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> Result<String, String> {
+/// The class-mask rules ([`Rules::Masks`], Forever's client), CONTRACT.md
+/// R8 for an edition whose specializations hold no spell:
+///
+///   * a class skill line is a SkillLine of CategoryID 7 that is no pet's
+///     (no "Pet - ..." line, nor the hunter's Beast Training);
+///   * each SkillLineAbility row on one adds the classes its ClassMask
+///     names, a class's bit being `1 << (ChrClasses.ID - 1)` and a mask of
+///     every bit (-1) naming every class;
+///   * a row whose mask is 0 names no class and is counted, not read
+///     ([`Generated::unclassed`]);
+///   * a spell is kept when its classes come to exactly one, with no spec;
+///     one naming more than one is dropped as ambiguous.
+///
+/// A mask bit that names no ChrClasses row, a ChrClasses row whose class
+/// this build does not know, and a class with no spell at all each fail
+/// loudly, as a missing class skill line fails Retail's rules.
+pub fn generate_masks(tables: &Tables, build: &str) -> Result<Generated, String> {
+    let parse_u32 = |cell: &str| -> Result<u32, String> {
+        cell.parse()
+            .map_err(|_| format!("bad numeric cell {cell:?}"))
+    };
+
+    // ChrClasses id -> its bit, each checked against the class it is here.
+    let cc = tables.get("ChrClasses")?;
+    let (id_c, file_c) = (cc.col("ID")?, cc.col("Filename")?);
+    let mut bits: BTreeMap<u32, u8> = BTreeMap::new();
+    for r in &cc.rows {
+        let id = parse_u32(cell(r, id_c, "ChrClasses.ID")?)?;
+        let file = cell(r, file_c, "ChrClasses.Filename")?;
+        let code = id
+            .checked_sub(1)
+            .filter(|&c| (c as usize) < CLASS_ORDER.len())
+            .ok_or_else(|| format!("ChrClasses {id} ({file}): no class of that id here"))?;
+        let name = CLASS_ORDER.get(code as usize).copied().unwrap_or_default();
+        if !file.eq_ignore_ascii_case(name) {
+            return Err(format!("ChrClasses {id} is {file}, not {name}"));
+        }
+        bits.insert(1 << code, code as u8);
+    }
+    let every: BTreeSet<u8> = bits.values().copied().collect();
+
+    // The class skill lines: category 7, no pet's.
+    let sl = tables.get("SkillLine")?;
+    let (id_c, cat_c, name_c) = (
+        sl.col("ID")?,
+        sl.col("CategoryID")?,
+        sl.col("DisplayName_lang")?,
+    );
+    let mut lines: HashSet<&str> = HashSet::new();
+    let mut training = false;
+    for r in &sl.rows {
+        if cell(r, cat_c, "SkillLine.CategoryID")? != "7" {
+            continue;
+        }
+        let name = cell(r, name_c, "SkillLine.DisplayName_lang")?;
+        if name == PET_TRAINING {
+            training = true;
+            continue;
+        }
+        if !name.starts_with("Pet - ") {
+            lines.insert(cell(r, id_c, "SkillLine.ID")?);
+        }
+    }
+    if !training {
+        return Err(format!(
+            "no class skill line is named {PET_TRAINING}: its pet abilities would read as a hunter's"
+        ));
+    }
+
+    // spell id -> the classes its rows' masks name.
+    let mut classes: BTreeMap<u32, BTreeSet<u8>> = BTreeMap::new();
+    let mut unclassed = 0;
+    let sla = tables.get("SkillLineAbility")?;
+    let (row_c, line_c, spell_c, mask_c) = (
+        sla.col("ID")?,
+        sla.col("SkillLine")?,
+        sla.col("Spell")?,
+        sla.col("ClassMask")?,
+    );
+    for r in &sla.rows {
+        if !lines.contains(cell(r, line_c, "SkillLineAbility.SkillLine")?) {
+            continue;
+        }
+        let text = cell(r, mask_c, "SkillLineAbility.ClassMask")?;
+        let mask: i32 = text
+            .parse()
+            .map_err(|_| format!("bad numeric cell {text:?}"))?;
+        let spell = parse_u32(cell(r, spell_c, "SkillLineAbility.Spell")?)?;
+        // The column is signed: -1 is every bit, every class.
+        let mask = mask as u32;
+        let named = if mask == u32::MAX {
+            every.clone()
+        } else {
+            let mut named = BTreeSet::new();
+            for bit in (0..32).map(|b| 1u32 << b).filter(|b| mask & b != 0) {
+                let code = bits.get(&bit).ok_or_else(|| {
+                    let row = cell(r, row_c, "SkillLineAbility.ID").unwrap_or("?");
+                    format!(
+                        "SkillLineAbility {row}: ClassMask {text} names bit {bit:#x}, which no ChrClasses row has"
+                    )
+                })?;
+                named.insert(*code);
+            }
+            named
+        };
+        if named.is_empty() {
+            // A mask of 0: the row names no class. Counted, not read (a
+            // class skill line may still hold another class's spells under
+            // it: Mounts' few classed rows are one class's, its others none).
+            unclassed += 1;
+        } else {
+            classes.entry(spell).or_default().extend(named);
+        }
+    }
+
+    // Resolve: one class or drop; never a spec.
+    let mut table: Vec<(u32, u8, u16)> = Vec::new();
+    let mut ambiguous = 0;
+    for (spell, cs) in &classes {
+        match (cs.len(), cs.first()) {
+            (1, Some(&code)) => table.push((*spell, code, 0)),
+            _ => ambiguous += 1,
+        }
+    }
+    for &code in &every {
+        if !table.iter().any(|e| e.1 == code) {
+            let name = CLASS_ORDER.get(code as usize).copied().unwrap_or_default();
+            return Err(format!("no spell names the class {name} alone"));
+        }
+    }
+
+    Ok(Generated {
+        content: emit(&table, ambiguous, build, Rules::Masks)?,
+        spells: table.len(),
+        spec_unique: 0,
+        ambiguous,
+        unclassed,
+    })
+}
+
+fn emit(
+    table: &[(u32, u8, u16)],
+    ambiguous: usize,
+    build: &str,
+    rules: Rules,
+) -> Result<String, String> {
     let mut o = String::new();
     let speced = table.iter().filter(|(_, _, s)| *s != 0).count();
     o.push_str("//! GENERATED by tools/gen-class-spells.sh — do not edit by hand.\n");
@@ -316,11 +528,22 @@ fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> Result<Strin
         table.len()
     )
     .map_err(|e| format!("emit: {e}"))?;
+    o.push_str(match rules {
+        Rules::Specs => {
+            "//!\n\
+             //! Maps a combat-log spell id to the only class that can cast it, and — when\n\
+             //! the spell is unique to one specialization — to that spec (CONTRACT.md R8).\n"
+        }
+        Rules::Masks => {
+            "//!\n\
+             //! Maps a combat-log spell id to the only class that can cast it, by the\n\
+             //! class masks of the client's class skill lines; this edition's\n\
+             //! specializations hold no spell of their own, so no entry names a spec\n\
+             //! (CONTRACT.md R8).\n"
+        }
+    });
     o.push_str(
-        "//!\n\
-         //! Maps a combat-log spell id to the only class that can cast it, and — when\n\
-         //! the spell is unique to one specialization — to that spec (CONTRACT.md R8).\n\
-         \n\
+        "\n\
          use wowdps_model::{Class, Spec};\n\
          \n\
          /// The class (and, when spec-unique, the spec) identified by a spell cast.\n\
@@ -360,9 +583,20 @@ fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> Result<Strin
          \x20   #[test]\n\
          \x20   fn table_is_sorted_by_spell_id() {\n\
          \x20       assert!(super::TABLE.windows(2).all(|w| w[0].0 < w[1].0));\n\
-         \x20   }\n\
-         }\n",
+         \x20   }\n",
     );
+    if rules == Rules::Masks {
+        o.push_str(
+            "\n\
+             \x20   /// The edition's specializations hold no spell of their own: no\n\
+             \x20   /// entry names one.\n\
+             \x20   #[test]\n\
+             \x20   fn no_entry_names_a_spec() {\n\
+             \x20       assert!(super::TABLE.iter().all(|e| e.2 == 0));\n\
+             \x20   }\n",
+        );
+    }
+    o.push_str("}\n");
     Ok(o)
 }
 
@@ -442,5 +676,131 @@ mod tests {
         );
         let err = generate(&t, "1.2.3.4").unwrap_err();
         assert!(err.contains("expected 13 class skill lines"), "{err}");
+    }
+
+    /// Each rules' tables are the command's, and between them all of it.
+    #[test]
+    fn the_rules_read_the_commands_tables() {
+        for rules in [Rules::Specs, Rules::Masks] {
+            assert!(
+                rules.tables().iter().all(|t| TABLES.contains(t)),
+                "{rules:?}"
+            );
+        }
+        assert!(
+            TABLES.iter().all(|t| {
+                Rules::Specs.tables().contains(t) || Rules::Masks.tables().contains(t)
+            })
+        );
+        assert_eq!(Rules::for_product("wowf"), Rules::Masks);
+        assert_eq!(Rules::for_product("wow"), Rules::Specs);
+        assert_eq!(Rules::for_product("wow_classic"), Rules::Specs);
+    }
+
+    /// A client of the class-mask kind: three classes (Warrior 1, Rogue 4,
+    /// Druid 11); two talent-tree lines and a "Mounts" line of category 7,
+    /// a pet line, Beast Training and a profession of another category.
+    fn mask_tables() -> Tables {
+        let mut t = Tables::default();
+        t.insert(
+            "ChrClasses",
+            csv("ID,Filename\n1,WARRIOR\n4,ROGUE\n11,DRUID\n"),
+        );
+        t.insert(
+            "SkillLine",
+            csv("ID,CategoryID,DisplayName_lang\n\
+                 26,7,Arms\n38,7,Combat\n777,7,Mounts\n\
+                 208,7,Pet - Wolf\n261,7,Beast Training\n164,11,Blacksmithing\n"),
+        );
+        t
+    }
+
+    fn with_rows(rows: &str) -> Tables {
+        let mut t = mask_tables();
+        let text = format!("ID,SkillLine,Spell,ClassMask\n{rows}");
+        t.insert("SkillLineAbility", csv(&text));
+        t
+    }
+
+    /// One row of every shape: a class's own bit on a tree line (Warrior
+    /// 1, Rogue 8, Druid 1024), two rows naming one class, two rows naming
+    /// two, one row naming two, the every-class -1, a row with no bit, and
+    /// rows on the pet line, Beast Training and a profession, which name
+    /// nothing at all.
+    #[test]
+    fn a_class_mask_names_the_spells_class_and_never_a_spec() {
+        let t = with_rows(
+            "1,26,100,1\n2,38,8647,8\n3,777,200,1024\n\
+             4,26,300,1\n5,38,300,1\n\
+             6,26,400,1\n7,38,400,8\n\
+             8,26,500,9\n\
+             9,38,600,-1\n\
+             10,26,700,0\n\
+             11,208,800,1\n12,261,900,1\n13,164,1000,8\n",
+        );
+        let g = generate_masks(&t, "1.60.1.1 (product wowf)").unwrap();
+        // 100 and 300 Warrior (code 0), 8647 Rogue (3), 200 Druid (10);
+        // 400, 500 and 600 ambiguous; 700, 800, 900 and 1000 never named.
+        assert_eq!((g.spells, g.spec_unique, g.ambiguous), (4, 0, 3));
+        assert_eq!(g.unclassed, 1, "row 10's mask of 0");
+        assert!(
+            g.content
+                .contains("    (100,0,0), (200,10,0), (300,0,0), (8647,3,0),\n"),
+            "{}",
+            g.content
+        );
+        assert!(g.content.contains("build 1.60.1.1 (product wowf)."));
+        assert!(
+            g.content
+                .contains("4 spells (0 spec-unique); 3 multi-class ids dropped")
+        );
+        assert!(g.content.contains("by the\n//! class masks"));
+        assert!(g.content.contains("fn no_entry_names_a_spec()"));
+    }
+
+    /// Retail's emitted table carries neither the class-mask words nor
+    /// their test.
+    #[test]
+    fn retails_table_reads_as_it_always_did() {
+        let g = generate(&base_tables(), "1.2.3.4").unwrap();
+        assert!(!g.content.contains("class masks"));
+        assert!(!g.content.contains("no_entry_names_a_spec"));
+        assert!(g.content.contains(
+            "//!\n//! Maps a combat-log spell id to the only class that can cast it, and — when\n"
+        ));
+        assert!(g.content.ends_with("    }\n}\n"));
+    }
+
+    /// What the class-mask rules refuse: a bit no ChrClasses row has, a
+    /// ChrClasses row unlike the class its id is here or past every class,
+    /// a class with no spell of its own, and a client with no Beast
+    /// Training line to leave out.
+    #[test]
+    fn the_class_mask_rules_fail_loudly() {
+        let classes = "1,26,100,1\n2,38,8647,8\n3,777,200,1024\n";
+        let e = generate_masks(&with_rows(&format!("{classes}4,26,300,2\n")), "b").unwrap_err();
+        assert!(
+            e.contains("SkillLineAbility 4: ClassMask 2 names bit 0x2"),
+            "{e}"
+        );
+        let e = generate_masks(&with_rows("1,26,100,1\n2,38,8647,8\n"), "b").unwrap_err();
+        assert!(e.contains("no spell names the class Druid alone"), "{e}");
+        let mut t = with_rows(classes);
+        t.insert("ChrClasses", csv("ID,Filename\n1,WARRIOR\n4,PALADIN\n"));
+        let e = generate_masks(&t, "b").unwrap_err();
+        assert!(e.contains("ChrClasses 4 is PALADIN, not Rogue"), "{e}");
+        t.insert("ChrClasses", csv("ID,Filename\n1,WARRIOR\n14,NEWCLASS\n"));
+        let e = generate_masks(&t, "b").unwrap_err();
+        assert!(e.contains("ChrClasses 14 (NEWCLASS)"), "{e}");
+        let mut t = with_rows(classes);
+        t.insert(
+            "SkillLine",
+            csv("ID,CategoryID,DisplayName_lang\n26,7,Arms\n38,7,Combat\n777,7,Mounts\n"),
+        );
+        let e = generate_masks(&t, "b").unwrap_err();
+        assert!(
+            e.contains("no class skill line is named Beast Training"),
+            "{e}"
+        );
     }
 }

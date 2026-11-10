@@ -521,6 +521,24 @@ fn replay_fixture_totals_match_expected() {
     );
 }
 
+/// R8 (editions) — the Forever fixture's meter rows against their goldens:
+/// a Forever client's log, read by Forever's tables, which hold no role,
+/// absorb or placed spell, so its Shield Wall opens no span and its Power
+/// Word: Shield no known shield, while every amount, the spell no table
+/// knows included, is counted as the rulings say.
+#[test]
+fn forever_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/forever.txt", "fixtures/forever.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
 /// NEGATIVE CONTROL — proves this test can actually fail. `corrupt.txt` is
 /// `sample.txt` with three silently altered amounts; checked against sample's
 /// expected values it MUST produce mismatches. A suite that cannot fail proves

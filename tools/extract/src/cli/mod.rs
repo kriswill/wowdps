@@ -3,13 +3,14 @@
 //! the install every command opens, `install`), by what they make —
 //! committed tables (`tablegen`), per-machine caches (`caches`), the
 //! client's tables and files as they are (`db2`) and the history store's
-//! creatures file seeded from Wowhead (`creatures`) — and where another
-//! edition's tables and caches may not go (`retail`).
+//! creatures file seeded from Wowhead (`creatures`) — and which edition's
+//! tables and caches each place is, where no other edition's may go
+//! (`owners`).
 
 pub use wowdps_extract::command::{Cmd, args, at, cmd, data_path, install, make_dir, read_text};
 
 pub mod caches;
 pub mod creatures;
 pub mod db2;
-pub mod retail;
+pub mod owners;
 pub mod tablegen;

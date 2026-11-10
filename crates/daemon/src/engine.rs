@@ -427,7 +427,7 @@ impl Engine {
             let (_, prefix) = self.loaded.iter().find(|(i, _)| *i == id)?;
             let prefix_seg = prefix.overall(ord)?;
             match segment.as_mut() {
-                Some(seg) => seg.absorb(&prefix_seg),
+                Some(seg) => absorb_prefix(seg, &prefix_seg),
                 None => segment = Some(prefix_seg),
             }
             let mut all = crate::history::visit_members(prefix, ord);
@@ -998,7 +998,7 @@ impl Engine {
                     && let Some(prefix_seg) = prefix.overall(ordinal)
                 {
                     match combined.as_mut() {
-                        Some(seg) => seg.absorb(&prefix_seg),
+                        Some(seg) => absorb_prefix(seg, &prefix_seg),
                         None => combined = Some(prefix_seg),
                     }
                 }
@@ -1347,6 +1347,17 @@ impl Engine {
             raid,
         }
     }
+}
+
+/// A visit's live Overall: the live meter's members with the lazily loaded
+/// prefix's merged in. The prefix holds the visit's first members, so the
+/// Σ is read by their game (`Meter::overall`'s rule, R8): build, edition
+/// and log version from the prefix, as a full replay gives them.
+fn absorb_prefix(seg: &mut wowdps_core::meter::Segment, prefix: &wowdps_core::meter::Segment) {
+    seg.absorb(prefix);
+    seg.build = prefix.build;
+    seg.project_id = prefix.project_id;
+    seg.log_version = prefix.log_version;
 }
 
 /// v35 (R25): does a session of `kind` use the raid timeline? The window

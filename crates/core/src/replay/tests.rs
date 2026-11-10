@@ -20,17 +20,19 @@ type PlacedRow = (
     Option<UnitId>,
 );
 
-/// A placed table of the test's own: Demonic Gateway (cast) and its trip
-/// aura, Wind Rush Totem (summon) and its buff, Anti-Magic Zone's buff and
-/// Healing Rain's heal (both telling), Demonic Circle (a create).
+/// A placed table of the test's own, Retail's as proto's is: Demonic
+/// Gateway (cast) and its trip aura, Wind Rush Totem (summon) and its buff,
+/// Anti-Magic Zone's buff and Healing Rain's heal (both telling), Demonic
+/// Circle (a create).
 struct Table;
 
 impl PlacedTable for Table {
-    fn places(&self, spell: u32) -> bool {
-        matches!(spell, 111_771 | 192_077 | 48_018)
+    fn places(&self, edition: Edition, spell: u32) -> bool {
+        edition.counts_as() == Edition::Retail && matches!(spell, 111_771 | 192_077 | 48_018)
     }
-    fn tells(&self, spell: u32) -> bool {
-        matches!(spell, 113_942 | 192_082 | 145_629 | 73_921)
+    fn tells(&self, edition: Edition, spell: u32) -> bool {
+        edition.counts_as() == Edition::Retail
+            && matches!(spell, 113_942 | 192_082 | 145_629 | 73_921)
     }
 }
 
