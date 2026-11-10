@@ -117,7 +117,8 @@ static NONE: Tables = Tables {
 
 impl Tables {
     /// The tables of `edition` as it counts: Retail's for Retail and for a
-    /// log that names no edition, Forever's for Forever, none for any other.
+    /// log that names no edition, Forever's for Forever, and for any other
+    /// the table-less set, which reads Retail's open-world maps alone.
     pub(crate) fn of(edition: Edition) -> &'static Tables {
         match edition.counts_as() {
             Edition::Retail => &RETAIL,

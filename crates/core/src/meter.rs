@@ -626,8 +626,9 @@ pub(crate) fn instanced_difficulty(difficulty: u32) -> bool {
 /// logs `ZONE_CHANGE,0,"Silvermoon City",15`, the end of a key
 /// `ZONE_CHANGE,2444,"The Waking Shores",8` — so a door onto a map Map.db2
 /// calls open world (the generated `open_world_maps.rs` of the log's edition,
-/// `tables`) is read as 0, zoned out. A map the table does not know, and
-/// every map of an edition with no table, keeps the door's own difficulty.
+/// `tables`; Retail's for an edition with none of its own) is read as 0,
+/// zoned out. A map the table does not know keeps the door's own
+/// difficulty.
 pub(crate) fn door_difficulty(tables: &Tables, map_id: u32, difficulty: u32) -> u32 {
     if tables.open_world(map_id) {
         0
@@ -1576,6 +1577,20 @@ impl Segment {
             || !self.enemies.is_empty()
             || self.pvp
             || !self.death_order.is_empty()
+    }
+
+    /// R10: a visit's Overall split in two — this one the live meter's, its
+    /// later members — with `prefix`, the Overall of its earlier members
+    /// (the lazily loaded prefix a daemon attached mid-visit holds), merged
+    /// in: `absorb`, then `prefix`'s build, project id and log version, as
+    /// `Meter::overall` takes them from the first member (R8: the game the
+    /// Σ is read by). The daemon's live Overall is made this way, so it
+    /// reads as a full replay's.
+    pub fn absorb_prefix(&mut self, prefix: &Segment) {
+        self.absorb(prefix);
+        self.build = prefix.build;
+        self.project_id = prefix.project_id;
+        self.log_version = prefix.log_version;
     }
 
     /// R10: merge another segment's counters into this one (Overall
@@ -8926,7 +8941,7 @@ mod tests {
             end(90_000, "Crawth", true),
         ]);
         let mut ov = live.overall(0).expect("the live side");
-        ov.absorb(&prefix.overall(0).expect("the prefix"));
+        ov.absorb_prefix(&prefix.overall(0).expect("the prefix"));
         assert_eq!(
             death(&ov, P1),
             (5_000, 56_000, false),

@@ -473,9 +473,12 @@ pub fn generate_masks(tables: &Tables, build: &str) -> Result<Generated, String>
             named
         };
         if named.is_empty() {
-            // A mask of 0: the row names no class. Counted, not read (a
-            // class skill line may still hold another class's spells under
-            // it: Mounts' few classed rows are one class's, its others none).
+            // A mask of 0: the row names no class. Counted, not read. These
+            // are mostly the talent lines' rows (about 1,200 on Forever's
+            // client, Stormstrike among them), which the class masks leave
+            // unclassed and a later change reads by talent line; Mounts and
+            // Companions, whose rows are no one class's, must stay out of
+            // any such reading.
             unclassed += 1;
         } else {
             classes.entry(spell).or_default().extend(named);

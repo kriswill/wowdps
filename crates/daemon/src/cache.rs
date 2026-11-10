@@ -7,12 +7,9 @@
 //! log in milliseconds, and serializing per-actor hashmaps is how a cache
 //! becomes an event store by accident.
 //!
-//! Nor is the edition the scan stood in at the checkpoint
+//! The entry does keep the edition the scan stood in at the checkpoint
 //! (`ScanState::project_id`, which picks the tables a resumed scan reads):
-//! the last version line among the checkpoint's seeds names it, so a resume
-//! reads it back from the log (`index::project_id_at`) and the entries keep
-//! their layout (`MAGIC` moved to retire checkpoints scanned before the
-//! tables were per edition).
+//! a resumed scan starts past the version line that named it.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -54,8 +51,8 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // markers standing.
 // \x14: (R8) the scan reads its log's own edition's tables — a checkpoint
 // scanned by the old rule read a Forever log's doors and keys by Retail's
-// open-world and keystone tables, so its visits may differ. The layout is
-// as it was (the edition is read back from the seeds, not stored).
+// open-world and keystone tables, so its visits may differ. ScanState
+// gained `project_id`, stored as a u8 after `arena_over`.
 const MAGIC: &[u8; 8] = b"WDPSIDX\x14";
 
 pub struct IndexCache {
@@ -121,18 +118,7 @@ impl IndexCache {
         file.seek(SeekFrom::Start(start)).ok()?;
         let mut window = vec![0u8; check_len as usize];
         file.read_exact(&mut window).ok()?;
-        if fnv64(&window) != checksum {
-            return None;
-        }
-        // The edition the scan was in, read back from the seed lines the
-        // checkpoint names (the checksum covers only the window before the
-        // offset, not every seed); a log that cannot give it back is scanned
-        // whole.
-        let project_id = index::project_id_at(file, &state.seeds).ok()?;
-        Some(ScanState {
-            project_id,
-            ..state
-        })
+        (fnv64(&window) == checksum).then_some(state)
     }
 
     fn store(&self, path: &Path, file: &mut File, state: &ScanState) {
@@ -175,6 +161,7 @@ impl IndexCache {
             wire::put_u32(b, *m)
         });
         wire::put_bool(&mut buf, state.arena_over);
+        wire::put_u8(&mut buf, state.project_id);
 
         let _ = write_atomic(&self.cache_path(path), &buf);
         self.prune();
@@ -220,6 +207,7 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
     let last_zone = rd.opt(|r| r.string()).ok()?;
     let last_zone_map = rd.opt(|r| r.u32()).ok()?;
     let arena_over = rd.bool().ok()?;
+    let project_id = rd.u8().ok()?;
     rd.finish().ok()?;
     Some((
         dev,
@@ -236,8 +224,7 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
             last_zone,
             last_zone_map,
             arena_over,
-            // Not stored: `resume_state` reads it back from the log.
-            project_id: 0,
+            project_id,
             offset,
         },
     ))
@@ -431,11 +418,11 @@ mod tests {
         assert_eq!(resumed, full);
     }
 
-    /// The edition a checkpoint stood in is not stored, yet a warm start
-    /// reads the tail by its tables: a Forever log's door onto a map only
-    /// Forever's table calls open world (2980) is zoned out after the
-    /// resume as in a full scan, where Retail's table would have opened a
-    /// second visit. The entry stores no edition: its layout is as it was.
+    /// The entry keeps the edition the checkpoint stood in, and a warm
+    /// start reads the tail by its tables: a Forever log's door onto a map
+    /// only Forever's table calls open world (2980) is zoned out after the
+    /// resume as in a full scan. Read as Retail's (the id dropped or
+    /// ignored), the same resume opens a second visit.
     #[test]
     fn a_warm_start_reads_the_tail_by_the_logs_own_edition() {
         let tmp = Temp::new("edition");
@@ -449,17 +436,71 @@ mod tests {
         assert_eq!(cold.checkpoint.offset, head.len() as u64);
         let stored = std::fs::read(cache.cache_path(&log)).unwrap();
         let (_, _, _, _, decoded) = decode(&stored).unwrap();
-        assert_eq!(decoded.project_id, 0, "not stored");
+        assert_eq!(decoded.project_id, 18, "stored");
+        assert_eq!(stored.last(), Some(&18), "the entry's last byte");
 
         let door = "11/1/2026 19:30:00.000-8  ZONE_CHANGE,2980,\"Dalaran City\",1\n";
         let mut f = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
         f.write_all(door.as_bytes()).unwrap();
         drop(f);
+        let state = cache
+            .resume_state(&log, &mut File::open(&log).unwrap())
+            .expect("the entry resumes");
+        assert_eq!(state.project_id, 18);
         let warm = cache.scan_file(&log, &mut File::open(&log).unwrap());
         let full = index::scan(&mut File::open(&log).unwrap());
         assert_eq!(warm, full);
         assert_eq!(full.checkpoint.visit_count, 1, "the door zoned out");
         assert_eq!(warm.checkpoint.project_id, 18);
+
+        // The same resume with the edition lost reads the door by Retail's
+        // table, where 2980 is no open-world map: a second visit.
+        let lost = ScanState {
+            project_id: 0,
+            ..state
+        };
+        let mut file = File::open(&log).unwrap();
+        file.seek(SeekFrom::Start(lost.offset)).unwrap();
+        let wrong = index::scan_from(&mut file, lost);
+        assert_eq!(wrong.checkpoint.visit_count, 2);
+        assert_ne!(wrong, full);
+    }
+
+    /// An entry written under the previous magic (`\x13`, scanned before
+    /// the tables were per edition) is refused whole, however well formed
+    /// the rest of it is, and the log is scanned again from its start.
+    #[test]
+    fn an_entry_of_the_previous_magic_is_refused_and_rescanned() {
+        let tmp = Temp::new("oldmagic");
+        let log = tmp.0.join("WoWCombatLog.txt");
+        std::fs::copy(FIXTURE, &log).unwrap();
+        let cache = IndexCache::new(tmp.0.join("cache"));
+        cache.scan_file(&log, &mut File::open(&log).unwrap());
+        let entry = cache.cache_path(&log);
+        let mut bytes = std::fs::read(&entry).unwrap();
+        assert!(
+            cache
+                .resume_state(&log, &mut File::open(&log).unwrap())
+                .is_some(),
+            "the entry as written resumes"
+        );
+        assert_eq!(bytes[7], 0x14);
+        bytes[7] = 0x13;
+        std::fs::write(&entry, &bytes).unwrap();
+        assert!(
+            cache
+                .resume_state(&log, &mut File::open(&log).unwrap())
+                .is_none(),
+            "the previous magic is refused"
+        );
+        let rescanned = cache.scan_file(&log, &mut File::open(&log).unwrap());
+        let full = index::scan(&mut File::open(&log).unwrap());
+        assert_eq!(rescanned, full);
+        assert_eq!(
+            std::fs::read(&entry).unwrap()[7],
+            0x14,
+            "rewritten under the new magic"
+        );
     }
 
     #[test]

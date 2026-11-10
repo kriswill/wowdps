@@ -367,3 +367,65 @@ fn an_overall_reads_its_members_edition_lazy_or_full() {
         std::fs::remove_file(&path).unwrap();
     }
 }
+
+/// The daemon's live Overall, attached mid-visit across an edition: the
+/// visit's first pull is Retail's, a version line names another edition
+/// and the visit resumes with a pull open. The live meter's own Σ is that
+/// later pull's, the lazily loaded prefix holds the first; merged with
+/// `Segment::absorb_prefix` the Σ reads as the full replay's — the first
+/// member's build, edition and log version, Retail's item under the proc.
+#[test]
+fn a_live_overall_merged_with_its_prefix_reads_as_the_full_replay() {
+    let attach = visit_log(
+        "10/1/2026 20:02:00.000-7  COMBAT_LOG_VERSION,21,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18\n\
+         10/1/2026 20:02:01.000-7  ZONE_CHANGE,2769,\"Liberation of Undermine\",16\n\
+         10/1/2026 20:03:00.000-7  ENCOUNTER_START,3010,\"Cauldron of Carnage\",16,20,2769\n\
+         10/1/2026 20:03:05.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"Vexie\",0xa48,0x0,1233384,\"Eradicating Arcanocore\",64,300,300,0,0,0,0,0,nil,nil\n",
+    );
+    let whole = format!(
+        "{attach}10/1/2026 20:03:30.000-7  ENCOUNTER_END,3010,\"Cauldron of Carnage\",16,20,1,30000\n"
+    );
+    let full = meter_from_lines(whole.lines());
+    let want = read_of(&full.overall(0).unwrap());
+    assert_eq!((want.0, want.1, want.2), ((12, 1, 0), 1, 22));
+
+    let path =
+        std::env::temp_dir().join(format!("wowdps-forever-attach-{}.txt", std::process::id()));
+    std::fs::write(&path, &attach).unwrap();
+    let idx = scan(&mut std::fs::File::open(&path).unwrap());
+    let prefix = load_segment_text(&path, idx.open_visit.as_ref().unwrap())
+        .unwrap()
+        .meter();
+    // The live side the way the tailer builds it: the open pull's seeds,
+    // then everything from the live offset.
+    let bytes = attach.as_bytes();
+    let open = idx.open.as_ref().unwrap();
+    let seeds: Vec<String> = open
+        .seeds
+        .iter()
+        .map(|&(s, e)| {
+            String::from_utf8_lossy(&bytes[s as usize..e as usize])
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    let tail = String::from_utf8_lossy(&bytes[idx.live_offset as usize..]).into_owned();
+    let mut lines: Vec<&str> = tail.lines().collect();
+    let end = "10/1/2026 20:03:30.000-7  ENCOUNTER_END,3010,\"Cauldron of Carnage\",16,20,1,30000";
+    lines.push(end);
+    let live = wowdps_core::meter::meter_from_seeded(seeds.iter().map(String::as_str), lines);
+    let mut combined = live.overall(0).unwrap();
+    assert_eq!(
+        combined.project_id, 18,
+        "the live half alone reads the later edition"
+    );
+    combined.absorb_prefix(&prefix.overall(0).unwrap());
+    let got = read_of(&combined);
+    assert_eq!(
+        (got.0, got.1, got.2, &got.3),
+        (want.0, want.1, want.2, &want.3)
+    );
+    let total = |r: &Read| r.4.iter().map(|(_, a)| a).sum::<u64>();
+    assert_eq!(total(&got), total(&want));
+    std::fs::remove_file(&path).unwrap();
+}
