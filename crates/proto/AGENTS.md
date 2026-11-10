@@ -44,7 +44,10 @@ the engine. Wire spec: CONTRACT.md, "Wire protocol".
   `tools/extract`); never hand-edit them. The daemon's replay cut keeps
   the lines of its spells (core's `PlacedTable`) and the replay draws
   them by it, so a new entry changes the cut (`tools/AGENTS.md`). It is a
-  stored table, not a message: changing it moves no `PROTO_VERSION`.
+  stored table, not a message: changing it moves no `PROTO_VERSION`. It
+  is Retail's: every lookup names the edition (`all`, `placed`, `tells`),
+  an edition with no table gets nothing, and another edition's table is
+  one entry in `placed::TABLES` (CONTRACT.md R8).
 - **`lua.rs` reads serializer output** (the game's `SavedVariables`); it is
   never an interpreter.
 - **`dirs.rs` is the one XDG resolver.** An empty or relative variable

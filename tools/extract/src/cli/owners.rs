@@ -1,14 +1,16 @@
-//! Retail's outputs, which another product's never take: the committed
-//! tables and their review twins in a checkout, which the meter is built
-//! from, and the caches in the data home, which the GUI and the mcp tools
-//! read. A table or cache made from another edition's client is written
-//! only where `-o` names another place (`retail_only`), checked before
+//! The outputs each edition of the game owns, which another edition's run
+//! never takes: the committed tables and their review twins in a checkout,
+//! which the meter is built from, each made from one edition's client
+//! (`tablegen::committed`), and the caches in the data home, which the GUI
+//! and the mcp tools read, all Retail's. A run writes a place it owns or
+//! one no edition does, and nothing else (`owned_only`), checked before
 //! the command reads anything.
 
 use std::path::{Component, Path, PathBuf};
 
 use super::install::Install;
 use super::{caches, data_path, tablegen};
+use wowdps_core::model::Edition;
 use wowdps_extract::game::default_product;
 
 /// A file at a wowdps checkout's root that only a checkout holds: what
@@ -20,75 +22,120 @@ pub fn cache_place(name: &str) -> String {
     format!("the data home's {name}")
 }
 
-/// Refuse the places a command would write when `install` reads another
-/// product than Retail's and one of them is Retail's: its `-o` when `out`
-/// resolves to a committed table or twin or to a data-home cache (whatever
-/// its spelling, `..` or symlinks), or `beside`, the file it writes next
-/// to `out` and named from it (a table's review twin), likewise; or, with
-/// no `-o`, its default `place`, which is always Retail's. Retail's
-/// product writes wherever it did.
-pub fn retail_only(
+/// Refuse the places a command would write that another product owns: its
+/// `-o` when `out` resolves to a committed table or twin made from another
+/// edition's client, or, for any product but Retail's, to a data-home cache
+/// (whatever its spelling, `..` or symlinks); `beside`, the file it writes
+/// next to `out` and named from it (a table's review twin), likewise; or,
+/// with no `-o`, its default `place`, which is Retail's, for any product
+/// but Retail's. A run writes its own edition's places and any place no
+/// edition owns.
+pub fn owned_only(
     install: &Install,
     out: Option<&Path>,
     beside: Option<&Path>,
     place: &str,
 ) -> Result<(), String> {
-    let retail = default_product();
-    if install.product == retail {
-        return Ok(());
-    }
-    let what = match out {
-        None => place.to_string(),
-        Some(out) => {
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let caches: Vec<PathBuf> = caches::CACHES
-                .iter()
-                .filter_map(|name| data_path(name).ok())
-                .collect();
-            let own = retail_place(out, &cwd, &caches).map(|found| (found, None));
-            let twin = beside.and_then(|b| retail_place(b, &cwd, &caches).map(|f| (f, Some(b))));
-            match own.or(twin) {
-                Some((found, None)) => format!("-o {}: {found}", out.display()),
-                Some((found, Some(b))) => format!(
-                    "-o {} writes {} beside it: {found}",
-                    out.display(),
-                    b.display()
-                ),
-                None => return Ok(()),
-            }
-        }
+    let refuse = |what: String, owner: Edition| {
+        Err(format!(
+            "{what} is {}'s (product {}); product {} needs -o naming another place",
+            owner.label(),
+            owner.product().unwrap_or_default(),
+            install.product
+        ))
     };
-    Err(format!(
-        "{what} is Retail's (product {retail}); product {} needs -o naming another place",
-        install.product
-    ))
+    let Some(out) = out else {
+        return if install.product == default_product() {
+            Ok(())
+        } else {
+            refuse(place.to_string(), Edition::Retail)
+        };
+    };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let caches: Vec<PathBuf> = caches::CACHES
+        .iter()
+        .filter_map(|name| data_path(name).ok())
+        .collect();
+    let own = owned_places(out, &cwd, &caches)
+        .into_iter()
+        .map(|f| (f, None));
+    let twin = beside.into_iter().flat_map(|b| {
+        owned_places(b, &cwd, &caches)
+            .into_iter()
+            .map(move |f| (f, Some(b)))
+    });
+    for (found, b) in own.chain(twin) {
+        if found.owner.product() == Some(install.product.as_str()) {
+            continue;
+        }
+        let what = match b {
+            None => format!("-o {}: {}", out.display(), found.place),
+            Some(b) => format!(
+                "-o {} writes {} beside it: {}",
+                out.display(),
+                b.display(),
+                found.place
+            ),
+        };
+        return refuse(what, found.owner);
+    }
+    Ok(())
 }
 
-/// The Retail output `out` (relative to `cwd`) reaches, if any: a
-/// committed table or review twin of a wowdps checkout, or one of
-/// `caches`, compared as the file system resolves them. `out` reaches
-/// both what it resolves to and where a write to it lands, which differ
-/// when its last component is a symlink: the writers rename a finished
-/// file over the name, which replaces the link rather than its target,
-/// so a committed table replaced by a link in its checkout is still hit.
-fn retail_place(out: &Path, cwd: &Path, caches: &[PathBuf]) -> Option<String> {
+/// An output an edition owns: how a refusal names it, and the edition.
+#[derive(Debug, PartialEq, Eq)]
+struct Owned {
+    place: String,
+    owner: Edition,
+}
+
+/// The owned outputs `out` (relative to `cwd`) reaches: a committed table
+/// or review twin of a wowdps checkout, its edition's, or one of `caches`,
+/// Retail's, compared as the file system resolves them. `out` reaches both
+/// what it resolves to and where a write to it lands, which differ when its
+/// last component is a symlink: the writers rename a finished file over the
+/// name, which replaces the link rather than its target, so a committed
+/// table replaced by a link in its checkout is still hit, and a link from
+/// one edition's table to another's reaches both.
+fn owned_places(out: &Path, cwd: &Path, caches: &[PathBuf]) -> Vec<Owned> {
     let places = [Some(resolved(out, cwd)), landing(out, cwd)];
-    for out in places.iter().flatten() {
-        for rel in tablegen::committed() {
-            // The checkout `out` would lie in, were it this file of one.
-            let root = out.ancestors().nth(rel.components().count());
-            if out.ends_with(&rel) && root.is_some_and(|r| r.join(CHECKOUT_MARK).is_file()) {
-                return Some(format!("the committed {}", rel.display()));
-            }
+    places
+        .iter()
+        .flatten()
+        .filter_map(|out| owned_at(out, cwd, caches))
+        .collect()
+}
+
+/// The owned output at `out`, a path already resolved, if any.
+fn owned_at(out: &Path, cwd: &Path, caches: &[PathBuf]) -> Option<Owned> {
+    for (owner, rel) in tablegen::committed() {
+        // The checkout `out` would lie in, were it this file of one.
+        let root = out.ancestors().nth(rel.components().count());
+        if out.ends_with(&rel) && root.is_some_and(|r| r.join(CHECKOUT_MARK).is_file()) {
+            let place = format!("the committed {}", rel.display());
+            return Some(Owned { place, owner });
         }
-        for cache in caches {
-            if resolved(cache, cwd) == *out {
-                let name = cache.file_name().unwrap_or_default().to_string_lossy();
-                return Some(cache_place(&name));
-            }
+    }
+    for cache in caches {
+        if resolved(cache, cwd) == out {
+            let name = cache.file_name().unwrap_or_default().to_string_lossy();
+            let place = cache_place(&name);
+            return Some(Owned {
+                place,
+                owner: Edition::Retail,
+            });
         }
     }
     None
+}
+
+/// The first place `out` reaches, as `owned_places` names it, for the tests.
+#[cfg(test)]
+fn place_of(out: &Path, cwd: &Path, caches: &[PathBuf]) -> Option<String> {
+    owned_places(out, cwd, caches)
+        .into_iter()
+        .next()
+        .map(|o| o.place)
 }
 
 /// Where a rename onto `path` (relative to `cwd`) lands: its directory
@@ -142,7 +189,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("wowdps-retail-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wowdps-owners-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.canonicalize().unwrap()
@@ -152,11 +199,40 @@ mod tests {
     fn the_committed_files_are_every_table_and_twin() {
         let root = checkout();
         let committed = tablegen::committed();
-        assert_eq!(committed.len(), 12, "8 tables, 4 review twins");
-        for rel in &committed {
+        assert_eq!(
+            committed.len(),
+            16,
+            "Retail's 8 tables and 4 review twins, Forever's 4 tables"
+        );
+        for (_, rel) in &committed {
             assert!(root.join(rel).is_file(), "{}", rel.display());
         }
         assert!(root.join(CHECKOUT_MARK).is_file());
+    }
+
+    /// A committed file is its edition's: Forever's under its directory,
+    /// Retail's beside it of the same name, and a cache Retail's.
+    #[test]
+    fn a_committed_file_is_found_with_its_edition() {
+        let root = checkout();
+        let owner = |rel: &str| {
+            let found = owned_places(&root.join(rel), Path::new("/"), &[]);
+            found.into_iter().next().map(|o| o.owner)
+        };
+        assert_eq!(
+            owner("crates/core/src/class_spells.rs"),
+            Some(Edition::Retail)
+        );
+        assert_eq!(
+            owner("crates/core/src/forever/class_spells.rs"),
+            Some(Edition::Forever)
+        );
+        assert_eq!(
+            owner("crates/core/src/forever/open_world_maps.rs"),
+            Some(Edition::Forever)
+        );
+        assert_eq!(owner("crates/core/src/forever/role_spells.rs"), None);
+        assert_eq!(owner("crates/core/src/forever.rs"), None);
     }
 
     /// A committed file is found whatever spells it: absolute, relative
@@ -166,10 +242,10 @@ mod tests {
     fn a_committed_file_is_found_however_it_is_spelled() {
         let root = checkout();
         let src = root.join("crates/core/src");
-        let found = |out: &str, cwd: &Path| retail_place(Path::new(out), cwd, &[]);
+        let found = |out: &str, cwd: &Path| place_of(Path::new(out), cwd, &[]);
         let class = Some("the committed crates/core/src/class_spells.rs".to_string());
         let abs = src.join("class_spells.rs");
-        assert_eq!(retail_place(&abs, Path::new("/"), &[]), class);
+        assert_eq!(place_of(&abs, Path::new("/"), &[]), class);
         assert_eq!(found("crates/core/src/class_spells.rs", &root), class);
         assert_eq!(found("class_spells.rs", &src), class);
         assert_eq!(
@@ -217,34 +293,34 @@ mod tests {
         for name in ["class_spells.rs", "role_spells.expected.md"] {
             std::os::unix::fs::symlink(&target, src.join(name)).unwrap();
             let want = Some(format!("the committed crates/core/src/{name}"));
-            assert_eq!(retail_place(&src.join(name), Path::new("/"), &[]), want);
-            assert_eq!(retail_place(Path::new(name), &src, &[]), want);
+            assert_eq!(place_of(&src.join(name), Path::new("/"), &[]), want);
+            assert_eq!(place_of(Path::new(name), &src, &[]), want);
             let linked = dir.join("src");
             let _ = std::fs::remove_file(&linked);
             std::os::unix::fs::symlink(&src, &linked).unwrap();
-            assert_eq!(retail_place(&linked.join(name), Path::new("/"), &[]), want);
+            assert_eq!(place_of(&linked.join(name), Path::new("/"), &[]), want);
         }
-        assert_eq!(retail_place(&target, Path::new("/"), &[]), None);
+        assert_eq!(place_of(&target, Path::new("/"), &[]), None);
 
         let home = dir.join("data/wowdps");
         std::fs::create_dir_all(&home).unwrap();
         std::os::unix::fs::symlink(&target, home.join("talents.json")).unwrap();
         let caches: Vec<PathBuf> = caches::CACHES.iter().map(|n| home.join(n)).collect();
         assert_eq!(
-            retail_place(&home.join("talents.json"), Path::new("/"), &caches),
+            place_of(&home.join("talents.json"), Path::new("/"), &caches),
             Some("the data home's talents.json".into())
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Anywhere else is not Retail's: a file of the same name elsewhere, a
+    /// Anywhere else is no edition's: a file of the same name elsewhere, a
     /// path shaped like a checkout's that is no checkout, a path in no
     /// directory that exists, a source file of the checkout no generator
     /// writes.
     #[test]
-    fn elsewhere_is_not_retails() {
+    fn elsewhere_is_no_editions() {
         let dir = scratch("elsewhere");
-        let none = |out: &Path| retail_place(out, Path::new("/"), &[]);
+        let none = |out: &Path| place_of(out, Path::new("/"), &[]);
         assert_eq!(none(&dir.join("class_spells.rs")), None);
         let shaped = dir.join("crates/core/src");
         std::fs::create_dir_all(&shaped).unwrap();
@@ -268,7 +344,7 @@ mod tests {
         let dir = scratch("caches");
         let home = dir.join("data/wowdps");
         let caches: Vec<PathBuf> = caches::CACHES.iter().map(|n| home.join(n)).collect();
-        let found = |out: PathBuf| retail_place(&out, Path::new("/"), &caches);
+        let found = |out: PathBuf| place_of(&out, Path::new("/"), &caches);
         for exists in [false, true] {
             if exists {
                 std::fs::create_dir_all(&home).unwrap();
@@ -310,14 +386,14 @@ mod tests {
         std::os::unix::fs::symlink(&home, dir.join("s")).unwrap();
         let out = dir.join("s/missing/../talents.json");
         assert_eq!(
-            retail_place(&out, Path::new("/"), &caches),
+            place_of(&out, Path::new("/"), &caches),
             Some("the data home's talents.json".into())
         );
         // `..` after a missing component, then into a symlinked directory.
         let src = checkout().join("crates/core/src");
         std::os::unix::fs::symlink(&src, dir.join("src")).unwrap();
         assert_eq!(
-            retail_place(&dir.join("gone/../src/role_spells.rs"), Path::new("/"), &[]),
+            place_of(&dir.join("gone/../src/role_spells.rs"), Path::new("/"), &[]),
             Some("the committed crates/core/src/role_spells.rs".into())
         );
 
@@ -333,7 +409,7 @@ mod tests {
         for (cached, written) in [("linkhome", "realhome"), ("realhome", "linkhome")] {
             let out = dir.join(written).join("wowdps/talents.json");
             assert_eq!(
-                retail_place(&out, Path::new("/"), &by(cached)),
+                place_of(&out, Path::new("/"), &by(cached)),
                 Some("the data home's talents.json".into()),
                 "caches under {cached}, -o under {written}"
             );
@@ -342,28 +418,28 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Retail's product writes wherever it did; another is refused no
-    /// `-o`, an `-o` that is Retail's, and an `-o` whose twin beside it
-    /// would be, in words that read right for each, and let through to
-    /// anywhere else.
+    /// Retail's product writes wherever it did but on another edition's
+    /// table; another is refused no `-o`, an `-o` that is Retail's, and an
+    /// `-o` whose twin beside it would be, in words that read right for
+    /// each, and let through to anywhere else.
     #[test]
-    fn only_another_product_is_refused_and_only_retails_places() {
+    fn another_products_place_is_refused_and_anywhere_else_is_not() {
         let root = checkout();
         let committed = root.join("crates/core/src/class_spells.rs");
         let place = "the committed crates/core/src/class_spells.rs";
-        assert!(retail_only(&install("wow"), None, None, place).is_ok());
-        assert!(retail_only(&install("wow"), Some(&committed), None, place).is_ok());
+        assert!(owned_only(&install("wow"), None, None, place).is_ok());
+        assert!(owned_only(&install("wow"), Some(&committed), None, place).is_ok());
         let tail = "is Retail's (product wow); product wowf needs -o naming another place";
         assert_eq!(
-            retail_only(&install("wowf"), None, None, place).unwrap_err(),
+            owned_only(&install("wowf"), None, None, place).unwrap_err(),
             format!("{place} {tail}")
         );
-        let e = retail_only(&install("wowf"), Some(&committed), None, place).unwrap_err();
+        let e = owned_only(&install("wowf"), Some(&committed), None, place).unwrap_err();
         assert_eq!(e, format!("-o {}: {place} {tail}", committed.display()));
 
         let stem = root.join("crates/core/src/proc_spells");
         let twin = root.join("crates/core/src/proc_spells.expected.md");
-        let e = retail_only(&install("wowf"), Some(&stem), Some(&twin), place).unwrap_err();
+        let e = owned_only(&install("wowf"), Some(&stem), Some(&twin), place).unwrap_err();
         assert_eq!(
             e,
             format!(
@@ -372,12 +448,83 @@ mod tests {
                 twin.display()
             )
         );
-        assert!(retail_only(&install("wow"), Some(&stem), Some(&twin), place).is_ok());
+        assert!(owned_only(&install("wow"), Some(&stem), Some(&twin), place).is_ok());
 
         let dir = scratch("allowed");
         let elsewhere = dir.join("class_spells.rs");
         let beside = dir.join("class_spells.expected.md");
-        assert!(retail_only(&install("wowf"), Some(&elsewhere), Some(&beside), place).is_ok());
+        for product in ["wowf", "wow"] {
+            let i = install(product);
+            assert!(
+                owned_only(&i, Some(&elsewhere), Some(&beside), place).is_ok(),
+                "{product}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Forever's committed table is Forever's own: its run writes it, by
+    /// any spelling, and Retail's is refused it, as is a product neither
+    /// edition names; Forever's run is still refused Retail's.
+    #[test]
+    fn each_editions_table_is_written_by_its_own_run_alone() {
+        let root = checkout();
+        let forever = root.join("crates/core/src/forever/class_spells.rs");
+        let retail = root.join("crates/core/src/class_spells.rs");
+        let place = "the committed crates/core/src/class_spells.rs";
+        assert!(owned_only(&install("wowf"), Some(&forever), None, place).is_ok());
+        let spelled = root.join("crates/core/src/../src/forever/./class_spells.rs");
+        assert!(owned_only(&install("wowf"), Some(&spelled), None, place).is_ok());
+        let tail = "is Forever's (product wowf); product wow needs -o naming another place";
+        let e = owned_only(&install("wow"), Some(&forever), None, place).unwrap_err();
+        assert_eq!(
+            e,
+            format!(
+                "-o {}: the committed crates/core/src/forever/class_spells.rs {tail}",
+                forever.display()
+            )
+        );
+        let e = owned_only(&install("wowx"), Some(&forever), None, place).unwrap_err();
+        assert!(
+            e.ends_with("is Forever's (product wowf); product wowx needs -o naming another place"),
+            "{e}"
+        );
+        let e = owned_only(&install("wowf"), Some(&retail), None, place).unwrap_err();
+        assert!(
+            e.ends_with("is Retail's (product wow); product wowf needs -o naming another place"),
+            "{e}"
+        );
+        // A product with no table of its own still has no default place.
+        assert!(owned_only(&install("wowx"), None, None, place).is_err());
+    }
+
+    /// A link from one edition's committed table to another's reaches both:
+    /// what it resolves to and where a write to it lands. Neither edition's
+    /// run may write through it.
+    #[test]
+    fn a_link_between_two_editions_tables_is_refused_to_both() {
+        let dir = scratch("cross");
+        let tree = dir.join("checkout");
+        let mark = tree.join(CHECKOUT_MARK);
+        std::fs::create_dir_all(mark.parent().unwrap()).unwrap();
+        std::fs::write(&mark, "").unwrap();
+        let src = tree.join("crates/core/src");
+        std::fs::create_dir_all(src.join("forever")).unwrap();
+        std::fs::write(src.join("class_spells.rs"), "x").unwrap();
+        let link = src.join("forever/class_spells.rs");
+        std::os::unix::fs::symlink(src.join("class_spells.rs"), &link).unwrap();
+        let owners: Vec<Edition> = owned_places(&link, Path::new("/"), &[])
+            .into_iter()
+            .map(|o| o.owner)
+            .collect();
+        assert_eq!(owners, [Edition::Retail, Edition::Forever]);
+        let place = "the committed crates/core/src/class_spells.rs";
+        for product in ["wow", "wowf"] {
+            assert!(
+                owned_only(&install(product), Some(&link), None, place).is_err(),
+                "{product}"
+            );
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

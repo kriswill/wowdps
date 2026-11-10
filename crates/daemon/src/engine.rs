@@ -427,7 +427,7 @@ impl Engine {
             let (_, prefix) = self.loaded.iter().find(|(i, _)| *i == id)?;
             let prefix_seg = prefix.overall(ord)?;
             match segment.as_mut() {
-                Some(seg) => seg.absorb(&prefix_seg),
+                Some(seg) => seg.absorb_prefix(&prefix_seg),
                 None => segment = Some(prefix_seg),
             }
             let mut all = crate::history::visit_members(prefix, ord);
@@ -998,7 +998,7 @@ impl Engine {
                     && let Some(prefix_seg) = prefix.overall(ordinal)
                 {
                     match combined.as_mut() {
-                        Some(seg) => seg.absorb(&prefix_seg),
+                        Some(seg) => seg.absorb_prefix(&prefix_seg),
                         None => combined = Some(prefix_seg),
                     }
                 }

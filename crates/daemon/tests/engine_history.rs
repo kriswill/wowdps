@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use wowdps_core::index::{self, load_segment_text};
 use wowdps_core::tail::TailEvent;
-use wowdps_daemon::engine::{Built, Engine, LoadoutBuilt};
+use wowdps_daemon::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
 use wowdps_model::{ListRow, SegmentId, SegmentKind, View};
 use wowdps_proto::{DaemonMsg, SegmentRef, is_loading_status};
 
@@ -414,5 +414,133 @@ fn a_live_visits_overall_absorbs_its_scanned_prefix() {
     // pull absorbed the merged row is strictly more than either half.
     assert!(merged_top > live_top, "{merged_top} vs live {live_top}");
     assert!(merged_top > 185_370, "{merged_top}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// R8 mid-visit attach across an edition: a visit's first pull was logged
+/// by Retail's client, then a version line names another edition (its own
+/// build and log version) and the visit resumes with a pull still open when
+/// the daemon starts. The live Overall merges the scanned prefix into the
+/// live members and is read by the first member's game, as a full replay's
+/// is: its drill nests the trinket proc under Retail's item, and the card
+/// the history store is handed names Retail's build, edition and log
+/// version, never the later line's.
+#[test]
+fn a_live_overall_reads_its_first_members_edition() {
+    const DAY: &str = "10/1/2026";
+    let line = |t: &str, rest: &str| format!("{DAY} {t}.000-7  {rest}\n");
+    let hit = |t: &str, amount: u32| {
+        line(
+            t,
+            &format!(
+                "SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"Vexie\",0xa48,0x0,1233384,\"Eradicating Arcanocore\",64,{amount},{amount},0,0,0,0,0,nil,nil"
+            ),
+        )
+    };
+    let mut text = String::new();
+    text += &line(
+        "20:00:00",
+        "COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1",
+    );
+    text += &line(
+        "20:00:01",
+        "ZONE_CHANGE,2769,\"Liberation of Undermine\",16",
+    );
+    text += &line(
+        "20:01:00",
+        "ENCOUNTER_START,3009,\"Vexie and the Geargrinders\",16,20,2769",
+    );
+    text += &hit("20:01:05", 500);
+    text += &line(
+        "20:01:30",
+        "ENCOUNTER_END,3009,\"Vexie and the Geargrinders\",16,20,1,30000",
+    );
+    text += &line(
+        "20:02:00",
+        "COMBAT_LOG_VERSION,21,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18",
+    );
+    text += &line(
+        "20:02:01",
+        "ZONE_CHANGE,2769,\"Liberation of Undermine\",16",
+    );
+    text += &line(
+        "20:03:00",
+        "ENCOUNTER_START,3010,\"Cauldron of Carnage\",16,20,2769",
+    );
+    text += &hit("20:03:05", 300);
+    let dir = std::env::temp_dir().join(format!("wowdps-engine-edition-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("live.txt");
+    std::fs::write(&path, &text).unwrap();
+
+    let (mut e, path) = boot(path.to_str().unwrap());
+    let (overall, row) = entries(&e)
+        .into_iter()
+        .find(|(_, r)| r.kind == SegmentKind::Overall)
+        .unwrap();
+    assert!(row.live, "the visit is under way");
+    let drill = |e: &mut Engine| {
+        e.build_segment(
+            SegmentRef::Id(overall),
+            View::Damage,
+            None,
+            Some("Player-1-A"),
+            None,
+            None,
+            None,
+        )
+    };
+    let cold = drill(&mut e);
+    install(&mut e, &path, cold);
+    let DaemonMsg::Snapshot {
+        rows, breakdown, ..
+    } = ready(drill(&mut e))
+    else {
+        panic!("a snapshot");
+    };
+    assert_eq!(
+        rows.iter().map(|r| r.amount).sum::<u64>(),
+        800,
+        "both pulls"
+    );
+    let groups: Vec<String> = breakdown
+        .unwrap()
+        .tree
+        .groups
+        .into_iter()
+        .map(|g| g.key)
+        .collect();
+    assert_eq!(groups, ["item:242394"], "Retail's item table");
+
+    // The pull ends and a door into another instance closes the visit.
+    let mut events = Vec::new();
+    let fresh = [
+        line(
+            "20:03:30",
+            "ENCOUNTER_END,3010,\"Cauldron of Carnage\",16,20,1,30000",
+        ),
+        line("20:04:00", "ZONE_CHANGE,2526,\"Algeth'ar Academy\",23"),
+    ];
+    e.on_tail(
+        TailEvent::Lines(fresh.iter().map(|l| l.trim_end().to_string()).collect()),
+        &mut events,
+    );
+    assert!(
+        events
+            .iter()
+            .any(|ev| matches!(ev, EngineEvent::Closed(id) if *id == overall))
+    );
+    assert!(
+        e.closed_needs_prefix(overall).is_none(),
+        "the prefix is resident"
+    );
+    let fight = e.take_closed(overall).unwrap();
+    let seg = &fight.segment;
+    assert_eq!(seg.kind, SegmentKind::Overall);
+    assert_eq!(
+        (seg.build, seg.project_id, seg.log_version),
+        ((12, 1, 0), 1, 22),
+        "the first member's game"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -20,9 +20,10 @@ what it does and how to run it.
   `talent-art.bin`), and every reader draws without them.
 - **Generated files are never hand-edited.** The committed tables
   (`crates/core/src/*_spells.rs`, `keystone_timers.rs`,
-  `open_world_maps.rs`, `crates/proto/src/placed/placed_spells.rs`) hold
-  factual identifiers only and are regenerated once per game patch. A generator change reruns it and
-  commits its output with it.
+  `open_world_maps.rs`, `crates/proto/src/placed/placed_spells.rs`, and
+  Forever's under `crates/core/src/forever/`) hold factual identifiers
+  only and are regenerated once per game patch. A generator change reruns
+  it and commits its output with it.
 - **Every generator sources `tools/lib.sh`:** it builds the extractor once
   (`build_extract`), fetches the schemas the command itself names (`$extract tables
   COMMAND`) and the TACT keys, and finds the upscaler. Never keep a table
@@ -33,11 +34,16 @@ what it does and how to run it.
   Output is deterministic per build.
 - **One edition at a time, Retail's by default.** The product read is
   `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
-  names another (Forever's `wowf`). The committed tables, their review
-  twins and the caches in the data home are Retail's: the extractor
-  refuses to write another product's output to any of them, however `-o`
-  spells it, and what it writes elsewhere names the product beside the
-  build.
+  names another (Forever's `wowf`). Each committed table and review twin
+  is one edition's (`tablegen::committed`): Retail's beside the code,
+  Forever's class, item, keystone and open-world tables under
+  `crates/core/src/forever/`. A table script passes `--checkout "$root"`,
+  so a run with no `-o` writes its own edition's committed table, and one
+  whose edition has none of that table needs `-o`. The extractor refuses
+  any product's output on another edition's committed file, Retail's
+  included, however `-o` spells it (`cli/owners.rs`). The caches in the
+  data home are Retail's alone: another product's needs `-o` elsewhere.
+  What a non-Retail run writes names the product beside the build.
 - **Curated tables need two proofs.** `role_spells`, `proc_spells` and
   `placed_spells` are hand lists in `tools/extract/src/` (`rolegen.rs`,
   `procgen.rs`, `placegen.rs`) that the generator checks against the
@@ -86,6 +92,7 @@ tools/gen-class-spells.sh      # class_spells.rs (R8)
 tools/gen-keystone-timers.sh   # keystone_timers.rs (R10)
 tools/gen-open-world-maps.sh   # open_world_maps.rs (R10)
 tools/gen-item-spells.sh       # item_spells.rs (R12; SpellEffect is big, be patient)
+tools/gen-class-spells.sh --product wowf   # and the other three: Forever's, crates/core/src/forever/
 tools/gen-role-spells.sh       # role_spells.rs (R18, curated)
 tools/gen-absorb-spells.sh     # absorb_spells.rs (R20)
 tools/gen-proc-spells.sh       # proc_spells.rs (R26, curated)

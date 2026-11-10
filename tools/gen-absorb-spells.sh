@@ -23,9 +23,9 @@
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
 #   logs_dir, or a scan of the install roots (Steam compatdata on
 #   Linux, /Applications and ~/Applications on macOS).
-#   --product ROW: another edition of the game (tools/lib.sh); its table
-#   and review twin go only where -o FILE names, never over the committed
-#   ones.
+#   --product ROW: another edition of the game (tools/lib.sh); no edition
+#   but Retail has this table yet, so its table and review twin go only
+#   where -o FILE names, never over a committed one.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,8 +38,9 @@ build_extract
 fetch_dbds gen-absorb-spells "$work"
 fetch_keys "$work/tactkeys.txt"
 
-# The words given come last, so a -o among them wins.
+# The words given come last, so a -o among them wins; without one the
+# table goes to its edition's committed file in this checkout.
 "$extract" gen-absorb-spells \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" \
     --census "$root/tools/absorb-spells-census.csv" \
-    -o "$root/crates/core/src/absorb_spells.rs" "$@"
+    --checkout "$root" "$@"

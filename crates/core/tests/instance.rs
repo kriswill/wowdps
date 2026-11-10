@@ -314,7 +314,7 @@ fn an_attach_mid_visit_composes_to_the_full_replay() {
 
     // The daemon's LiveOverall merge: live members + the lazy prefix.
     let mut combined = live.overall(2).expect("the open pull is a live member");
-    combined.absorb(&prefix.overall(2).expect("prefix holds the closed members"));
+    combined.absorb_prefix(&prefix.overall(2).expect("prefix holds the closed members"));
 
     let want = meter.overall(2).unwrap();
     assert_eq!(
@@ -769,7 +769,7 @@ fn a_pull_behind_a_door_logged_at_zero_zones_in() {
     assert_eq!(live.visits().len(), 2, "the seeds rebuilt both visits");
     assert_eq!(live.segments().last().and_then(|s| s.visit), Some(1));
     let mut combined = live.overall(1).expect("the open pull is a live member");
-    combined.absorb(&lazy(bytes, open).overall(1).expect("the closed members"));
+    combined.absorb_prefix(&lazy(bytes, open).overall(1).expect("the closed members"));
     let want = meter.overall(1).expect("the Mythic Σ");
     assert_eq!(
         amounts(&combined, View::Damage),

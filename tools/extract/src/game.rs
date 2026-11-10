@@ -88,7 +88,8 @@ fn logs_dir_from_config(text: &str) -> Option<String> {
 }
 
 /// The product read where none is named: Retail's (`Edition::product`),
-/// whose client every committed table and every cache's reader is made for.
+/// whose client every cache's reader and the committed tables beside the
+/// code are made for (another edition's sit in a directory of its own).
 pub fn default_product() -> &'static str {
     // Retail always has a product; were it ever to lose it, the empty name
     // has no row and the lookup's error lists the rows there are.
@@ -198,9 +199,10 @@ impl Game {
 
     /// The build as what is made from it names it (a table's header, the
     /// talent dataset's build, the spell tips' stamp): the build alone for
-    /// Retail's product, as every committed table names it, and with the
-    /// product beside it for any other, so nothing made from another
-    /// edition's client is ever read as Retail's.
+    /// Retail's product, as Retail's committed tables name it, and with the
+    /// product beside it for any other (Forever's committed tables among
+    /// them), so nothing made from another edition's client is ever read as
+    /// Retail's.
     pub fn build_label(&self) -> String {
         if self.product == default_product() {
             self.build.clone()

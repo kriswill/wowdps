@@ -13,24 +13,27 @@ use std::path::Path;
 
 use wowdps_core::index::{self, SegmentMeta, load_segment_text};
 use wowdps_core::meter::SegmentKind;
+use wowdps_core::model::Edition;
 use wowdps_core::model::replay::{Cut, EventKind, PlacedKind, UnitKind};
 use wowdps_core::replay::{PlacedTable, cut};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures");
-const GATED: [&str; 9] = [
+const GATED: [&str; 10] = [
     "sample", "taken", "support", "spans", "shields", "stacks", "tree", "relog", "replay",
+    "forever",
 ];
 
 /// The fixtures' placed spells — check.awk's `PLACE` / `TELL`, a subset of
-/// proto's generated `placed` table.
+/// proto's generated `placed` table, which is Retail's alone.
 struct Fixtures;
 
 impl PlacedTable for Fixtures {
-    fn places(&self, spell: u32) -> bool {
-        matches!(spell, 111_771 | 192_077 | 48_018)
+    fn places(&self, edition: Edition, spell: u32) -> bool {
+        edition.counts_as() == Edition::Retail && matches!(spell, 111_771 | 192_077 | 48_018)
     }
-    fn tells(&self, spell: u32) -> bool {
-        matches!(spell, 113_942 | 192_082 | 145_629 | 73_921)
+    fn tells(&self, edition: Edition, spell: u32) -> bool {
+        edition.counts_as() == Edition::Retail
+            && matches!(spell, 113_942 | 192_082 | 145_629 | 73_921)
     }
 }
 

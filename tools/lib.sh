@@ -27,11 +27,13 @@
 # The edition of the game read is the extractor's to choose, as the
 # install is: `--product ROW` (a gen-* script passes it on with the rest
 # of its words), else $WOWDPS_PRODUCT, else `wow`, Retail's row in the
-# install's .build.info (Forever's is `wowf`). The committed tables, their
-# review twins and the caches in the data home are Retail's, so the
-# extractor refuses another product's output there, however -o spells it:
-# it goes where -o names another place, its product named beside its
-# build.
+# install's .build.info (Forever's is `wowf`). Each committed table and
+# review twin is one edition's: a table script passes `--checkout "$root"`,
+# so a run writes its own edition's committed table where it has one
+# (Retail's beside the code, Forever's under crates/core/src/forever/),
+# and the extractor refuses any product's output on another edition's,
+# however -o spells it. The caches in the data home are Retail's alone.
+# What goes elsewhere names its product beside its build.
 
 : "${root:?tools/lib.sh: set root to the checkout before sourcing it}"
 

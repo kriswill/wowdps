@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::args::Args;
 use super::install::{Install, load_tables};
-use super::retail::{cache_place, retail_only};
+use super::owners::{cache_place, owned_only};
 use super::{Cmd, cmd, data_path, make_dir, read_text};
 use wowdps_extract::atomic::{write_atomic, write_if_changed};
 use wowdps_extract::{artgen, icongen, journal, spellicongen, spelltipgen, talentgen};
@@ -63,7 +63,7 @@ const TALENTS: &str = "talents.json";
 const TALENT_ART: &str = "talent-art.bin";
 
 /// Every cache these commands write in the data home, where the GUI and
-/// the mcp tools read Retail's (`retail::retail_only`).
+/// the mcp tools read Retail's (`owners::owned_only`).
 pub const CACHES: [&str; 5] = [
     CLASS_ICONS,
     SPELL_ICONS,
@@ -92,7 +92,7 @@ pub fn icons(mut a: Args) -> Result<(), String> {
                 .into(),
         );
     }
-    retail_only(&install, out.as_deref(), None, &cache_place(CLASS_ICONS))?;
+    owned_only(&install, out.as_deref(), None, &cache_place(CLASS_ICONS))?;
     let (game, tables) = install.open_tables()?;
     let csv = tables.get(icongen::TABLE)?;
 
@@ -143,7 +143,7 @@ pub fn spell_icons(mut a: Args) -> Result<(), String> {
     let out = a.path(&["-o", "--out"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    retail_only(&install, out.as_deref(), None, &cache_place(SPELL_ICONS))?;
+    owned_only(&install, out.as_deref(), None, &cache_place(SPELL_ICONS))?;
     let out = match out {
         Some(p) => p,
         None => data_path(SPELL_ICONS)?,
@@ -183,7 +183,7 @@ pub fn spell_tips(mut a: Args) -> Result<(), String> {
     let force = a.flag(&["--force"]);
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    retail_only(
+    owned_only(
         &install,
         out.as_deref(),
         None,
@@ -261,7 +261,7 @@ pub fn talent_art(mut a: Args) -> Result<(), String> {
     let out = a.path(&["-o", "--out"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    retail_only(&install, out.as_deref(), None, &cache_place(TALENT_ART))?;
+    owned_only(&install, out.as_deref(), None, &cache_place(TALENT_ART))?;
     // A per-machine cache like the icon caches — extracted Blizzard art
     // never lands in the repository.
     let out = match out {
@@ -295,7 +295,7 @@ pub fn talent_trees(mut a: Args) -> Result<(), String> {
     let listfile = a.path(&["--listfile"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    retail_only(&install, out.as_deref(), None, &cache_place(TALENTS))?;
+    owned_only(&install, out.as_deref(), None, &cache_place(TALENTS))?;
     // A per-machine cache like the icon caches — Blizzard-derived strings
     // (spell names) never land in the repository.
     let out = match out {

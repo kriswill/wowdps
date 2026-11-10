@@ -12,8 +12,20 @@
 //! daemon's `PlacedTable` over this table), and the replay draws them by
 //! it: it lives here, beside the store's codecs, because the daemon and a
 //! pure client both read it (CONTRACT.md, R29).
+//!
+//! Each edition of the game has its own table, or none: every question
+//! names the edition the log was written by (`Edition::counts_as`, a log
+//! that names none counting as Retail), and an edition with no table
+//! places nothing and tells nothing, never another edition's entry.
+//! Retail's is the only one generated so far.
+
+use wowdps_model::Edition;
 
 mod placed_spells;
+
+/// Each edition's table, by the edition it counts as. A table generated
+/// for another edition is one entry here.
+static TABLES: &[(Edition, &[Placed])] = &[(Edition::Retail, placed_spells::TABLE)];
 
 /// How the log tells where a placed spell stands. An entry lists what
 /// tells, most trusted first; the replay takes the first that does.
@@ -104,22 +116,79 @@ impl Placed {
     }
 }
 
-/// Every placed spell, by spell id.
-pub fn all() -> &'static [Placed] {
-    placed_spells::TABLE
+/// The editions that have a table, each once.
+pub fn editions() -> impl Iterator<Item = Edition> {
+    TABLES.iter().map(|&(edition, _)| edition)
 }
 
-/// The placed spell a cast or summon of `spell` makes, if any.
-pub fn placed(spell: u32) -> Option<&'static Placed> {
-    let table = placed_spells::TABLE;
+/// Every placed spell of `edition`'s table, by spell id; none for an
+/// edition with no table.
+pub fn all(edition: Edition) -> &'static [Placed] {
+    let edition = edition.counts_as();
+    TABLES
+        .iter()
+        .find(|&&(e, _)| e == edition)
+        .map_or(&[], |&(_, table)| table)
+}
+
+/// The placed spell a cast or summon of `spell` makes in `edition`, if any.
+pub fn placed(edition: Edition, spell: u32) -> Option<&'static Placed> {
+    let table = all(edition);
     table
         .binary_search_by_key(&spell, |p| p.spell)
         .ok()
         .and_then(|i| table.get(i))
 }
 
-/// Whether `spell` tells where some placed spell stands (a `Touch` or
-/// `Trips` spell of any entry).
-pub fn tells(spell: u32) -> bool {
-    all().iter().any(|p| p.telling().any(|id| id == spell))
+/// Whether `spell` tells where some placed spell of `edition` stands (a
+/// `Touch` or `Trips` spell of any entry).
+pub fn tells(edition: Edition, spell: u32) -> bool {
+    all(edition)
+        .iter()
+        .any(|p| p.telling().any(|id| id == spell))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Retail's table answers for Retail and for a log that names no
+    /// edition; every other edition has none, so a lookup there, of a
+    /// spell Retail's table holds or of one no table holds, is nothing.
+    #[test]
+    fn an_edition_with_no_table_places_and_tells_nothing() {
+        let gateway = 111_771;
+        let trip = 113_942;
+        for e in [Edition::Retail, Edition::Unknown(0)] {
+            assert!(placed(e, gateway).is_some(), "{e:?}");
+            assert!(tells(e, trip), "{e:?}");
+            assert!(!all(e).is_empty(), "{e:?}");
+        }
+        for e in [Edition::Forever, Edition::Classic(2), Edition::Unknown(7)] {
+            assert!(all(e).is_empty(), "{e:?}");
+            for id in [gateway, trip, 0, u32::MAX] {
+                assert!(placed(e, id).is_none(), "{e:?} {id}");
+                assert!(!tells(e, id), "{e:?} {id}");
+            }
+        }
+        for id in [0, u32::MAX] {
+            assert!(placed(Edition::Retail, id).is_none(), "{id}");
+            assert!(!tells(Edition::Retail, id), "{id}");
+        }
+        assert_eq!(editions().collect::<Vec<_>>(), [Edition::Retail]);
+    }
+
+    /// Every table is sorted by spell id, as `placed`'s search needs, and
+    /// listed once under the edition it counts as.
+    #[test]
+    fn every_table_is_sorted_and_listed_once() {
+        for (i, &(e, table)) in TABLES.iter().enumerate() {
+            assert_eq!(e, e.counts_as());
+            assert!(
+                TABLES.iter().skip(i + 1).all(|&(o, _)| o != e),
+                "{e:?} twice"
+            );
+            assert!(table.windows(2).all(|w| w[0].spell < w[1].spell), "{e:?}");
+        }
+    }
 }

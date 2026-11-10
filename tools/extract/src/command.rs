@@ -97,10 +97,14 @@ and Data/. When omitted, the install is located via $WOWDPS_WOW_DIR, the
 wowdps config's logs_dir, or a scan of the install roots (Steam compatdata
 on Linux, /Applications and ~/Applications on macOS). --product ROW names
 the edition of the game read, by its .build.info product (wow: Retail,
-wowf: Forever); when omitted, $WOWDPS_PRODUCT, else wow. The committed
-tables and the caches in the data home are Retail's: another product's
-output needs -o naming another place, and its build is written with the
-product beside it. --keys takes TACT keys in wowdev TACTKeys format;
+wowf: Forever); when omitted, $WOWDPS_PRODUCT, else wow. Each committed
+table is one edition's and the caches in the data home are Retail's: with
+no -o a table generator writes its own edition's committed table (under
+--checkout DIR, else the working directory; -o, when given, wins over
+--checkout), and a product with no such table or cache needs -o naming
+another place. No run writes another edition's committed table, however -o
+spells it, and what a product other than Retail's makes names it beside
+its build. --keys takes TACT keys in wowdev TACTKeys format;
 without a key, encrypted chunks decode to zeroes exactly like the game
 client. The gen-* commands expect --dbd-dir to hold <Table>.dbd schemas
 for the tables they read (the tools/gen-*.sh wrappers download them).";

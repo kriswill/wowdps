@@ -41,6 +41,14 @@ rulings, §Fixtures). Read the ruling before changing what it governs.
   `role_spells.rs`, `absorb_spells.rs` and `proc_spells.rs` come from
   `tools/gen-*.sh` (read `tools/AGENTS.md`). `class_spells` wins over
   `item_spells`' generous trigger chase.
+- **Each table is one edition's.** Retail's sit in `src/`, Forever's in
+  `src/forever/` (class, item, keystone, open-world). Code outside tests
+  reads every table through `tables.rs` with the fight's edition
+  (`Segment::project_id`): an edition with no table of a kind gets nothing
+  of it, never another edition's entry, except open-world maps, which an
+  edition with none of its own reads from Retail's for now. A new
+  edition's table is one entry there (R8). An Overall reads its first
+  member's edition, never the meter's latest version line.
 - **A wire or store shape change** goes through `crates/proto/` and its
   rules; a meter fix that moves no shape keeps `PROTO_VERSION`.
 

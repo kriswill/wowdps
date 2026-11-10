@@ -14,13 +14,15 @@
 # Note SpellEffect is a large table (~30 MB compressed in CASC); this takes
 # noticeably longer than the class-spell generator.
 #
-# usage: tools/gen-item-spells.sh [wow-dir] [--product ROW -o FILE]
+# usage: tools/gen-item-spells.sh [wow-dir] [--product ROW] [-o FILE]
 #   wow-dir: folder holding .build.info and Data/. When omitted the tool
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
 #   logs_dir, or a scan of the install roots (Steam compatdata on
 #   Linux, /Applications and ~/Applications on macOS).
-#   --product ROW: another edition of the game (tools/lib.sh); its table
-#   goes only where -o FILE names, never over the committed one.
+#   --product ROW: another edition of the game (tools/lib.sh). Forever's
+#   (wowf) table goes to its own committed file,
+#   crates/core/src/forever/item_spells.rs; any other edition's only where
+#   -o FILE names, never over another edition's committed one.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,7 +35,8 @@ build_extract
 fetch_dbds gen-item-spells "$work"
 fetch_keys "$work/tactkeys.txt"
 
-# The words given come last, so a -o among them wins.
+# The words given come last, so a -o among them wins; without one the
+# table goes to its edition's committed file in this checkout.
 "$extract" gen-item-spells \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" \
-    -o "$root/crates/core/src/item_spells.rs" "$@"
+    --checkout "$root" "$@"

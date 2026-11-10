@@ -12,6 +12,9 @@
 # role-spell ids (ROLE, in BEGIN), never the generated Rust table; R20 (the
 # shield ledger) likewise over the fixtures' absorb-spell ids (SHIELD); R21 (the
 # stacked-debuff ledger) needs no table at all — admission is a data property.
+# Those copies, and R29's placed ids, are RETAIL's tables: a log whose
+# COMBAT_LOG_VERSION names another edition reads none of them (R8's per-edition
+# rule, `edition_tables`).
 #
 # Usage:  gawk -f check.awk sample.txt sample.txt     # file passed TWICE (2 passes)
 #   pass 1 builds the pet -> owner map (pets act before SPELL_SUMMON)
@@ -771,6 +774,13 @@ BEGIN {
     TELL[192082]  = 1   # Wind Rush
     TELL[145629]  = 1   # Anti-Magic Zone
     TELL[73921]   = 1   # Healing Rain
+    # R8 (editions): every table above is Retail's. Kept whole here, and read
+    # (ROLE, SHIELD, PLACE, TELL) only while the latest version line names
+    # Retail — `edition_tables`, at each COMBAT_LOG_VERSION of pass 2.
+    for (k in ROLE)   ROLE_R[k] = ROLE[k]
+    for (k in SHIELD) SHIELD_R[k] = SHIELD[k]
+    for (k in PLACE)  PLACE_R[k] = PLACE[k]
+    for (k in TELL)   TELL_R[k] = TELL[k]
     # The lines the parser models with a source and a destination: what R29
     # learns hostility from (an unmodelled line — a swing's _LANDED twin, a
     # drain — teaches nothing).
@@ -810,8 +820,23 @@ FNR == NR {
     next
 }
 
+# ---- R8 (editions): the tables a log reads are its own edition's, by the
+# version line's PROJECT_ID (field 7; absent or 0 counts as Retail, 1). The
+# copies in BEGIN are Retail's; every other edition — Forever's 18, a Classic
+# client's, an unlisted id — has no role, absorb or placed table, so it opens
+# no R18 span, no R20 shield and no R29 placed row, and keys no aura as R18's.
+function edition_tables(pid,   k) {
+    delete ROLE; delete SHIELD; delete PLACE; delete TELL
+    if (pid != 0 && pid != 1) return
+    for (k in ROLE_R)   ROLE[k] = ROLE_R[k]
+    for (k in SHIELD_R) SHIELD[k] = SHIELD_R[k]
+    for (k in PLACE_R)  PLACE[k] = PLACE_R[k]
+    for (k in TELL_R)   TELL[k] = TELL_R[k]
+}
+
 # ---- R6 hard boundary: close any open segment, advance the epoch (resets owners)
 ev == "COMBAT_LOG_VERSION" {
+    edition_tables($8 + 0)
     if (seen2) {
         epoch++
         if (cur && segEnd[cur] == "") segEnd[cur] = now
