@@ -8,7 +8,9 @@
 //! header flag 0x01 (offset map / "sparse") is set — variable-length records
 //! with inlined strings addressed by an offset map. Sections end with the id
 //! list, copy table, offset map, relationship data and offset-map id list
-//! (the last two swap places under flag 0x02).
+//! (the last two swap places under flag 0x02). A table with no records is
+//! the header and field structures alone: no storage infos, pallet or
+//! common data, and no sections.
 //!
 //! String fields hold offsets relative to the field's own position within a
 //! virtual blob of `[all sections' records][all sections' string blocks]`;
@@ -256,7 +258,16 @@ impl Db2 {
         }
 
         let info_count = header.field_storage_info_size as usize / STORAGE_INFO_SIZE;
-        if info_count != header.field_count as usize {
+        // Storage infos say how records hold their fields, so a table with
+        // no records has none to give: the client writes an empty table as
+        // its header and field structures alone, with no sections. That is
+        // a valid table of no rows (its columns are still the schema's
+        // layout, by `field_count`); a file missing its storage infos while
+        // it claims records or holds a section is malformed.
+        let empty = header.field_storage_info_size == 0
+            && header.record_count == 0
+            && header.section_count == 0;
+        if info_count != header.field_count as usize && !empty {
             return Err(format!(
                 "wdc5: {} storage infos but {} fields",
                 info_count, header.field_count

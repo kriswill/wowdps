@@ -4,8 +4,8 @@
 //! section); expected CSV cells are computed by hand from the same spec, so
 //! these tests pin the parser's semantics rather than its implementation.
 //! Covered: every field compression, arrays, floats, strings referenced
-//! across sections, non-inline ids, the copy table, relationship data, and
-//! a sparse (offset-map) table with inlined strings.
+//! across sections, non-inline ids, the copy table, relationship data, a
+//! sparse (offset-map) table with inlined strings, and an empty table.
 
 use wowdps_extract::{dbd::Dbd, table, wdc5::Db2};
 
@@ -1128,4 +1128,136 @@ fn structural_rejections() {
     assert!(parse_err(d).contains("offset_records_end precedes records"));
     let err = parse_err(build(&sparse(Some(vec![(0xFFFF_FF00, 4)]))));
     assert!(err.contains("sparse record 0 outside file"), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// An empty table, as the client ships one: the header and one field
+// structure per field, then nothing (no storage infos, pallet or common
+// data, encrypted ids or sections). A real client writes tables it has no
+// rows for this way, in the layout the rows would have.
+
+/// The header field `field_storage_info_size`, at byte 188.
+const STORAGE_INFO_SIZE_AT: std::ops::Range<usize> = 188..192;
+
+/// An empty table of `fields` (`field_structure`'s size and position each)
+/// under `flags` and `id_index`, its layout hash `layout`.
+fn empty_table(flags: u16, id_index: u16, layout: u32, fields: &[(i16, u16)]) -> Vec<u8> {
+    let mut b = Buf(Vec::new());
+    let n = fields.len() as u32;
+    header(
+        &mut b, 0, n, 4, 0, layout, 0, 0, flags, id_index, 0, 0, 0, 0,
+    );
+    // `header` wrote all 204 bytes, so the field is there to clear.
+    if let Some(size) = b.0.get_mut(STORAGE_INFO_SIZE_AT) {
+        size.copy_from_slice(&0u32.to_le_bytes());
+    }
+    for (size, position) in fields {
+        b.i16(*size);
+        b.u16(*position);
+    }
+    b.0
+}
+
+/// Inline ids, an unsigned int, an array and a string: four record fields.
+const EMPTY_INLINE_DBD: &str = "\
+COLUMNS
+int ID
+int MapID
+int Flags
+string Name
+
+LAYOUT 00000001
+BUILD 1.0.0.1
+$id$ID<32>
+MapID<u16>
+Flags<32>[2]
+Name
+";
+
+/// A non-inline id and relation around two record fields.
+const EMPTY_NONINLINE_DBD: &str = "\
+COLUMNS
+int ID
+string Name
+int A
+int ParentID
+
+LAYOUT 00000002
+BUILD 1.0.0.1
+$noninline,id$ID
+Name
+A<u8>
+$noninline,relation$ParentID
+";
+
+/// No records is a table all the same: no rows, and the layout's columns,
+/// arrays expanded, whether its ids are inline or not.
+#[test]
+fn an_empty_table_decodes_to_its_columns_alone() {
+    let inline = empty_table(0, 0, 1, &[(0, 0), (16, 4), (0, 6), (0, 14)]);
+    let db2 = Db2::parse(inline.clone()).unwrap();
+    assert!(db2.rows.is_empty() && db2.infos.is_empty() && db2.sections.is_empty());
+    assert_eq!(db2.fields.len(), 4);
+    assert_eq!(
+        csv_of(inline, EMPTY_INLINE_DBD).unwrap(),
+        "ID,MapID,Flags_0,Flags_1,Name\n"
+    );
+
+    let noninline = empty_table(0x04, 0, 2, &[(0, 0), (24, 4)]);
+    assert_eq!(
+        csv_of(noninline.clone(), EMPTY_NONINLINE_DBD).unwrap(),
+        "ID,Name,A,ParentID\n"
+    );
+    let dbd = Dbd::parse(EMPTY_NONINLINE_DBD).unwrap();
+    let csv = table::decode(&Db2::parse(noninline).unwrap(), &dbd).unwrap();
+    assert_eq!(csv.header, ["ID", "Name", "A", "ParentID"]);
+    assert!(csv.rows.is_empty());
+}
+
+/// Only a file with no records and no sections may leave out its storage
+/// infos; anything else missing them is malformed, as before. An empty
+/// table's field structures must be whole, and its schema must still be
+/// its own.
+#[test]
+fn an_empty_table_is_no_cover_for_a_malformed_one() {
+    let fields = [(0, 0), (16, 4), (0, 6), (0, 14)];
+    let parse_err = |data: Vec<u8>| Db2::parse(data).unwrap_err();
+
+    // Records claimed, with no storage infos to read them by.
+    let mut d = empty_table(0, 0, 1, &fields);
+    d[136..140].copy_from_slice(&1u32.to_le_bytes());
+    let err = parse_err(d);
+    assert!(err.contains("0 storage infos but 4 fields"), "{err}");
+
+    // A section, though it holds no records: one section header between
+    // the header and the field structures.
+    let mut d = empty_table(0, 0, 1, &fields);
+    d[200..204].copy_from_slice(&1u32.to_le_bytes());
+    let fields_at = d.split_off(204);
+    let mut section = Buf(d);
+    section.u64(0); // tact_key_hash
+    section.u32((204 + 40 + fields_at.len()) as u32); // file_offset: the end
+    section.bytes(&[0; 28]); // no records, strings, ids, copies or rest
+    section.bytes(&fields_at);
+    let err = parse_err(section.0);
+    assert!(err.contains("0 storage infos but 4 fields"), "{err}");
+
+    // Storage infos for some fields and not the rest.
+    let mut d = empty_table(0, 0, 1, &fields);
+    d[STORAGE_INFO_SIZE_AT].copy_from_slice(&24u32.to_le_bytes());
+    d.extend_from_slice(&[0; 24]);
+    let err = parse_err(d);
+    assert!(err.contains("1 storage infos but 4 fields"), "{err}");
+
+    // Field structures cut short.
+    let d = empty_table(0, 0, 1, &fields)[..204 + 6].to_vec();
+    let err = parse_err(d);
+    assert!(err.contains("truncated reading field"), "{err}");
+
+    // A schema whose layout has another count of record fields.
+    let err = csv_of(empty_table(0, 0, 1, &fields[..3]), EMPTY_INLINE_DBD).unwrap_err();
+    assert!(err.contains("has 4 inline fields, file has 3"), "{err}");
+    // And one that does not know the layout at all.
+    let err = csv_of(empty_table(0, 0, 9, &fields), EMPTY_INLINE_DBD).unwrap_err();
+    assert!(err.contains("layout 00000009 not in dbd"), "{err}");
 }

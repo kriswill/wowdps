@@ -180,7 +180,9 @@ mod tests {
     /// one is refused: the generator's own (`proc_spells`, no extension)
     /// or another's (`gen-role-spells` onto proc's twin, or proto's placed
     /// one). A generator with no twin goes through with the same `-o`, as
-    /// far as the absent install, and writes nothing.
+    /// far as the absent install, and writes nothing: shown in a scratch
+    /// checkout (its mark made), so a run let through could reach no file
+    /// of this one.
     #[test]
     fn a_twin_named_from_o_is_checked_too() {
         let absent = ["--wow-dir", "/nonexistent", "--dbd-dir", "/nonexistent"];
@@ -209,11 +211,23 @@ mod tests {
             assert!(e.starts_with(&head), "{name}: {e}");
             assert!(e.ends_with(REFUSED), "{name}: {e}");
         }
-        let path = committed("crates/core/src/proc_spells");
+        let scratch = std::env::temp_dir().join(format!(
+            "wowdps-extract-twin-checkout-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let mark = scratch.join(cli::retail::CHECKOUT_MARK);
+        std::fs::create_dir_all(mark.parent().unwrap()).unwrap();
+        std::fs::write(&mark, "").unwrap();
+        let path = scratch.join("crates/core/src/proc_spells");
+        let path = path.display().to_string();
         let words = [&["--product", "wowf", "-o", path.as_str()][..], &absent[..]].concat();
+        let e = run("gen-proc-spells", &words);
+        assert!(e.ends_with(REFUSED), "the scratch checkout's twin: {e}");
         let e = run("gen-class-spells", &words);
         assert!(e.contains(".build.info") && !e.contains("Retail's"), "{e}");
-        assert!(!std::path::Path::new(&path).exists(), "nothing written");
+        assert!(!scratch.join("crates/core/src").exists(), "nothing written");
+        std::fs::remove_dir_all(&scratch).unwrap();
     }
 
     /// Every table generator is refused its own committed table and twin,
