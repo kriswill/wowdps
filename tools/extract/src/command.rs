@@ -100,11 +100,10 @@ the edition of the game read, by its .build.info product (wow: Retail,
 wowf: Forever); when omitted, $WOWDPS_PRODUCT, else wow. The committed
 tables and the caches in the data home are Retail's: another product's
 output needs -o naming another place, and its build is written with the
-product beside it.
---keys takes TACT keys in wowdev TACTKeys format; without a key,
-encrypted chunks decode to zeroes exactly like the game client. The gen-*
-commands expect --dbd-dir to hold <Table>.dbd schemas for the tables they
-read (the tools/gen-*.sh wrappers download them).";
+product beside it. --keys takes TACT keys in wowdev TACTKeys format;
+without a key, encrypted chunks decode to zeroes exactly like the game
+client. The gen-* commands expect --dbd-dir to hold <Table>.dbd schemas
+for the tables they read (the tools/gen-*.sh wrappers download them).";
 
 /// A binary's commands: its name, and every command it runs, in the order
 /// its usage lists them (each module's own list, its `tables` last).

@@ -35,7 +35,7 @@ what it does and how to run it.
   `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
   names another (Forever's `wowf`). The committed tables, their review
   twins and the caches in the data home are Retail's: the extractor
-  refuses another product's output every one of them, however `-o`
+  refuses to write another product's output to any of them, however `-o`
   spells it, and what it writes elsewhere names the product beside the
   build.
 - **Curated tables need two proofs.** `role_spells`, `proc_spells` and
@@ -101,7 +101,7 @@ tools/seed-creatures.sh        # NPC classifications from Wowhead into the store
 ## Checks and the rest
 
 ```sh
-tools/extract/verify.sh [--game "$WOW_DIR"]    # the DB2 decoder vs wago.tools (network)
+tools/extract/verify.sh [--game "$WOW_DIR"] [--product ROW]   # the DB2 decoder vs wago.tools (network)
 tools/dev-unit.sh install | status | profile debug | profile release | uninstall
 tools/fetch-gpui-docs.sh [kit-version]         # the gitignored docs/gpui mirror
 wowdps-codeql [--accept] [rust|actions]        # tools/codeql.sh, gated on codeql-baseline.txt

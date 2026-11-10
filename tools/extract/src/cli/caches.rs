@@ -92,7 +92,7 @@ pub fn icons(mut a: Args) -> Result<(), String> {
                 .into(),
         );
     }
-    retail_only(&install, out.as_deref(), &cache_place(CLASS_ICONS))?;
+    retail_only(&install, out.as_deref(), None, &cache_place(CLASS_ICONS))?;
     let (game, tables) = install.open_tables()?;
     let csv = tables.get(icongen::TABLE)?;
 
@@ -143,7 +143,7 @@ pub fn spell_icons(mut a: Args) -> Result<(), String> {
     let out = a.path(&["-o", "--out"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    retail_only(&install, out.as_deref(), &cache_place(SPELL_ICONS))?;
+    retail_only(&install, out.as_deref(), None, &cache_place(SPELL_ICONS))?;
     let out = match out {
         Some(p) => p,
         None => data_path(SPELL_ICONS)?,
@@ -183,7 +183,12 @@ pub fn spell_tips(mut a: Args) -> Result<(), String> {
     let force = a.flag(&["--force"]);
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    retail_only(&install, out.as_deref(), &cache_place(spelltipgen::FILE))?;
+    retail_only(
+        &install,
+        out.as_deref(),
+        None,
+        &cache_place(spelltipgen::FILE),
+    )?;
     let started = std::time::Instant::now();
     let out = match out {
         Some(p) => p,
@@ -256,7 +261,7 @@ pub fn talent_art(mut a: Args) -> Result<(), String> {
     let out = a.path(&["-o", "--out"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    retail_only(&install, out.as_deref(), &cache_place(TALENT_ART))?;
+    retail_only(&install, out.as_deref(), None, &cache_place(TALENT_ART))?;
     // A per-machine cache like the icon caches — extracted Blizzard art
     // never lands in the repository.
     let out = match out {
@@ -290,7 +295,7 @@ pub fn talent_trees(mut a: Args) -> Result<(), String> {
     let listfile = a.path(&["--listfile"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    retail_only(&install, out.as_deref(), &cache_place(TALENTS))?;
+    retail_only(&install, out.as_deref(), None, &cache_place(TALENTS))?;
     // A per-machine cache like the icon caches — Blizzard-derived strings
     // (spell names) never land in the repository.
     let out = match out {

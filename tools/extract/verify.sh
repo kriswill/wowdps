@@ -49,7 +49,7 @@ tables=(
     GameObjects:841620
 )
 
-game="" build="" product="${WOWDPS_PRODUCT:-wow}"
+game="" build="" product=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --game) game="$2"; shift 2 ;;
@@ -57,6 +57,8 @@ while [ $# -gt 0 ]; do
         *) build="$1"; shift ;;
     esac
 done
+# An empty product is none, as the extractor reads it.
+product="${product:-${WOWDPS_PRODUCT:-wow}}"
 # Retail's runs say what they always said; another product is named.
 latest="latest" installed="local install"
 if [ "$product" != wow ]; then

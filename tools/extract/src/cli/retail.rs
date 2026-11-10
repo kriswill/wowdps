@@ -20,13 +20,19 @@ pub fn cache_place(name: &str) -> String {
     format!("the data home's {name}")
 }
 
-/// Refuse the place a command would write when `install` reads another
-/// product than Retail's and that place is one of Retail's: its `-o` when
-/// `out` resolves to a committed table or twin or to a data-home cache
-/// (whatever its spelling, `..` or symlinks), or, with no `-o`, its
-/// default `place`, which is always Retail's. Retail's product writes
-/// wherever it did.
-pub fn retail_only(install: &Install, out: Option<&Path>, place: &str) -> Result<(), String> {
+/// Refuse the places a command would write when `install` reads another
+/// product than Retail's and one of them is Retail's: its `-o` when `out`
+/// resolves to a committed table or twin or to a data-home cache (whatever
+/// its spelling, `..` or symlinks), or `beside`, the file it writes next
+/// to `out` and named from it (a table's review twin), likewise; or, with
+/// no `-o`, its default `place`, which is always Retail's. Retail's
+/// product writes wherever it did.
+pub fn retail_only(
+    install: &Install,
+    out: Option<&Path>,
+    beside: Option<&Path>,
+    place: &str,
+) -> Result<(), String> {
     let retail = default_product();
     if install.product == retail {
         return Ok(());
@@ -39,8 +45,15 @@ pub fn retail_only(install: &Install, out: Option<&Path>, place: &str) -> Result
                 .iter()
                 .filter_map(|name| data_path(name).ok())
                 .collect();
-            match retail_place(out, &cwd, &caches) {
-                Some(found) => format!("-o {}: {found}", out.display()),
+            let own = retail_place(out, &cwd, &caches).map(|found| (found, None));
+            let twin = beside.and_then(|b| retail_place(b, &cwd, &caches).map(|f| (f, Some(b))));
+            match own.or(twin) {
+                Some((found, None)) => format!("-o {}: {found}", out.display()),
+                Some((found, Some(b))) => format!(
+                    "-o {} writes {} beside it: {found}",
+                    out.display(),
+                    b.display()
+                ),
                 None => return Ok(()),
             }
         }
@@ -72,31 +85,31 @@ fn retail_place(out: &Path, cwd: &Path, caches: &[PathBuf]) -> Option<String> {
     None
 }
 
-/// `path`, made absolute against `cwd`, as the file system names it: its
-/// own symlinks resolved where it exists, else its directory's with its
-/// name rejoined, else its `.` and `..` folded by name alone (nothing of
-/// it exists to resolve).
+/// `path`, made absolute against `cwd`, where the file system would put
+/// it: walked a component at a time as the kernel walks it, each one
+/// that exists resolved with its symlinks (so the path so far is always
+/// the real one, and a `..` steps to its real parent), each one that does
+/// not exist kept by name, as the directory a command creates there will
+/// be. A symlink above a missing component, or a `..` after one, so lands
+/// where the write would.
 fn resolved(path: &Path, cwd: &Path) -> PathBuf {
-    let abs = cwd.join(path);
-    if let Ok(p) = abs.canonicalize() {
-        return p;
-    }
-    if let (Some(dir), Some(name)) = (abs.parent(), abs.file_name())
-        && let Ok(dir) = dir.canonicalize()
-    {
-        return dir.join(name);
-    }
-    let mut folded = PathBuf::new();
-    for c in abs.components() {
+    let mut real = PathBuf::new();
+    for c in cwd.join(path).components() {
         match c {
             Component::CurDir => {}
             Component::ParentDir => {
-                folded.pop();
+                real.pop();
             }
-            other => folded.push(other),
+            Component::Normal(name) => {
+                real.push(name);
+                if let Ok(p) = real.canonicalize() {
+                    real = p;
+                }
+            }
+            root => real.push(root),
         }
     }
-    folded
+    real
 }
 
 #[cfg(test)]
@@ -230,24 +243,88 @@ mod tests {
         Install::files(&mut Args::new("bin", words, &CMD)).unwrap()
     }
 
+    /// A symlink above a component that does not exist yet still counts:
+    /// `link/missing/../talents.json`, with `link` the data home's wowdps
+    /// directory, is where the write lands once `missing` is made. And a
+    /// data home reached through a symlink, its `wowdps/` not made yet, is
+    /// the same place by either spelling, from either side.
+    #[test]
+    fn a_symlink_above_a_missing_component_is_followed() {
+        let dir = scratch("missing");
+        let home = dir.join("data/wowdps");
+        std::fs::create_dir_all(&home).unwrap();
+        let caches: Vec<PathBuf> = caches::CACHES.iter().map(|n| home.join(n)).collect();
+        std::os::unix::fs::symlink(&home, dir.join("s")).unwrap();
+        let out = dir.join("s/missing/../talents.json");
+        assert_eq!(
+            retail_place(&out, Path::new("/"), &caches),
+            Some("the data home's talents.json".into())
+        );
+        // `..` after a missing component, then into a symlinked directory.
+        let src = checkout().join("crates/core/src");
+        std::os::unix::fs::symlink(&src, dir.join("src")).unwrap();
+        assert_eq!(
+            retail_place(&dir.join("gone/../src/role_spells.rs"), Path::new("/"), &[]),
+            Some("the committed crates/core/src/role_spells.rs".into())
+        );
+
+        let real = dir.join("realhome");
+        std::fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, dir.join("linkhome")).unwrap();
+        let by = |home: &str| -> Vec<PathBuf> {
+            caches::CACHES
+                .iter()
+                .map(|n| dir.join(home).join("wowdps").join(n))
+                .collect()
+        };
+        for (cached, written) in [("linkhome", "realhome"), ("realhome", "linkhome")] {
+            let out = dir.join(written).join("wowdps/talents.json");
+            assert_eq!(
+                retail_place(&out, Path::new("/"), &by(cached)),
+                Some("the data home's talents.json".into()),
+                "caches under {cached}, -o under {written}"
+            );
+        }
+        assert!(!real.join("wowdps").exists(), "nothing made");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// Retail's product writes wherever it did; another is refused no
-    /// `-o` and an `-o` that is Retail's, in words that read right for
-    /// both, and let through to anywhere else.
+    /// `-o`, an `-o` that is Retail's, and an `-o` whose twin beside it
+    /// would be, in words that read right for each, and let through to
+    /// anywhere else.
     #[test]
     fn only_another_product_is_refused_and_only_retails_places() {
-        let committed = checkout().join("crates/core/src/class_spells.rs");
+        let root = checkout();
+        let committed = root.join("crates/core/src/class_spells.rs");
         let place = "the committed crates/core/src/class_spells.rs";
-        assert!(retail_only(&install("wow"), None, place).is_ok());
-        assert!(retail_only(&install("wow"), Some(&committed), place).is_ok());
+        assert!(retail_only(&install("wow"), None, None, place).is_ok());
+        assert!(retail_only(&install("wow"), Some(&committed), None, place).is_ok());
         let tail = "is Retail's (product wow); product wowf needs -o naming another place";
         assert_eq!(
-            retail_only(&install("wowf"), None, place).unwrap_err(),
+            retail_only(&install("wowf"), None, None, place).unwrap_err(),
             format!("{place} {tail}")
         );
-        let e = retail_only(&install("wowf"), Some(&committed), place).unwrap_err();
+        let e = retail_only(&install("wowf"), Some(&committed), None, place).unwrap_err();
         assert_eq!(e, format!("-o {}: {place} {tail}", committed.display()));
+
+        let stem = root.join("crates/core/src/proc_spells");
+        let twin = root.join("crates/core/src/proc_spells.expected.md");
+        let e = retail_only(&install("wowf"), Some(&stem), Some(&twin), place).unwrap_err();
+        assert_eq!(
+            e,
+            format!(
+                "-o {} writes {} beside it: the committed crates/core/src/proc_spells.expected.md {tail}",
+                stem.display(),
+                twin.display()
+            )
+        );
+        assert!(retail_only(&install("wow"), Some(&stem), Some(&twin), place).is_ok());
+
         let dir = scratch("allowed");
-        assert!(retail_only(&install("wowf"), Some(&dir.join("class_spells.rs")), place).is_ok());
+        let elsewhere = dir.join("class_spells.rs");
+        let beside = dir.join("class_spells.expected.md");
+        assert!(retail_only(&install("wowf"), Some(&elsewhere), Some(&beside), place).is_ok());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

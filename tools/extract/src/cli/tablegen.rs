@@ -194,9 +194,10 @@ struct Made {
 /// returned called with them and the build (with the product beside it
 /// for any but Retail's, `Game::build_label`); and the table written where
 /// its bytes change, its review twin beside it. The committed tables are
-/// Retail's: another product's output is refused every one of them and
-/// their twins, however `-o` spells it (the scripts name the committed
-/// table, so only a later `-o` elsewhere lets it through).
+/// Retail's: another product's output may not be written to any of them
+/// or their twins, however `-o` spells it, nor may the twin named from
+/// `-o` be one (the scripts name the committed table, so only a later
+/// `-o` elsewhere lets it through).
 fn generate<G>(
     mut a: Args,
     t: Table,
@@ -213,7 +214,13 @@ where
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
     let place = format!("the committed {}", t.out);
-    retail_only(&install, out.as_deref(), &place)?;
+    // A census-backed table writes its review twin beside it, the twin's
+    // name made from `-o`'s: both are checked before anything is read.
+    let twin = out
+        .as_deref()
+        .filter(|_| t.census.is_some())
+        .map(review_twin);
+    retail_only(&install, out.as_deref(), twin.as_deref(), &place)?;
     let out = out.unwrap_or_else(|| PathBuf::from(t.out));
     let census = match (t.census, census_path) {
         (Some(_), Some(path)) => read_text(&path)?,
