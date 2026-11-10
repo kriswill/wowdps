@@ -25,21 +25,24 @@
 # Like spell-icons.bin this is extracted Blizzard artwork and lives OUTSIDE
 # the repository on purpose; a machine without it falls back to drawn discs.
 #
-# usage: tools/gen-icons.sh [wow-dir] [--no-upscale]
+# usage: tools/gen-icons.sh [wow-dir] [--no-upscale] [-o FILE] [--product ROW]
 #   wow-dir: folder holding .build.info and Data/. When omitted the tool
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
 #   logs_dir, or a scan of the install roots (Steam compatdata on
 #   Linux, /Applications and ~/Applications on macOS).
+#   -o: the cache's path (default $XDG_DATA_HOME/wowdps/class-icons.bin).
+#   --product ROW: another edition of the game (tools/lib.sh); its icons
+#   go only where -o FILE names, never where the GUI reads Retail's.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 . "$root/tools/lib.sh"
 upscale=1
-wow=""
+pass=()
 for a in "$@"; do
     case "$a" in
         --no-upscale) upscale=0 ;;
-        *) wow=$a ;;
+        *) pass+=("$a") ;;
     esac
 done
 
@@ -50,7 +53,10 @@ build_extract
 fetch_dbds gen-icons "$work"
 fetch_keys "$work/tactkeys.txt"
 
-gen=("$extract" gen-icons ${wow:+"$wow"} --dbd-dir "$work" --keys "$work/tactkeys.txt")
+# Every run takes the words given, -o among them: the run that writes the
+# icons whole checks the cache its last run will write, so another
+# product's Retail place is refused before anything is decoded or upscaled.
+gen=("$extract" gen-icons ${pass[@]+"${pass[@]}"} --dbd-dir "$work" --keys "$work/tactkeys.txt")
 esrgan=""
 [ "$upscale" = 1 ] && esrgan=$(find_upscaler)
 if [ -n "$esrgan" ]; then

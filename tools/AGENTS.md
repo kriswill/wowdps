@@ -31,6 +31,13 @@ what it does and how to run it.
   `logs_dir`, or a Steam compatdata scan; or pass the folder holding
   `.build.info`). The network serves only WoWDBDefs schemas and TACT keys.
   Output is deterministic per build.
+- **One edition at a time, Retail's by default.** The product read is
+  `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
+  names another (Forever's `wowf`). The committed tables, their review
+  twins and the caches in the data home are Retail's: the extractor
+  refuses another product's output every one of them, however `-o`
+  spells it, and what it writes elsewhere names the product beside the
+  build.
 - **Curated tables need two proofs.** `role_spells`, `proc_spells` and
   `placed_spells` are hand lists in `tools/extract/src/` (`rolegen.rs`,
   `procgen.rs`, `placegen.rs`) that the generator checks against the

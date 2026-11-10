@@ -12,6 +12,9 @@
 # usage: tools/extract/verify.sh [build]      # default: latest live build
 #        tools/extract/verify.sh --game <dir> # dir holds .build.info + Data;
 #                                             # build comes from .build.info
+#        [--product ROW]                      # the edition, by its product
+#                                             # (default $WOWDPS_PRODUCT,
+#                                             # else wow: Retail)
 # cache: $WOWDPS_DB2_CACHE (default /tmp/wowdps-db2-verify), per build
 set -euo pipefail
 
@@ -46,26 +49,32 @@ tables=(
     GameObjects:841620
 )
 
-game="" build=""
+game="" build="" product="${WOWDPS_PRODUCT:-wow}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --game) game="$2"; shift 2 ;;
+        --product) product="$2"; shift 2 ;;
         *) build="$1"; shift ;;
     esac
 done
+# Retail's runs say what they always said; another product is named.
+latest="latest" installed="local install"
+if [ "$product" != wow ]; then
+    latest="latest $product" installed="local install, product $product"
+fi
 if [ -n "$game" ] && [ -z "$build" ]; then
     # The wago CSVs must match the installed build exactly.
-    build=$(awk -F'|' 'NR==1 { for (i=1; i<=NF; i++) { split($i,a,"!");
+    build=$(awk -F'|' -v want="$product" 'NR==1 { for (i=1; i<=NF; i++) { split($i,a,"!");
                 if (a[1]=="Version") v=i; if (a[1]=="Product") p=i } }
-            NR>1 && $p=="wow" { print $v; exit }' "$game/.build.info")
-    [ -n "$build" ] || { echo "no wow row in $game/.build.info" >&2; exit 1; }
+            NR>1 && $p==want { print $v; exit }' "$game/.build.info")
+    [ -n "$build" ] || { echo "no $product row in $game/.build.info" >&2; exit 1; }
 elif [ -z "$build" ]; then
     build=$(curl -sfL -A "$ua" https://wago.tools/api/builds \
-        | grep -o '"wow":\[{[^}]*}' | grep -o '"version":"[^"]*"' \
+        | grep -o "\"$product\":\\[{[^}]*}" | grep -o '"version":"[^"]*"' \
         | head -1 | cut -d'"' -f4)
-    [ -n "$build" ] || { echo "could not determine latest build" >&2; exit 1; }
+    [ -n "$build" ] || { echo "could not determine $latest build" >&2; exit 1; }
 fi
-echo "build $build${game:+ (local install)}"
+echo "build $build${game:+ ($installed)}"
 
 cache="${WOWDPS_DB2_CACHE:-/tmp/wowdps-db2-verify}/$build"
 mkdir -p "$cache"
@@ -88,7 +97,7 @@ for entry in "${tables[@]}"; do
     name="${entry%%:*}" fdid="${entry##*:}"
     printf '%-26s ' "$name"
     if [ -n "$game" ]; then
-        if ! "$bin" fetch "$game" --fdid "$fdid" --keys "$cache/tactkeys.txt" \
+        if ! "$bin" fetch "$game" --product "$product" --fdid "$fdid" --keys "$cache/tactkeys.txt" \
             -o "$cache/$name.db2" 2>/dev/null; then
             echo "LOCAL EXTRACTION FAILED"; fail=1; continue
         fi

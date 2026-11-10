@@ -34,13 +34,13 @@ pub const COMMANDS: &[Cmd] = &[
     cmd(
         "fetch",
         "fetch [wow-dir] (--fdid N | --file dbfilesclient/x.db2)
-                       [-o out] [--keys tactkeys.txt] [--locale enUS]",
+                       [-o out] [--keys tactkeys.txt] [--locale enUS] [--product wow]",
         fetch,
     ),
     cmd(
         "sql",
         "sql [Table...] [-c SQL] [--find WORD] [--tables] [--csv]
-                       [--refresh] [--wow wow-dir]
+                       [--refresh] [--wow wow-dir] [--product wow]
                        (wowdps-db2: the game's tables in DuckDB, cached per build)",
         sql,
     ),
@@ -294,6 +294,7 @@ pub fn sql(mut a: Args) -> Result<(), String> {
     let query = a.opt(&["-c", "--command"])?;
     let find = a.opt(&["--find"])?;
     let wow_dir = a.path(&["--wow"])?;
+    let product = wowdps_extract::game::product(a.opt(&["--product"])?);
     let refresh = a.flag(&["--refresh"]);
     let list = a.flag(&["--tables"]);
     let csv_paths = a.flag(&["--csv"]);
@@ -339,12 +340,13 @@ pub fn sql(mut a: Args) -> Result<(), String> {
         })
         .collect::<Result<_, _>>()?;
 
-    // The build the install holds: its tables' place in the cache.
+    // The build the install holds for the product: its tables' place in
+    // the cache, which keeps the editions apart, each its own build.
     let wow_dir = match wow_dir {
         Some(p) => p,
         None => wowdps_extract::game::locate()?,
     };
-    let build = wowdps_extract::game::build_info(&wow_dir)?.version;
+    let build = wowdps_extract::game::build_info(&wow_dir, &product)?.version;
     let build_dir = db2sql::build_dir(&root, &build);
     let (csv_dir, pq_dir) = (build_dir.join("csv"), build_dir.join("parquet"));
     for d in [&csv_dir, &pq_dir] {
@@ -378,7 +380,7 @@ pub fn sql(mut a: Args) -> Result<(), String> {
             if refresh || db2sql::stale(&keys, db2sql::MAX_AGE) {
                 db2sql::fetch(db2sql::KEYS_URL, &keys)?;
             }
-            game = Some(Game::open(&wow_dir, Some(&keys))?);
+            game = Some(Game::open_product(&wow_dir, &product, Some(&keys))?);
         }
         let Some(g) = &game else {
             continue;

@@ -16,11 +16,15 @@ use crate::wdc5::Db2;
 const NO_DBD_DIR: &str = "--dbd-dir DIR is needed: the WoWDBDefs schemas of the tables read";
 
 /// Where the game's files come from: the install (`--wow-dir DIR`, or the
-/// one word a command leaves, else found by `game::locate`), the TACT keys
-/// for its encrypted files (`--keys FILE`) and the WoWDBDefs schemas its
-/// tables decode by (`--dbd-dir DIR`), and the tables the command reads.
+/// one word a command leaves, else found by `game::locate`), the edition
+/// of the game read in it (`--product ROW`), the TACT keys for its
+/// encrypted files (`--keys FILE`) and the WoWDBDefs schemas its tables
+/// decode by (`--dbd-dir DIR`), and the tables the command reads.
 pub struct Install {
     pub dir: Option<PathBuf>,
+    /// The `.build.info` row read: `--product ROW`, else `$WOWDPS_PRODUCT`,
+    /// else Retail's (`game::product`).
+    pub product: String,
     pub keys: Option<PathBuf>,
     pub dbd_dir: Option<PathBuf>,
     /// The command's tables (`Cmd::tables`), each once, in the order it
@@ -44,6 +48,7 @@ impl Install {
 
     fn take(args: &mut Args, tables: bool) -> Result<Install, String> {
         let dir = args.path(&["--wow-dir"])?;
+        let product = crate::game::product(args.opt(&["--product"])?);
         let keys = args.path(&["--keys"])?;
         let dbd_dir = if tables {
             let dir = args.path(&["--dbd-dir"])?;
@@ -62,19 +67,20 @@ impl Install {
         };
         Ok(Install {
             dir,
+            product,
             keys,
             dbd_dir,
             tables,
         })
     }
 
-    /// The install's storage, opened.
+    /// The install's storage, opened for the product named.
     pub fn open(&self) -> Result<Game, String> {
         let dir = match &self.dir {
             Some(d) => d.clone(),
             None => crate::game::locate()?,
         };
-        Game::open(&dir, self.keys.as_deref())
+        Game::open_product(&dir, &self.product, self.keys.as_deref())
     }
 
     /// The schemas' directory, which a command reading tables needs.
@@ -155,6 +161,24 @@ mod tests {
         assert!(
             a.finish().is_err(),
             "a command reading no table takes no --dbd-dir"
+        );
+    }
+
+    /// `--product` names the row read, wherever it stands; the install
+    /// directory is still the one word left. (The default, which reads
+    /// `$WOWDPS_PRODUCT`, is `game`'s test: this one never depends on the
+    /// environment it runs in.)
+    #[test]
+    fn the_product_is_its_flag() {
+        let mut a = args(&["/wow", "--product", "wowf", "--dbd-dir", "dbd"]);
+        let i = Install::with_tables(&mut a).unwrap();
+        assert_eq!(i.product, "wowf");
+        assert_eq!(i.dir, Some(PathBuf::from("/wow")));
+        assert!(a.finish().is_ok());
+        let mut a = args(&["--product"]);
+        assert_eq!(
+            Install::files(&mut a).err().unwrap(),
+            "--product needs a value"
         );
     }
 }
