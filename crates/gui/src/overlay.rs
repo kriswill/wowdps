@@ -237,8 +237,10 @@ fn open_on(
             keyboard_interactivity: KeyboardInteractivity::None,
             ..Default::default()
         }),
-        // As the window's: no power-saver cap (gpui-pre 0.3.11's default),
-        // GPUI's inactive-window and thermal caps standing.
+        // As the window's: no power-saver cap (gpui-pre 0.3.11's default).
+        // The overlay is never the active window, so GPUI's inactive-window
+        // cap (about 30 fps) is its real limit; since gpui-pre 0.3.11 that
+        // cap paces every redraw, not animation frames alone.
         low_power_frame_interval: None,
         ..Default::default()
     };
@@ -307,8 +309,10 @@ fn open_on(
         focus: false,
         kind: WindowKind::PopUp,
         is_resizable: false,
-        // As the window's: no power-saver cap (gpui-pre 0.3.11's default),
-        // GPUI's inactive-window and thermal caps standing.
+        // As the window's: no power-saver cap (gpui-pre 0.3.11's default).
+        // The overlay is never the active window, so GPUI's inactive-window
+        // cap (about 30 fps) is its real limit; since gpui-pre 0.3.11 that
+        // cap paces every redraw, not animation frames alone.
         low_power_frame_interval: None,
         ..Default::default()
     };

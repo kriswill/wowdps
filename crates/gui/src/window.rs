@@ -134,7 +134,8 @@ pub fn open(client: DaemonClient, cx: &mut App) -> Result<(), String> {
         app_id: Some("wowdps-gui".to_string()),
         // Under the OS's power saver, draw at the display's rate as before
         // gpui-pre 0.3.11, whose default caps a window near 30 fps there.
-        // GPUI's inactive-window and thermal caps stand.
+        // GPUI's inactive-window and thermal caps stand; since 0.3.11 the
+        // inactive one paces every redraw of an unfocused window.
         low_power_frame_interval: None,
         ..Default::default()
     };
