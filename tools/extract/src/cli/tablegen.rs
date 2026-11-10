@@ -193,7 +193,8 @@ struct Made {
 /// read stops it first; the client tables read; the generator `prepare`
 /// returned called with them and the build (with the product beside it
 /// for any but Retail's, `Game::build_label`); and the table written where
-/// its bytes change, its review twin beside it. The committed tables are
+/// its bytes change, its review twin beside it, made exactly where a
+/// census backs the table (`twin_as_checked`). The committed tables are
 /// Retail's: another product's output may not be written to any of them
 /// or their twins, however `-o` spells it, nor may the twin named from
 /// `-o` be one (the scripts name the committed table, so only a later
@@ -233,6 +234,7 @@ where
     let (game, tables) = install.open_tables()?;
 
     let made = make(&tables, &game.build_label())?;
+    twin_as_checked(&t, &made)?;
     let note = put(&out, &made.content)?;
     let twin = match &made.expected {
         Some(expected) => {
@@ -244,6 +246,24 @@ where
     };
     eprintln!("{}{note}: {}{twin}", out.display(), made.summary);
     Ok(())
+}
+
+/// The guard checks a review twin's place when a census backs the table,
+/// and the writer writes one when the generator made one: the two must
+/// agree before anything is written, or a generator that made a twin its
+/// table has no census for would write it where nothing checked.
+fn twin_as_checked(t: &Table, made: &Made) -> Result<(), String> {
+    match (t.census.is_some(), made.expected.is_some()) {
+        (false, true) => Err(format!(
+            "{}: made a review twin for {}, which no census backs, so its place was never checked",
+            t.command, t.out
+        )),
+        (true, false) => Err(format!(
+            "{}: made no review twin for {}, which a census backs",
+            t.command, t.out
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Write a generated repository file only when its bytes change (so cargo
@@ -412,4 +432,27 @@ pub fn placed_spells_ids(a: Args) -> Result<(), String> {
     a.finish()?;
     print!("{}", placegen::census_ids());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A twin is let through exactly where a census backs the table, as
+    /// the guard checked it; the other way round, for every table, is an
+    /// error that names the generator.
+    #[test]
+    fn a_twin_is_written_only_where_the_guard_checked_one() {
+        let made = |twin: bool| Made {
+            content: String::new(),
+            expected: twin.then(|| "twin".to_string()),
+            summary: String::new(),
+        };
+        for t in TABLES {
+            let backed = t.census.is_some();
+            assert!(twin_as_checked(t, &made(backed)).is_ok(), "{}", t.command);
+            let e = twin_as_checked(t, &made(!backed)).unwrap_err();
+            assert!(e.starts_with(&format!("{}: made ", t.command)), "{e}");
+        }
+    }
 }

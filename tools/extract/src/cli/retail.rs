@@ -13,7 +13,7 @@ use wowdps_extract::game::default_product;
 
 /// A file at a wowdps checkout's root that only a checkout holds: what
 /// the dev shell's wrappers know a checkout by.
-const CHECKOUT_MARK: &str = "crates/core/fixtures/check.awk";
+pub const CHECKOUT_MARK: &str = "crates/core/fixtures/check.awk";
 
 /// How the refusal names a cache in the data home.
 pub fn cache_place(name: &str) -> String {
@@ -64,25 +64,39 @@ pub fn retail_only(
     ))
 }
 
-/// The Retail output `out` (relative to `cwd`) resolves to, if any: a
+/// The Retail output `out` (relative to `cwd`) reaches, if any: a
 /// committed table or review twin of a wowdps checkout, or one of
-/// `caches`, compared as the file system resolves them.
+/// `caches`, compared as the file system resolves them. `out` reaches
+/// both what it resolves to and where a write to it lands, which differ
+/// when its last component is a symlink: the writers rename a finished
+/// file over the name, which replaces the link rather than its target,
+/// so a committed table replaced by a link in its checkout is still hit.
 fn retail_place(out: &Path, cwd: &Path, caches: &[PathBuf]) -> Option<String> {
-    let out = resolved(out, cwd);
-    for rel in tablegen::committed() {
-        // The checkout `out` would lie in, were it this file of one.
-        let root = out.ancestors().nth(rel.components().count());
-        if out.ends_with(&rel) && root.is_some_and(|r| r.join(CHECKOUT_MARK).is_file()) {
-            return Some(format!("the committed {}", rel.display()));
+    let places = [Some(resolved(out, cwd)), landing(out, cwd)];
+    for out in places.iter().flatten() {
+        for rel in tablegen::committed() {
+            // The checkout `out` would lie in, were it this file of one.
+            let root = out.ancestors().nth(rel.components().count());
+            if out.ends_with(&rel) && root.is_some_and(|r| r.join(CHECKOUT_MARK).is_file()) {
+                return Some(format!("the committed {}", rel.display()));
+            }
         }
-    }
-    for cache in caches {
-        if resolved(cache, cwd) == out {
-            let name = cache.file_name().unwrap_or_default().to_string_lossy();
-            return Some(cache_place(&name));
+        for cache in caches {
+            if resolved(cache, cwd) == *out {
+                let name = cache.file_name().unwrap_or_default().to_string_lossy();
+                return Some(cache_place(&name));
+            }
         }
     }
     None
+}
+
+/// Where a rename onto `path` (relative to `cwd`) lands: its directory
+/// resolved, with its own name kept, link or not. None where it names no
+/// file (it ends in `..`).
+fn landing(path: &Path, cwd: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?;
+    Some(resolved(path.parent()?, cwd).join(name))
 }
 
 /// `path`, made absolute against `cwd`, where the file system would put
@@ -181,6 +195,45 @@ mod tests {
         let dir = scratch("link");
         std::os::unix::fs::symlink(&src, dir.join("src")).unwrap();
         assert_eq!(found("src/class_spells.rs", &dir), class);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A committed file that is itself a symlink in its checkout is found
+    /// too: it resolves to the link's target, but the writer renames its
+    /// file over the name, which replaces the link where the committed file
+    /// is. The target is no committed file for it; a data-home cache that
+    /// is a link is found as well.
+    #[test]
+    fn a_committed_file_replaced_by_a_symlink_is_found() {
+        let dir = scratch("linked");
+        let tree = dir.join("checkout");
+        let mark = tree.join(CHECKOUT_MARK);
+        std::fs::create_dir_all(mark.parent().unwrap()).unwrap();
+        std::fs::write(&mark, "").unwrap();
+        let src = tree.join("crates/core/src");
+        std::fs::create_dir_all(&src).unwrap();
+        let target = dir.join("elsewhere.rs");
+        std::fs::write(&target, "x").unwrap();
+        for name in ["class_spells.rs", "role_spells.expected.md"] {
+            std::os::unix::fs::symlink(&target, src.join(name)).unwrap();
+            let want = Some(format!("the committed crates/core/src/{name}"));
+            assert_eq!(retail_place(&src.join(name), Path::new("/"), &[]), want);
+            assert_eq!(retail_place(Path::new(name), &src, &[]), want);
+            let linked = dir.join("src");
+            let _ = std::fs::remove_file(&linked);
+            std::os::unix::fs::symlink(&src, &linked).unwrap();
+            assert_eq!(retail_place(&linked.join(name), Path::new("/"), &[]), want);
+        }
+        assert_eq!(retail_place(&target, Path::new("/"), &[]), None);
+
+        let home = dir.join("data/wowdps");
+        std::fs::create_dir_all(&home).unwrap();
+        std::os::unix::fs::symlink(&target, home.join("talents.json")).unwrap();
+        let caches: Vec<PathBuf> = caches::CACHES.iter().map(|n| home.join(n)).collect();
+        assert_eq!(
+            retail_place(&home.join("talents.json"), Path::new("/"), &caches),
+            Some("the data home's talents.json".into())
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
