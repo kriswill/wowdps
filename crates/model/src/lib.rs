@@ -188,6 +188,117 @@ pub fn difficulty_from_str(s: &str) -> Option<u32> {
     })
 }
 
+/// The edition of the game a combat log was written by, read from its
+/// COMBAT_LOG_VERSION line's `PROJECT_ID`. Editions share encounter,
+/// difficulty and map ids with no promise that an id means the same thing
+/// in both, so whatever groups fights by those ids groups them by
+/// [`Edition::counts_as`] too, never by the edition or its
+/// [`Edition::key`] alone. Made by [`Edition::from_project_id`]; the
+/// numbers it does not know are kept, never refused. The payloads mean
+/// something only as that function makes them: `Classic(1)` or
+/// `Unknown(18)` is no value it returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Edition {
+    /// `PROJECT_ID` 1: the current game.
+    Retail,
+    /// `PROJECT_ID` 18: the Forever client.
+    Forever,
+    /// One of the Classic clients' published ids (2, 5, 11, 14, 19),
+    /// kept: each is its own client with its own characters, so they
+    /// share a label and a key but are never counted together.
+    Classic(u8),
+    /// Any other number, kept. 0 is a log or a card that named none: a
+    /// card stored before its log's header carried the id, or an imported
+    /// one; it is metered by Retail's rules and counts as Retail. Any other
+    /// number is some game this build does not know, and counts as itself.
+    Unknown(u8),
+}
+
+impl Edition {
+    /// The project ids of the Classic clients.
+    pub const CLASSIC_IDS: [u8; 5] = [2, 5, 11, 14, 19];
+
+    /// The edition a `PROJECT_ID` names. The inverse of
+    /// [`Edition::project_id`] for every number.
+    pub fn from_project_id(id: u8) -> Self {
+        match id {
+            1 => Edition::Retail,
+            18 => Edition::Forever,
+            n if Self::CLASSIC_IDS.contains(&n) => Edition::Classic(n),
+            n => Edition::Unknown(n),
+        }
+    }
+
+    /// The `PROJECT_ID` this edition was read from.
+    pub fn project_id(self) -> u8 {
+        match self {
+            Edition::Retail => 1,
+            Edition::Forever => 18,
+            Edition::Classic(n) | Edition::Unknown(n) => n,
+        }
+    }
+
+    /// The edition this one is reckoned with wherever fights are grouped:
+    /// the kills that end a progression, the retention groups, the fastest
+    /// kill and the owner's bests, the owner's inference. `Unknown(0)` —
+    /// no number recorded, which every fight stored before the header
+    /// carried one has — counts as Retail, so those fights keep the
+    /// grouping they always had. Every other edition counts as itself, an
+    /// unlisted nonzero id included: that is some other game, and its
+    /// kills, caps, bests and owner never mix with Retail's.
+    pub fn counts_as(self) -> Self {
+        match self {
+            Edition::Unknown(0) => Edition::Retail,
+            other => other,
+        }
+    }
+
+    /// The name a reader sees: "Retail", "Forever", "Classic", or
+    /// "Unknown" for a number this build does not know (0 included).
+    pub fn label(self) -> &'static str {
+        match self {
+            Edition::Retail => "Retail",
+            Edition::Forever => "Forever",
+            Edition::Classic(_) => "Classic",
+            Edition::Unknown(_) => "Unknown",
+        }
+    }
+
+    /// The lowercase spelling a filter argument or a SQL column uses:
+    /// `retail`, `forever`, `classic` or `unknown`. Stable once shipped. It
+    /// names a family, not a bookkeeping group: every Classic client shares
+    /// `classic` and every unlisted id `unknown`. The group is
+    /// [`Edition::counts_as`].
+    pub fn key(self) -> &'static str {
+        match self {
+            Edition::Retail => "retail",
+            Edition::Forever => "forever",
+            Edition::Classic(_) => "classic",
+            Edition::Unknown(_) => "unknown",
+        }
+    }
+
+    /// The folder an install keeps this edition's client in, beside the
+    /// others under the install root; `None` where it is not known.
+    pub fn product_dir(self) -> Option<&'static str> {
+        match self {
+            Edition::Retail => Some("_retail_"),
+            Edition::Forever => Some("_forever_"),
+            Edition::Classic(_) | Edition::Unknown(_) => None,
+        }
+    }
+
+    /// The edition's product in the install's `.build.info` (its Product
+    /// column); `None` where it is not known.
+    pub fn product(self) -> Option<&'static str> {
+        match self {
+            Edition::Retail => Some("wow"),
+            Edition::Forever => Some("wowf"),
+            Edition::Classic(_) | Edition::Unknown(_) => None,
+        }
+    }
+}
+
 /// A spec's role, as the game's group finder classifies it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -2461,6 +2572,86 @@ mod tests {
         assert_eq!(GraphMode::Dps.toggled().toggled(), GraphMode::Dps);
         assert_eq!(GraphMode::Dps.label(), "dps");
         assert_eq!(GraphMode::Total.label(), "total");
+    }
+
+    /// Every project id reads as an edition and back, unknown ones kept.
+    #[test]
+    fn editions_round_trip_every_project_id() {
+        for id in 0..=u8::MAX {
+            assert_eq!(Edition::from_project_id(id).project_id(), id, "{id}");
+        }
+        assert_eq!(Edition::from_project_id(1), Edition::Retail);
+        assert_eq!(Edition::from_project_id(18), Edition::Forever);
+        for id in Edition::CLASSIC_IDS {
+            assert_eq!(Edition::from_project_id(id), Edition::Classic(id));
+        }
+        assert_eq!(Edition::from_project_id(0), Edition::Unknown(0));
+        assert_eq!(Edition::from_project_id(7), Edition::Unknown(7));
+    }
+
+    /// Only a card with no number (0) counts as Retail, so a card stored
+    /// before the header carried the id groups with Retail's (1) exactly as
+    /// it always did; every other edition counts as itself — each Classic
+    /// client apart from the others, and an unlisted nonzero id apart from
+    /// Retail.
+    #[test]
+    fn only_no_number_counts_as_retail() {
+        for id in 0..=u8::MAX {
+            let e = Edition::from_project_id(id);
+            let want = if id == 0 { Edition::Retail } else { e };
+            assert_eq!(e.counts_as(), want, "{id}");
+            assert_eq!(e.counts_as().counts_as(), e.counts_as(), "{id}");
+        }
+        assert_eq!(
+            Edition::from_project_id(0).counts_as(),
+            Edition::from_project_id(1).counts_as()
+        );
+        assert_eq!(Edition::Unknown(7).counts_as(), Edition::Unknown(7));
+        assert_ne!(Edition::Unknown(7).counts_as(), Edition::Retail);
+        assert_ne!(Edition::Unknown(7).counts_as(), Edition::Unknown(8));
+        assert_ne!(Edition::Forever.counts_as(), Edition::Retail);
+        assert_ne!(Edition::Classic(2).counts_as(), Edition::Classic(19));
+        assert_ne!(Edition::Classic(2).counts_as(), Edition::Retail);
+        // The keys name families, not groups: two Classic clients share
+        // one, and so do two unlisted ids, while each counts apart.
+        assert_eq!(Edition::Classic(2).key(), Edition::Classic(19).key());
+        assert_eq!(Edition::Unknown(0).key(), Edition::Unknown(7).key());
+    }
+
+    /// The labels, keys and product names, spelled out: they are what a
+    /// reader, a filter and a SQL column see.
+    #[test]
+    fn editions_name_themselves() {
+        let e = |id| Edition::from_project_id(id);
+        let names: Vec<(&str, &str, Option<&str>, Option<&str>)> = [1, 18, 2, 19, 0, 7]
+            .into_iter()
+            .map(|id| {
+                (
+                    e(id).label(),
+                    e(id).key(),
+                    e(id).product_dir(),
+                    e(id).product(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Retail", "retail", Some("_retail_"), Some("wow")),
+                ("Forever", "forever", Some("_forever_"), Some("wowf")),
+                ("Classic", "classic", None, None),
+                ("Classic", "classic", None, None),
+                ("Unknown", "unknown", None, None),
+                ("Unknown", "unknown", None, None),
+            ]
+        );
+        for id in 0..=u8::MAX {
+            let key = e(id).key();
+            assert!(
+                !key.is_empty() && key.bytes().all(|b| b.is_ascii_lowercase()),
+                "{key:?}"
+            );
+        }
     }
 
     /// The tank and healer sets, listed: a spec added by a patch shows up

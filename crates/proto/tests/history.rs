@@ -6,9 +6,9 @@
 
 use wowdps_model::LoadoutAura;
 use wowdps_model::{
-    Class, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
-    Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
-    View,
+    Class, Edition, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind,
+    Mitigation, Role, Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick,
+    Timeline, UptimeCell, View,
 };
 use wowdps_model::{Empower, GroupKind, PowerSeries, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_proto::history::{
@@ -722,6 +722,30 @@ fn missing_fields_take_defaults_and_only_identity_is_required() {
     assert!(StoredLoadout::from_json(&v).is_none());
     let v = json::parse(r#"{"schema":1,"body":"b"}"#).unwrap();
     assert!(Annotation::from_json(&v).is_none());
+}
+
+/// The edition is read off the stored `project_id`, never stored twice: the
+/// golden card is Retail's, a card without the number (or with one out of
+/// range) is unknown and counts as Retail, and a Forever card is Forever.
+#[test]
+fn a_card_names_its_edition_from_its_project_id() {
+    assert_eq!(card().edition(), Edition::Retail);
+    let bare = FightCard::from_json(&json::parse(r#"{"schema":1,"id":"x-9"}"#).unwrap()).unwrap();
+    assert_eq!(bare.project_id, 0);
+    assert_eq!(bare.edition(), Edition::Unknown(0));
+    assert_eq!(bare.edition().counts_as(), Edition::Retail);
+    let wide =
+        FightCard::from_json(&json::parse(r#"{"schema":1,"id":"x-9","project_id":300}"#).unwrap())
+            .unwrap();
+    assert_eq!(wide.edition(), Edition::Unknown(0));
+    let forever = FightCard {
+        project_id: 18,
+        ..card()
+    };
+    assert_eq!(forever.edition(), Edition::Forever);
+    let back = FightCard::from_json(&reparse(forever.to_json())).unwrap();
+    assert_eq!(back.edition(), Edition::Forever);
+    assert!(!CARD_GOLDEN.contains("edition"), "the number is the record");
 }
 
 #[test]

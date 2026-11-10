@@ -17,12 +17,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use wowdps_core::tail::SourceSpec;
-use wowdps_daemon::history::HistoryOptions;
+use wowdps_daemon::history::{HistoryOptions, MemBackend, Retention, Store};
 use wowdps_daemon::{DaemonOptions, run};
 use wowdps_history::Lake;
 use wowdps_mcp::grade::grade;
 use wowdps_model::{
-    Mark, MarkKind, MissKind, Mitigation, PowerSeries, Role, Row, Spec, UptimeCell, View,
+    Encounter, Mark, MarkKind, MissKind, Mitigation, PowerSeries, Role, Row, Spec, UptimeCell, View,
 };
 use wowdps_proto::history::{
     CardPlayer, FightCard, FightKind, FightRows, PlayerCoarse, PlayerMitigation, PlayerShields,
@@ -941,6 +941,100 @@ fn the_floors_exclude_in_sql_exactly_as_the_daemon_does() {
             .and_then(Json::as_u64),
         Some(0)
     );
+}
+
+/// Editions of the game in one lake: SQL names each card's edition off its
+/// `project_id` exactly as `FightCard::edition` does, on `fights` and on
+/// `players`, and `stats.kept` counts progression per edition exactly as
+/// the daemon's store does over the same files — one edition's kill ends
+/// no other's progression on an encounter of the same id, each Classic
+/// client is its own, a card with no number counts as Retail and an
+/// unlisted nonzero id as itself.
+#[test]
+fn sql_names_editions_and_keeps_progression_apart_as_the_daemon_does() {
+    let tmp = Temp::new("editions");
+    std::fs::create_dir_all(tmp.0.join("fights")).unwrap();
+    let pull = |id: &str, project_id: u8, start: i64, kill: bool| FightCard {
+        encounter: Some(Encounter {
+            id: 3130,
+            difficulty: 15,
+            group_size: 20,
+        }),
+        project_id,
+        log: u64::from(project_id) + 100,
+        start_local_ms: start,
+        start_utc_ms: start,
+        success: Some(kill),
+        ..card(id, vec![player("p1", Spec::Arms, 1000.0, 0.0)])
+    };
+    let cards = [
+        pull("c19-wipe", 19, 7_000, false),
+        pull("c2-kill", 2, 6_000, true),
+        pull("f-wipe", 18, 5_000, false),
+        pull("r-kill", 1, 1_000, true),
+        pull("r-wipe", 1, 2_000, false),
+        pull("u-wipe", 0, 3_000, false),
+        pull("x-wipe", 7, 4_000, false),
+    ];
+    for c in &cards {
+        std::fs::write(
+            tmp.0.join("fights").join(format!("{}.json", c.id)),
+            c.to_json().to_line(),
+        )
+        .unwrap();
+    }
+    let lake = Lake::open(&tmp.0).unwrap();
+    let want: Vec<String> = cards
+        .iter()
+        .map(|c| format!(r#"["{}",{},"{}"]"#, c.id, c.project_id, c.edition().key()))
+        .collect();
+    for sql in [
+        "SELECT id, project_id, edition FROM fights ORDER BY id",
+        "SELECT fight_id, project_id, edition FROM players ORDER BY fight_id",
+    ] {
+        let got: Vec<String> = lake
+            .sql(sql)
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| Json::Arr(r.clone()).to_line())
+            .collect();
+        assert_eq!(got, want, "{sql}");
+    }
+    assert_eq!(
+        want,
+        [
+            r#"["c19-wipe",19,"classic"]"#,
+            r#"["c2-kill",2,"classic"]"#,
+            r#"["f-wipe",18,"forever"]"#,
+            r#"["r-kill",1,"retail"]"#,
+            r#"["r-wipe",1,"retail"]"#,
+            r#"["u-wipe",0,"unknown"]"#,
+            r#"["x-wipe",7,"unknown"]"#,
+        ]
+    );
+    // Retail's kill ends Retail's progression and the no-number card's
+    // (it counts as Retail); Forever's wipe, the second Classic client's
+    // and the unlisted id 7's are still progression.
+    let kept = lake.stats().get("kept").cloned().unwrap();
+    let n = |k: &str| kept.get(k).and_then(Json::as_u64);
+    assert_eq!(
+        (n("kills"), n("progression")),
+        (Some(2), Some(3)),
+        "{kept:?}"
+    );
+    let store = Store::open(MemBackend::over_dir(&tmp.0), Retention::default());
+    let st = store.status();
+    assert_eq!((st.kept_kills, st.kept_progression), (2, 3));
+    let progression: Vec<&str> = store
+        .cards()
+        .iter()
+        .filter(|c| store.is_progression(c))
+        .map(|c| c.id.as_str())
+        .collect();
+    let mut progression = progression;
+    progression.sort_unstable();
+    assert_eq!(progression, ["c19-wipe", "f-wipe", "x-wipe"]);
 }
 
 #[test]
@@ -3843,7 +3937,7 @@ fn every_documented_query_runs_over_the_fixture_lake() {
     }
     let spans_id = stored_cards(&spans_hist)[0].id.clone();
     let queries = doc_queries();
-    assert_eq!(queries.len(), 15, "{queries:?}");
+    assert_eq!(queries.len(), 16, "{queries:?}");
     for (heading, sql) in &queries {
         let param = match heading.as_str() {
             "Healer rank trend across a tier" => Json::str(SPANS_PRIEST),
@@ -3915,6 +4009,17 @@ fn every_documented_query_runs_over_the_fixture_lake() {
     let t = lake.sql_with(swaps, &[Json::str(&spans_id)]).unwrap();
     assert_eq!(t.rows[0][2].as_u64(), Some(0), "the first bucket: {t:?}");
     assert_eq!(t.rows[0][3].as_u64(), Some(22_000), "{t:?}");
+    // Every fixture is a Retail log (PROJECT_ID 1): the edition recipe
+    // names it so on every row.
+    let (heading, editions) = &queries[15];
+    assert!(heading.contains("game edition"), "{heading}");
+    let t = lake.sql(editions).unwrap();
+    assert!(
+        t.rows
+            .iter()
+            .all(|r| cell_str(&r[0]) == "retail" && r[1].as_u64() == Some(1)),
+        "{t:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------

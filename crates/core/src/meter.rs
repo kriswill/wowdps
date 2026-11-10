@@ -784,7 +784,8 @@ pub struct Segment {
     /// The game build from the log's COMBAT_LOG_VERSION line (R6 seed, so
     /// lazy loads carry it); zeros before any version line.
     pub build: (u16, u16, u16),
-    /// PROJECT_ID from the same line (1 = retail); 0 before any.
+    /// PROJECT_ID from the same line, the game edition the log names
+    /// (`Edition::from_project_id`: 1 = Retail); 0 before any.
     pub project_id: u8,
     /// The log format version from the same line; 0 before any.
     pub log_version: u32,

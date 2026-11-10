@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use duckdb::types::Value;
 use duckdb::{Config, Connection};
-use wowdps_model::{Role, RoleNightRow, Spec};
+use wowdps_model::{Edition, Role, RoleNightRow, Spec};
 use wowdps_proto::creatures;
 use wowdps_proto::history::{FightCard, FightDetails, FightKind};
 use wowdps_proto::json::Json;
@@ -68,6 +68,22 @@ fn support_case() -> String {
         "CASE WHEN p.spec IN ({}) THEN true ELSE false END",
         ids.join(", ")
     )
+}
+
+/// `CASE <id> WHEN 1 THEN 'retail' … ELSE 'unknown' END` over every project
+/// id an edition is known by, so SQL names a fight's edition exactly as
+/// `Edition::key` does — a number no edition knows, a card without one and
+/// a NULL all read `unknown`, as `FightCard::edition` reads them.
+fn edition_case(id: &str) -> String {
+    let mut sql = format!("CASE {id}");
+    for n in 0..=u8::MAX {
+        let edition = Edition::from_project_id(n);
+        if !matches!(edition, Edition::Unknown(_)) {
+            sql.push_str(&format!(" WHEN {n} THEN '{}'", edition.key()));
+        }
+    }
+    sql.push_str(&format!(" ELSE '{}' END", Edition::Unknown(0).key()));
+    sql
 }
 
 /// Every field of a stored `Row` (`wowdps_proto::history::row_json`) as
@@ -369,10 +385,26 @@ impl Lake {
             } else {
                 "CAST(NULL AS BIGINT[])"
             };
+            // `edition` — the game edition the card's log was written by,
+            // named off its stored `project_id` (`Edition::key`), never
+            // stored twice. Every card carries the number; a lake whose
+            // cards somehow lack it reads 0 and `unknown`, as the codec
+            // does, so both columns exist on every lake.
+            let edition = if self.sql("SELECT project_id FROM fights LIMIT 0").is_ok() {
+                format!(
+                    "{} AS edition",
+                    edition_case("TRY_CAST(project_id AS BIGINT)")
+                )
+            } else {
+                format!(
+                    "CAST(0 AS BIGINT) AS project_id, {} AS edition",
+                    edition_case("0")
+                )
+            };
             self.conn
                 .execute_batch(&format!(
                     "CREATE OR REPLACE VIEW fights AS SELECT *, {imported} AS imported, \
-                     {affixes} AS affixes \
+                     {affixes} AS affixes, {edition} \
                      FROM read_json({}, format = 'auto', union_by_name = true);",
                     glob("fights", "json")
                 ))
@@ -613,11 +645,15 @@ impl Lake {
             } else {
                 format!("EXCLUDE ({})", excluded.join(", "))
             };
+            // The card's edition rides each player row beside its number,
+            // so a question across fights can keep editions apart, as the
+            // daemon's bookkeeping does.
             self.conn
                 .execute_batch(&format!(
                     "CREATE VIEW players AS SELECT f.id AS fight_id, f.kind, f.name AS fight, \
                      f.start_utc_ms, f.duration_ms, f.success, f.aborted, f.imported, \
                      f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
+                     f.project_id, f.edition, \
                      p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql}{am_sql}\
                      {shields_sql}{heal_absorbed_sql} \
                      FROM fights f, unnest(f.players) AS u(p);",
@@ -1602,8 +1638,9 @@ fn read_cards(dir: &Path) -> Vec<FightCard> {
 /// one for every fight retention keeps whole or protects and the newest of
 /// the rest per boss and difficulty, so a demoted wipe counts here by
 /// design); and the cards the DEFAULT rules keep whole, by why — a kill, a
-/// timed key, a progression wipe (a boss no card killed at that
-/// difficulty), a pin — each card once, under the first reason that holds.
+/// timed key, a progression wipe (a boss no card of its edition killed at
+/// that difficulty), a pin — each card once, under the first reason that
+/// holds.
 pub fn replay_stats(dir: &Path) -> Json {
     let cards = read_cards(dir);
     let replays: Vec<(String, u64)> = std::fs::read_dir(dir.join("replay"))
@@ -1634,12 +1671,17 @@ pub fn replay_stats(dir: &Path) -> Json {
         .filter(|c| matches!(c.kind, FightKind::Encounter | FightKind::Key) && !has(&c.id))
         .count();
     // The daemon's `kept_counts`: this machine's own kills end a boss's
-    // progression, and an import (v46) is counted first, apart.
-    let killed: std::collections::HashSet<(u32, u32)> = cards
+    // progression in their own edition (`Edition::counts_as`: a card with
+    // no number counts as Retail, every other edition as itself), and an
+    // import (v46) is counted first, apart.
+    let killed: std::collections::HashSet<(Edition, u32, u32)> = cards
         .iter()
         .filter(|c| c.kind == FightKind::Encounter && c.success == Some(true) && !c.aborted)
         .filter(|c| !c.is_imported())
-        .filter_map(|c| c.encounter.map(|e| (e.id, e.difficulty)))
+        .filter_map(|c| {
+            c.encounter
+                .map(|e| (c.edition().counts_as(), e.id, e.difficulty))
+        })
         .collect();
     let (mut kills, mut keys, mut progression, mut pins, mut imports) =
         (0u64, 0u64, 0u64, 0u64, 0u64);
@@ -1655,7 +1697,7 @@ pub fn replay_stats(dir: &Path) -> Json {
             && c.success == Some(false)
             && !c.aborted
             && c.encounter
-                .is_some_and(|e| !killed.contains(&(e.id, e.difficulty)))
+                .is_some_and(|e| !killed.contains(&(c.edition().counts_as(), e.id, e.difficulty)))
         {
             progression += 1;
         } else if c.pinned {

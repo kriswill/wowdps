@@ -33,8 +33,9 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   mock and tests. Write store tests against `MemBackend`.
 - **Retention runs after every write.** The protected set is kept whole:
   boss kills, timed keys, pinned fights and progression wipes until the
-  first kill at that difficulty. The caps count the unprotected alone; never
-  demote or evict a protected fight.
+  first kill in that edition at that difficulty. The caps count the
+  unprotected alone, per edition (`Edition::counts_as`); never demote or
+  evict a protected fight.
 - **Stored equals live.** A stored drill, window, stack or comparison must
   equal the live answer over the same seconds (`tests/series.rs`): both go
   through one function (`series::window_rows`, one `answer`). Never fork a

@@ -232,6 +232,12 @@ pub fn catalog() -> Vec<Tool> {
                           since; sort newest, fastest (kills only — fastest with limit 1 \
                           is the best kill) or by the owner's DPS. Ids here are stable \
                           fight ids (strings), not list_fights' per-run integers. Each \
+                          fight names the game edition its log was written by: `edition` \
+                          (retail, forever, classic, or unknown — project_id 0 for a card \
+                          stored before its log carried the number, counted with retail, \
+                          else a number this build does not know), `edition_name` and \
+                          `project_id`; no filter narrows by edition \
+                          yet, so an encounter id two editions share lists both. Each \
                           fight's `me` block is the requested `player`'s graded row when \
                           `player` is given, else the owner's. The `me` / \
                           `peer` rows carry two grades: the legacy DPS-pool block (rank_dps, \
@@ -362,7 +368,9 @@ pub fn catalog() -> Vec<Tool> {
             name: "progression",
             description: "Pulls-to-kill progression on one boss + difficulty from the \
                           history store: total pulls, kills, the first kill, a per-night \
-                          breakdown and the median kill time.",
+                          breakdown and the median kill time. first_kill and best_kill \
+                          name their game `edition`; an encounter id two editions share \
+                          counts both editions' pulls.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -616,7 +624,9 @@ pub fn catalog() -> Vec<Tool> {
                           deaths, taken/dtps, support_given/support_received, \
                           healed_received, self_healed, rated over combat_ms; the \
                           mitigation split, aura spans and shields stay 0), with no view \
-                          rows, and a drill or a from_secs/to_secs window is an error.",
+                          rows, and a drill or a from_secs/to_secs window is an error. \
+                          The `fight` card names its game edition as `history` does \
+                          (edition, edition_name, project_id).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -827,8 +837,10 @@ pub fn catalog() -> Vec<Tool> {
             description: "Ad hoc SQL (DuckDB) over the history store's files, via the \
                           wowdps-history binary. Views: fights (one row per stored fight: \
                           id, kind, name, encounter{id,difficulty,group_size}, key, \
-                          start_utc_ms, duration_ms, success, aborted, build, owner, \
-                          pinned, players[], and v46 imported: true for a fight imported \
+                          start_utc_ms, duration_ms, success, aborted, build, project_id \
+                          and edition (the game edition its log names: retail, forever, \
+                          classic or unknown), owner, pinned, players[], and v46 \
+                          imported: true for a fight imported \
                           from outside this machine's logs, whose players carry (since \
                           v48) the meter the importer reckoned, rated over combat_ms, and \
                           before v48 no numbers — add `AND NOT imported` to any question \
@@ -837,7 +849,7 @@ pub fn catalog() -> Vec<Tool> {
                           for a key the log joined mid-run (its END names none) and on a \
                           card stored before v47), players (one \
                           row per player per fight: fight_id, imported, encounter_id, \
-                          difficulty, guid, name, class, spec, role \
+                          difficulty, project_id, edition, guid, name, class, spec, role \
                           (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
                           — on cards written since roadmap 1a — taken, mitigated, prevented, dtps, \
                           mitigated_pct, overheal, absorbed, heal_absorbed (v44), support_given, support_received, \
@@ -2232,6 +2244,7 @@ fn view_name(view: View) -> &'static str {
 fn card_ref(c: &FightCard) -> Json {
     obj! {
         "id": Json::str(c.id.clone()),
+        "edition": Json::str(c.edition().key()),
         "date": Json::str(utc_datetime(c.start_utc_ms)),
         "start_utc_ms": Json::num(c.start_utc_ms as f64),
         "duration": Json::str(wowdps_model::fmt::duration(c.duration_ms)),
@@ -2535,6 +2548,13 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
         }),
         "result": card_result(c),
         "build": Json::str(format!("{}.{}.{}", c.build.0, c.build.1, c.build.2)),
+        // The game edition the fight's log was written by: its key, its
+        // name and the PROJECT_ID it was read from (`unknown` and 0 on a
+        // card stored before the log's header carried one, and on an
+        // import).
+        "edition": Json::str(c.edition().key()),
+        "edition_name": Json::str(c.edition().label()),
+        "project_id": Json::u64(u64::from(c.project_id)),
         "owner": opt_str(c.owner.clone()),
         "pinned": Json::Bool(c.pinned),
         // v46: where the fight came from — null for this machine's own, the
@@ -5562,6 +5582,44 @@ mod tests {
         assert_eq!(
             card_json(&imported).get("origin").map(Json::to_line),
             Some(r#"{"kind":"imported","source":"import:test-1"}"#.to_string())
+        );
+    }
+
+    /// A stored card names its game edition — key, name and the number it
+    /// was read from — and so does a card by reference; a card that
+    /// carried no number is unknown.
+    #[test]
+    fn a_card_names_its_edition() {
+        let fields = |c: &FightCard| {
+            let j = card_json(c);
+            (
+                j.get("edition").map(Json::to_line),
+                j.get("edition_name").map(Json::to_line),
+                j.get("project_id").and_then(Json::as_u64),
+                card_ref(c).get("edition").map(Json::to_line),
+            )
+        };
+        let line = |s: &str| Some(format!("\"{s}\""));
+        let retail = card(60_000, Vec::new());
+        assert_eq!(
+            fields(&retail),
+            (line("retail"), line("Retail"), Some(1), line("retail"))
+        );
+        let forever = FightCard {
+            project_id: 18,
+            ..card(60_000, Vec::new())
+        };
+        assert_eq!(
+            fields(&forever),
+            (line("forever"), line("Forever"), Some(18), line("forever"))
+        );
+        let older = FightCard {
+            project_id: 0,
+            ..card(60_000, Vec::new())
+        };
+        assert_eq!(
+            fields(&older),
+            (line("unknown"), line("Unknown"), Some(0), line("unknown"))
         );
     }
 

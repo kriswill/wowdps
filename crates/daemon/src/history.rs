@@ -15,7 +15,7 @@
 //! - a live meter is never delayed — `HistoryLink::send` is a bounded
 //!   `try_send`; a full channel drops the write and counts it.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,7 +29,7 @@ use wowdps_core::meter::{Meter, Segment, SegmentKind, Visit};
 use wowdps_core::model::replay::Cut;
 use wowdps_core::model::series::{self as series_model, SpellTallies, snap, window_rows};
 use wowdps_core::model::{
-    Class, Role, RoleNightRow, Row, SegmentId, ShieldRow, Spec, Timeline, View,
+    Class, Edition, Role, RoleNightRow, Row, SegmentId, ShieldRow, Spec, Timeline, View,
 };
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
@@ -1948,10 +1948,12 @@ pub struct Store<B: Backend> {
     /// format its head names and its size, listed once at open and kept
     /// with every write and removal, as `series` is.
     replays: HashMap<String, (Option<u8>, u64)>,
-    /// v45: every (encounter id, difficulty) a stored card KILLED — what
-    /// tells a progression wipe (`Store::is_progression`) from an ordinary
-    /// one. Rebuilt whenever the cards change.
-    killed: HashSet<(u32, u32)>,
+    /// v45: every (edition, encounter id, difficulty) a stored card KILLED
+    /// — what tells a progression wipe (`Store::is_progression`) from an
+    /// ordinary one. The edition is the card's `Edition::counts_as`: two
+    /// editions may share an encounter id, and one's kill ends no
+    /// progression of the other's. Rebuilt whenever the cards change.
+    killed: HashSet<(Edition, u32, u32)>,
 }
 
 impl<B: Backend> Store<B> {
@@ -2088,7 +2090,10 @@ impl<B: Backend> Store<B> {
             .iter()
             .filter(|c| c.kind == FightKind::Encounter && c.success == Some(true) && !c.aborted)
             .filter(|c| !c.is_imported())
-            .filter_map(|c| c.encounter.map(|e| (e.id, e.difficulty)))
+            .filter_map(|c| {
+                c.encounter
+                    .map(|e| (c.edition().counts_as(), e.id, e.difficulty))
+            })
             .collect();
     }
 
@@ -2098,16 +2103,19 @@ impl<B: Backend> Store<B> {
     /// `history_keep_progression_whole` holds, so every pull of a
     /// progression is there to compare; once the first kill there lands,
     /// the wipes before it answer to the caps again (pins still protect). A
-    /// Heroic kill says nothing of a Mythic wipe.
+    /// Heroic kill says nothing of a Mythic wipe, and one edition's kill
+    /// nothing of another's wipe on an encounter of the same id.
     pub fn is_progression(&self, card: &FightCard) -> bool {
         self.cfg.keep_progression
             && !card.is_imported()
             && card.kind == FightKind::Encounter
             && card.success == Some(false)
             && !card.aborted
-            && card
-                .encounter
-                .is_some_and(|e| !self.killed.contains(&(e.id, e.difficulty)))
+            && card.encounter.is_some_and(|e| {
+                !self
+                    .killed
+                    .contains(&(card.edition().counts_as(), e.id, e.difficulty))
+            })
     }
 
     /// The details rule with progression: a kill, a long enough wipe, or
@@ -2140,7 +2148,7 @@ impl<B: Backend> Store<B> {
 
     /// [`Store::replay_slots`] over a protected set in hand.
     fn slots_from(&self, protected: &HashSet<String>) -> HashSet<String> {
-        let mut groups: BTreeMap<(u8, u32, u32), Vec<&FightCard>> = BTreeMap::new();
+        let mut groups: BTreeMap<GroupKey, Vec<&FightCard>> = BTreeMap::new();
         for c in self.cards.iter().filter(|c| self.cfg.wants_replay(c)) {
             groups.entry(group_key(c)).or_default().push(c);
         }
@@ -2951,7 +2959,7 @@ impl<B: Backend> Store<B> {
     }
 
     pub fn status(&self) -> HistoryStatus {
-        self.status_with(self.cfg.characters.is_empty() && self.owner().is_some())
+        self.status_with(self.cfg.characters.is_empty() && !self.owners().is_empty())
     }
 
     /// [`Store::status`] with whether an owner resolved already known.
@@ -3148,10 +3156,10 @@ impl<B: Backend> Store<B> {
 
     /// Who "me" is ON THIS CARD: a player of the card who is one of the
     /// account's characters — the configured names first, then the
-    /// addon's own-character set, then the store-wide owner when they are
-    /// on the roster — else `None`. Never a guid the card does not list:
-    /// the store-wide owner is one character, and a night on an alt is
-    /// the alt's night (spec §9).
+    /// addon's own-character set, then the owner of the card's edition
+    /// ([`Store::owner_in`]) when they are on the roster — else `None`.
+    /// Never a guid the card does not list: that owner is one character,
+    /// and a night on an alt is the alt's night (spec §9).
     pub fn owner_of(&self, card: &FightCard) -> Option<String> {
         let wanted: Vec<String> = self
             .cfg
@@ -3176,7 +3184,7 @@ impl<B: Backend> Store<B> {
         {
             return Some(p.guid.clone());
         }
-        let (guid, _) = self.owner()?;
+        let (guid, _) = self.owner_in(card.edition())?;
         card.players.iter().any(|p| p.guid == guid).then_some(guid)
     }
 
@@ -3218,17 +3226,17 @@ impl<B: Backend> Store<B> {
     }
 
     /// v35: every character of the account this store knows — the addon's
-    /// own-character set, the store-wide owner and each card's owner (all
+    /// own-character set, each edition's owner and each card's owner (all
     /// three already "me" to the cards), by guid, and the configured names
     /// for a character no card has met yet. What marks an answer's rows
     /// `mine`.
     pub fn mine(&self) -> Mine {
-        self.mine_with(self.owner())
+        self.mine_with(self.owners())
     }
 
-    /// [`Store::mine`] over an [`Store::owner`] already resolved — the
-    /// intersection behind it walks every card's players.
-    fn mine_with(&self, owner: Option<(String, bool)>) -> Mine {
+    /// [`Store::mine`] over the [`Store::owners`] already resolved — the
+    /// intersection behind each walks every card's players.
+    fn mine_with(&self, owners: BTreeMap<Edition, (String, bool)>) -> Mine {
         let guids = self
             .affiliations
             .values()
@@ -3242,20 +3250,50 @@ impl<B: Backend> Store<B> {
                     .filter(|c| !c.is_imported())
                     .filter_map(|c| c.owner.clone()),
             )
-            .chain(owner.map(|(g, _)| g));
+            .chain(owners.into_values().map(|(g, _)| g));
         Mine::new(guids, &self.cfg.characters)
     }
 
     /// What the thread publishes after every request: the status and the
-    /// account's characters, over ONE resolution of the owner.
+    /// account's characters, over ONE resolution of the owners.
     pub fn status_and_mine(&self) -> (HistoryStatus, Mine) {
-        let owner = self.owner();
-        (self.status_with(owner.is_some()), self.mine_with(owner))
+        let owners = self.owners();
+        (self.status_with(!owners.is_empty()), self.mine_with(owners))
     }
 
-    /// Who "me" is: the configured character, else the one guid every
-    /// stored log's COMBATANT_INFO named (spec §9). `(guid, inferred)`.
+    /// Who "me" is in Retail's fights, and so in every card that names no
+    /// edition (project id 0): [`Store::owner_in`] for Retail.
+    /// `(guid, inferred)`.
     pub fn owner(&self) -> Option<(String, bool)> {
+        self.owner_in(Edition::Retail)
+    }
+
+    /// The owner of every edition this machine's cards hold, by the
+    /// edition they count as; an edition whose owner is unknown is absent.
+    pub fn owners(&self) -> BTreeMap<Edition, (String, bool)> {
+        let editions: BTreeSet<Edition> = self
+            .cards
+            .iter()
+            .filter(|c| !c.is_imported())
+            .map(|c| c.edition().counts_as())
+            .collect();
+        editions
+            .into_iter()
+            .filter_map(|e| Some((e, self.owner_in(e)?)))
+            .collect()
+    }
+
+    /// Who "me" is in one edition's fights (the cards that count as
+    /// `edition` does): the configured character, else the one guid every
+    /// stored log of that edition named in its COMBATANT_INFO (spec §9).
+    /// `(guid, inferred)`. Each edition is its own game with its own
+    /// characters, so the inference never reads another's logs: one
+    /// edition's log is never the second log that names another's owner.
+    pub fn owner_in(&self, edition: Edition) -> Option<(String, bool)> {
+        let edition = edition.counts_as();
+        // This machine's own cards of the edition: v46, the logs are this
+        // machine's; an imported card has none.
+        let ours = |c: &&FightCard| !c.is_imported() && c.edition().counts_as() == edition;
         if !self.cfg.characters.is_empty() {
             let wanted: Vec<String> = self
                 .cfg
@@ -3270,7 +3308,7 @@ impl<B: Backend> Store<B> {
                 .cards
                 .iter()
                 .rev()
-                .filter(|c| !c.is_imported())
+                .filter(ours)
                 .flat_map(|c| c.players.iter())
                 .find(|p| name_matches(&wanted, &p.name))
                 .map(|p| (p.guid.clone(), false));
@@ -3283,15 +3321,14 @@ impl<B: Backend> Store<B> {
             .cards
             .iter()
             .rev()
-            .filter(|c| !c.is_imported())
+            .filter(ours)
             .flat_map(|c| c.players.iter())
             .find(|p| self.affiliations.get(&p.guid).is_some_and(|a| a.mine))
         {
             return Some((mine.guid.clone(), true));
         }
-        // v46: the logs are this machine's; an imported card has none.
         let mut per_log: HashMap<u64, HashSet<&str>> = HashMap::new();
-        for c in self.cards.iter().filter(|c| !c.is_imported()) {
+        for c in self.cards.iter().filter(ours) {
             let set = per_log.entry(c.log).or_default();
             for p in c.players.iter().filter(|p| p.logged && !p.enemy) {
                 set.insert(&p.guid);
@@ -3314,21 +3351,22 @@ impl<B: Backend> Store<B> {
         self.cards
             .iter()
             .rev()
-            .filter(|c| !c.is_imported())
+            .filter(ours)
             .find_map(|c| c.owner.clone())
             .map(|g| (g, true))
     }
 
-    /// Cards + rows per (kind, encounter or map, difficulty) capped at
-    /// `keep_per_encounter`, details at `keep_details_per_encounter`,
-    /// oldest first, never touching the protected set: pinned, annotated,
-    /// (v42) every boss kill and timed key (`Retention::keeps_whole`), the
-    /// fastest kill per group, and the owner's best per (group, spec) for
-    /// Damage, Healing and — R17, Tank specs on kills — mitigated_pct. The
-    /// caps count the unprotected fights alone (v42).
+    /// Cards + rows per (edition, kind, encounter or map, difficulty)
+    /// capped at `keep_per_encounter`, details at
+    /// `keep_details_per_encounter`, oldest first, never touching the
+    /// protected set: pinned, annotated, (v42) every boss kill and timed key
+    /// (`Retention::keeps_whole`), the fastest kill per group, and the
+    /// owner's best per (group, spec) for Damage, Healing and — R17, Tank
+    /// specs on kills — mitigated_pct. The caps count the unprotected
+    /// fights alone (v42).
     fn retain(&mut self) {
         let protected = self.protected();
-        let mut groups: BTreeMap<(u8, u32, u32), Vec<usize>> = BTreeMap::new();
+        let mut groups: BTreeMap<GroupKey, Vec<usize>> = BTreeMap::new();
         for (i, c) in self.cards.iter().enumerate() {
             groups.entry(group_key(c)).or_default().push(i);
         }
@@ -3432,7 +3470,9 @@ impl<B: Backend> Store<B> {
 
     fn protected(&self) -> HashSet<String> {
         let mut out: HashSet<String> = HashSet::new();
-        let owner = self.owner().map(|(g, _)| g);
+        // Each edition's owner races for that edition's bests alone: the
+        // group key below carries the edition too.
+        let owners = self.owners();
         let mut fastest: HashMap<GroupKey, (i64, &str)> = HashMap::new();
         // (group, spec id, 0 = damage / 1 = healing / 2 = mitigated_pct) →
         // the owner's best value. Zeros never enter (see below).
@@ -3466,7 +3506,7 @@ impl<B: Backend> Store<B> {
             // floor, "best hps = 0.0" pinned an arbitrary card on every
             // pure-DPS spec, and every un-regraded card would now do the
             // same for mitigated_pct).
-            if let Some(owner) = &owner
+            if let Some((owner, _)) = owners.get(&c.edition().counts_as())
                 && !c.aborted
                 && let Some(p) = c.players.iter().find(|p| &p.guid == owner)
             {
@@ -3514,9 +3554,9 @@ impl<B: Backend> Store<B> {
                 origin,
             } => {
                 // v22: `role` is the SUBJECT's role — `guid` when one was
-                // given, else the owner. With no subject at all (owner
-                // uninferred and no guid) the filter is a no-op, resolved
-                // inside `fights`.
+                // given, else the owner of each card's edition. With no
+                // subject at all (owner uninferred and no guid) the filter
+                // is a no-op, resolved inside `fights`.
                 let (cards, total) = self.fights(
                     *encounter,
                     *difficulty,
@@ -3572,9 +3612,10 @@ impl<B: Backend> Store<B> {
     ///
     /// v22 `role`: only fights the SUBJECT played that role in, by their
     /// spec on that card — the subject is `guid` when one was given, else
-    /// the owner. With neither (the owner is uninferred and no `guid` was
-    /// asked for) there is nobody whose role to read, so the filter is a
-    /// no-op and every fight still answers.
+    /// the owner of the card's edition. With neither (that owner is
+    /// uninferred and no `guid` was asked for) there is nobody whose role to
+    /// read, so the filter is a no-op on that card and it still answers.
+    /// `OwnerPerSec` ranks each card by its own edition's owner too.
     #[allow(clippy::too_many_arguments)]
     fn fights(
         &self,
@@ -3589,14 +3630,20 @@ impl<B: Backend> Store<B> {
         role: Option<Role>,
         origin: OriginFilter,
     ) -> (Vec<FightCard>, u32) {
-        let owner = self.owner().map(|(g, _)| g);
-        let subject: Option<&str> = guid.or(owner.as_deref());
+        // The owner a card answers for is its own edition's.
+        let owners = self.owners();
+        let owner = |c: &FightCard| -> Option<&str> {
+            owners
+                .get(&c.edition().counts_as())
+                .map(|(g, _)| g.as_str())
+        };
+        let subject = |c: &FightCard| -> Option<&str> { guid.or_else(|| owner(c)) };
         let mut hits: Vec<&FightCard> = self
             .cards
             .iter()
             // v46: this machine's own unless the client asks for imports.
             .filter(|c| origin.admits(&c.origin))
-            .filter(|c| match (role, subject) {
+            .filter(|c| match (role, subject(c)) {
                 (Some(role), Some(subject)) => c
                     .players
                     .iter()
@@ -3616,8 +3663,7 @@ impl<B: Backend> Store<B> {
             FightSort::Fastest => hits.sort_by_key(|c| (c.duration_ms, c.start_utc_ms)),
             FightSort::OwnerPerSec => {
                 let per_sec = |c: &FightCard| {
-                    owner
-                        .as_deref()
+                    owner(c)
                         .and_then(|o| c.players.iter().find(|p| p.guid == o))
                         .map_or(0.0, |p| p.dps)
                 };
@@ -4235,10 +4281,13 @@ fn card_difficulty(c: &FightCard) -> Option<u32> {
         .or_else(|| c.key.as_ref().map(|k| k.difficulty))
 }
 
-/// Retention group: `(kind, encounter id | map id, difficulty)`.
-type GroupKey = (u8, u32, u32);
+/// Retention group: `(edition, kind, encounter id | map id, difficulty)`,
+/// the edition the card's `Edition::counts_as` — editions share ids, and
+/// one's fights never crowd out, or race, another's.
+type GroupKey = (Edition, u8, u32, u32);
 
 fn group_key(c: &FightCard) -> GroupKey {
+    let edition = c.edition().counts_as();
     let kind = match c.kind {
         FightKind::Encounter => 0,
         FightKind::Arena => 1,
@@ -4247,9 +4296,14 @@ fn group_key(c: &FightCard) -> GroupKey {
         FightKind::Trash => 4,
     };
     match (c.encounter, &c.key) {
-        (Some(e), _) => (kind, e.id, e.difficulty),
-        (None, Some(k)) => (kind, k.map_id, k.difficulty.max(k.level.unwrap_or(0))),
-        (None, None) => (kind, 0, 0),
+        (Some(e), _) => (edition, kind, e.id, e.difficulty),
+        (None, Some(k)) => (
+            edition,
+            kind,
+            k.map_id,
+            k.difficulty.max(k.level.unwrap_or(0)),
+        ),
+        (None, None) => (edition, kind, 0, 0),
     }
 }
 
