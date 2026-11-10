@@ -22,9 +22,9 @@ use crate::lua::Lua;
 use crate::obj;
 use wowdps_model::LoadoutAura;
 use wowdps_model::{
-    Class, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
-    Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell,
-    View,
+    Class, Edition, Encounter, EnergizeRow, GearItem, Loadout, Mark, MarkKind, MissKind,
+    Mitigation, Role, Row, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick,
+    Timeline, UptimeCell, View,
 };
 use wowdps_model::{Empower, GroupKind, PowerSeries, SpellGroup, SpellMeta, SpellPart, SpellTree};
 
@@ -725,6 +725,14 @@ impl FightCard {
     /// A keystone run's RUN rate is `wowdps_model::rate(amount, duration_ms)`.
     pub fn rate_ms(&self) -> i64 {
         self.combat_ms.unwrap_or(self.duration_ms)
+    }
+
+    /// The game edition the card's log was written by, from its
+    /// `project_id`: `Unknown(0)` on a card stored before the header
+    /// carried the id and on an imported one, which counts as Retail
+    /// ([`Edition::counts_as`]); an unlisted nonzero id counts as itself.
+    pub fn edition(&self) -> Edition {
+        Edition::from_project_id(self.project_id)
     }
 
     /// v46: a fight imported from outside this machine's logs.

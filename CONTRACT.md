@@ -5,6 +5,7 @@ rulings below are the agreed interface.
 
 - `wowdps-model` — domain types only (`View`, `Row`, `Class`, `Spec`, `SegmentKind`,
   `SegmentId`, `SegmentInfo`, `ListRow`, `Screen`, `Pane`, `Drill`, `Action`, `fmt`,
+  `Edition` — the game edition a log names, the Daemon section's editions paragraph —
   and (v45, R29) `replay`: a fight as the replay draws it, `Cut`).
   Zero dependencies, no I/O, no parser.
 - `wowdps-core` — the engine: `parser`, `meter`, `index`, `tail`, and (v45) `replay`, the
@@ -63,6 +64,7 @@ impl Unit { pub fn is_player(&self) -> bool; pub fn is_pet_or_guardian(&self) ->
 pub enum Event {
     Version { log_version: u32, advanced: bool,
               build: (u16, u16, u16), project_id: u8 },  // BUILD_VERSION / PROJECT_ID; zeros when absent
+                                          // (`Edition::from_project_id` reads the id; 0 is unknown)
     EncounterStart { id: u32, name: String, difficulty: u32, group_size: u32,
                      instance_id: u32 },         // R10: ZONE_CHANGE's map id for the same place
     EncounterEnd   { id: u32, name: String, success: bool,
@@ -151,7 +153,8 @@ pub struct Segment {
     pub noise: bool,               // R13: post-match arena tail — never listed, even live
     pub encounter: Option<Encounter>, // ENCOUNTER_START id / difficulty / group_size; None off bosses
     pub build: (u16, u16, u16),    // game build from the latest COMBAT_LOG_VERSION (R6 seed) — zeros before one
-    pub project_id: u8,            // PROJECT_ID from the same line (1 = retail)
+    pub project_id: u8,            // PROJECT_ID from the same line: model `Edition` (1 Retail, 18 Forever,
+                                   // 2/5/11/14/19 the Classic clients, else unknown; 0 before any)
     pub log_version: u32,          // log format version from the same line
 }
 pub struct Visit {                 // R10: one contiguous stay in instanced content
@@ -909,20 +912,46 @@ rescans and replays write nothing twice; a record still open at the end of an
 older log is stored `aborted` and is replaced if its END ever arrives. Stored:
 raid bosses, arena matches, keyed runs' Σ (their member bosses — any boss at keystone difficulty 8, START seen or not — only under `history_store_trash`) and
 plain visits' Σ; Trash only under the switch; noise never. Retention per
-(kind, encounter | map, difficulty), oldest first, never the protected set
+(edition, kind, encounter | map, difficulty), oldest first, never the protected set
 (pinned, annotated, (v46) imported (the imported fights paragraph below), the fastest kill, the owner's best per_sec per spec for
-damage and healing, and — 1a step 2b — a Tank spec's best `mitigated_pct` on kills; a measure of 0 or an aborted fight protects nothing; v42 every boss kill and timed key, kept whole; and (v45) every PROGRESSION wipe — a boss pull lost, not aborted, at an (encounter id, difficulty) no stored card has killed, kept whole as a kill is, details, series and replay alike, whatever its length, until the first kill there lands and the wipes before it answer to the caps again; `history_keep_progression_whole`, on by default; a Heroic kill says nothing of a Mythic wipe). (v45, R29) Every boss pull and keystone run is also cut into the REPLAY tier, `replay/<id>.bin` (`proto::replay`): from its log, beside the meter on import and regrade, as a cut alone after a live close once the thread is idle, and by the rewrite queue for a fight whose slot lacks a current file; a fight keeps it while protected, else among the newest `history_keep_details_per_encounter` of its group, and past `history_replay_mb` (default 4096) the oldest unprotected go — never a protected one (v46: a replay file that cannot be removed stays listed, and answered, until retention removes it). `GetReplay` answers the file; `HistoryStatus` counts the tier and the kept-whole set by why. "Me" is `history_characters`, else (v31) a character the
-wowdps addon marked as the account's own on the newest card, else the one guid every
-stored log's COMBATANT_INFO named. `Status` carries a `HistoryStatus` (v20).
+damage and healing, and — 1a step 2b — a Tank spec's best `mitigated_pct` on kills; a measure of 0 or an aborted fight protects nothing; v42 every boss kill and timed key, kept whole; and (v45) every PROGRESSION wipe — a boss pull lost, not aborted, at an (edition, encounter id, difficulty) no stored card has killed, kept whole as a kill is, details, series and replay alike, whatever its length, until the first kill there lands and the wipes before it answer to the caps again; `history_keep_progression_whole`, on by default; a Heroic kill says nothing of a Mythic wipe). (v45, R29) Every boss pull and keystone run is also cut into the REPLAY tier, `replay/<id>.bin` (`proto::replay`): from its log, beside the meter on import and regrade, as a cut alone after a live close once the thread is idle, and by the rewrite queue for a fight whose slot lacks a current file; a fight keeps it while protected, else among the newest `history_keep_details_per_encounter` of its group, and past `history_replay_mb` (default 4096) the oldest unprotected go — never a protected one (v46: a replay file that cannot be removed stays listed, and answered, until retention removes it). `GetReplay` answers the file; `HistoryStatus` counts the tier and the kept-whole set by why. "Me" is resolved per edition, over that edition's cards alone: `history_characters`, else (v31) a character the
+wowdps addon marked as the account's own on the edition's newest card, else the one guid every
+stored log of the edition named in its COMBATANT_INFO (another edition's log is never the second log).
+`Store::owner` is Retail's; `Store::owner_in(edition)` any edition's. `Status` carries a `HistoryStatus` (v20); its
+`owner_inferred` holds when some edition's owner was inferred.
 Whose rows are the READER'S (v35, `daemon::mine::Mine`) is wider than "me": every
-character of the account the store knows — the addon's own-character set, the
-store-wide owner and every card's owner by guid — plus the configured
+character of the account the store knows — the addon's own-character set, each
+edition's owner and every card's owner by guid — plus the configured
 `history_characters` by name, so an alt is "you" too. The history thread
 publishes it after every request it handles (`HistoryLink::mine`, swapped
 whole behind a lock); the hub reads it before each build and the engine marks
 the snapshot's rows, drill and raid deaths; the store marks a stored fight's
 at answer time. Nothing is stored with the flag, and a daemon without a store
 marks nothing.
+
+**Editions of the game** (record and wire unchanged: the card's `project_id` is the record):
+model `Edition`, read from a log's `COMBAT_LOG_VERSION` `PROJECT_ID` — `from_project_id` gives
+`Retail` (1), `Forever` (18), `Classic(n)` for the Classic clients' published ids (2, 5, 11,
+14, 19) and `Unknown(n)` for any other number, kept (0: no number recorded — a card stored
+before its log's header carried the id, and an import); the payloads mean something only as
+`from_project_id` makes them, and `project_id()` is its inverse; `label()` ("Retail",
+"Forever", "Classic", "Unknown") and `key()` (`retail`, `forever`, `classic`, `unknown`) name
+it — a key names a family (every Classic client shares `classic`, every unlisted id
+`unknown`), never a bookkeeping group; `product_dir()` / `product()` are the install's folder
+and `.build.info` product (`_retail_` / `wow`, `_forever_` / `wowf`, `None` where not known).
+`FightCard::edition()` reads a card's. Editions share encounter, difficulty and map ids with no
+promise that one id means one fight, so the store's bookkeeping keys on `Edition::counts_as()`
+— `Unknown(0)` counts as Retail, every other edition as itself (each Classic client apart, and
+an unlisted nonzero id apart from Retail: some other game): the kill set that ends a
+progression, the retention groups and with them the fastest kill and the owner's bests, and
+the owner's inference. One edition's kill ends no progression of another's, its fights never
+take another's place under the caps or race another's for a best, and a store of Retail cards
+and cards with no number keeps exactly the grouping it had. The fixed questions take no edition yet: `Fights`, `Progression`,
+`Trend` and `RoleNight` answer over every edition an id names, `Fights` reading each card's own
+edition's owner for its role subject and `OwnerPerSec`. The lake's `fights` and `players` views
+carry `edition` (the key, named off `project_id`; `players` carries `project_id` too), and
+`stats.kept.progression` is reckoned per edition as the store does. The MCP's stored cards say
+`edition`, `edition_name` and `project_id`, and a card by reference its `edition`.
 
 **Imported fights** (v46, `ClientMsg::ImportReplay`): a fight from outside this machine's
 logs — a client converted it (a Warcraft Logs fight, say) and hands the daemon what its source

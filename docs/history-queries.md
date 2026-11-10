@@ -238,6 +238,32 @@ pool); `max` the largest maximum reported. Mana is type 0 (`power_name`:
 and long wipes keep the details tier the view reads, and only once written
 by v44 or regraded.
 
+## Each player's pulls and best per boss, one game edition at a time
+
+```sql
+select p.edition, p.project_id, p.encounter_id, p.difficulty, p.name,
+       count(*) as pulls, max(p.dps) as best_dps
+from players p
+where not p.enemy and not p.imported
+group by 1, 2, 3, 4, 5
+order by 1, 2, 3, 4, best_dps desc;
+```
+
+Each log names the edition of the game that wrote it (`PROJECT_ID` in its
+header), and `fights.edition` and `players.edition` spell it beside the
+stored `project_id`: `retail`, `forever`, `classic`, or `unknown` for a
+number this build does not know and for a card stored before its log
+carried one. `edition` names a family: the Classic clients share
+`classic`, and every unlisted number `unknown`. Editions share encounter,
+difficulty and map ids with no promise that an id names the same fight,
+so a question across fights groups by edition too, as this one does. The
+daemon's bookkeeping (the kills that end a progression, retention, bests,
+the owner) counts a card with no number (`project_id` 0) as Retail and
+keeps every other number apart, so group by `case project_id when 0 then
+1 else project_id end` to reckon as it does; its fixed questions and
+`best-kill`, `progression`, `trend` and `role-night` do not narrow by
+edition yet.
+
 ## The replay tier (R29, v45) — no view, by design
 
 `replay/<id>.bin` is binary and holds no SQL view: it is the one tier a
