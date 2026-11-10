@@ -237,6 +237,9 @@ fn open_on(
             keyboard_interactivity: KeyboardInteractivity::None,
             ..Default::default()
         }),
+        // As the window's: no power-saver cap (gpui-pre 0.3.11's default),
+        // GPUI's inactive-window and thermal caps standing.
+        low_power_frame_interval: None,
         ..Default::default()
     };
     // Straight through GPUI, not `gpui_kit::open_window`: Kit's Root paints
@@ -304,6 +307,9 @@ fn open_on(
         focus: false,
         kind: WindowKind::PopUp,
         is_resizable: false,
+        // As the window's: no power-saver cap (gpui-pre 0.3.11's default),
+        // GPUI's inactive-window and thermal caps standing.
+        low_power_frame_interval: None,
         ..Default::default()
     };
     let root = overlay.clone();

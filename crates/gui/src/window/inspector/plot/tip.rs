@@ -4,7 +4,7 @@
 //! the surface under a hairline of the edge, a swatch before each stacked
 //! band's line, its lines one under the other.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use gpui_kit::{
     App, Font, FontWeight, Hsla, ShapedLine, SharedString, TextAlign, TextRun, Window,
@@ -28,7 +28,7 @@ pub fn weight(face: Face) -> FontWeight {
 }
 
 pub(super) struct Shaper {
-    text: Arc<WindowTextSystem>,
+    text: Rc<WindowTextSystem>,
     pen: Pen,
     /// The face its words are set in.
     ui: SharedString,
