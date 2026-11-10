@@ -85,4 +85,190 @@ mod tests {
             );
         }
     }
+
+    /// What every refusal of product wowf ends with.
+    const REFUSED: &str = "is Retail's (product wow); product wowf needs -o naming another place";
+
+    /// The error `name` gives for `words` (empty where it ran through).
+    fn run(name: &str, words: &[&str]) -> String {
+        let c = EXTRACT.find(name).unwrap();
+        let words = words.iter().map(|w| w.to_string()).collect();
+        (c.run)(EXTRACT.args(words, c)).err().unwrap_or_default()
+    }
+
+    /// A committed file of this checkout, by its absolute path.
+    fn committed(rel: &str) -> String {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        root.join(rel).display().to_string()
+    }
+
+    /// Every generator refuses another product's output where Retail's
+    /// lives before it reads anything (the install, a census, the store,
+    /// the network): with no `-o` (its own committed table or data-home
+    /// cache), and with an `-o` naming any committed table or review twin,
+    /// not only its own.
+    #[test]
+    fn every_generator_keeps_another_product_off_retails_outputs() {
+        let gens: Vec<_> = EXTRACT
+            .iter()
+            .filter(|c| c.name.starts_with("gen-"))
+            .collect();
+        assert_eq!(gens.len(), 13);
+        let others = [
+            committed("crates/core/src/item_spells.rs"),
+            committed("crates/core/src/proc_spells.expected.md"),
+        ];
+        for c in gens {
+            let e = run(c.name, &["--product", "wowf", "--dbd-dir", "/nonexistent"]);
+            assert!(e.ends_with(REFUSED), "{}: {e}", c.name);
+            for other in &others {
+                let other = other.as_str();
+                let words = [
+                    "--product",
+                    "wowf",
+                    "-o",
+                    other,
+                    "--dbd-dir",
+                    "/nonexistent",
+                ];
+                let e = run(c.name, &words);
+                assert!(e.starts_with(&format!("-o {other}: ")), "{}: {e}", c.name);
+                assert!(e.ends_with(REFUSED), "{}: {e}", c.name);
+            }
+        }
+    }
+
+    /// An `-o` elsewhere lets another product through, as far as the
+    /// install (absent here, so nothing is read or written); of two `-o`,
+    /// the later is the one checked, as it is the one written. The
+    /// whole-icons pass, which writes no cache, is refused up front when
+    /// the cache its run after cuts would be Retail's.
+    #[test]
+    fn an_o_elsewhere_gets_through_and_the_later_o_wins() {
+        let elsewhere = std::env::temp_dir()
+            .join(format!("wowdps-extract-elsewhere-{}", std::process::id()))
+            .join("out");
+        let (elsewhere, mine) = (
+            elsewhere.display().to_string(),
+            committed("crates/core/src/class_spells.rs"),
+        );
+        let (elsewhere, mine) = (elsewhere.as_str(), mine.as_str());
+        /// Product wowf, `words`, and an install that is not there.
+        fn with<'a>(words: &[&'a str]) -> Vec<&'a str> {
+            let absent = ["--wow-dir", "/nonexistent", "--dbd-dir", "/nonexistent"];
+            [&["--product", "wowf"][..], words, &absent[..]].concat()
+        }
+        let through = |e: &str| e.contains(".build.info") && !e.contains("Retail's");
+
+        let e = run("gen-class-spells", &with(&["-o", mine, "-o", elsewhere]));
+        assert!(through(&e), "{e}");
+        let e = run("gen-class-spells", &with(&["-o", elsewhere, "-o", mine]));
+        assert!(e.ends_with(REFUSED), "{e}");
+        let e = run("gen-spell-icons", &with(&["-o", elsewhere]));
+        assert!(through(&e), "{e}");
+
+        let e = run("gen-icons", &with(&["--whole", elsewhere, "--whole-only"]));
+        assert!(e.ends_with(REFUSED), "{e}");
+        let words = ["--whole", elsewhere, "--whole-only", "-o", elsewhere];
+        let e = run("gen-icons", &with(&words));
+        assert!(through(&e), "{e}");
+        assert!(!std::path::Path::new(elsewhere).exists(), "nothing written");
+    }
+
+    /// A census-backed generator writes its review twin beside `-o`, its
+    /// name made from `-o`'s, so an `-o` whose twin would be a committed
+    /// one is refused: the generator's own (`proc_spells`, no extension)
+    /// or another's (`gen-role-spells` onto proc's twin, or proto's placed
+    /// one). A generator with no twin goes through with the same `-o`, as
+    /// far as the absent install, and writes nothing.
+    #[test]
+    fn a_twin_named_from_o_is_checked_too() {
+        let absent = ["--wow-dir", "/nonexistent", "--dbd-dir", "/nonexistent"];
+        let cases = [
+            (
+                "gen-proc-spells",
+                "crates/core/src/proc_spells",
+                ".expected.md",
+            ),
+            (
+                "gen-role-spells",
+                "crates/core/src/proc_spells",
+                ".expected.md",
+            ),
+            (
+                "gen-role-spells",
+                "crates/proto/src/placed/placed_spells",
+                ".expected.md",
+            ),
+        ];
+        for (name, stem, ext) in cases {
+            let (path, twin) = (committed(stem), committed(&format!("{stem}{ext}")));
+            let words = [&["--product", "wowf", "-o", path.as_str()][..], &absent[..]].concat();
+            let e = run(name, &words);
+            let head = format!("-o {path} writes {twin} beside it: the committed {stem}{ext} ");
+            assert!(e.starts_with(&head), "{name}: {e}");
+            assert!(e.ends_with(REFUSED), "{name}: {e}");
+        }
+        let path = committed("crates/core/src/proc_spells");
+        let words = [&["--product", "wowf", "-o", path.as_str()][..], &absent[..]].concat();
+        let e = run("gen-class-spells", &words);
+        assert!(e.contains(".build.info") && !e.contains("Retail's"), "{e}");
+        assert!(!std::path::Path::new(&path).exists(), "nothing written");
+    }
+
+    /// Every table generator is refused its own committed table and twin,
+    /// found by the header the generator writes into the table rather than
+    /// by `tablegen`'s list of them, so a generator added without its entry
+    /// there fails here; and every generated table in the checkout is one.
+    #[test]
+    fn every_table_generator_is_refused_its_own_committed_files() {
+        use std::io::BufRead;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        // (first line, path) of every generated Rust file under crates/.
+        let mut generated = Vec::new();
+        let mut dirs = vec![root.join("crates")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if entry.file_type().unwrap().is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|x| x == "rs") {
+                    let file = std::fs::File::open(&path).unwrap();
+                    let first = std::io::BufReader::new(file).lines().next();
+                    let first = first.and_then(Result::ok).unwrap_or_default();
+                    if first.starts_with("//! GENERATED by tools/gen-") {
+                        generated.push((first, path));
+                    }
+                }
+            }
+        }
+        let gens: Vec<&Cmd> = tablegen::COMMANDS
+            .iter()
+            .filter(|c| c.name.starts_with("gen-"))
+            .collect();
+        assert_eq!(generated.len(), gens.len(), "{generated:?}");
+        let committed = tablegen::committed();
+        for c in gens {
+            let header = format!("//! GENERATED by tools/{}.sh ", c.name);
+            let own: Vec<_> = generated
+                .iter()
+                .filter(|(first, _)| first.starts_with(&header))
+                .collect();
+            assert_eq!(own.len(), 1, "{}: {own:?}", c.name);
+            let table = own[0].1.clone();
+            let twin = table.with_extension("expected.md");
+            let files = [Some(table), twin.is_file().then_some(twin)];
+            for file in files.into_iter().flatten() {
+                let listed = committed.iter().any(|rel| file.ends_with(rel));
+                assert!(listed, "{}: {} not listed", c.name, file.display());
+                let f = file.display().to_string();
+                let e = run(
+                    c.name,
+                    &["--product", "wowf", "-o", &f, "--dbd-dir", "/nonexistent"],
+                );
+                assert!(e.ends_with(REFUSED), "{}: {e}", c.name);
+            }
+        }
+    }
 }

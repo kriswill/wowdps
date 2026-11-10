@@ -9,6 +9,7 @@ use std::path::Path;
 
 use super::args::Args;
 use super::install::{Install, load_tables};
+use super::retail::{cache_place, retail_only};
 use super::{Cmd, cmd, data_path, make_dir, read_text};
 use wowdps_extract::atomic::{write_atomic, write_if_changed};
 use wowdps_extract::{artgen, icongen, journal, spellicongen, spelltipgen, talentgen};
@@ -18,14 +19,15 @@ pub const COMMANDS: &[Cmd] = &[
     cmd(
         "gen-icons",
         "gen-icons [wow-dir] --dbd-dir <dir> [-o class-icons.bin]
-                       [--whole DIR [--whole-only]] [--upscaled DIR] [--keys tactkeys.txt]",
+                       [--whole DIR [--whole-only]] [--upscaled DIR] [--keys tactkeys.txt]
+                       [--product wow]",
         icons,
     )
     .reads(&[&[icongen::TABLE]]),
     cmd(
         "gen-spell-icons",
         "gen-spell-icons [wow-dir] --dbd-dir <dir>
-                       [-o spell-icons.bin] [--keys tactkeys.txt]",
+                       [-o spell-icons.bin] [--keys tactkeys.txt] [--product wow]",
         spell_icons,
     )
     .reads(&[&[spellicongen::TABLE]]),
@@ -33,7 +35,7 @@ pub const COMMANDS: &[Cmd] = &[
         "gen-spell-tips",
         "gen-spell-tips [wow-dir] --dbd-dir <dir> [-o spell-tips.bin]
                        [--store history-dir] [--force]
-                       [--keys tactkeys.txt]
+                       [--keys tactkeys.txt] [--product wow]
                        (tools/gen-spell-tips.sh: the replay's spell tooltips and lane facts)",
         spell_tips,
     )
@@ -42,24 +44,41 @@ pub const COMMANDS: &[Cmd] = &[
         "gen-talent-trees",
         "gen-talent-trees [wow-dir] --dbd-dir <dir>
                        [-o talents.json] [--keys tactkeys.txt]
-                       [--listfile icons.csv]",
+                       [--listfile icons.csv] [--product wow]",
         talent_trees,
     )
     .reads(&[&talentgen::TABLES]),
     cmd(
         "gen-talent-art",
         "gen-talent-art [wow-dir] --dbd-dir <dir>
-                       [-o talent-art.bin] [--keys tactkeys.txt]",
+                       [-o talent-art.bin] [--keys tactkeys.txt] [--product wow]",
         talent_art,
     )
     .reads(&[&artgen::TABLES]),
 ];
 
+const CLASS_ICONS: &str = "class-icons.bin";
+const SPELL_ICONS: &str = "spell-icons.bin";
+const TALENTS: &str = "talents.json";
+const TALENT_ART: &str = "talent-art.bin";
+
+/// Every cache these commands write in the data home, where the GUI and
+/// the mcp tools read Retail's (`retail::retail_only`).
+pub const CACHES: [&str; 5] = [
+    CLASS_ICONS,
+    SPELL_ICONS,
+    spelltipgen::FILE,
+    TALENTS,
+    TALENT_ART,
+];
+
 /// `gen-icons`: the class crests and spec icons as class-icons.bin.
 /// `--whole DIR` also writes each icon at its native 64 px as
-/// `DIR/<fdid>.png`, for the upscaler (with `--whole-only`, those alone);
-/// `--upscaled DIR` cuts the tiles from their 4× upscales there
-/// (tools/gen-icons.sh runs Real-ESRGAN between).
+/// `DIR/<fdid>.png`, for the upscaler (with `--whole-only`, those alone,
+/// and no cache: its `-o`, if any, names the cache the run after it cuts,
+/// checked here so another product's Retail place is refused before the
+/// upscaler runs); `--upscaled DIR` cuts the tiles from their 4× upscales
+/// there (tools/gen-icons.sh runs Real-ESRGAN between).
 pub fn icons(mut a: Args) -> Result<(), String> {
     let out = a.path(&["-o", "--out"])?;
     let whole = a.path(&["--whole"])?;
@@ -67,12 +86,13 @@ pub fn icons(mut a: Args) -> Result<(), String> {
     let whole_only = a.flag(&["--whole-only"]);
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
-    if whole_only && (whole.is_none() || out.is_some() || upscaled.is_some()) {
+    if whole_only && (whole.is_none() || upscaled.is_some()) {
         return Err(
-            "gen-icons --whole-only takes --whole DIR alone: it writes the icons whole and no cache"
+            "gen-icons --whole-only takes --whole DIR and no --upscaled: it writes the icons whole and no cache"
                 .into(),
         );
     }
+    retail_only(&install, out.as_deref(), None, &cache_place(CLASS_ICONS))?;
     let (game, tables) = install.open_tables()?;
     let csv = tables.get(icongen::TABLE)?;
 
@@ -99,7 +119,7 @@ pub fn icons(mut a: Args) -> Result<(), String> {
     // never lands in the repository.
     let out = match out {
         Some(p) => p,
-        None => data_path("class-icons.bin")?,
+        None => data_path(CLASS_ICONS)?,
     };
     if let Some(parent) = out.parent() {
         make_dir(parent)?;
@@ -123,9 +143,10 @@ pub fn spell_icons(mut a: Args) -> Result<(), String> {
     let out = a.path(&["-o", "--out"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
+    retail_only(&install, out.as_deref(), None, &cache_place(SPELL_ICONS))?;
     let out = match out {
         Some(p) => p,
-        None => data_path("spell-icons.bin")?,
+        None => data_path(SPELL_ICONS)?,
     };
     let (game, tables) = install.open_tables()?;
 
@@ -152,13 +173,22 @@ pub fn spell_icons(mut a: Args) -> Result<(), String> {
 /// every spell the curated tables list. A file whose stamp says it was
 /// made by these rules from this build for these spells is current, and
 /// no table is decoded (`--force` decodes them anyway); the bytes are the
-/// same run after run, and a file already holding them is left alone.
+/// same run after run, and a file already holding them is left alone. The
+/// stamp hashes the build as the tables' headers name it
+/// (`Game::build_label`), so another product's tips are never current
+/// for Retail's build.
 pub fn spell_tips(mut a: Args) -> Result<(), String> {
     let out = a.path(&["-o", "--out"])?;
     let store = a.path(&["--store"])?;
     let force = a.flag(&["--force"]);
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
+    retail_only(
+        &install,
+        out.as_deref(),
+        None,
+        &cache_place(spelltipgen::FILE),
+    )?;
     let started = std::time::Instant::now();
     let out = match out {
         Some(p) => p,
@@ -193,13 +223,13 @@ pub fn spell_tips(mut a: Args) -> Result<(), String> {
         wanted.curated
     );
     let game = install.open()?;
-    let stamp = spelltipgen::stamp(&game.build, &wanted.ids, &wanted.fights);
+    let build = game.build_label();
+    let stamp = spelltipgen::stamp(&build, &wanted.ids, &wanted.fights);
     let held = std::fs::read(&out).ok();
     if !force && held.as_deref().and_then(spelltipgen::read_stamp) == Some(stamp) {
         eprintln!(
-            "{}: current (build {}, the same spells); nothing decoded ({:.1} s; --force regenerates)",
+            "{}: current (build {build}, the same spells); nothing decoded ({:.1} s; --force regenerates)",
             out.display(),
-            game.build,
             started.elapsed().as_secs_f32()
         );
         return Ok(());
@@ -211,7 +241,7 @@ pub fn spell_tips(mut a: Args) -> Result<(), String> {
     }
     let wrote = write_if_changed(&out, &g.bytes)?;
     eprintln!(
-        "{}: {} spells ({} with a parent, {} of them active; {} effects whose press some spec's logs omit, from {} players' fights; {} with the journal's words; {} asked for have no name), build {}, {} KiB{} in {:.1} s",
+        "{}: {} spells ({} with a parent, {} of them active; {} effects whose press some spec's logs omit, from {} players' fights; {} with the journal's words; {} asked for have no name), build {build}, {} KiB{} in {:.1} s",
         out.display(),
         g.records,
         g.parents,
@@ -220,7 +250,6 @@ pub fn spell_tips(mut a: Args) -> Result<(), String> {
         wanted.fights.len(),
         g.journal,
         g.nameless,
-        game.build,
         g.bytes.len() / 1024,
         if wrote { "" } else { ", unchanged" },
         started.elapsed().as_secs_f32()
@@ -232,11 +261,12 @@ pub fn talent_art(mut a: Args) -> Result<(), String> {
     let out = a.path(&["-o", "--out"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
+    retail_only(&install, out.as_deref(), None, &cache_place(TALENT_ART))?;
     // A per-machine cache like the icon caches — extracted Blizzard art
     // never lands in the repository.
     let out = match out {
         Some(p) => p,
-        None => data_path("talent-art.bin")?,
+        None => data_path(TALENT_ART)?,
     };
     let (game, tables) = install.open_tables()?;
 
@@ -265,11 +295,12 @@ pub fn talent_trees(mut a: Args) -> Result<(), String> {
     let listfile = a.path(&["--listfile"])?;
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
+    retail_only(&install, out.as_deref(), None, &cache_place(TALENTS))?;
     // A per-machine cache like the icon caches — Blizzard-derived strings
     // (spell names) never land in the repository.
     let out = match out {
         Some(p) => p,
-        None => data_path("talents.json")?,
+        None => data_path(TALENTS)?,
     };
     let (game, tables) = install.open_tables()?;
     let icon_names = match &listfile {
@@ -280,18 +311,20 @@ pub fn talent_trees(mut a: Args) -> Result<(), String> {
         }
     };
 
-    let g = talentgen::generate(&tables, &icon_names, &game.build)?;
+    // The dataset's build names the product beside it for any but
+    // Retail's, as the tables' headers do (`Game::build_label`).
+    let build = game.build_label();
+    let g = talentgen::generate(&tables, &icon_names, &build)?;
     if let Some(parent) = out.parent() {
         make_dir(parent)?;
     }
     write_atomic(&out, &g.content)?;
     eprintln!(
-        "{}: {} trees, {} specs, {} nodes, build {} ({} KiB; {} spells nameless)",
+        "{}: {} trees, {} specs, {} nodes, build {build} ({} KiB; {} spells nameless)",
         out.display(),
         g.trees,
         g.specs,
         g.nodes,
-        game.build,
         g.content.len() / 1024,
         g.nameless
     );

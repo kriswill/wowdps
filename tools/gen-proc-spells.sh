@@ -17,16 +17,18 @@
 #
 # Note SpellEffect and Spell are large tables; this takes a minute or two.
 #
-# usage: tools/gen-proc-spells.sh [wow-dir]
+# usage: tools/gen-proc-spells.sh [wow-dir] [--product ROW -o FILE]
 #   wow-dir: folder holding .build.info and Data/. When omitted the tool
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
 #   logs_dir, or a scan of the install roots (Steam compatdata on
 #   Linux, /Applications and ~/Applications on macOS).
+#   --product ROW: another edition of the game (tools/lib.sh); its table
+#   and review twin go only where -o FILE names, never over the committed
+#   ones.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 . "$root/tools/lib.sh"
-wow="${1:-}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -35,7 +37,8 @@ build_extract
 fetch_dbds gen-proc-spells "$work"
 fetch_keys "$work/tactkeys.txt"
 
-"$extract" gen-proc-spells ${wow:+"$wow"} \
+# The words given come last, so a -o among them wins.
+"$extract" gen-proc-spells \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" \
     --census "$root/tools/proc-spells-census.csv" \
-    -o "$root/crates/core/src/proc_spells.rs"
+    -o "$root/crates/core/src/proc_spells.rs" "$@"

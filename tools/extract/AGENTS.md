@@ -61,10 +61,12 @@ pinned revision. The scripts that drive it: `tools/AGENTS.md`.
   descriptions and the journal's words for spells go to `spell-tips.bin`,
   art to the caches.
 - **Look before you fetch.** Use `wowdps-db2` (any game table as SQL,
-  cached per build under `~/.cache/wowdps/db2/<build>/`) before any hand
-  fetch, CSV or DuckDB session.
+  cached per build under `~/.cache/wowdps/db2/<build>/`; `--product ROW`
+  for another edition's, as `fetch` and the gen-* commands take it)
+  before any hand fetch, CSV or DuckDB session.
 - **Gates.** The DB2 decoder: `tools/extract/verify.sh` against wago.tools'
-  export (network; `--game` reads the install's own CASC). Any change:
+  export (network; `--game` reads the install's own CASC, `--product ROW`
+  another edition's build in it). Any change:
   rerun the generators it reaches on the base and the change, each built
   in its own worktree and target, and compare their outputs byte for
   byte; wowdps-replay's `tools/extract-check.sh` checks the library again
@@ -104,5 +106,5 @@ pinned revision. The scripts that drive it: `tools/AGENTS.md`.
 ```sh
 cargo test -p wowdps-extract
 cargo run -q -p wowdps-extract                   # no arguments: its CLI
-wowdps-db2 JournalEncounter -c "select ..."      # --find WORD, --tables, --csv
+wowdps-db2 JournalEncounter -c "select ..."      # --find WORD, --tables, --csv, --product ROW
 ```

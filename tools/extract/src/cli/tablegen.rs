@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::args::Args;
 use super::install::Install;
+use super::retail::retail_only;
 use super::{Cmd, cmd, read_text};
 use wowdps_extract::atomic::write_if_changed;
 use wowdps_extract::table::Tables;
@@ -21,56 +22,56 @@ pub const COMMANDS: &[Cmd] = &[
     cmd(
         "gen-class-spells",
         "gen-class-spells [wow-dir] --dbd-dir <dir>
-                       [-o class_spells.rs] [--keys tactkeys.txt]",
+                       [-o class_spells.rs] [--keys tactkeys.txt] [--product wow]",
         class_spells,
     )
     .reads(&[CLASS_SPELLS.tables]),
     cmd(
         "gen-keystone-timers",
         "gen-keystone-timers [wow-dir] --dbd-dir <dir>
-                       [-o keystone_timers.rs] [--keys tactkeys.txt]",
+                       [-o keystone_timers.rs] [--keys tactkeys.txt] [--product wow]",
         keystone_timers,
     )
     .reads(&[KEYSTONE_TIMERS.tables]),
     cmd(
         "gen-open-world-maps",
         "gen-open-world-maps [wow-dir] --dbd-dir <dir>
-                       [-o open_world_maps.rs] [--keys tactkeys.txt]",
+                       [-o open_world_maps.rs] [--keys tactkeys.txt] [--product wow]",
         open_world_maps,
     )
     .reads(&[OPEN_WORLD_MAPS.tables]),
     cmd(
         "gen-item-spells",
         "gen-item-spells [wow-dir] --dbd-dir <dir>
-                       [-o item_spells.rs] [--keys tactkeys.txt]",
+                       [-o item_spells.rs] [--keys tactkeys.txt] [--product wow]",
         item_spells,
     )
     .reads(&[ITEM_SPELLS.tables]),
     cmd(
         "gen-role-spells",
         "gen-role-spells [wow-dir] --dbd-dir <dir> --census <csv>
-                       [-o role_spells.rs] [--keys tactkeys.txt]",
+                       [-o role_spells.rs] [--keys tactkeys.txt] [--product wow]",
         role_spells,
     )
     .reads(&[ROLE_SPELLS.tables]),
     cmd(
         "gen-absorb-spells",
         "gen-absorb-spells [wow-dir] --dbd-dir <dir> --census <csv>
-                       [-o absorb_spells.rs] [--keys tactkeys.txt]",
+                       [-o absorb_spells.rs] [--keys tactkeys.txt] [--product wow]",
         absorb_spells,
     )
     .reads(&[ABSORB_SPELLS.tables]),
     cmd(
         "gen-proc-spells",
         "gen-proc-spells [wow-dir] --dbd-dir <dir> --census <csv>
-                       [-o proc_spells.rs] [--keys tactkeys.txt]",
+                       [-o proc_spells.rs] [--keys tactkeys.txt] [--product wow]",
         proc_spells,
     )
     .reads(&[PROC_SPELLS.tables]),
     cmd(
         "gen-placed-spells",
         "gen-placed-spells [wow-dir] --dbd-dir <dir> --census <csv>
-                       [-o placed_spells.rs] [--keys tactkeys.txt]",
+                       [-o placed_spells.rs] [--keys tactkeys.txt] [--product wow]",
         placed_spells,
     )
     .reads(&[PLACED_SPELLS.tables]),
@@ -153,6 +154,32 @@ const PLACED_SPELLS: Table = Table {
     census: Some("tools/placed-spells-census.csv"),
 };
 
+/// Every table generator.
+const TABLES: [&Table; 8] = [
+    &CLASS_SPELLS,
+    &ITEM_SPELLS,
+    &KEYSTONE_TIMERS,
+    &OPEN_WORLD_MAPS,
+    &ROLE_SPELLS,
+    &ABSORB_SPELLS,
+    &PROC_SPELLS,
+    &PLACED_SPELLS,
+];
+
+/// Every committed table and, where a census backs it, its review twin,
+/// by its path in a checkout: Retail's, which another product's output
+/// never takes (`retail::retail_only`).
+pub fn committed() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for t in TABLES {
+        paths.push(PathBuf::from(t.out));
+        if t.census.is_some() {
+            paths.push(review_twin(Path::new(t.out)));
+        }
+    }
+    paths
+}
+
 /// What a generator made: the table's text, its review twin's where a
 /// census backs it, and the summary's words after the table's path.
 struct Made {
@@ -164,8 +191,13 @@ struct Made {
 /// Run a table generator: its arguments taken; the census read and handed
 /// to `prepare` before the install is opened, so a census that does not
 /// read stops it first; the client tables read; the generator `prepare`
-/// returned called with them and the build; and the table written where
-/// its bytes change, its review twin beside it.
+/// returned called with them and the build (with the product beside it
+/// for any but Retail's, `Game::build_label`); and the table written where
+/// its bytes change, its review twin beside it. The committed tables are
+/// Retail's: another product's output may not be written to any of them
+/// or their twins, however `-o` spells it, nor may the twin named from
+/// `-o` be one (the scripts name the committed table, so only a later
+/// `-o` elsewhere lets it through).
 fn generate<G>(
     mut a: Args,
     t: Table,
@@ -174,15 +206,22 @@ fn generate<G>(
 where
     G: FnOnce(&Tables, &str) -> Result<Made, String>,
 {
-    let out = a
-        .path(&["-o", "--out"])?
-        .unwrap_or_else(|| PathBuf::from(t.out));
+    let out = a.path(&["-o", "--out"])?;
     let census_path = match t.census {
         Some(_) => a.path(&["--census"])?,
         None => None,
     };
     let install = Install::with_tables(&mut a)?;
     a.finish()?;
+    let place = format!("the committed {}", t.out);
+    // A census-backed table writes its review twin beside it, the twin's
+    // name made from `-o`'s: both are checked before anything is read.
+    let twin = out
+        .as_deref()
+        .filter(|_| t.census.is_some())
+        .map(review_twin);
+    retail_only(&install, out.as_deref(), twin.as_deref(), &place)?;
+    let out = out.unwrap_or_else(|| PathBuf::from(t.out));
     let census = match (t.census, census_path) {
         (Some(_), Some(path)) => read_text(&path)?,
         (Some(committed), None) => {
@@ -193,7 +232,7 @@ where
     let make = prepare(&census)?;
     let (game, tables) = install.open_tables()?;
 
-    let made = make(&tables, &game.build)?;
+    let made = make(&tables, &game.build_label())?;
     let note = put(&out, &made.content)?;
     let twin = match &made.expected {
         Some(expected) => {

@@ -31,6 +31,13 @@ what it does and how to run it.
   `logs_dir`, or a Steam compatdata scan; or pass the folder holding
   `.build.info`). The network serves only WoWDBDefs schemas and TACT keys.
   Output is deterministic per build.
+- **One edition at a time, Retail's by default.** The product read is
+  `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
+  names another (Forever's `wowf`). The committed tables, their review
+  twins and the caches in the data home are Retail's: the extractor
+  refuses to write another product's output to any of them, however `-o`
+  spells it, and what it writes elsewhere names the product beside the
+  build.
 - **Curated tables need two proofs.** `role_spells`, `proc_spells` and
   `placed_spells` are hand lists in `tools/extract/src/` (`rolegen.rs`,
   `procgen.rs`, `placegen.rs`) that the generator checks against the
@@ -94,7 +101,7 @@ tools/seed-creatures.sh        # NPC classifications from Wowhead into the store
 ## Checks and the rest
 
 ```sh
-tools/extract/verify.sh [--game "$WOW_DIR"]    # the DB2 decoder vs wago.tools (network)
+tools/extract/verify.sh [--game "$WOW_DIR"] [--product ROW]   # the DB2 decoder vs wago.tools (network)
 tools/dev-unit.sh install | status | profile debug | profile release | uninstall
 tools/fetch-gpui-docs.sh [kit-version]         # the gitignored docs/gpui mirror
 wowdps-codeql [--accept] [rust|actions]        # tools/codeql.sh, gated on codeql-baseline.txt

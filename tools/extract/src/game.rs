@@ -6,6 +6,7 @@ use crate::blte::{self, Keys};
 use crate::casc::{self, LocalStore};
 use crate::tact;
 use std::path::{Path, PathBuf};
+use wowdps_core::model::Edition;
 
 /// Find the install without a hardcoded path. In order: `$WOWDPS_WOW_DIR`,
 /// the wowdps config's `logs_dir` (walking up to the folder holding
@@ -86,12 +87,34 @@ fn logs_dir_from_config(text: &str) -> Option<String> {
     None
 }
 
-/// The build an install holds: its `.build.info`'s row for the `wow`
-/// product.
-pub fn build_info(wow_dir: &Path) -> Result<tact::BuildInfo, String> {
+/// The product read where none is named: Retail's (`Edition::product`),
+/// whose client every committed table and every cache's reader is made for.
+pub fn default_product() -> &'static str {
+    // Retail always has a product; were it ever to lose it, the empty name
+    // has no row and the lookup's error lists the rows there are.
+    Edition::Retail.product().unwrap_or_default()
+}
+
+/// The product a command reads: the one it names (`--product ROW`), else
+/// `$WOWDPS_PRODUCT`, else Retail's (`default_product`). An empty name is
+/// none, as the shell's `${WOWDPS_PRODUCT:-}` reads it.
+pub fn product(named: Option<String>) -> String {
+    choose_product(named, std::env::var("WOWDPS_PRODUCT").ok())
+}
+
+fn choose_product(named: Option<String>, env: Option<String>) -> String {
+    named
+        .filter(|p| !p.is_empty())
+        .or(env.filter(|p| !p.is_empty()))
+        .unwrap_or_else(|| default_product().to_string())
+}
+
+/// The build an install holds for one product: its `.build.info`'s row
+/// for it (`default_product` is Retail's).
+pub fn build_info(wow_dir: &Path, product: &str) -> Result<tact::BuildInfo, String> {
     let path = wow_dir.join(".build.info");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    tact::BuildInfo::parse(&text, "wow")
+    tact::BuildInfo::parse(&text, product).map_err(|e| format!("{}: {e}", wow_dir.display()))
 }
 
 #[derive(Debug)]
@@ -105,17 +128,35 @@ pub struct Game {
     /// manifest without it.
     index: std::sync::OnceLock<Result<tact::RootIndex, String>>,
     pub build: String,
+    /// The `.build.info` product its build was read for: which edition of
+    /// the game its files are.
+    product: String,
 }
 
 impl Game {
     /// `wow_dir` is the folder holding `.build.info` and `Data/`. Keys come
     /// from the install's keyring config plus an optional TACTKeys file.
+    /// Retail's product (`default_product`); `open_product` reads another.
     pub fn open(wow_dir: &Path, keys_path: Option<&Path>) -> Result<Game, String> {
+        Game::open_product(wow_dir, default_product(), keys_path)
+    }
+
+    /// `open` for the build `.build.info` names for `product`. The
+    /// editions installed side by side share the install's `Data/`
+    /// storage, each build its own config, encoding and root in it.
+    pub fn open_product(
+        wow_dir: &Path,
+        product: &str,
+        keys_path: Option<&Path>,
+    ) -> Result<Game, String> {
         let read_text = |p: &Path| -> Result<String, String> {
             std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))
         };
 
-        let info = build_info(wow_dir)?;
+        let info = build_info(wow_dir, product)?;
+        if product != default_product() {
+            eprintln!("product {product}");
+        }
         eprintln!("build {} (config {})", info.version, info.build_key);
 
         let data_dir = wow_dir.join("Data");
@@ -151,7 +192,21 @@ impl Game {
             root,
             index: std::sync::OnceLock::new(),
             build: info.version,
+            product: product.to_string(),
         })
+    }
+
+    /// The build as what is made from it names it (a table's header, the
+    /// talent dataset's build, the spell tips' stamp): the build alone for
+    /// Retail's product, as every committed table names it, and with the
+    /// product beside it for any other, so nothing made from another
+    /// edition's client is ever read as Retail's.
+    pub fn build_label(&self) -> String {
+        if self.product == default_product() {
+            self.build.clone()
+        } else {
+            format!("{} (product {})", self.build, self.product)
+        }
     }
 
     pub fn root(&self) -> &[u8] {
@@ -214,6 +269,25 @@ mod tests {
             started.elapsed()
         );
         assert!(found > 100);
+    }
+
+    /// The flag wins, then the environment, then Retail's product; an
+    /// empty name is none. Read as `product` reads them, with the
+    /// environment handed in, so no test changes the process's.
+    #[test]
+    fn the_product_is_the_flag_then_the_environment_then_retails() {
+        assert_eq!(default_product(), "wow");
+        assert_eq!(Edition::Retail.product(), Some(default_product()));
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(choose_product(None, None), "wow");
+        assert_eq!(choose_product(None, s("wowf")), "wowf");
+        assert_eq!(choose_product(s("wowt"), s("wowf")), "wowt");
+        assert_eq!(choose_product(s(""), s("")), "wow");
+        assert_eq!(choose_product(s(""), s("wowf")), "wowf");
+        assert_eq!(
+            choose_product(None, Edition::Forever.product().map(String::from)),
+            "wowf"
+        );
     }
 
     #[test]
@@ -384,7 +458,8 @@ mod tests {
 
     /// A complete fake install: .build.info, build config, keyring config,
     /// sixteen journals and one archive holding the encoding, root and one
-    /// file, all BLTE-plain.
+    /// file, all BLTE-plain. Two editions are installed, Retail's `wow`
+    /// and Forever's `wowf`, their rows naming the one build config.
     fn fake_install(wow: &Path) -> [u8; 16] {
         let (enc_ckey, enc_ekey) = (key(0x10), key(0xA0));
         let (root_ckey, root_ekey) = (key(0x20), key(0xB0));
@@ -397,7 +472,8 @@ mod tests {
             wow.join(".build.info"),
             format!(
                 "Build Key!HEX:16|Version!STRING:0|Product!STRING:0|KeyRing!HEX:16\n\
-                 {build_hash}|12.0.0.1|wow|{keyring_hash}\n"
+                 {build_hash}|12.0.0.1|wow|{keyring_hash}\n\
+                 {build_hash}|1.60.0.2|wowf|\n"
             ),
         )
         .unwrap();
@@ -466,6 +542,8 @@ mod tests {
 
         let game = Game::open(&wow, Some(&extra_keys)).unwrap();
         assert_eq!(game.build, "12.0.0.1");
+        assert_eq!(game.product, "wow");
+        assert_eq!(game.build_label(), "12.0.0.1", "Retail's header as ever");
         assert_eq!(game.keys.len(), 4);
         assert_eq!(game.root().len(), 24 + 12 + 4 + 16 + 8);
         assert_eq!(game.fetch_fdid(41, 0x2).unwrap(), b"hello file");
@@ -483,6 +561,24 @@ mod tests {
         // Without the keyring the install still opens.
         let game = Game::open(&wow, None).unwrap();
         assert_eq!(game.keys.len(), 2);
+
+        // Another edition's row: its build, its product in the header, and
+        // no keyring of its own (its row names none).
+        let game = Game::open_product(&wow, "wowf", Some(&extra_keys)).unwrap();
+        assert_eq!(
+            (game.build.as_str(), game.product.as_str()),
+            ("1.60.0.2", "wowf")
+        );
+        assert_eq!(game.build_label(), "1.60.0.2 (product wowf)");
+        assert_eq!(game.keys.len(), 2);
+        assert_eq!(game.fetch_fdid(41, 0x2).unwrap(), b"hello file");
+        // A product not installed names the install and the rows it has.
+        let e = Game::open_product(&wow, "wowt", None).unwrap_err();
+        assert!(
+            e.ends_with(".build.info: no row for product \"wowt\" (its products: wow, wowf)"),
+            "{e}"
+        );
+        assert!(e.starts_with(&wow.display().to_string()), "{e}");
 
         // Breakage along the chain surfaces as errors.
         assert!(

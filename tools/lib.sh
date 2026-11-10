@@ -23,6 +23,15 @@
 # given: $WOWDPS_DBD_DIR (a directory of <Table>.dbd files) and
 # $WOWDPS_TACT_KEYS (a TACTKeys file) are copied instead, so a regenerate
 # can run offline, or against schemas pinned by hand.
+#
+# The edition of the game read is the extractor's to choose, as the
+# install is: `--product ROW` (a gen-* script passes it on with the rest
+# of its words), else $WOWDPS_PRODUCT, else `wow`, Retail's row in the
+# install's .build.info (Forever's is `wowf`). The committed tables, their
+# review twins and the caches in the data home are Retail's, so the
+# extractor refuses another product's output there, however -o spells it:
+# it goes where -o names another place, its product named beside its
+# build.
 
 : "${root:?tools/lib.sh: set root to the checkout before sourcing it}"
 

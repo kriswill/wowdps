@@ -24,8 +24,71 @@ pub struct BuildInfo {
 }
 
 impl BuildInfo {
-    /// Pick the active row for `product` (e.g. "wow").
+    /// Pick the active row for `product` (e.g. "wow"). One edition of the
+    /// game is one product: an install holding several has a row for each
+    /// (Retail's `wow`, Forever's `wowf`), so a product with no row is not
+    /// installed there, and the error names the rows that are.
     pub fn parse(text: &str, product: &str) -> Result<BuildInfo, String> {
+        let rows = Rows::parse(text)?;
+        let mut fallback = None;
+        for cells in rows.rows() {
+            let cell = |i: usize| cells.get(i).copied().unwrap_or_default();
+            if cell(rows.product) != product {
+                continue;
+            }
+            let info = BuildInfo {
+                build_key: cell(rows.build).to_string(),
+                version: cell(rows.version).to_string(),
+                keyring: rows
+                    .keyring
+                    .map(|k| cell(k).to_string())
+                    .filter(|k| !k.is_empty()),
+            };
+            match rows.active.map(cell) {
+                Some("1") | None => return Ok(info),
+                _ => fallback = Some(info),
+            }
+        }
+        fallback.ok_or_else(|| {
+            let have = products(text).unwrap_or_default();
+            let have = if have.is_empty() {
+                "none".to_string()
+            } else {
+                have.join(", ")
+            };
+            format!(".build.info: no row for product {product:?} (its products: {have})")
+        })
+    }
+}
+
+/// Every product `.build.info` has a row for, each once, in file order:
+/// the editions of the game installed there.
+fn products(text: &str) -> Result<Vec<String>, String> {
+    let rows = Rows::parse(text)?;
+    let mut out: Vec<String> = Vec::new();
+    for cells in rows.rows() {
+        let p = cells.get(rows.product).copied().unwrap_or_default();
+        if !p.is_empty() && !out.iter().any(|o| o == p) {
+            out.push(p.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// `.build.info`'s header read: where the columns a row is read by stand,
+/// and the rows under it.
+struct Rows<'a> {
+    width: usize,
+    build: usize,
+    version: usize,
+    product: usize,
+    keyring: Option<usize>,
+    active: Option<usize>,
+    lines: std::str::Lines<'a>,
+}
+
+impl<'a> Rows<'a> {
+    fn parse(text: &'a str) -> Result<Rows<'a>, String> {
         let mut lines = text.lines();
         let header = lines.next().ok_or(".build.info: empty")?;
         let names: Vec<&str> = header
@@ -33,36 +96,31 @@ impl BuildInfo {
             .map(|c| c.split('!').next().unwrap_or(c))
             .collect();
         let col = |name: &str| names.iter().position(|&n| n == name);
-        let (Some(build), Some(version), Some(prod)) =
+        let (Some(build), Some(version), Some(product)) =
             (col("Build Key"), col("Version"), col("Product"))
         else {
             return Err(".build.info: missing expected columns".into());
         };
-        let keyring = col("KeyRing");
-        let active = col("Active");
+        Ok(Rows {
+            width: names.len(),
+            build,
+            version,
+            product,
+            keyring: col("KeyRing"),
+            active: col("Active"),
+            lines,
+        })
+    }
 
-        let mut fallback = None;
-        for line in lines {
-            let cells: Vec<&str> = line.split('|').collect();
-            // Column indices come from the header, and the row is only read
-            // once its cell count matches, so every `cell` below is in range.
-            let cell = |i: usize| cells.get(i).copied().unwrap_or_default();
-            if cells.len() != names.len() || cell(prod) != product {
-                continue;
-            }
-            let info = BuildInfo {
-                build_key: cell(build).to_string(),
-                version: cell(version).to_string(),
-                keyring: keyring
-                    .map(|k| cell(k).to_string())
-                    .filter(|k| !k.is_empty()),
-            };
-            match active.map(cell) {
-                Some("1") | None => return Ok(info),
-                _ => fallback = Some(info),
-            }
-        }
-        fallback.ok_or_else(|| format!(".build.info: no row for product {product:?}"))
+    /// The rows' cells. Column indices come from the header, and a row is
+    /// only given once its cell count matches it, so every index read from
+    /// the header is in range.
+    fn rows(&self) -> impl Iterator<Item = Vec<&'a str>> + use<'a> {
+        let width = self.width;
+        self.lines
+            .clone()
+            .map(|line| line.split('|').collect::<Vec<&str>>())
+            .filter(move |cells| cells.len() == width)
     }
 }
 
@@ -529,6 +587,45 @@ us|1|dddd|1.15.0.1|	|wow_classic";
         assert_eq!(bi.version, "12.0.7.68974");
         assert_eq!(bi.keyring.as_deref(), Some("cccc"));
         assert!(BuildInfo::parse(text, "agent").is_err());
+    }
+
+    /// Editions installed side by side: a row each, read by product, and a
+    /// product with no row refused with the rows there are.
+    #[test]
+    fn build_info_reads_each_edition_by_its_product() {
+        let text = "\
+Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|KeyRing!HEX:16|Product!STRING:0
+us|1|aaaa|12.1.5.1|kkkk|wow
+us|1|bbbb|1.60.1.2||wowf
+us|0|cccc|12.1.5.0|kkkk|wow";
+        let retail = BuildInfo::parse(text, "wow").unwrap();
+        assert_eq!(
+            (retail.build_key.as_str(), retail.version.as_str()),
+            ("aaaa", "12.1.5.1")
+        );
+        let forever = BuildInfo::parse(text, "wowf").unwrap();
+        assert_eq!(
+            (forever.build_key.as_str(), forever.version.as_str()),
+            ("bbbb", "1.60.1.2")
+        );
+        assert_eq!(forever.keyring, None);
+        assert_eq!(
+            products(text).unwrap(),
+            ["wow", "wowf"],
+            "each once, in order"
+        );
+        assert_eq!(
+            BuildInfo::parse(text, "wowt").unwrap_err(),
+            ".build.info: no row for product \"wowt\" (its products: wow, wowf)"
+        );
+        // Rows of the wrong width are no rows, and an empty product none.
+        let text = "Build Key!HEX:16|Version!STRING:0|Product!STRING:0\nshort|row\naaaa|1.0|\n";
+        assert!(products(text).unwrap().is_empty());
+        assert_eq!(
+            BuildInfo::parse(text, "wow").unwrap_err(),
+            ".build.info: no row for product \"wow\" (its products: none)"
+        );
+        assert!(products("").unwrap_err().contains("empty"));
     }
 
     #[test]

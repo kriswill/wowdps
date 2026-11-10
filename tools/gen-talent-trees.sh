@@ -14,16 +14,18 @@
 # files for the wowhead CDN — this runs once per game patch. Output is
 # deterministic: same build in, same bytes out.
 #
-# usage: tools/gen-talent-trees.sh [wow-dir]
+# usage: tools/gen-talent-trees.sh [wow-dir] [-o FILE] [--product ROW]
 #   wow-dir: folder holding .build.info and Data/. When omitted the tool
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
 #   logs_dir, or a scan of the install roots (Steam compatdata on
 #   Linux, /Applications and ~/Applications on macOS).
+#   -o: the dataset's path (default $XDG_DATA_HOME/wowdps/talents.json).
+#   --product ROW: another edition of the game (tools/lib.sh); its trees
+#   go only where -o FILE names, never where the talent tools read Retail's.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 . "$root/tools/lib.sh"
-wow="${1:-}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -45,5 +47,5 @@ build_extract
 fetch_dbds gen-talent-trees "$work"
 fetch_keys "$work/tactkeys.txt"
 
-"$extract" gen-talent-trees ${wow:+"$wow"} \
-    --dbd-dir "$work" --keys "$work/tactkeys.txt" --listfile "$icons"
+"$extract" gen-talent-trees \
+    --dbd-dir "$work" --keys "$work/tactkeys.txt" --listfile "$icons" "$@"
