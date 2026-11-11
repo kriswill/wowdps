@@ -22,8 +22,9 @@ use ratatui::backend::CrosstermBackend;
 
 use wowdps_core::cli::{Cmd, SourceSpec, parse_args};
 use wowdps_daemon::{DaemonOptions, config::Config, spec_display};
+use wowdps_model::Edition;
 use wowdps_proto::{
-    ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, Reconnect, SourceArg,
+    ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, EditionRef, Reconnect, SourceArg,
 };
 
 const USAGE: &str = "\
@@ -33,11 +34,14 @@ Usage:
   wowdps                 TUI client (starts the daemon if none is running)
   wowdps --file <path>   ...with the daemon replaying/following one log file
   wowdps --logs <dir>    ...with the daemon following the newest log in <dir>
+  wowdps --edition <e>   ...showing one edition's logs, retail or forever,
+                         whichever runs (without it: the live edition's)
   wowdps gui             start the daemon if needed, launch wowdps-gui, exit
   wowdps daemon          run the daemon in the foreground (systemd target)
           [--linger]     ...and never idle-exit
           [--file|--logs] override the config's logs_dir
-  wowdps status          report the running daemon's state
+  wowdps status          report the running daemon's state: each edition's
+                         source, the log it follows and which is live
   wowdps stop            shut the daemon down
   wowdps addon           report the wowdps addon in the game's AddOns folder
   wowdps addon install   write it there (the daemon keeps it current after
@@ -79,7 +83,7 @@ fn main() {
         Cmd::Status => do_status(),
         Cmd::Addon { install } => do_addon(install),
         Cmd::Gui { source } => launch_gui(source),
-        Cmd::Tui { source } => run_tui(source),
+        Cmd::Tui { source, edition } => run_tui(source, edition),
         Cmd::External { name, args } => run_external(&name, args),
     };
     std::process::exit(code);
@@ -215,19 +219,11 @@ fn do_status() -> i32 {
             ..
         }) => {
             println!("wowdps daemon: running");
-            println!("  source:  {}", source.as_deref().unwrap_or("(none)"));
-            for line in edition_lines(&editions) {
+            for line in source_lines(source.as_deref(), &editions) {
                 println!("{line}");
             }
             println!("  clients: {clients}");
-            println!(
-                "  game:    {}",
-                if game_running {
-                    "running"
-                } else {
-                    "not running"
-                }
-            );
+            println!("  game:    {}", game_line(game_running, &editions));
             println!("  linger:  {}", if linger { "yes" } else { "no" });
             println!("  overlay: {overlay:?}");
             let mut h = if history.enabled {
@@ -268,20 +264,51 @@ fn do_status() -> i32 {
     }
 }
 
-/// v49: `wowdps status`'s line per edition's source — its edition, the log
-/// it follows and whether it is the live one: `  edition: Retail (live),
-/// WoWCombatLog-….txt`. An edition its log has not named yet reads
-/// "not named yet"; no log reads "no log yet".
-fn edition_lines(editions: &[wowdps_proto::EditionSource]) -> Vec<String> {
-    editions
+/// v49: `wowdps status`'s lines for what the daemon follows, a pair per
+/// edition's source: the folder or file followed, then its edition, whether
+/// it is the live one (what a following client is shown) and the log it
+/// follows now —
+///
+/// ```text
+///   source:  dir:/…/_retail_/Logs
+///   edition: Retail (live), WoWCombatLog-….txt
+/// ```
+///
+/// The first pair is the daemon's first source, as `Status::source` names
+/// it: a daemon of one source prints that pair alone, as it always has. An
+/// edition its log has not named yet reads "not named yet"; no log reads
+/// "no log yet".
+fn source_lines(first: Option<&str>, editions: &[wowdps_proto::EditionSource]) -> Vec<String> {
+    let source = |s: Option<&str>| format!("  source:  {}", s.unwrap_or("(none)"));
+    let mut out = vec![source(first)];
+    for (i, e) in editions.iter().enumerate() {
+        if i > 0 {
+            out.push(source(e.source.as_deref()));
+        }
+        let name = e.edition.map_or("not named yet", |e| e.label());
+        let live = if e.live { " (live)" } else { "" };
+        let log = e.log.as_deref().unwrap_or("no log yet");
+        out.push(format!("  edition: {name}{live}, {log}"));
+    }
+    out
+}
+
+/// `wowdps status`'s game line: `running` or `not running`, and — with
+/// more than one edition's source listed — the editions whose game runs:
+/// `running (Forever)`.
+fn game_line(game_running: bool, editions: &[wowdps_proto::EditionSource]) -> String {
+    if !game_running {
+        return "not running".to_string();
+    }
+    let named: Vec<&str> = editions
         .iter()
-        .map(|e| {
-            let name = e.edition.map_or("not named yet", |e| e.label());
-            let live = if e.live { " (live)" } else { "" };
-            let log = e.log.as_deref().unwrap_or("no log yet");
-            format!("  edition: {name}{live}, {log}")
-        })
-        .collect()
+        .filter(|e| e.running)
+        .map(|e| e.edition.map_or("not named yet", |e| e.label()))
+        .collect();
+    if editions.len() < 2 || named.is_empty() {
+        return "running".to_string();
+    }
+    format!("running ({})", named.join(", "))
 }
 
 /// `YYYY-MM-DD` of a UTC epoch in milliseconds, hand-rolled (no chrono).
@@ -460,7 +487,7 @@ fn connect(source: Option<SourceArg>) -> Result<DaemonClient, String> {
     }
 }
 
-fn run_tui(source: Option<SourceSpec>) -> i32 {
+fn run_tui(source: Option<SourceSpec>, edition: Option<Edition>) -> i32 {
     let client = match connect(source_arg(&source)) {
         Ok(client) => client,
         Err(e) => {
@@ -468,7 +495,7 @@ fn run_tui(source: Option<SourceSpec>) -> i32 {
             return 1;
         }
     };
-    if let Err(e) = run(client) {
+    if let Err(e) = run(client, tui_state(edition)) {
         eprintln!("wowdps: {e}");
         return 1;
     }
@@ -511,14 +538,26 @@ fn install_panic_hook() {
     }));
 }
 
-fn run(mut client: DaemonClient) -> io::Result<()> {
+/// The TUI's state before its first request: following the live edition,
+/// or — `--edition` — pinned to one, whichever runs. The pin is kept for
+/// the session, reconnects included (every Watch names it); the header
+/// names the edition each answer carries.
+fn tui_state(edition: Option<Edition>) -> ClientState {
+    let mut state = ClientState::new();
+    if let Some(e) = edition {
+        // Nothing is sent yet: `initial_request` declares the pin.
+        let _ = state.set_edition(EditionRef::Pin(e));
+    }
+    state
+}
+
+fn run(mut client: DaemonClient, mut state: ClientState) -> io::Result<()> {
     install_panic_hook();
 
     let _guard = TerminalGuard::new()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
 
-    let mut state = ClientState::new();
     client.send(&state.initial_request());
 
     while !state.quit {
@@ -563,30 +602,103 @@ fn run(mut client: DaemonClient) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::edition_lines;
+    use super::{game_line, source_lines, tui_state};
     use wowdps_model::Edition;
-    use wowdps_proto::EditionSource;
+    use wowdps_proto::{ClientMsg, Cursor, EditionRef, EditionSource};
 
-    /// v49: `wowdps status` names each edition's source, its log and which
-    /// is live, and says so when the log has named no edition yet.
+    fn retail() -> EditionSource {
+        EditionSource {
+            edition: Some(Edition::Retail),
+            source: Some("dir:/wow/_retail_/Logs".to_string()),
+            log: Some("WoWCombatLog-110126_200000.txt".to_string()),
+            live: true,
+            running: false,
+        }
+    }
+
+    /// A daemon of one source prints the source and its edition's line,
+    /// as `wowdps status` always has.
     #[test]
-    fn status_lists_each_editions_source() {
-        let lines = edition_lines(&[
+    fn status_of_one_source_reads_as_it_did() {
+        let one = [retail()];
+        assert_eq!(
+            source_lines(Some("dir:/wow/_retail_/Logs"), &one),
+            [
+                "  source:  dir:/wow/_retail_/Logs",
+                "  edition: Retail (live), WoWCombatLog-110126_200000.txt",
+            ]
+        );
+        assert_eq!(game_line(false, &one), "not running");
+        let running = [EditionSource {
+            running: true,
+            ..retail()
+        }];
+        assert_eq!(game_line(true, &running), "running");
+        // A daemon listing no source still names its own.
+        assert_eq!(source_lines(None, &[]), ["  source:  (none)"]);
+    }
+
+    /// v49: with a source per edition, each is listed with its edition,
+    /// its log and which is live, and the game line names whose game runs.
+    /// An edition its log has not named yet, or a source with no log yet,
+    /// says so.
+    #[test]
+    fn status_lists_each_editions_source_its_log_and_the_live_one() {
+        let several = [
+            EditionSource {
+                live: false,
+                ..retail()
+            },
             EditionSource {
                 edition: Some(Edition::Forever),
-                source: Some("dir:/logs".to_string()),
-                log: Some("WoWCombatLog-110126_200000.txt".to_string()),
+                source: Some("dir:/wow/_forever_/Logs".to_string()),
+                log: Some("WoWCombatLog-110126_210000.txt".to_string()),
                 live: true,
                 running: true,
             },
             EditionSource::default(),
-        ]);
+        ];
         assert_eq!(
-            lines,
+            source_lines(Some("dir:/wow/_retail_/Logs"), &several),
             [
-                "  edition: Forever (live), WoWCombatLog-110126_200000.txt",
+                "  source:  dir:/wow/_retail_/Logs",
+                "  edition: Retail, WoWCombatLog-110126_200000.txt",
+                "  source:  dir:/wow/_forever_/Logs",
+                "  edition: Forever (live), WoWCombatLog-110126_210000.txt",
+                "  source:  (none)",
                 "  edition: not named yet, no log yet",
             ]
+        );
+        assert_eq!(game_line(true, &several), "running (Forever)");
+        assert_eq!(game_line(false, &several), "not running");
+        // The watcher saw a game it could not place in a source.
+        let unplaced = [retail(), EditionSource::default()];
+        assert_eq!(game_line(true, &unplaced), "running");
+    }
+
+    /// `--edition` pins the session before its first request, so the first
+    /// Watch already looks in that edition; without it the TUI follows.
+    #[test]
+    fn the_edition_flag_pins_the_first_watch() {
+        let watch_edition = |msg: ClientMsg| match msg {
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition,
+            } => edition,
+            other => panic!("not a list Watch: {other:?}"),
+        };
+        let pinned = tui_state(Some(Edition::Forever));
+        assert_eq!(pinned.edition_ref(), EditionRef::Pin(Edition::Forever));
+        assert_eq!(pinned.edition(), Some(Edition::Forever));
+        assert_eq!(
+            watch_edition(pinned.initial_request()),
+            EditionRef::Pin(Edition::Forever)
+        );
+        let following = tui_state(None);
+        assert_eq!(following.edition(), None);
+        assert_eq!(
+            watch_edition(following.initial_request()),
+            EditionRef::Follow
         );
     }
 }

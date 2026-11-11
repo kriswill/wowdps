@@ -160,6 +160,9 @@ fn newest_install(installs: Vec<PathBuf>) -> Option<PathBuf> {
 pub enum Cmd {
     Tui {
         source: Option<SourceSpec>,
+        /// `--edition <name>`: the one edition the TUI shows, whichever
+        /// runs; `None` follows the live edition.
+        edition: Option<Edition>,
     },
     Daemon {
         source: Option<SourceSpec>,
@@ -187,7 +190,10 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Cmd>
     let mut args = args.into_iter();
 
     let Some(first) = args.next() else {
-        return Ok(Some(Cmd::Tui { source: None }));
+        return Ok(Some(Cmd::Tui {
+            source: None,
+            edition: None,
+        }));
     };
     let cmd = match first.as_str() {
         "help" | "-h" | "--help" => return Ok(None),
@@ -247,13 +253,45 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Cmd>
         // A leading flag is the TUI client's.
         _ => {
             let (source, extra) = parse_tail(std::iter::once(first.clone()).chain(args))?;
-            if let Some(other) = extra.first() {
-                return Err(unknown(other));
+            let mut edition = None;
+            let mut extra = extra.into_iter();
+            while let Some(arg) = extra.next() {
+                match arg.as_str() {
+                    // Last wins, as the source flags do.
+                    "--edition" => {
+                        let name = extra.next().ok_or_else(|| {
+                            format!("--edition needs a name: {}", edition_names())
+                        })?;
+                        edition = Some(edition_arg(&name)?);
+                    }
+                    other => return Err(unknown(other)),
+                }
             }
-            Cmd::Tui { source }
+            Cmd::Tui { source, edition }
         }
     };
     Ok(Some(cmd))
+}
+
+/// `--edition`'s name: an edition an install keeps a product folder of
+/// ([`PRODUCTS`]), by its [`Edition::key`] in any case. Anything else is
+/// refused with the names it takes.
+fn edition_arg(name: &str) -> Result<Edition, String> {
+    let want = name.trim().to_lowercase();
+    PRODUCTS
+        .into_iter()
+        .find(|e| e.key() == want)
+        .ok_or_else(|| format!("unknown edition {name:?}: {}", edition_names()))
+}
+
+/// `--edition takes retail or forever`, from [`PRODUCTS`].
+fn edition_names() -> String {
+    let keys: Vec<&str> = PRODUCTS.iter().map(|e| e.key()).collect();
+    match keys.split_last() {
+        Some((last, [])) => format!("--edition takes {last}"),
+        Some((last, rest)) => format!("--edition takes {} or {last}", rest.join(", ")),
+        None => "--edition takes no name".to_string(),
+    }
 }
 
 fn unknown(arg: &str) -> String {
@@ -315,7 +353,13 @@ mod tests {
     #[test]
     fn no_arguments_is_the_plain_tui_client() {
         // The daemon's config picks the source.
-        assert_eq!(ok(&[]), Cmd::Tui { source: None });
+        assert_eq!(
+            ok(&[]),
+            Cmd::Tui {
+                source: None,
+                edition: None
+            }
+        );
     }
 
     #[test]
@@ -323,21 +367,71 @@ mod tests {
         assert_eq!(
             ok(&["--file", "/tmp/a.txt"]),
             Cmd::Tui {
-                source: Some(SourceSpec::File(PathBuf::from("/tmp/a.txt")))
+                source: Some(SourceSpec::File(PathBuf::from("/tmp/a.txt"))),
+                edition: None
             }
         );
         assert_eq!(
             ok(&["--logs", "/tmp/logs"]),
             Cmd::Tui {
-                source: Some(SourceSpec::Dir(PathBuf::from("/tmp/logs")))
+                source: Some(SourceSpec::Dir(PathBuf::from("/tmp/logs"))),
+                edition: None
             }
         );
         assert_eq!(
             ok(&["-f", "/tmp/a.txt"]),
             Cmd::Tui {
-                source: Some(SourceSpec::File(PathBuf::from("/tmp/a.txt")))
+                source: Some(SourceSpec::File(PathBuf::from("/tmp/a.txt"))),
+                edition: None
             }
         );
+    }
+
+    /// v49: `--edition` pins the TUI to one edition by name, in any case,
+    /// beside a source or alone; without it the TUI follows.
+    #[test]
+    fn edition_pins_the_tui_to_one_edition() {
+        assert_eq!(
+            ok(&["--edition", "forever"]),
+            Cmd::Tui {
+                source: None,
+                edition: Some(Edition::Forever)
+            }
+        );
+        assert_eq!(
+            ok(&["--logs", "/tmp/logs", "--edition", "Retail"]),
+            Cmd::Tui {
+                source: Some(SourceSpec::Dir(PathBuf::from("/tmp/logs"))),
+                edition: Some(Edition::Retail)
+            }
+        );
+        // The last one wins, as the source flags do.
+        assert_eq!(
+            ok(&["--edition", "retail", "--edition", "forever"]),
+            Cmd::Tui {
+                source: None,
+                edition: Some(Edition::Forever)
+            }
+        );
+    }
+
+    /// A name `--edition` does not take is refused with the names it does;
+    /// so is a missing one. It is the TUI's alone.
+    #[test]
+    fn a_bad_edition_is_refused_with_the_names_it_takes() {
+        for bad in ["classic", "tbc", "1", ""] {
+            let err = parse(&["--edition", bad]).unwrap_err();
+            assert_eq!(
+                err,
+                format!("unknown edition {bad:?}: --edition takes retail or forever"),
+            );
+        }
+        assert_eq!(
+            parse(&["--edition"]).unwrap_err(),
+            "--edition needs a name: --edition takes retail or forever"
+        );
+        assert!(parse(&["daemon", "--edition", "forever"]).is_err());
+        assert!(parse(&["gui", "--edition", "forever"]).is_err());
     }
 
     #[test]
@@ -346,7 +440,8 @@ mod tests {
         assert_eq!(
             ok(&["--logs", path]),
             Cmd::Tui {
-                source: Some(SourceSpec::Dir(PathBuf::from(path)))
+                source: Some(SourceSpec::Dir(PathBuf::from(path))),
+                edition: None
             }
         );
     }
@@ -589,7 +684,8 @@ mod tests {
         assert_eq!(
             ok(&["--file", "a", "--file", "b"]),
             Cmd::Tui {
-                source: Some(SourceSpec::File(PathBuf::from("b")))
+                source: Some(SourceSpec::File(PathBuf::from("b"))),
+                edition: None
             }
         );
     }
