@@ -3213,9 +3213,23 @@ fn the_live_tools_follow_or_pin_an_edition() {
         "fight",
         &format!(r#"{{"fight_id":"{hid}","edition":"forever"}}"#),
     );
+    // Pinned, another edition's history id is that edition's fight, said
+    // so — not "an older night", not answered from the store.
+    assert!(is_error(&reply), "{}", reply.to_line());
     assert!(
-        is_error(&reply),
-        "pinned to forever, a retail id is not found"
+        error_text(&reply).contains("that fight is retail's, not forever's"),
+        "{}",
+        error_text(&reply)
+    );
+    let reply = call(
+        &mut bridge,
+        "loadout",
+        &format!(r#"{{"fight_id":"{hid}","player":"Thraxx","edition":"forever"}}"#),
+    );
+    assert!(
+        is_error(&reply) && error_text(&reply).contains("that fight is retail's, not forever's"),
+        "{}",
+        reply.to_line()
     );
 
     // A player is looked up inside the one fight, so one edition.
@@ -3468,4 +3482,36 @@ fn the_history_tools_keep_editions_apart() {
     );
     assert_eq!(str_of(&one, "edition"), "forever");
     assert_eq!(num_of(one.get("night").expect("night"), "pulls"), 3.0);
+
+    // A stored fight's loadout by id: Retail's log is swept, in no live
+    // list, so its card answers — and a call pinned to another edition is
+    // told whose fight it is.
+    let retail_kill = doc_of(
+        &mut bridge,
+        "history",
+        r#"{"edition":"retail","kind":"encounter","limit":1}"#,
+    );
+    let rid = str_of(&fights(&retail_kill)[0], "id").to_string();
+    let doc = doc_of(
+        &mut bridge,
+        "loadout",
+        &format!(r#"{{"fight_id":"{rid}","player":"Ana"}}"#),
+    );
+    assert_eq!(doc.get("logged"), Some(&Json::Bool(false)));
+    assert_eq!(
+        str_of(doc.get("fight").expect("fight"), "edition"),
+        "retail"
+    );
+    let reply = call(
+        &mut bridge,
+        "loadout",
+        &format!(r#"{{"fight_id":"{rid}","player":"Ana","edition":"forever"}}"#),
+    );
+    assert!(is_error(&reply), "{}", reply.to_line());
+    assert!(
+        error_text(&reply).contains("that fight is retail's, not forever's")
+            && error_text(&reply).contains("from history"),
+        "{}",
+        error_text(&reply)
+    );
 }

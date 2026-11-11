@@ -87,8 +87,9 @@ pub fn catalog() -> Vec<Tool> {
     let edition_arg = || {
         edition_of(
             "Only fights of this edition. Absent: every edition, each fight naming \
-             its own, and a player named by name is looked up inside one edition (a \
-             name that is a player in two editions' fights is an error naming both).",
+             its own, and a player named by name is looked up inside one edition, \
+             among each edition's newest 500 fights (a name that is a player in two \
+             editions' fights there is an error naming both).",
         )
     };
     let edition_boss = || {
@@ -1297,13 +1298,29 @@ fn arg_role(args: &Json) -> Result<Option<Role>, String> {
     }
 }
 
+/// How many of the newest cards a player's name is looked up among, per
+/// window ([`name_windows`]).
+const NAME_WINDOW: u32 = 500;
+
+/// The windows a name is looked up in: the filter's edition's newest
+/// cards; without a filter, every edition's newest and Retail's and
+/// Forever's newest each too, so one edition's many recent fights never
+/// hide another's player of the same name.
+fn name_windows(edition: Option<Edition>) -> Vec<Option<Edition>> {
+    match edition {
+        Some(e) => vec![Some(e)],
+        None => vec![None, Some(Edition::Retail), Some(Edition::Forever)],
+    }
+}
+
 /// A `player` argument as a guid: a "Player-…" key passes through; a name
-/// is looked up among the store's newest cards (case-insensitive) of
-/// `edition`, the call's filter. v49: inside ONE edition — without a
-/// filter, a name that is a player in two editions' fights is two
-/// characters of two games, and the answer says so rather than pick one.
-/// With the guid, the edition (by `Edition::counts_as`) the name was found
-/// in, else the filter's.
+/// is looked up (case-insensitive) among the newest [`NAME_WINDOW`] cards
+/// of each of [`name_windows`] — of `edition`, the call's filter, else of
+/// every edition and of Retail and Forever each. v49: inside ONE edition —
+/// without a filter, a name that is a player in two editions' fights is
+/// two characters of two games, and the answer says so rather than pick
+/// one. With the guid, the edition (by `Edition::counts_as`) the name was
+/// found in, else the filter's.
 fn history_subject(
     bridge: &mut Bridge,
     args: &Json,
@@ -1317,45 +1334,50 @@ fn history_subject(
     if who.starts_with("Player-") {
         return Ok(Some((who.to_string(), edition)));
     }
-    let cards = match bridge.history(HistoryQuery::Fights {
-        encounter: None,
-        difficulty: None,
-        guid: None,
-        since_utc_ms: None,
-        kind: None,
-        sort: FightSort::Newest,
-        limit: 500,
-        after_id: None,
-        role: None,
-        origin: OriginFilter::Local,
-        edition,
-    })? {
-        HistoryAnswer::Fights { cards, .. } => cards,
-        _ => Vec::new(),
-    };
     let want = who.to_lowercase();
     let named = |p: &&CardPlayer| {
         p.name.to_lowercase() == want || p.name.to_lowercase().starts_with(&format!("{want}-"))
     };
-    // The newest card's match per edition.
-    let mut found: Vec<(Edition, &CardPlayer)> = Vec::new();
-    for c in &cards {
-        let e = c.edition().counts_as();
-        if found.iter().any(|(f, _)| *f == e) {
-            continue;
-        }
-        if let Some(p) = c.players.iter().find(named) {
-            found.push((e, p));
+    // Each edition's newest match: (edition, name, guid).
+    let mut found: Vec<(Edition, String, String)> = Vec::new();
+    for window in name_windows(edition) {
+        let cards = match bridge.history(HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: NAME_WINDOW,
+            after_id: None,
+            role: None,
+            origin: OriginFilter::Local,
+            edition: window,
+        })? {
+            HistoryAnswer::Fights { cards, .. } => cards,
+            _ => Vec::new(),
+        };
+        for c in &cards {
+            let e = c.edition().counts_as();
+            if found.iter().any(|(f, _, _)| *f == e) {
+                continue;
+            }
+            if let Some(p) = c.players.iter().find(named) {
+                found.push((e, p.name.clone(), p.guid.clone()));
+            }
         }
     }
     match found.as_slice() {
-        [] => Err(format!("no stored fight has a player named {who:?}")),
-        [(e, p)] => Ok(Some((p.guid.clone(), Some(*e)))),
+        [] => Err(format!(
+            "no stored fight has a player named {who:?} (among each edition's newest \
+             {NAME_WINDOW}; pass the GUID for an older one)"
+        )),
+        [(e, _, guid)] => Ok(Some((guid.clone(), Some(*e)))),
         many => Err(format!(
             "{who:?} is a player in more than one game edition's fights ({}): pass edition, \
              or the player's GUID",
             many.iter()
-                .map(|(e, p)| format!("{}: {} {}", e.key(), p.name, p.guid))
+                .map(|(e, name, guid)| format!("{}: {name} {guid}", e.key()))
                 .collect::<Vec<_>>()
                 .join("; ")
         )),
@@ -3192,8 +3214,8 @@ fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
         .collect();
     Ok(obj! {
         "source": opt_str(source),
-        // v49: the edition the list is of — the live one; null before the
-        // log names one.
+        // v49: the edition the list is of — the pinned one, else the live
+        // one; null before the log names one.
         "edition": edition.map_or(Json::Null, |e| Json::str(e.key())),
         "fight_active": Json::Bool(active),
         "fights": Json::Arr(fights),
@@ -3671,13 +3693,18 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 
 fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     // A stored fight (an older night, or anything the daemon's lists do
-    // not hold) answers from the loadouts tier.
-    if let Some(fight_id) = args.get("fight_id").and_then(Json::as_str)
-        && live_fight(bridge, fight_id)?.is_none()
-    {
-        return stored_loadout(bridge, args, fight_id);
-    }
-    let segment = arg_segment(bridge, args)?;
+    // not hold) answers from the loadouts tier. The id is looked up once.
+    let listed = match args.get("fight_id").and_then(Json::as_str) {
+        Some(fight_id) => match live_fight(bridge, fight_id)?.hit {
+            Some(segment) => Some(segment),
+            None => return stored_loadout(bridge, args, fight_id),
+        },
+        None => None,
+    };
+    let segment = match args.get("segment_id").and_then(Json::as_u64) {
+        Some(id) => SegmentRef::Id(SegmentId(id)),
+        None => listed.unwrap_or(SegmentRef::Live),
+    };
     // The build doesn't belong to a view; damage rows list everyone who
     // contributed, which is where a coach's questions start anyway — but a
     // healer who never swung is only on the healing rows, so try those too.
@@ -4197,17 +4224,36 @@ fn arg_segment(bridge: &mut Bridge, args: &Json) -> Result<SegmentRef, String> {
     let Some(fight_id) = args.get("fight_id").and_then(Json::as_str) else {
         return Ok(SegmentRef::Live);
     };
-    live_fight(bridge, fight_id)?.ok_or_else(|| {
-        format!(
-            "fight_id {fight_id:?} is not in the daemon's current logs — an older night: use stored_fight"
-        )
+    let found = live_fight(bridge, fight_id)?;
+    found.hit.ok_or_else(|| {
+        if found.identified {
+            format!(
+                "fight_id {fight_id:?} is not in the daemon's current logs — an older night: use stored_fight"
+            )
+        } else {
+            format!(
+                "fight_id {fight_id:?}: the daemon's log has no identity yet — use segment_id, or stored_fight"
+            )
+        }
     })
 }
 
-/// A history fight id among the daemon's lists: the call's edition's, and
-/// — following — every other edition's source too, since the id names one
-/// log of one edition. `None` when no list holds it.
-fn live_fight(bridge: &mut Bridge, fight_id: &str) -> Result<Option<SegmentRef>, String> {
+/// What a history fight id names among the daemon's lists.
+struct LiveFight {
+    /// Its segment, in whichever edition's list holds it.
+    hit: Option<SegmentRef>,
+    /// The call's own edition's list names its log's identity: a miss is
+    /// then an older night's fight, not one of a log whose header is not
+    /// yet whole.
+    identified: bool,
+}
+
+/// A history fight id among the daemon's lists: the call's edition's
+/// first, then every other edition's source's, since the id names one log
+/// of one edition. A pinned call that names another edition's fight is
+/// then told so by its snapshot (`in_scope`), never answered from the
+/// store as a fight the daemon does not hold.
+fn live_fight(bridge: &mut Bridge, fight_id: &str) -> Result<LiveFight, String> {
     let find = |segs: &crate::bridge::Segments| {
         segs.entries
             .iter()
@@ -4218,11 +4264,12 @@ fn live_fight(bridge: &mut Bridge, fight_id: &str) -> Result<Option<SegmentRef>,
             .map(|e| SegmentRef::Id(e.id))
     };
     let segs = bridge.segments()?;
+    let identified = segs.log_id.is_some();
     if let Some(hit) = find(&segs) {
-        return Ok(Some(hit));
-    }
-    if bridge.scope() != EditionRef::Follow {
-        return Ok(None);
+        return Ok(LiveFight {
+            hit: Some(hit),
+            identified,
+        });
     }
     let others: Vec<Edition> = bridge
         .status()?
@@ -4233,10 +4280,16 @@ fn live_fight(bridge: &mut Bridge, fight_id: &str) -> Result<Option<SegmentRef>,
         .collect();
     for edition in others {
         if let Some(hit) = find(&bridge.segments_in(EditionRef::Pin(edition))?) {
-            return Ok(Some(hit));
+            return Ok(LiveFight {
+                hit: Some(hit),
+                identified,
+            });
         }
     }
-    Ok(None)
+    Ok(LiveFight {
+        hit: None,
+        identified,
+    })
 }
 
 /// v49: a call that pinned an edition is answered from that edition's
@@ -4255,15 +4308,21 @@ fn in_scope(scope: EditionRef, id: Option<SegmentId>, info: &SegmentInfo) -> Res
         ));
     }
     if !scope.serves(Some(info.edition)) {
-        return Err(format!(
-            "that fight is {}'s, not {}'s: drop edition, or take an id from \
-             list_fights with edition {}",
-            info.edition.key(),
-            edition.key(),
-            edition.key()
-        ));
+        return Err(wrong_edition(info.edition, edition, "list_fights"));
     }
     Ok(())
+}
+
+/// A pinned call named a fight of another edition than its pin: which
+/// edition it is, and where the pin's ids come from (`ids_from`).
+fn wrong_edition(fight: Edition, pin: Edition, ids_from: &str) -> String {
+    format!(
+        "that fight is {}'s, not {}'s: drop edition, or take an id from \
+         {ids_from} with edition {}",
+        fight.key(),
+        pin.key(),
+        pin.key()
+    )
 }
 
 fn fight_info(id: Option<SegmentId>, info: &SegmentInfo, log_id: Option<u64>) -> Json {
@@ -4747,6 +4806,12 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
     else {
         return Err(not_stored(fight_id));
     };
+    // v49: a pinned call answers its own edition's fights alone.
+    if let EditionRef::Pin(pin) = bridge.scope()
+        && !bridge.scope().serves(Some(card_only.card.edition()))
+    {
+        return Err(wrong_edition(card_only.card.edition(), pin, "history"));
+    }
     let want = who.to_lowercase();
     let p = card_only
         .card
@@ -4929,6 +4994,26 @@ mod tests {
         assert_eq!(doc.get("edition"), Some(&Json::str("forever")));
         assert!(no_build_note(Edition::Forever).contains("carries no COMBATANT_INFO"));
         assert!(no_build_note(Edition::Retail).contains("only inside instances"));
+    }
+
+    /// v49: a name is looked up in the filter's edition's newest cards, else
+    /// in every edition's and in Retail's and Forever's each, so one
+    /// edition's many recent fights hide no other edition's player.
+    #[test]
+    fn a_name_is_looked_up_in_each_editions_newest_fights() {
+        assert_eq!(
+            name_windows(Some(Edition::Forever)),
+            [Some(Edition::Forever)]
+        );
+        assert_eq!(
+            name_windows(None),
+            [None, Some(Edition::Retail), Some(Edition::Forever)]
+        );
+        let err = wrong_edition(Edition::Retail, Edition::Forever, "history");
+        assert!(
+            err.contains("that fight is retail's, not forever's") && err.contains("from history"),
+            "{err}"
+        );
     }
 
     /// R21: the conditioned split derives level 0 from the by-ability row
