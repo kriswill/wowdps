@@ -766,7 +766,7 @@ fn resync(sources: &Sources, sessions: &mut [Session]) {
             let msg = engine.list_for(s.edition, &list);
             // A list the session holds already (an unserved pin's empty
             // one, the same from every source) moves nothing: not re-sent.
-            if s.last_list() != Some(&msg) {
+            if !s.holds_empty_list(&msg) {
                 s.push_list(msg);
             }
             s.answered_by = Some(i);
@@ -2358,11 +2358,13 @@ mod tests {
     }
 
     /// The frames of one step as lists: session, entries, log named,
-    /// edition named; anything but a list fails.
+    /// edition named, `active`, and whether a log id is named; anything but
+    /// a list fails.
+    #[allow(clippy::type_complexity)]
     fn lists_in(
         frames: &[Frame],
         step: &str,
-    ) -> Vec<(u64, usize, Option<String>, Option<Edition>)> {
+    ) -> Vec<(u64, usize, Option<String>, Option<Edition>, bool, bool)> {
         frames
             .iter()
             .filter(|f| f.step == step)
@@ -2371,8 +2373,17 @@ mod tests {
                     entries,
                     source,
                     edition,
+                    active,
+                    log_id,
                     ..
-                } => (f.session, entries.len(), source.clone(), *edition),
+                } => (
+                    f.session,
+                    entries.len(),
+                    source.clone(),
+                    *edition,
+                    *active,
+                    log_id.is_some(),
+                ),
                 _ => panic!("not a list: {}", f.line()),
             })
             .collect()
@@ -2411,32 +2422,71 @@ mod tests {
         assert_eq!(
             lists_in(&two, "deliver switched"),
             [
-                (1, 0, log("sample.txt"), r),
-                (2, 0, log("sample.txt"), r),
-                (3, 0, None, f),
-                (4, 0, log("sample.txt"), r),
-                (5, 0, log("sample.txt"), r),
+                (1, 0, log("sample.txt"), r, false, true),
+                (2, 0, log("sample.txt"), r, false, true),
+                (3, 0, None, f, false, false),
+                (4, 0, log("sample.txt"), r, false, true),
+                (5, 0, log("sample.txt"), r, false, true),
             ]
         );
         assert_eq!(
             lists_in(&one, "rotate switched"),
             [
-                (1, 0, log("forever.txt"), None),
-                (2, 0, None, r),
-                (3, 0, None, f),
-                (4, 0, log("forever.txt"), None),
-                (5, 0, log("forever.txt"), None),
+                (1, 0, log("forever.txt"), None, false, true),
+                (2, 0, None, r, false, false),
+                (3, 0, None, f, false, false),
+                (4, 0, log("forever.txt"), None, false, true),
+                (5, 0, log("forever.txt"), None, false, true),
             ]
         );
         assert_eq!(
             lists_in(&two, "rotate switched"),
             [
-                (1, 0, log("forever.txt"), r),
-                (2, 0, log("forever.txt"), r),
-                (3, 0, None, f),
-                (4, 0, log("forever.txt"), r),
-                (5, 0, log("forever.txt"), r),
+                (1, 0, log("forever.txt"), r, false, true),
+                (2, 0, log("forever.txt"), r, false, true),
+                (3, 0, None, f, false, false),
+                (4, 0, log("forever.txt"), r, false, true),
+                (5, 0, log("forever.txt"), r, false, true),
             ]
+        );
+    }
+
+    /// v49: an empty list is held only since the session's last Watch: one
+    /// that leaves its pin (here for Retail's, on `Live`, which is sent no
+    /// list) and comes back is sent its edition's empty list at the next
+    /// move of the live edition, though it was sent the same one before.
+    #[test]
+    fn a_new_watch_forgets_the_empty_list_the_session_held() {
+        let mut hub = two_editions();
+        deliver_both(&mut hub);
+        let rx = hub.connect(1, ClientKind::Tui);
+        let watch = |hub: &mut Hub, cursor: Cursor, edition: Edition| {
+            hub.client(
+                1,
+                ClientMsg::Watch {
+                    cursor,
+                    edition: EditionRef::Pin(edition),
+                },
+            );
+        };
+        watch(&mut hub, Cursor::List, Edition::Classic(2));
+        assert!(matches!(
+            drain(&rx).as_slice(),
+            [DaemonMsg::SegmentList { entries, .. }] if entries.is_empty()
+        ));
+        watch(&mut hub, seg_cursor(SegmentRef::Live), Edition::Retail);
+        watch(&mut hub, seg_cursor(SegmentRef::Live), Edition::Classic(2));
+        drain(&rx);
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Retail])));
+        assert_eq!(hub.sources.live(), 0, "the live edition moved");
+        let got = drain(&rx);
+        assert!(
+            got.iter().any(|m| matches!(
+                m,
+                DaemonMsg::SegmentList { entries, edition: Some(Edition::Classic(2)), .. }
+                    if entries.is_empty()
+            )),
+            "{got:?}"
         );
     }
 
