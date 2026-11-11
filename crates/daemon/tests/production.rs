@@ -238,8 +238,13 @@ fn start(
     let _ = std::fs::remove_file(&socket);
     let daemon = thread::spawn(move || run(opts));
     let deadline = Instant::now() + DEADLINE;
+    // The socket's path names the user (its fallback folder carries the
+    // uid): never print it.
     while UnixStream::connect(&socket).is_err() {
-        assert!(Instant::now() < deadline, "daemon never bound {socket:?}");
+        assert!(
+            Instant::now() < deadline,
+            "the daemon never bound its socket"
+        );
         thread::sleep(Duration::from_millis(5));
     }
     let stop = Stop(socket.clone());
