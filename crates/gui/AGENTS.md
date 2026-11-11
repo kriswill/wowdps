@@ -72,7 +72,11 @@ Read before the work it covers:
 - Its output/display is chosen before the app starts: Linux finds it by
   recomputing GPUI's UUIDv5 of the output name
   (`gui_logic::output::output_uuid`), macOS by the display's 1-based index
-  in GPUI's order (`primary` is 1); never by bounds.
+  in GPUI's order (`primary` is 1); never by bounds. Under Hyprland, with no
+  output pinned, a change of live edition whose game window is on another
+  monitor reopens it there (`Rehome`, as `Reanchor` reopens on an edge);
+  `output::Home::rehome` decides, against the display the surface is on, so
+  one already on the game's display is never recreated.
 - It has no keyboard: every gesture is a click, a right press or a wheel.
 - It is single-instance: a new `--overlay` launch evicts the running one.
   Never kill an overlay by a PID from earlier output.

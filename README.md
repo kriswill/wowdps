@@ -27,8 +27,9 @@ No addon, no injection, no screen reading.
   deaths, per player, with class colors, crests and spec icons. Updates at
   10 Hz.
 - **Overlay.** A wlr-layer-shell surface for Hyprland, sway and other wlroots
-  compositors. It starts with the game, follows the game's workspace, and
-  shrinks to a click-through 1 px strip when hidden.
+  compositors. It starts with the game, follows the game's workspace (under
+  Hyprland; with two games open, the live one's: the game of the latest
+  pull), and shrinks to a click-through 1 px strip when hidden.
 - **Segments.** Pulls split into encounters and trash the same way the game
   does. Mythic+ runs group into instance visits with a Σ overall view and
   keystone par timers. Arena matches are titled as wins or losses.
@@ -165,9 +166,11 @@ always follows the game that is running. The defaults find both games: the
 daemon's `game_process` (`wow.exe`) matches either client and names each by
 its product folder, and the overlay's `game_match` (`world of warcraft`)
 matches either window. With both games open at once the two windows look
-the same to the compositor, so the overlay shows, hides and places itself
-(on that window's monitor) by whichever of them Hyprland lists first, not
-necessarily the one being played.
+the same to the compositor, so under Hyprland the overlay tells them apart
+by their processes' product folders: it shows, hides and places itself (on
+that window's monitor) by the live game's window. The live game is the one
+with the latest pull, so the overlay moves to the other game at its first
+pull, not at a workspace switch.
 
 The addon is one game's for now: the daemon keeps current and reads the copy
 in the product folder of the logs it is pointed at (`logs_dir`, else
