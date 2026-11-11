@@ -104,7 +104,10 @@ workspace is not displayed on any monitor. `game_match` is a case-insensitive
 substring of the window's class or title, or several separated by `|` with no
 spaces around it (one per edition's window): a window matching any is the
 game's, a `|` always separates, and an empty value or piece matches no
-window. Both transitions can be driven
+window. The default, `world of warcraft`, matches both editions' windows:
+Retail's and Forever's are alike (class `wow.exe`, title `World of
+Warcraft`, fullscreen), so with both open the best-scored window listed
+first is the game's, whichever edition is live. Both transitions can be driven
 without WoW: point `game_match` at a fake title in a scratch config, then
 spawn and close such a window on a workspace nothing displays:
 

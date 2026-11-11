@@ -708,6 +708,58 @@ mod tests {
         assert!(!t.poll().iter().any(|e| matches!(e, TailEvent::Error(_))));
     }
 
+    /// What an edition's folder followed with no game writing it costs: a
+    /// missing folder says `Waiting` once and then nothing, however often
+    /// it is polled; an idle log is scanned once, never again on a poll
+    /// that finds nothing new; and the missing folder's first log is
+    /// scanned once when it appears.
+    #[test]
+    fn an_idle_folder_is_scanned_once_and_a_missing_one_never() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counting = |scans: Arc<AtomicUsize>| -> ScanFn {
+            Box::new(move |_, file| {
+                scans.fetch_add(1, Ordering::SeqCst);
+                index::scan(file)
+            })
+        };
+        let dir = TempDir::new("idle");
+        let idle = dir.join("idle");
+        fs::create_dir_all(&idle).unwrap();
+        append(&idle.join("WoWCombatLog-01.txt"), hit(0, 0).as_bytes());
+        let missing = dir.join("missing");
+        let (idle_scans, missing_scans) =
+            (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let mut a = Tailer::with_scan(SourceSpec::Dir(idle.clone()), counting(idle_scans.clone()));
+        let mut b = Tailer::with_scan(
+            SourceSpec::Dir(missing.clone()),
+            counting(missing_scans.clone()),
+        );
+        assert!(index_of(&a.poll()).is_some());
+        assert_eq!(b.poll(), vec![TailEvent::Waiting]);
+        for _ in 0..100 {
+            let (x, y) = (a.poll(), b.poll());
+            assert!(
+                x.iter().all(|e| *e == TailEvent::CaughtUp),
+                "an idle log: {x:?}"
+            );
+            assert!(y.is_empty(), "a missing folder: {y:?}");
+        }
+        assert_eq!(idle_scans.load(Ordering::SeqCst), 1);
+        assert_eq!(missing_scans.load(Ordering::SeqCst), 0);
+
+        fs::create_dir_all(&missing).unwrap();
+        assert!(b.poll().is_empty(), "an empty folder: still waiting");
+        let first = missing.join("WoWCombatLog-02.txt");
+        append(&first, hit(0, 0).as_bytes());
+        let events = b.poll();
+        assert!(events.contains(&TailEvent::Switched(first)), "{events:?}");
+        for _ in 0..100 {
+            assert!(b.poll().iter().all(|e| *e == TailEvent::CaughtUp));
+        }
+        assert_eq!(missing_scans.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn newest_log_ignores_unrelated_files() {
         let dir = TempDir::new("select");
