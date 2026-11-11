@@ -1,12 +1,13 @@
 //! The top bar every window screen wears (the prototype's `.top`, the iced
 //! window's `top_bar.rs`): the wordmark, the two places — Home and Fights —
 //! and, while the window knows more than one edition of the game, the
-//! edition switch beside them; the jump box, the live pill, the character
-//! picker, the gear and the help button, on the panel's surface over a
-//! hairline the active place's underline covers. At 820 px and under the
-//! wordmark goes, the jump box shrinks to its glyph, the pill keeps its dot
-//! and clock, the switch's name truncates sooner and the picker keeps its
-//! icon.
+//! edition switch beside them: a chip per game, the one shown filled with
+//! its color, or where they do not fit a dropdown; the jump box, the live
+//! pill, the character picker, the gear and the help button, on the
+//! panel's surface over a hairline the active place's underline covers. At
+//! 820 px and under the wordmark goes, the jump box shrinks to its glyph,
+//! the pill keeps its dot and clock, the switch is the dropdown, its name
+//! truncating sooner, and the picker keeps its icon.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -15,10 +16,10 @@ use std::time::Duration;
 use gpui_kit::base::{IterationCount, Keyframe, Keyframes, Timing, animate_keyframes};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Bounds, Context, Div, MouseButton, Pixels, TestSupportExt as _, Window, canvas, div, img, px,
-    relative,
+    Bounds, Context, Div, ElementId, MouseButton, Pixels, SharedString, TestSupportExt as _,
+    Window, canvas, div, img, px, relative,
 };
-use wowdps_gui_logic::editions::Face;
+use wowdps_gui_logic::editions::{Entry, Face, chip_tip, chips, dot_needs_ring, ink_on};
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_model::fmt::duration;
 use wowdps_model::{Class, Screen, SegmentKind, Spec};
@@ -26,7 +27,8 @@ use wowdps_proto::ClientState;
 
 use super::Gui;
 use super::chrome::{icon_button, kbd, place, tip};
-use super::paint::{dot, glyph, glyph_ink, ring};
+use super::marks::{Seat, badge};
+use super::paint::{dot, fill_disc, glyph, glyph_ink, ring};
 use super::w::{MEDIUM, REGULAR, SEMIBOLD, W};
 use crate::images;
 use crate::theme::hsla;
@@ -64,6 +66,17 @@ const PICKER_NAME_W: f32 = 160.0;
 const SWITCH_GAP: f32 = 6.0;
 const SWITCH_NAME_W: f32 = 150.0;
 const SWITCH_NAME_NARROW: f32 = 76.0;
+/// A game's chip: the live pill's height, corners and gap, a badge
+/// concentric with its round end, a little more room after the name, and
+/// a hair between two chips. With the live dot before the badge the chip
+/// starts as the pill does.
+const CHIP_BADGE: f32 = 18.0;
+const CHIP_PAD_RIGHT: f32 = 12.0;
+const CHIP_PAD_DOT: f32 = 10.0;
+const CHIP_GAP: f32 = 4.0;
+/// The ring of the bar's color round a live dot on a fill that drowns
+/// its red.
+const DOT_RING: f32 = 1.5;
 /// The live dot's pulse (`.pulse` in the prototype): a ring that swells
 /// off the dot and fades, once every 1.6 s — a few times when a pull goes
 /// live, then the dot at rest. Every frame of it redraws the whole window,
@@ -172,23 +185,31 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
             )),
     );
     // The edition switch, only once more than one edition is known: a
-    // window of one edition is today's.
-    if gui.edition_entries().is_some() {
-        let face = gui.edition_face();
-        line = line
-            .child(div().w(w.z(SWITCH_GAP)).flex_none())
-            .child(edition_switch(
+    // window of one edition is today's. Side by side while the games fit,
+    // else the dropdown.
+    let mut chipped = false;
+    if let Some(entries) = gui.edition_entries() {
+        line = line.child(div().w(w.z(SWITCH_GAP)).flex_none());
+        chipped = chips(entries.len(), narrow);
+        line = if chipped {
+            line.child(edition_chips(w, entries, cx))
+        } else {
+            let face = gui.edition_face();
+            line.child(edition_switch(
                 w,
                 face,
                 narrow,
                 Rc::clone(&gui.edition_at),
                 cx,
-            ));
+            ))
+        };
     }
     // The jump box stands centred in the room between the places and what
     // follows (`.jump{margin-inline:auto}`), keeping clear of both; narrow,
+    // and at the tile frame beside the games' chips, which take its room,
     // it is a glyph at the end of that room.
-    line = line.child(if narrow {
+    let glyph_jump = narrow || (chipped && w.fit() == super::w::Fit::Tile);
+    line = line.child(if glyph_jump {
         div().flex_1().flex().justify_end().child(tip(
             icon_button(w, "top-jump", Glyph::Search, true).on_mouse_down(
                 MouseButton::Left,
@@ -262,11 +283,117 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         .child(div().absolute().inset_0().child(line))
 }
 
-/// The edition switch: the game the window shows, by its name, after the
-/// live dot while it is the game being played — no dot while the window
-/// shows another — with its emblem once one is cached and the caret; the
-/// build in its tooltip. A press opens the edition menu. Its bounds are
-/// kept for the menu to hang from.
+/// The games side by side (`editions::chips`): a chip each, in the order
+/// the census knows them. The one shown is filled with its color, its
+/// badge and name in the ink that reads there; the others are quiet — the
+/// badge on the bar, the name in the muted ink, a wash under the pointer.
+/// The live dot sits in the chip of the game being played, before its
+/// badge, ringed in the bar's color where the fill drowns its red. A
+/// press shows that game; the tooltip is its build, and says when it is
+/// the game being played.
+fn edition_chips(w: &W, entries: Vec<Entry>, cx: &mut Context<Gui>) -> impl IntoElement {
+    let mut row = div()
+        .id("top-edition")
+        .test_support()
+        .h_full()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(w.z(CHIP_GAP));
+    for e in entries {
+        row = row.child(chip(w, e, cx));
+    }
+    row
+}
+
+/// One game's chip in the row.
+fn chip(w: &W, e: Entry, cx: &mut Context<Gui>) -> impl IntoElement {
+    let on = e.on;
+    let fill = e.mark.tone.fill(&w.t);
+    let ink = hsla(ink_on(fill, &w.t));
+    let seat = if on {
+        Seat::Fill { fill }
+    } else {
+        Seat::Bare {
+            under: w.c(|t| t.surface),
+        }
+    };
+    let side = w.z(CHIP_BADGE);
+    let playing = e.note.is_some();
+    let bad = w.t.bad;
+    let ringed = on && dot_needs_ring(bad, fill);
+    let d = w.z(w.size.dot);
+    let live = playing.then(|| {
+        let edge = if ringed { w.z(DOT_RING) } else { px(0.) };
+        let (bar, red) = (w.c(|t| t.surface), hsla(bad));
+        canvas(
+            |_, _, _| {},
+            move |b, (), window, _| {
+                let r = b.size.width.min(b.size.height) / 2.;
+                if edge > px(0.) {
+                    fill_disc(window, b.center(), r, bar);
+                }
+                fill_disc(window, b.center(), r - edge, red);
+            },
+        )
+        .size(d + edge * 2.)
+        .flex_none()
+    });
+    let edition = e.edition;
+    let tip_words = chip_tip(&e);
+    let pad_left = if playing {
+        w.z(CHIP_PAD_DOT)
+    } else {
+        w.z((PILL_H - CHIP_BADGE) / 2.)
+    };
+    let chip = div()
+        .id(ElementId::Name(SharedString::from(e.id.clone())))
+        .aria_label(SharedString::from(e.name.clone()))
+        .test_support()
+        .aria_selected(on)
+        .h(w.z(PILL_H))
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(w.z(7.))
+        .pl(pad_left)
+        .pr(w.z(CHIP_PAD_RIGHT))
+        .rounded(w.pill(PILL_H / 2.))
+        .cursor_pointer()
+        .font_family(w.ui.clone())
+        .font_weight(MEDIUM)
+        .text_size(w.z(PILL_PX))
+        .when(on, |d| d.bg(hsla(fill)).text_color(ink))
+        .when(!on, |d| {
+            d.text_color(w.c(|t| t.ink_3_text))
+                .hover(|s| s.bg(w.c(|t| t.hover)).text_color(w.c(|t| t.ink)))
+        })
+        .children(live)
+        .child(badge(w, e.edition, e.mark, side, seat))
+        .child(
+            div()
+                .max_w(w.z(SWITCH_NAME_W))
+                .min_w_0()
+                .truncate()
+                .line_height(relative(1.3))
+                .child(e.name),
+        );
+    tip(chip, tip_words).on_mouse_down(
+        MouseButton::Left,
+        cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            // The keys stay the window's, as after a pick from the menu.
+            window.focus(&this.focus, cx);
+            this.pick_edition(edition, cx);
+        }),
+    )
+}
+
+/// The edition switch as a dropdown, where the chips do not fit: the game
+/// the window shows, by its name, after the live dot while it is the game
+/// being played — no dot while the window shows another — with its badge
+/// and the caret; the build in its tooltip. A press opens the edition
+/// menu. Its bounds are kept for the menu to hang from.
 fn edition_switch(
     w: &W,
     face: Face,
@@ -275,7 +402,15 @@ fn edition_switch(
     cx: &mut Context<Gui>,
 ) -> impl IntoElement {
     let side = w.z(w.size.place);
-    let emblem = images::edition_emblem(face.edition, w.device(side));
+    let mark = badge(
+        w,
+        face.edition,
+        face.mark,
+        side,
+        Seat::Bare {
+            under: w.c(|t| t.surface),
+        },
+    );
     let seat = canvas(move |b, _, _| at.set(b), |_, (), _, _| {})
         .absolute()
         .inset_0();
@@ -303,7 +438,7 @@ fn edition_switch(
         .when(face.playing, |d| {
             d.child(dot(w.z(w.size.dot), w.c(|t| t.bad)))
         })
-        .children(emblem.map(|tile| img(tile).size(side).flex_none()))
+        .child(mark)
         .child(
             div()
                 .max_w(w.z(name_w))

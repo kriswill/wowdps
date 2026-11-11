@@ -10,7 +10,7 @@ use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AppContext, ElementId, TestAppContext, px, size};
 use wowdps_daemon::mock::MockDaemon;
 use wowdps_gui_logic::config::{Config, KeysOf};
-use wowdps_gui_logic::editions::PLAYING_NOW;
+use wowdps_gui_logic::editions::{FOREVER, PLAYING_NOW};
 use wowdps_model::{Edition, Screen};
 use wowdps_proto::{ClientMsg, EditionRef, HistoryQuery};
 
@@ -51,11 +51,15 @@ fn shown(cx: &mut TestAppContext, rig: &Rig, id: impl Into<ElementId>) -> bool {
     .unwrap()
 }
 
-/// Press the switch, then one of its games.
+/// Press one of the switch's games: its chip where the games sit side by
+/// side, else the dropdown and then its row.
 fn pick(cx: &mut TestAppContext, rig: &Rig, entry: &str) {
-    press(cx, rig, "top-edition");
-    assert!(shown(cx, rig, "edition-menu"), "the menu opens");
-    press(cx, rig, ElementId::Name(entry.to_string().into()));
+    let id = ElementId::Name(entry.to_string().into());
+    if !shown(cx, rig, id.clone()) {
+        press(cx, rig, "top-edition");
+        assert!(shown(cx, rig, "edition-menu"), "the menu opens");
+    }
+    press(cx, rig, id);
     settle(cx, &rig.session);
 }
 
@@ -195,7 +199,15 @@ fn the_switch_shows_one_game_at_a_time(cx: &mut TestAppContext) {
         );
         let face = g.edition_face();
         assert_eq!((face.name.as_str(), face.playing), ("Forever", false));
+        // The stored Forever pull's header tags its game.
+        let w = super::super::w::W::new(1.0, 1440., cx);
+        let tag = super::super::fight_head::Head::of(g, &w, cx).tag;
+        assert_eq!(
+            tag.map(|t| (t.name, t.mark)),
+            Some(("Forever".into(), FOREVER))
+        );
     });
+    assert!(shown(cx, &rig, "head-edition"), "the tag is drawn");
     assert_eq!(rail_editions(cx, &rig), vec![Edition::Forever]);
     assert!(
         h.sent.borrow().iter().any(|m| matches!(
@@ -216,15 +228,71 @@ fn the_switch_shows_one_game_at_a_time(cx: &mut TestAppContext) {
         let st = g.session.read(cx).state();
         assert_eq!(st.edition_ref(), EditionRef::Follow);
         assert_eq!(st.screen, Screen::Meter, "back on the log's newest pull");
+        let w = super::super::w::W::new(1.0, 1440., cx);
+        let tag = super::super::fight_head::Head::of(g, &w, cx).tag;
+        assert_eq!(tag, None, "a Retail fight in Retail's window");
     });
+    assert!(!shown(cx, &rig, "head-edition"));
     assert_eq!(rail_editions(cx, &rig), vec![Edition::Retail]);
 }
 
+/// Where the bar has room the games sit side by side, a chip each, every
+/// one in sight: a press on one shows it, and there is no menu to open. A
+/// narrow bar has the dropdown instead.
+#[gpui_kit::test]
+fn the_games_sit_side_by_side_where_they_fit(cx: &mut TestAppContext) {
+    let (rig, h) = two(cx, EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]));
+    h.playing.set(Some(Edition::Retail));
+    status(cx, &rig);
+    assert!(shown(cx, &rig, "top-edition"), "the switch is drawn");
+    assert!(shown(cx, &rig, "edition-retail") && shown(cx, &rig, "edition-forever"));
+    rig.gui.read_with(cx, |g, _| assert!(g.edition_chips()));
+    // The dropdown's press does nothing here: no menu is opened.
+    cx.update_window(rig.window, |_, window, cx| {
+        rig.gui.update(cx, |g, cx| {
+            g.toggle_menu(super::super::cards::Menu::Edition, window, cx)
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    rig.gui
+        .read_with(cx, |g, _| assert!(!g.cards.edition && !g.modal()));
+    assert!(!shown(cx, &rig, "edition-menu"));
+    press(cx, &rig, "edition-forever");
+    rig.gui.read_with(cx, |g, _| {
+        assert_eq!(g.edition, EditionRef::Pin(Edition::Forever));
+        assert_eq!(g.hist.edition, Edition::Forever);
+    });
+    press(cx, &rig, "edition-retail");
+    rig.gui
+        .read_with(cx, |g, _| assert_eq!(g.edition, EditionRef::Follow));
+
+    let narrow = rig_on(
+        cx,
+        460.,
+        860.,
+        EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]),
+    );
+    assert!(shown(cx, &narrow, "top-edition"));
+    assert!(
+        !shown(cx, &narrow, "edition-forever"),
+        "no chips when narrow"
+    );
+    narrow.gui.read_with(cx, |g, _| assert!(!g.edition_chips()));
+    pick(cx, &narrow, "edition-forever");
+    narrow
+        .gui
+        .read_with(cx, |g, _| assert_eq!(g.hist.edition, Edition::Forever));
+}
+
 /// The menu lists the games and nothing else — the one shown lit, the one
-/// being played noted — and it is modal: any key closes it.
+/// being played noted — and it is modal: any key closes it. It is the
+/// dropdown's, on a bar too narrow for the games side by side.
 #[gpui_kit::test]
 fn the_edition_menu_lists_the_games(cx: &mut TestAppContext) {
-    let (rig, h) = two(cx, EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]));
+    let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]);
+    let h = handles(&link);
+    let rig = rig_on(cx, 460., 860., link);
     press(cx, &rig, "top-edition");
     assert!(shown(cx, &rig, "edition-retail"));
     assert!(shown(cx, &rig, "edition-forever"));
@@ -455,9 +523,11 @@ fn an_empty_game_says_how_to_get_a_fight(cx: &mut TestAppContext) {
             ))
         );
         let w = super::super::w::W::new(1.0, 1440., cx);
-        let meta = super::super::fight_head::Head::of(g, &w, cx).meta;
-        assert!(!meta.contains("Midnight"), "{meta}");
+        let head = super::super::fight_head::Head::of(g, &w, cx);
+        assert!(!head.meta.contains("Midnight"), "{}", head.meta);
+        assert_eq!(head.tag, None, "no fight, no tag");
     });
+    assert!(shown(cx, &rig, "stage-empty-mark"), "the game's badge");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -679,24 +749,27 @@ const BAR: [&str; 6] = [
     "top-help",
 ];
 
-/// What the bar is measured by: the switch, the bar's other pieces, the
-/// meter's top under it, and the menu's rows, Retail's and Forever's.
+/// What the bar is measured by: the switch, its chips (where the games
+/// sit side by side), the bar's other pieces, the meter's top under it,
+/// and the dropdown menu's rows (where the bar is narrow).
 #[derive(Debug, PartialEq)]
 struct Measure {
-    /// The emblem's side in the switch: the places' type size, zoomed.
-    side: gpui_kit::Pixels,
     switch: gpui_kit::Bounds<gpui_kit::Pixels>,
+    chips: Vec<gpui_kit::Bounds<gpui_kit::Pixels>>,
     bar: Vec<gpui_kit::Bounds<gpui_kit::Pixels>>,
     meter_top: gpui_kit::Pixels,
-    rows: [gpui_kit::Bounds<gpui_kit::Pixels>; 2],
+    rows: Vec<gpui_kit::Bounds<gpui_kit::Pixels>>,
 }
 
 /// The window over two editions at `at`, in its real faces, measured with
-/// `emblem` as every game's (`None`: no emblem cached).
+/// `emblem` as every game's emblem (`None`: none cached, our marks).
 fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
     use super::super::cards::Menu;
     use super::super::shots::{Shot, app};
-    crate::images::without_art(emblem.is_none());
+    // No art but the stand-in in either run (it is read before the
+    // cache), so the two differ by the badge's content alone on any
+    // machine.
+    crate::images::without_art(true);
     crate::images::emblem_on_this_thread(emblem);
     let mut cx = app();
     let path = own_config();
@@ -717,14 +790,17 @@ fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
         session: held.expect("the session was built"),
     };
     shot.settle(&mut cx);
-    let (side, switch, bar, meter_top) = cx
+    let ids = ["edition-retail", "edition-forever"];
+    let (switch, chips, bar, meter_top) = cx
         .update_window(window, |_, window, cx| {
             window.render_frame(cx);
             window.render_frame(cx);
-            let w = super::super::w::W::new(1.0, at.0, cx);
             (
-                w.z(w.size.place),
                 window.find("top-edition").bounds(),
+                ids.iter()
+                    .filter_map(|id| window.try_find(ElementId::Name((*id).into())))
+                    .map(|e| e.bounds())
+                    .collect::<Vec<_>>(),
                 BAR.iter()
                     .filter_map(|id| window.try_find(*id).map(|e| e.bounds()))
                     .collect::<Vec<_>>(),
@@ -738,58 +814,60 @@ fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
             gui.update(cx, |g, cx| g.toggle_menu(Menu::Edition, window, cx));
             window.render_frame(cx);
             window.render_frame(cx);
-            ["edition-retail", "edition-forever"]
-                .map(|id| window.find(ElementId::Name(id.into())).bounds())
+            if window.try_find("edition-menu").is_none() {
+                return Vec::new();
+            }
+            ids.iter()
+                .filter_map(|id| window.try_find(ElementId::Name((*id).into())))
+                .map(|e| e.bounds())
+                .collect()
         })
         .expect("the window");
     crate::images::emblem_on_this_thread(None);
     crate::images::without_art(false);
     Measure {
-        side,
         switch,
+        chips,
         bar,
         meter_top,
         rows,
     }
 }
 
-/// An emblem rides beside each game's name without moving the bar, at
-/// each of the three frames: the switch keeps its height and grows by the
-/// emblem and one gap, exactly, so a game with no emblem cached is its
-/// name alone with no gap where the emblem would be; the bar's other
-/// pieces keep their line and height (the jump box may give up width),
-/// the meter starts where it did, and the menu's rows keep their sizes.
+/// A game's badge holds its emblem where one is cached, else our mark,
+/// and the bar is the same either way at each of the three frames: the
+/// switch, its chips and the menu's rows keep their every pixel of place.
+/// The games sit side by side where the bar has room — two chips as tall
+/// as the live pill, on the jump box's line — and the narrow bar has the
+/// dropdown, whose menu lists them; the bar's other pieces and the meter
+/// keep their line.
 #[test]
 #[cfg_attr(
     target_os = "macos",
     ignore = "gpui's mac platform must be created on the main thread"
 )]
-fn an_emblem_keeps_the_bar_s_rhythm() {
+fn a_badge_keeps_the_switch_s_rhythm() {
     for (frame, w, h) in super::super::shots::SIZES {
-        let bare = measure((w, h), None);
-        let worn = measure((w, h), Some(DISC));
-        // At zoom 1 the switch's gap is 6 px.
-        assert_eq!(worn.switch.size.height, bare.switch.size.height, "{frame}");
-        assert_eq!(worn.switch.origin.y, bare.switch.origin.y, "{frame}");
-        assert_eq!(
-            worn.switch.size.width - bare.switch.size.width,
-            worn.side + px(6.),
-            "{frame}: the emblem and one gap, no more"
-        );
-        assert!(bare.bar.len() >= 2, "{frame}: the places at least");
-        assert_eq!(worn.bar.len(), bare.bar.len(), "{frame}");
-        // The jump box flexes: where the bar is short, it gives the
-        // emblem its room. Every piece keeps its line and its height.
-        for (worn, bare) in worn.bar.iter().zip(&bare.bar) {
-            assert_eq!(
-                (worn.origin.y, worn.size.height),
-                (bare.origin.y, bare.size.height),
-                "{frame}: the bar keeps its line"
-            );
+        let marks = measure((w, h), None);
+        let emblems = measure((w, h), Some(DISC));
+        assert_eq!(marks, emblems, "{frame}: an emblem or a mark, one rhythm");
+        if frame == "narrow" {
+            assert!(marks.chips.is_empty(), "{frame}: the dropdown");
+            assert_eq!(marks.rows.len(), 2, "{frame}: its menu lists both");
+            assert_eq!(marks.rows[0].size, marks.rows[1].size);
+        } else {
+            assert_eq!(marks.chips.len(), 2, "{frame}: side by side");
+            assert!(marks.rows.is_empty(), "{frame}: no menu");
+            let jump = marks.bar[2];
+            for chip in &marks.chips {
+                assert_eq!(chip.size.height, px(28.), "{frame}: the pill's height");
+                assert!(
+                    (chip.center().y - jump.center().y).abs() < px(0.5),
+                    "{frame}: on the jump box's line"
+                );
+                assert!(marks.switch.contains(&chip.center()), "{frame}");
+            }
         }
-        assert_eq!(worn.meter_top, bare.meter_top, "{frame}");
-        for (worn, bare) in worn.rows.iter().zip(&bare.rows) {
-            assert_eq!(worn.size, bare.size, "{frame}: a menu row keeps its size");
-        }
+        assert!(marks.bar.len() >= 2, "{frame}: the places at least");
     }
 }

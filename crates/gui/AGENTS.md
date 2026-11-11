@@ -102,8 +102,11 @@ cargo test -p wowdps-gui overlay_render_guard -- --ignored
 WOWDPS_SHOTS_THEME=onyx WOWDPS_SHOTS_DIR=/tmp/onyx cargo test -p wowdps-gui window_shots -- --ignored
 ```
 
-Also `talent_shots`, `inspector_plot_shots`,
+Also `talent_shots`, `inspector_plot_shots`, `edition_shots`, `mark_sheet`,
 `the_chrome_budget_holds_on_the_log` and `real_dataset_draws_every_spec`.
+The edition marks and switch have a render guard of their own,
+`marks_render_guard`: run it by name before merging a change to them, as
+the overlay's (`WOWDPS_BLESS=1` re-blesses `snapshots/marks/`).
 Shots over a real log or a frozen history store (`WOWDPS_SHOTS_LOG`,
 `WOWDPS_SHOTS_HISTORY`) hold real names: write them outside the checkout
 and never commit them.

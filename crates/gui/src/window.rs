@@ -22,6 +22,7 @@ mod history;
 mod home;
 mod inspector;
 mod instruments;
+mod marks;
 mod paint;
 mod palette;
 mod rail;
@@ -118,6 +119,10 @@ const ZOOM_MIN: f32 = 0.5;
 const ZOOM_MAX: f32 = 3.0;
 /// The inspector beside the meter: the most of the prototype's `minmax`,
 /// which the grid always gives it — 520 wide, 410 in a tile.
+/// An empty game's badge on the stage, and the room under it before its
+/// words.
+const EMPTY_MARK: f32 = 40.0;
+const EMPTY_MARK_GAP: f32 = 8.0;
 const INSPECTOR_WIDE: f32 = 520.0;
 const INSPECTOR_TILE: f32 = 410.0;
 
@@ -852,6 +857,10 @@ impl Gui {
         // A game with no fight to show says how to get one, never a blank
         // meter under a header waiting for combat.
         if let Some((head, line)) = self.empty_game(cx) {
+            // The game's badge above its words, larger: the game said at a
+            // glance before a word is read.
+            let shown = self.hist.edition;
+            let mark = self.hist.store.census.mark(shown);
             return stage
                 .child(
                     div()
@@ -864,6 +873,21 @@ impl Gui {
                         .justify_center()
                         .gap(w.z(6.))
                         .px(w.z(24.))
+                        .child(
+                            div()
+                                .id("stage-empty-mark")
+                                .test_support()
+                                .pb(w.z(EMPTY_MARK_GAP))
+                                .child(marks::badge(
+                                    w,
+                                    shown,
+                                    mark,
+                                    w.z(EMPTY_MARK),
+                                    marks::Seat::Bare {
+                                        under: w.c(|t| t.ground),
+                                    },
+                                )),
+                        )
                         .child(w.text(head, w.size.body, w.c(|t| t.ink), w::SEMIBOLD))
                         .child(w.text(line, w.size.small, w.c(|t| t.ink_2), REGULAR)),
                 )

@@ -54,7 +54,10 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   degraded store apart, and shows nothing no card carries (no season score,
   no boss denominator, no ladder percentile).
 - **Colors.** The accent is the interface, class colors are people, green
-  and red are outcomes, and no color is semantic yellow. The accent is an
+  and red are outcomes, the games' colors (`midnight`, `forever`) are the
+  games, and no color is semantic yellow. A game's color is worn by its
+  mark and by the shown game's chip in the edition switch, nowhere else:
+  no tinted bar, rail, border or ground. The accent is an
   underline or an edge, never a fill. Class color as text is lifted until it
   clears WCAG AA (`theme::class_text_on`); a bar keeps `Class::rgb`
   exactly. Bars sit under the row's text; no text sits on a class color.
@@ -90,12 +93,23 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   follows again once its game has been live and moved on. It rides
   `ClientState::set_edition` for the meter and, only once the census knows
   more than one edition, every history read (`Store::rescope`). With one
-  edition known nothing is drawn or asked differently. Emblems go through
-  `images::edition_emblem`: the launcher's own for each game, from the
-  per-machine `edition-emblems.bin` (`tools/gen-emblems.sh`), rasterized by
-  GPUI's SVG renderer at the device pixels drawn, once per game and size.
-  Without one a game is its name alone, with no gap
-  (`editions::tests::an_emblem_keeps_the_bar_s_rhythm`). The talent viewer
+  edition known nothing is drawn or asked differently. The switch is a
+  row of chips after the places while the games fit (`editions::chips`:
+  up to three, a bar that is not narrow), the shown game's chip filled
+  with its color and the live dot on the played game's; else a dropdown
+  and its menu (`Gui::edition_chips` keeps the menu shut while the chips
+  are drawn). At the tile frame beside the chips the jump box is its
+  glyph. Each game has one mark and one color (gui-logic's
+  `editions::Mark` and `Tone`, the marks glyphs of the `glyph` table),
+  worn in one round badge (`marks.rs`) wherever the game is named: a
+  chip, the dropdown and its menu, a fight's tag (`head-edition`, once
+  several games are known) and an empty game's stage. The badge holds the
+  game's emblem where the per-machine `edition-emblems.bin`
+  (`tools/gen-emblems.sh`) has one, else our mark, the same size either
+  way (`editions::tests::a_badge_keeps_the_switch_s_rhythm`). A mark's
+  color yields to the bar's ink where the chrome looks too like it
+  (`Tone::mark_color`). The marks' pictures are committed and guarded
+  (`shots::marks_render_guard`, drawn without the art). The talent viewer
   reads the fight's game's trees (`Viewer::edition`).
 - **The chrome budget is a test.** At 1440×900 the first meter row starts
   under 290 px with 18 rows showing

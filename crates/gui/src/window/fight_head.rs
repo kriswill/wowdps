@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, Div, MouseButton, TestSupportExt as _, div, relative};
-use wowdps_gui_logic::editions::header_meta;
+use wowdps_gui_logic::editions::{Tag, header_parts};
 use wowdps_gui_logic::fight_head::{
     GONE, NEWER_TIP, OLDER_TIP, RAIL_TIP, READING, RunClocks, Seen, Stats, Verdict, WAITING, You,
     meta, outcome, pairs, pending, you,
@@ -23,7 +23,8 @@ use wowdps_gui_logic::theme::{YOU_EDGE, YOU_WASH, YOU_WASH_HOVER};
 use wowdps_model::fmt::duration;
 
 use super::Gui;
-use super::chrome::{badge, class_icon, icon_button, quiet, tip};
+use super::chrome::{badge as word_badge, class_icon, icon_button, quiet, tip};
+use super::marks::{Seat, badge};
 use super::w::{Fit, MEDIUM, REGULAR, SEMIBOLD, W};
 use crate::theme::hsla;
 
@@ -55,9 +56,13 @@ pub struct Head {
     /// The fight's name; `None` before there is a fight, when the line says
     /// it is waiting, in the quiet ink of a status.
     pub title: Option<String>,
-    /// "Heroic, 25 players"; empty off a boss pull. A fight of an edition
-    /// other than Retail leads with it ("Forever, Normal, 5 players").
+    /// "Heroic, 25 players"; empty off a boss pull. With one game known, a
+    /// fight of an edition other than Retail leads with it ("Forever,
+    /// Normal, 5 players").
     pub meta: String,
+    /// With several games known, the game a reader could take the fight
+    /// for another's: its badge and name before the meta's words.
+    pub tag: Option<Tag>,
     pub outcome: Option<(String, Tone)>,
     /// Empty before there is a fight to time.
     pub duration: String,
@@ -101,23 +106,26 @@ impl Head {
             .filter(|e| *e >= STALE_AFTER)
             .map(|e| format!("no events for {}s", e.as_secs()));
 
+        // v49: a fight of another edition than Retail says which, and a
+        // Retail fight in another edition's window says its name, by its
+        // own card's build where it has one — once several games are
+        // known, as a tag of its mark and name.
+        let (tag, words) = header_parts(
+            meta(app.segment_encounter()),
+            app.segment_edition(),
+            gui.header_edition(),
+            card.map(|c| c.build)
+                .filter(|b| *b != (0, 0, 0))
+                .or_else(|| gui.hist.store.census.build(wowdps_model::Edition::Retail)),
+        );
         Head {
             duration: name
                 .as_ref()
                 .map_or_else(String::new, |_| duration(app.duration_ms())),
             stats: name.is_some().then(|| stats_of(gui, cx)),
             title: name,
-            // v49: a fight of another edition than Retail says which, and
-            // a Retail fight in another edition's window says its name, by
-            // its own card's build where it has one.
-            meta: header_meta(
-                meta(app.segment_encounter()),
-                app.segment_edition(),
-                gui.header_edition(),
-                card.map(|c| c.build)
-                    .filter(|b| *b != (0, 0, 0))
-                    .or_else(|| gui.hist.store.census.build(wowdps_model::Edition::Retail)),
-            ),
+            tag,
+            meta: words,
             outcome: outcome(Verdict {
                 wipe_pct: card.and_then(wipe_pct),
                 ..Verdict::of(app)
@@ -245,11 +253,32 @@ fn title_line(head: &Head, w: &W, cx: &mut Context<Gui>) -> Div {
             meta = meta.child(quiet(w, night.clone(), meta_px));
         }
     }
+    if let Some(tag) = &head.tag {
+        meta = meta.child(
+            div()
+                .id("head-edition")
+                .test_support()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(w.z(6.))
+                .child(badge(
+                    w,
+                    tag.edition,
+                    tag.mark,
+                    w.z(meta_px),
+                    Seat::Bare {
+                        under: w.c(|t| t.ground),
+                    },
+                ))
+                .child(quiet(w, tag.name.clone(), meta_px)),
+        );
+    }
     if !head.meta.is_empty() {
         meta = meta.child(quiet(w, head.meta.clone(), meta_px));
     }
     if let Some((word, tone)) = &head.outcome {
-        meta = meta.child(badge(w, word, *tone));
+        meta = meta.child(word_badge(w, word, *tone));
     }
     if !head.duration.is_empty() {
         meta = meta.child(quiet(w, head.duration.clone(), meta_px));

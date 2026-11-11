@@ -541,67 +541,54 @@ fn edition_shots() {
         s.settle(cx);
         let _ = cx.update_window(s.window, |_, window, cx| window.render_frame(cx));
     }
-    let poses: [(&str, EditionPose); 5] = [
-        ("editions", |_, _| {}),
-        ("editions-menu", |cx, s| menu(cx, s, Menu::Edition)),
-        ("editions-forever", forever),
-        ("editions-forever-menu", |cx, s| {
+    use wowdps_model::Edition::{Forever, Retail};
+    // Each state: its name, the game being played, whether the chrome is a
+    // class's (a Warlock's lavender, the one class chrome that takes
+    // Midnight's mark to ink), and how it is reached.
+    // `Window::Empty`: Forever known by a log with no pull in it, and no
+    // Forever fight stored — the stage that says how to get one.
+    let poses: [(&str, wowdps_model::Edition, Window, EditionPose); 9] = [
+        ("editions", Retail, Window::Plain, |_, _| {}),
+        ("editions-menu", Retail, Window::Plain, |cx, s| {
+            menu(cx, s, Menu::Edition)
+        }),
+        ("editions-forever", Retail, Window::Plain, forever),
+        ("editions-forever-menu", Retail, Window::Plain, |cx, s| {
             forever(cx, s);
             menu(cx, s, Menu::Edition);
         }),
-        ("editions-forever-home", |cx, s| {
+        ("editions-forever-home", Retail, Window::Plain, |cx, s| {
             forever(cx, s);
             cx.update_entity(&s.gui, |g, cx| g.open_home(cx));
             s.settle(cx);
         }),
+        (
+            "editions-playing-forever",
+            Forever,
+            Window::Plain,
+            |_, _| {},
+        ),
+        (
+            "editions-forever-playing-forever",
+            Forever,
+            Window::Plain,
+            forever,
+        ),
+        (
+            "editions-forever-class",
+            Retail,
+            Window::ClassChrome,
+            forever,
+        ),
+        ("editions-forever-empty", Retail, Window::Empty, forever),
     ];
-    for (name, pose) in poses {
+    // The art caches stay out with `WOWDPS_SHOTS_ART=off`: each game's
+    // badge is then our own mark, as on a machine without the emblems.
+    let no_art = std::env::var("WOWDPS_SHOTS_ART").is_ok_and(|v| v == "off");
+    crate::images::without_art(no_art);
+    for (name, playing, kind, pose) in poses {
         for (frame, w, h) in SIZES {
-            let mut cx = app();
-            let path = super::tests::own_config();
-            std::fs::write(
-                &path,
-                format!(
-                    "zoom = 1.0\nhome_on_start = false\ntheme = \"{}\"\n",
-                    testkit::shots_theme().name
-                ),
-            )
-            .expect("the shots' config is written");
-            let cfg = Config::load();
-            let link = testkit::EditionsLink::owned(&["Thraxx-Nebula-US", "Velkris-Nebula-US"])
-                .with_forever_source();
-            link.playing.set(Some(wowdps_model::Edition::Retail));
-            let mut held = None;
-            let (window, gui) =
-                testkit::open_headless(&mut cx, size(px(w), px(h)), |window, cx| {
-                    let session = cx.new(|_| {
-                        Session::with_state(Box::new(link), wowdps_proto::ClientState::new())
-                    });
-                    held = Some(session.clone());
-                    let gui = cx.new(|cx| Gui::new(session, cfg, window, cx));
-                    let focus = gui.read(cx).focus().clone();
-                    window.focus(&focus, cx);
-                    gui
-                });
-            let shot = Shot {
-                window,
-                gui,
-                session: held.expect("the session was built"),
-            };
-            shot.settle(&mut cx);
-            let tonight = cx.update(|cx| {
-                shot.session
-                    .read(cx)
-                    .state()
-                    .entries()
-                    .iter()
-                    .map(|e| e.row.start_ms)
-                    .max()
-                    .map(wowdps_gui_logic::rail::night_of)
-            });
-            cx.update_entity(&shot.gui, |g, _| g.hist.tonight_pin = tonight);
-            shot.settle(&mut cx);
-            let _ = cx.update_window(shot.window, |_, window, cx| window.render_frame(cx));
+            let (mut cx, shot) = edition_window((w, h), playing, kind);
             pose(&mut cx, &shot);
             shot.settle(&mut cx);
             cx.run_until_parked();
@@ -616,6 +603,251 @@ fn edition_shots() {
             }
         }
     }
+    crate::images::without_art(false);
+}
+
+/// Which window over two editions a shot opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Window {
+    /// Both fixtures followed and stored.
+    Plain,
+    /// The same, in a Warlock's class chrome.
+    ClassChrome,
+    /// Retail's fights, and a Forever log with no pull in it.
+    Empty,
+}
+
+/// A window over a daemon of two editions (`testkit::EditionsLink`: the
+/// committed fixtures only) at `at`, in the shots' theme, with `playing`
+/// the game being played, as `kind` says, settled on its newest night.
+fn edition_window(
+    at: (f32, f32),
+    playing: wowdps_model::Edition,
+    kind: Window,
+) -> (HeadlessAppContext, Shot) {
+    let class_chrome = kind == Window::ClassChrome;
+    let mut cx = app();
+    let path = super::tests::own_config();
+    // A class chrome wears the class each game's keys remember: the
+    // top-level one for Retail, the table's for Forever.
+    let chrome = if class_chrome {
+        "chrome = \"class\"\ncharacter_class = \"Warlock\"\n\n\
+         [editions.forever]\ncharacter_class = \"Warlock\"\n"
+    } else {
+        ""
+    };
+    std::fs::write(
+        &path,
+        format!(
+            "zoom = 1.0\nhome_on_start = false\ntheme = \"{}\"\n{chrome}",
+            testkit::shots_theme().name
+        ),
+    )
+    .expect("the shots' config is written");
+    let cfg = Config::load();
+    let link = if kind == Window::Empty {
+        let log = path.with_file_name("WoWCombatLog-empty.txt");
+        let header = std::fs::read_to_string(testkit::EditionsLink::fixture("forever.txt"))
+            .ok()
+            .and_then(|t| t.lines().next().map(str::to_string))
+            .expect("the fixture's header");
+        std::fs::write(&log, format!("{header}\n")).expect("a log with no pull");
+        testkit::EditionsLink::stored(&["Thraxx-Nebula-US"], false).with_forever_log(&log)
+    } else {
+        testkit::EditionsLink::owned(&["Thraxx-Nebula-US", "Velkris-Nebula-US"])
+            .with_forever_source()
+    };
+    link.playing.set(Some(playing));
+    let mut held = None;
+    let (window, gui) = testkit::open_headless(&mut cx, size(px(at.0), px(at.1)), |window, cx| {
+        let session =
+            cx.new(|_| Session::with_state(Box::new(link), wowdps_proto::ClientState::new()));
+        held = Some(session.clone());
+        let gui = cx.new(|cx| Gui::new(session, cfg, window, cx));
+        let focus = gui.read(cx).focus().clone();
+        window.focus(&focus, cx);
+        gui
+    });
+    let shot = Shot {
+        window,
+        gui,
+        session: held.expect("the session was built"),
+    };
+    shot.settle(&mut cx);
+    let tonight = cx.update(|cx| {
+        shot.session
+            .read(cx)
+            .state()
+            .entries()
+            .iter()
+            .map(|e| e.row.start_ms)
+            .max()
+            .map(wowdps_gui_logic::rail::night_of)
+    });
+    cx.update_entity(&shot.gui, |g, _| g.hist.tonight_pin = tonight);
+    shot.settle(&mut cx);
+    let _ = cx.update_window(shot.window, |_, window, cx| window.render_frame(cx));
+    (cx, shot)
+}
+
+/// Every game's badge at 13, 16, 19 and 64 px, a row a size: our marks
+/// (or the cached emblems, with the art on) bare on the theme's bar, then
+/// Midnight's and Forever's on their chips' fills. No words, so the
+/// picture is the same on any machine.
+fn mark_sheet_image() -> image::RgbaImage {
+    use super::marks::{Seat, badge};
+    use gpui_kit::{Context, IntoElement, ParentElement as _, Render, Styled as _, Window, div};
+    use wowdps_gui_logic::editions::{CLASSIC, FOREVER, MIDNIGHT, NEUTRAL};
+    use wowdps_model::Edition;
+    struct Sheet;
+    impl Render for Sheet {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let w = super::w::W::new(1.0, 640., cx);
+            let bare = [
+                (Edition::Retail, MIDNIGHT),
+                (Edition::Forever, FOREVER),
+                (Edition::Classic(2), CLASSIC),
+                (Edition::Unknown(40), NEUTRAL),
+            ];
+            let mut sheet = div()
+                .size_full()
+                .bg(w.c(|t| t.surface))
+                .p(px(16.))
+                .flex()
+                .flex_col()
+                .gap(px(14.));
+            for side in [13.0_f32, 16.0, 19.0, 64.0] {
+                let mut row = div().flex().items_center().gap(px(14.));
+                for (edition, mark) in bare {
+                    let under = w.c(|t| t.surface);
+                    row = row.child(badge(&w, edition, mark, px(side), Seat::Bare { under }));
+                }
+                for (edition, mark) in [(Edition::Retail, MIDNIGHT), (Edition::Forever, FOREVER)] {
+                    let fill = mark.tone.fill(&w.t);
+                    row = row.child(
+                        div()
+                            .p(px((side * 0.3).round()))
+                            .rounded_full()
+                            .bg(crate::theme::hsla(fill))
+                            .child(badge(&w, edition, mark, px(side), Seat::Fill { fill })),
+                    );
+                }
+                sheet = sheet.child(row);
+            }
+            sheet
+        }
+    }
+    let mut cx = app();
+    let (window, _) =
+        testkit::open_headless(&mut cx, size(px(640.), px(300.)), |_, cx| cx.new(|_| Sheet));
+    cx.run_until_parked();
+    let _ = cx.update_window(window, |_, window, cx| window.render_frame(cx));
+    cx.capture_screenshot(window).expect("a headless renderer")
+}
+
+/// The marks' contact sheet as `marks-sheet.png`, in the shots' theme;
+/// `WOWDPS_SHOTS_ART=off` keeps the emblem cache out.
+#[test]
+#[ignore = "needs a wgpu adapter"]
+fn mark_sheet() {
+    let no_art = std::env::var("WOWDPS_SHOTS_ART").is_ok_and(|v| v == "off");
+    crate::images::without_art(no_art);
+    let image = mark_sheet_image();
+    crate::images::without_art(false);
+    if let Some(dir) = std::env::var_os("WOWDPS_SHOTS_DIR").map(PathBuf::from) {
+        std::fs::create_dir_all(&dir).expect("the shots' directory");
+        let path = dir.join("marks-sheet.png");
+        image.save(&path).expect("png written");
+        eprintln!("mark_sheet: {}", path.display());
+    }
+}
+
+/// The part of a window's picture inside `b`, in the picture's own pixels.
+fn crop(
+    image: &image::RgbaImage,
+    b: gpui_kit::Bounds<gpui_kit::Pixels>,
+    width: f32,
+) -> image::RgbaImage {
+    let k = image.width() as f32 / width;
+    let x = (f32::from(b.origin.x) * k).floor().max(0.0) as u32;
+    let y = (f32::from(b.origin.y) * k).floor().max(0.0) as u32;
+    let w = (f32::from(b.size.width) * k).ceil() as u32;
+    let h = (f32::from(b.size.height) * k).ceil() as u32;
+    image::imageops::crop_imm(
+        image,
+        x,
+        y,
+        w.min(image.width() - x),
+        h.min(image.height() - y),
+    )
+    .to_image()
+}
+
+/// The marks' render guard: our marks are our art, so their pictures are
+/// committed (`snapshots/marks/`) and held like the overlay's
+/// (`crate::guard`), drawn in `navy` without the art caches — the marks
+/// alone, never an emblem. The contact sheet; the chips at the wide frame,
+/// Retail shown and played; Forever shown with the game played's dot on
+/// Retail's chip; and the narrow frame's dropdown with its menu open.
+/// `WOWDPS_BLESS=1` re-blesses an intended change.
+#[test]
+#[ignore = "needs a wgpu adapter; run by name"]
+fn marks_render_guard() {
+    use wowdps_model::Edition::{Forever, Retail};
+    crate::images::without_art(true);
+    let navy = std::env::var("WOWDPS_SHOTS_THEME").is_err();
+    assert!(
+        navy,
+        "the guard's pictures are navy's: unset WOWDPS_SHOTS_THEME"
+    );
+    let mut states: Vec<(&str, image::RgbaImage)> = vec![("sheet", mark_sheet_image())];
+    for (name, at, forever, menu_open) in [
+        ("chips", (1440.0, 900.0), false, false),
+        ("chips-forever", (1440.0, 900.0), true, false),
+        ("dropdown-menu", (460.0, 860.0), false, true),
+    ] {
+        let (mut cx, shot) = edition_window(at, Retail, Window::Plain);
+        if forever {
+            cx.update_entity(&shot.gui, |g, cx| g.pick_edition(Forever, cx));
+            shot.settle(&mut cx);
+        }
+        if menu_open {
+            menu(&mut cx, &shot, Menu::Edition);
+        }
+        cx.run_until_parked();
+        let area = cx
+            .update_window(shot.window, |_, window, cx| {
+                window.render_frame(cx);
+                let switch = window.find("top-edition").bounds();
+                match window.try_find("edition-menu") {
+                    Some(menu) => switch.union(&menu.bounds()),
+                    None => switch,
+                }
+            })
+            .expect("the window");
+        let image = cx
+            .capture_screenshot(shot.window)
+            .expect("a headless renderer");
+        states.push((name, crop(&image, area, at.0)));
+    }
+    crate::images::without_art(false);
+    let mut failed: Vec<String> = states
+        .iter()
+        .filter_map(|(name, pic)| crate::guard::check("marks", name, pic).err())
+        .collect();
+    let blessed: Vec<String> = std::fs::read_dir(crate::guard::dir("marks"))
+        .map(|d| {
+            d.filter_map(|e| e.ok()?.file_name().into_string().ok())
+                .filter_map(|n| n.strip_suffix(".png").map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    for name in blessed {
+        if !states.iter().any(|(s, _)| *s == name) {
+            failed.push(format!("{name}: blessed, but no state draws it"));
+        }
+    }
+    assert!(failed.is_empty(), "marks guard:\n{}", failed.join("\n"));
 }
 
 /// The chrome budget over a real log (the iced window's

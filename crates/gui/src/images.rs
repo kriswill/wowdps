@@ -6,7 +6,7 @@
 //! (the readers memoize), so GPUI uploads each texture once — the iced
 //! GUI's per-frame re-upload trap (review finding 9) cannot happen here.
 //! No cache means `None` everywhere, and the UI draws its class-coloured
-//! discs, and each game's name alone, instead.
+//! discs, and each game its own mark, instead.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -102,12 +102,12 @@ pub fn spec_icon(spec_id: u32, px: f32) -> Option<Tile> {
     class_icons()?.spec(spec_id, px, make)
 }
 
-/// An edition's emblem for the edition switch, `px` device pixels across:
-/// the launcher's own for that game (`edition-emblems.bin`, an SVG
-/// document), rasterized at exactly the whole pixels that cover it — GPUI
-/// samples without mipmaps — once per game and size. `None` without the
-/// cache or with no emblem of that game in it: the switch names the game
-/// alone.
+/// An edition's emblem for a game's badge (`window::marks`), `px` device
+/// pixels across: the launcher's own for that game
+/// (`edition-emblems.bin`, an SVG document), rasterized at exactly the
+/// whole pixels that cover it — GPUI samples without mipmaps — once per
+/// game and size. `None` without the cache or with no emblem of that game
+/// in it: the badge holds our own mark.
 pub fn edition_emblem(edition: Edition, px: f32) -> Option<Tile> {
     let edge = px.ceil().clamp(1.0, 1024.0) as u32;
     #[cfg(test)]

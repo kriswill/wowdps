@@ -132,6 +132,9 @@ impl Gui {
             Menu::Picker => self.cards.picker,
             Menu::Edition => self.cards.edition,
         };
+        // The edition menu is the dropdown's: with the games side by side
+        // on the bar there is nothing to open.
+        let open = open && !(menu == Menu::Edition && self.edition_chips());
         self.cards.options = open && menu == Menu::Options;
         self.cards.sheet = open && menu == Menu::Sheet;
         self.cards.picker = open && menu == Menu::Picker;
