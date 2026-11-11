@@ -51,6 +51,7 @@ fn options(tmp: &Temp, source: SourceSpec) -> DaemonOptions {
         socket: tmp.join("test.sock"),
         lockfile: tmp.join("test.lock"),
         source,
+        editions: Default::default(),
         linger: true,
         idle_grace: Duration::from_secs(30),
         tick: Duration::from_millis(20),

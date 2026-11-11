@@ -17,10 +17,13 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use wowdps_core::index::{self, Index, ScanState, SegmentMeta};
+use wowdps_model::Edition;
 use wowdps_proto::wire::{self, Reader};
 
-/// Cache files kept per directory; older ones are evicted so "newest logs
-/// warm, ancient ones rescan" falls out of the layout.
+/// Cache files kept per edition (v49: the edition each entry's checkpoint
+/// stood in, `ScanState::project_id`, reckoned as `Edition::counts_as`);
+/// older ones are evicted so "newest logs warm, ancient ones rescan" falls
+/// out of the layout, and one edition's logs never push another's out.
 const KEEP: usize = 8;
 
 /// Bytes hashed before the checkpoint to prove the prefix is unchanged.
@@ -167,27 +170,51 @@ impl IndexCache {
         self.prune();
     }
 
-    /// Keep the newest [`KEEP`] entries by mtime.
+    /// Keep the newest [`KEEP`] entries by mtime of each edition (v49). An
+    /// entry's edition is its checkpoint's, read from the entry decoded
+    /// whole ([`entry_edition`]); one this build cannot decode (another
+    /// magic, a short or torn file) counts as Retail's, where every entry
+    /// counted before editions were told apart.
     fn prune(&self) {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return;
         };
-        let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
-            .flatten()
-            .filter(|e| e.path().extension().is_some_and(|x| x == "bin"))
-            .filter_map(|e| {
-                let m = e.metadata().ok()?;
-                Some((m.modified().ok()?, e.path()))
-            })
-            .collect();
-        if files.len() <= KEEP {
-            return;
+        let mut groups: std::collections::HashMap<Edition, Vec<(std::time::SystemTime, PathBuf)>> =
+            std::collections::HashMap::new();
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().is_none_or(|x| x != "bin") {
+                continue;
+            }
+            let Some(mtime) = e.metadata().ok().and_then(|m| m.modified().ok()) else {
+                continue;
+            };
+            groups
+                .entry(entry_edition(&path))
+                .or_default()
+                .push((mtime, path));
         }
-        files.sort_by_key(|(mtime, _)| std::cmp::Reverse(*mtime));
-        for (_, path) in files.split_off(KEEP) {
-            let _ = std::fs::remove_file(path);
+        for mut files in groups.into_values() {
+            if files.len() <= KEEP {
+                continue;
+            }
+            files.sort_by_key(|(mtime, _)| std::cmp::Reverse(*mtime));
+            for (_, path) in files.split_off(KEEP) {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
+}
+
+/// The edition a cache entry's checkpoint stood in, as it is reckoned: the
+/// `ScanState::project_id` of an entry this build decodes whole, else —
+/// another magic, a short or torn file — Retail's.
+fn entry_edition(path: &Path) -> Edition {
+    let project_id = std::fs::read(path)
+        .ok()
+        .and_then(|bytes| decode(&bytes))
+        .map_or(0, |(.., state)| state.project_id);
+    Edition::from_project_id(project_id).counts_as()
 }
 
 fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
@@ -572,6 +599,55 @@ mod tests {
         }
         let count = std::fs::read_dir(tmp.0.join("cache")).unwrap().count();
         assert!(count <= KEEP, "kept {count}");
+    }
+
+    /// v49: eight logs per edition, not eight in all — a night of Retail
+    /// logs never evicts Forever's, and each edition keeps its own newest.
+    #[test]
+    fn each_edition_keeps_its_own_newest_entries() {
+        let tmp = Temp::new("prune-editions");
+        let cache = IndexCache::new(tmp.0.join("cache"));
+        let forever_fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+        let mut forever = Vec::new();
+        for i in 0..3 {
+            let log = tmp.0.join(format!("WoWCombatLog-forever-{i}.txt"));
+            std::fs::copy(forever_fixture, &log).unwrap();
+            cache.scan_file(&log, &mut File::open(&log).unwrap());
+            forever.push(log);
+        }
+        for i in 0..(KEEP + 4) {
+            let log = tmp.0.join(format!("WoWCombatLog-{i}.txt"));
+            std::fs::copy(FIXTURE, &log).unwrap();
+            cache.scan_file(&log, &mut File::open(&log).unwrap());
+        }
+        let mut by_edition: std::collections::HashMap<Edition, usize> = Default::default();
+        for e in std::fs::read_dir(tmp.0.join("cache")).unwrap().flatten() {
+            *by_edition.entry(entry_edition(&e.path())).or_default() += 1;
+        }
+        assert_eq!(by_edition.get(&Edition::Retail), Some(&KEEP));
+        assert_eq!(by_edition.get(&Edition::Forever), Some(&3), "none evicted");
+        for log in &forever {
+            assert!(cache.cache_path(log).exists(), "{}", log.display());
+        }
+        // An entry this build cannot read counts as Retail's: another magic,
+        // and one wearing this build's magic but too short to be an entry,
+        // whatever its last byte says.
+        let odd = tmp.0.join("cache").join("odd.bin");
+        std::fs::write(&odd, b"WDPSIDX\x01\x12").unwrap();
+        assert_eq!(entry_edition(&odd), Edition::Retail);
+        let short = tmp.0.join("cache").join("short.bin");
+        let mut bytes = MAGIC.to_vec();
+        bytes.push(Edition::Forever.project_id());
+        std::fs::write(&short, &bytes).unwrap();
+        assert_eq!(entry_edition(&short), Edition::Retail);
+        // A whole Forever entry, torn short of its last bytes, is unreadable.
+        let whole = std::fs::read(cache.cache_path(&forever[0])).unwrap();
+        assert_eq!(whole.last(), Some(&Edition::Forever.project_id()));
+        let torn = tmp.0.join("cache").join("torn.bin");
+        let mut cut = whole[..whole.len() - 3].to_vec();
+        cut.push(Edition::Forever.project_id());
+        std::fs::write(&torn, &cut).unwrap();
+        assert_eq!(entry_edition(&torn), Edition::Retail);
     }
 
     const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");

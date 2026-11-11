@@ -223,10 +223,24 @@ fn visible_now(dir: &Path, needle: &str) -> bool {
     on_screen_workspaces(&monitors).contains(&ws)
 }
 
+/// The window needles a `game_match` names: one substring, or several
+/// separated by `|` (one per edition's window, say), each lowercased and
+/// otherwise taken as written — spaces are part of a needle, and a window
+/// title holding a `|` cannot be named. An empty piece (`""`, a trailing
+/// `|`, `||`) is no needle: it would match every window.
+pub fn needles(game_match: &str) -> Vec<String> {
+    game_match
+        .split('|')
+        .filter(|n| !n.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
 /// Find the game in a plain-text `clients` reply and return its workspace
 /// id. Blocks start `Window <addr> -> <title>:` with one indented
-/// `field: value` line each; the needle is matched case-insensitively
-/// against class, title, and their initial variants.
+/// `field: value` line each; each of `game_match`'s needles ([`needles`])
+/// is matched case-insensitively against class, title, and their initial
+/// variants, and a window matching any is the game's.
 ///
 /// Every matching window is scored and the best wins, because a browser
 /// tab titled "… - Item - World of Warcraft" matches the needle too and
@@ -234,7 +248,11 @@ fn visible_now(dir: &Path, needle: &str) -> bool {
 /// outranks a title match, a fullscreen window outranks a windowed one,
 /// an exact title outranks a containing one, and the current title
 /// outranks the initial one.
-fn game_workspace(clients: &str, needle: &str) -> Option<i32> {
+fn game_workspace(clients: &str, game_match: &str) -> Option<i32> {
+    let needles = needles(game_match);
+    if needles.is_empty() {
+        return None;
+    }
     let mut best: Option<(u32, i32)> = None;
     let (mut ws, mut score, mut fullscreen) = (None::<i32>, 0u32, false);
     let mut flush = |ws: Option<i32>, score: u32, fullscreen: bool| {
@@ -268,9 +286,10 @@ fn game_workspace(clients: &str, needle: &str) -> Option<i32> {
                 ("title:", 4),
                 ("initialtitle:", 1),
             ] {
-                if let Some(v) = lower.strip_prefix(key).map(str::trim)
-                    && v.contains(needle)
-                {
+                let Some(v) = lower.strip_prefix(key).map(str::trim) else {
+                    continue;
+                };
+                for needle in needles.iter().filter(|n| v.contains(n.as_str())) {
                     // The game's own title IS the needle; a tab's merely
                     // contains it.
                     let exact = u32::from(v == needle) * 2;
@@ -630,6 +649,46 @@ Monitor DP-2 (ID 1):
             "matches any field"
         );
         assert_eq!(game_workspace(CLIENTS, "factorio"), None);
+    }
+
+    /// `game_match` may name several windows, `|`-separated: a window
+    /// matching any of them is the game's, ranked as one needle's would be.
+    /// One needle, the default, matches as it always did.
+    #[test]
+    fn game_match_takes_several_windows() {
+        assert_eq!(needles("World of Warcraft"), ["world of warcraft"]);
+        assert_eq!(
+            needles("World of Warcraft|Other Game|"),
+            ["world of warcraft", "other game"]
+        );
+        // Spaces are part of a needle: a value is taken as written.
+        assert_eq!(needles(" wow |x"), [" wow ", "x"]);
+        // An empty piece is no needle: it would match every window.
+        for empty in ["", "|", "||", "|||"] {
+            assert!(needles(empty).is_empty(), "{empty:?}");
+            assert_eq!(game_workspace(CLIENTS, empty), None, "{empty:?}");
+        }
+        assert_eq!(needles("a||b|"), ["a", "b"]);
+        assert_eq!(game_workspace(CLIENTS, "||world of warcraft|"), Some(9));
+        let other = "\
+Window 70aa -> Other Game:
+	mapped: 1
+	workspace: 4 (4)
+	class: other_game
+	title: Other Game
+";
+        assert_eq!(
+            game_workspace(other, "world of warcraft|other game"),
+            Some(4)
+        );
+        assert_eq!(game_workspace(other, "world of warcraft"), None);
+        // Both windows open: the needles that match decide which.
+        let both = format!("{CLIENTS}{other}");
+        assert_eq!(
+            game_workspace(&both, "World of Warcraft|steam_app_battlenet"),
+            Some(9)
+        );
+        assert_eq!(game_workspace(&both, "other_game|nothing"), Some(4));
     }
 
     #[test]

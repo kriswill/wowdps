@@ -13,13 +13,28 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
 - **`wowdps stop` is the shutdown.** The daemon takes no signals; the unit's
   `ExecStop` runs it.
 - **Liveness is observation plus the game process** (`game.rs`), never the
-  log's mtime: the game flushes in multi-minute bursts.
+  log's mtime: the game flushes in multi-minute bursts. The watcher names
+  each running edition by the product folder in its command line; the
+  overlay is shown while any runs.
 - **Nothing closes on the game-process signal.** Closing is file-derived: a
   tailer that switches logs sends `HistoryReq::Retire` for the one it left.
 - **The hub never parses history.** Historical parses run on the loader
   pool. The hub pushes changed-only at 10 Hz and answers a `Watch` at once;
-  `SegmentId`s are monotonic for the daemon's life; at most 16 parsed
-  segments stay in the LRU.
+  `SegmentId`s are monotonic for the daemon's life, from one counter
+  (`engine::Ids`) every engine shares; at most 16 parsed segments stay in
+  each engine's LRU.
+- **One source and one engine per edition** (`sources.rs`, CONTRACT.md's
+  editions paragraph). Every answer goes through `Sources`: an id to the
+  engine holding it, `Live` and the list to the session's edition's, the
+  live edition by its rule there. A session no source serves acts on
+  nothing. Over the hub's one-source scenario a daemon of one source queues
+  the wire bytes it queued before editions were followed:
+  `one_source_frames_are_the_daemon_s_before_editions` holds them to
+  `tests/golden/one_source_frames.txt`, made by the daemon before. Re-bless
+  it (`WOWDPS_BLESS=1`, which rewrites it and fails) only for a change every
+  Retail client should see, and say so in the commit.
+  Discovery follows `wowdps_core::cli::FOLLOWED` (Retail alone today);
+  tests name other editions' folders through `DaemonOptions::editions`.
 - **Build per-client extras only for the kinds that read them:** the raid
   timeline for `Window` and `Mcp` (`engine::wants_raid`), stacked series for
   `Window` (`engine::wants_series`).

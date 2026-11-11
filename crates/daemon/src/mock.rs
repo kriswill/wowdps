@@ -227,7 +227,8 @@ impl MockDaemon {
                     linger: false,
                     overlay: wowdps_proto::OverlayState::Absent,
                     history: self.history.status(),
-                    editions: vec![self.engine.edition_source(source, self.game_running)],
+                    // One source, the live edition's by definition.
+                    editions: vec![self.engine.edition_source(source, true, self.game_running)],
                 });
             }
             // R11, as the hub does it: the id table shrinks and the new

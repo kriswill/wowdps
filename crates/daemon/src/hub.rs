@@ -1,7 +1,9 @@
-//! The hub thread: owns the engine and the session table, applies client
-//! messages, and on each tick rebuilds snapshots for watched cursors only,
-//! pushing the ones that changed. Snapshot rate is capped by the tick.
+//! The hub thread: owns the engines (one per followed source, `Sources`)
+//! and the session table, applies client messages, and on each tick
+//! rebuilds snapshots for watched cursors only, pushing the ones that
+//! changed. Snapshot rate is capped by the tick.
 
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::time::{Duration, Instant};
 
@@ -13,14 +15,18 @@ use wowdps_proto::{
     Night, PROTO_VERSION, SegmentRef,
 };
 
-use crate::engine::{Built, Engine, EngineEvent, ListKey, LoadoutBuilt};
+use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
+use crate::game::Running;
 use crate::history::{Ask, HistoryLink, HistoryReq, LogRef};
 use crate::loader::{LoadReply, LoadReq};
 use crate::overlay::{Cmd, Supervisor};
 use crate::session::Session;
+use crate::sources::{SourceSetup, Sources, cursor_id};
 
 pub enum HubMsg {
-    Tail(TailEvent),
+    /// v49: one followed source's tail event, by the source's place in
+    /// `HubOptions::sources` (0 is the first).
+    Tail(usize, TailEvent),
     Connected {
         id: u64,
         kind: ClientKind,
@@ -40,7 +46,8 @@ pub enum HubMsg {
         /// bytes and would set the size of every message the hub receives.
         result: Result<Box<Meter>, String>,
     },
-    Game(bool),
+    /// v49: the game watcher's word — which editions' clients run.
+    Game(Running),
     /// v20: the history thread's reply to one session's one-shot.
     History {
         session: u64,
@@ -58,9 +65,19 @@ pub struct HubOptions {
     pub idle_grace: Duration,
     pub tick: Duration,
     pub version: String,
-    /// Canonical display of what this daemon tails (`spec_display`), reported
-    /// in `Status` so a client with `--file`/`--logs` can detect a conflict.
-    pub source_spec: Option<String>,
+    /// v49: every followed source, in order: the first is what `--file`,
+    /// `--logs` or the config names, and its canonical display
+    /// (`spec_display`) is `Status::source`, so a client with
+    /// `--file`/`--logs` can detect a conflict. Empty is one source naming
+    /// nothing.
+    pub sources: Vec<SourceSetup>,
+}
+
+impl HubOptions {
+    /// What `Status::source` reports: the first source's display.
+    fn source_spec(&self) -> Option<String> {
+        self.sources.first().and_then(|s| s.spec.clone())
+    }
 }
 
 /// Runs until `Shutdown`, idle-exit, or every sender hanging up.
@@ -71,10 +88,8 @@ pub fn run(
     opts: HubOptions,
     history: HistoryLink,
 ) {
-    let mut engine = Engine::new();
+    let mut sources = Sources::new(&opts.sources);
     let mut sessions: Vec<Session> = Vec::new();
-    let mut last_list = ListKey::default();
-    let mut game_running = false;
     let mut shutdown = false;
     let mut idle_since: Option<Instant> = Some(Instant::now());
     let mut last_tick = Instant::now();
@@ -83,17 +98,18 @@ pub fn run(
         let timeout = opts.tick.saturating_sub(last_tick.elapsed());
         // v35: whose rows are the reader's, as the history thread last
         // resolved it — a refcount, read before anything is built.
-        engine.mine = history.mine();
+        let mine = history.mine();
+        for engine in sources.engines_mut() {
+            engine.mine = Arc::clone(&mine);
+        }
         match rx.recv_timeout(timeout) {
             Ok(msg) => handle(
                 msg,
-                &mut engine,
+                &mut sources,
                 &mut sessions,
                 &loader,
                 &mut supervisor,
                 &opts,
-                &mut last_list,
-                &mut game_running,
                 &mut shutdown,
                 &history,
             ),
@@ -103,9 +119,7 @@ pub fn run(
 
         if last_tick.elapsed() >= opts.tick {
             last_tick = Instant::now();
-            for s in sessions.iter_mut() {
-                push_cursor(s, &mut engine, &loader, game_running);
-            }
+            tick(&mut sources, &mut sessions, &loader);
             let cmds = supervisor.on_tick();
             deliver(&mut sessions, cmds);
         }
@@ -255,22 +269,25 @@ fn deliver(sessions: &mut [Session], cmds: Vec<Cmd>) {
 #[allow(clippy::too_many_arguments)]
 fn handle(
     msg: HubMsg,
-    engine: &mut Engine,
+    sources: &mut Sources,
     sessions: &mut Vec<Session>,
     loader: &Sender<LoadReq>,
     supervisor: &mut Supervisor,
     opts: &HubOptions,
-    last_list: &mut ListKey,
-    game_running: &mut bool,
     shutdown: &mut bool,
     history: &HistoryLink,
 ) {
     match msg {
-        HubMsg::Tail(ev) => {
+        HubMsg::Tail(i, ev) => {
+            if i >= sources.len() {
+                return;
+            }
+            let engine = sources.engine(i);
             // A switch to a newer log retires the one we leave: its open
             // tail (an abandoned pull, the raid night's Σ) is final now and
             // imports as it would on a restart, so a lingering daemon never
             // waits for one. The first `Switched` has nothing to retire.
+            // v49: each source retires its own.
             if history.enabled()
                 && let TailEvent::Switched(new) = &ev
                 && let Some(old) = engine.source_path.clone()
@@ -292,13 +309,24 @@ fn handle(
             }
             let awaiting = engine.awaiting_index();
             let mut events = Vec::new();
-            engine.on_tail(ev, &mut events);
+            sources.on_tail(i, ev, &mut events);
+            // v49: the live edition may move — a source's first log, a pull
+            // opening while the live one has none, a log written last.
+            let opened = events
+                .iter()
+                .any(|e| matches!(e, EngineEvent::Opened(_)))
+                .then_some(i);
+            sources.choose_live(opened);
             for ev in events {
                 match ev {
                     // v49: to the sessions this source answers — a pin to
-                    // another edition has no fight starting here.
+                    // another edition has no fight starting here, and a
+                    // follower none but the live edition's.
                     EngineEvent::Opened(id) => {
-                        for s in sessions.iter_mut().filter(|s| engine.serves(s.edition)) {
+                        let engine = sources.engine(i);
+                        for s in sessions.iter_mut().filter(|s| {
+                            sources.for_scope(s.edition) == i && engine.serves(s.edition)
+                        }) {
                             s.push_control(DaemonMsg::SegmentOpened { id });
                         }
                     }
@@ -308,6 +336,7 @@ fn handle(
                         if !history.enabled() {
                             continue;
                         }
+                        let engine = sources.engine_mut(i);
                         if let Some(fight) = engine.take_closed(id) {
                             let _ = history.send(HistoryReq::Store(Box::new(fight)));
                         } else if let Some(meta) = engine.closed_needs_prefix(id) {
@@ -321,22 +350,34 @@ fn handle(
                 }
             }
             // The id table changed shape: broadcast the list to every
-            // session, not just List watchers. Off-list navigation resolves
-            // neighbors by id, and a segment that opened *and closed* inside
-            // one flush burst never gets a `SegmentOpened` of its own
-            // (`Opened` only covers a batch's still-open tail). v49: so does
-            // a change of the source's edition with no id moving (`ListKey`).
-            // And a log switched to is served to pinned sessions only once
-            // its index (or a line) lands (`Engine::serves`): they are sent
-            // the list then, whether its key moved or not — an empty,
-            // header-less new log's has not.
-            let key = engine.list_key();
-            if key != *last_list {
-                *last_list = key;
-                broadcast_list(engine, sessions, *game_running, false);
-            } else if awaiting && !engine.awaiting_index() {
-                broadcast_list(engine, sessions, *game_running, true);
+            // session this source answers, not just List watchers.
+            // Off-list navigation resolves neighbors by id, and a segment
+            // that opened *and closed* inside one flush burst never gets a
+            // `SegmentOpened` of its own (`Opened` only covers a batch's
+            // still-open tail). v49: so does a change of the source's
+            // edition with no id moving (`ListKey`). And a log switched to
+            // is served to pinned sessions only once its index (or a line)
+            // lands (`Engine::serves`): they are sent the list then, whether
+            // its key moved or not — an empty, header-less new log's has
+            // not.
+            let key = sources.engine(i).list_key();
+            let changed = match sources.source_mut(i) {
+                Some(src) if src.last_list != key => {
+                    src.last_list = key;
+                    true
+                }
+                _ => false,
+            };
+            if changed {
+                broadcast_list(sources, sessions, i, false);
+            } else if awaiting && !sources.engine(i).awaiting_index() {
+                broadcast_list(sources, sessions, i, true);
             }
+            // v49: every session now answered by another source than the
+            // one whose list it holds — the followers of a live edition that
+            // moved, a pin whose edition another source now serves — is sent
+            // that one's list, which moves it.
+            resync(sources, sessions);
         }
         HubMsg::Connected { id, kind, pid, tx } => {
             let mut s = Session::new(id, kind, pid, tx);
@@ -363,21 +404,22 @@ fn handle(
                     s.set_cursor(cursor, edition);
                     // Answer immediately: a view change or drilldown open is
                     // one round trip, not one round trip plus a tick.
-                    push_cursor(s, engine, loader, *game_running);
+                    push_cursor(s, sources, loader);
                 }
                 ClientMsg::GetStatus { req_id } => {
                     let clients = sessions.len() as u32;
-                    let source = opts.source_spec.clone();
+                    let source = opts.source_spec();
                     let overlay = supervisor.state();
                     let history = history.status();
-                    // v49: every edition's source — today the one.
-                    let editions = vec![engine.edition_source(source.clone(), *game_running)];
+                    // v49: every edition's source, the live one marked.
+                    let editions = sources.edition_sources();
+                    let game_running = sources.running().any();
                     let Some(s) = sessions.iter_mut().find(|s| s.id == id) else {
                         return;
                     };
                     s.push_control(DaemonMsg::Status {
                         req_id,
-                        game_running: *game_running,
+                        game_running,
                         source,
                         clients,
                         linger: opts.linger,
@@ -392,36 +434,57 @@ fn handle(
                         supervisor.on_visibility_changed(visible);
                     }
                 }
-                // R11: the trash can. The id table shrinks: broadcast the
-                // new list to every session, exactly like a tail change.
+                // R11: the trash can, in the source serving the session.
+                // The id table shrinks: broadcast the new list to every
+                // session it answers, exactly like a tail change. v49: a
+                // session pinned to an edition no source serves holds an
+                // empty list, and its trash can tombstones nothing.
                 ClientMsg::DiscardTrash => {
-                    engine.discard_trash();
-                    let key = engine.list_key();
-                    if key != *last_list {
-                        *last_list = key;
-                        broadcast_list(engine, sessions, *game_running, false);
+                    let Some(i) = sources.serving(s.edition) else {
+                        return;
+                    };
+                    sources.engine_mut(i).discard_trash();
+                    let key = sources.engine(i).list_key();
+                    if let Some(src) = sources.source_mut(i)
+                        && src.last_list != key
+                    {
+                        src.last_list = key;
+                        broadcast_list(sources, sessions, i, false);
                     }
                 }
                 // v19: a one-shot, answered like GetStatus when the segment
                 // is warm; a cold segment parks the request behind the
-                // loader and `HubMsg::Loaded` answers it.
+                // loader and `HubMsg::Loaded` answers it. v49: an id in the
+                // source holding it, `Live` in the session's edition's; an
+                // id no source holds is nobody's.
                 ClientMsg::GetLoadout {
                     req_id,
                     segment,
                     guid,
-                } => match engine.loadout_in(s.edition, segment, &guid) {
-                    LoadoutBuilt::Ready(loadout) => {
-                        s.push_control(DaemonMsg::Loadout {
-                            req_id,
-                            guid,
-                            loadout,
-                        });
+                } => {
+                    let i = match segment {
+                        SegmentRef::Id(seg) => sources.owner_of(seg),
+                        SegmentRef::Live => sources.serving(s.edition),
+                    };
+                    let built = match i {
+                        Some(i) => sources.engine_mut(i).loadout_in(s.edition, segment, &guid),
+                        None => LoadoutBuilt::Ready(None),
+                    };
+                    match built {
+                        LoadoutBuilt::Ready(loadout) => {
+                            s.push_control(DaemonMsg::Loadout {
+                                req_id,
+                                guid,
+                                loadout,
+                            });
+                        }
+                        LoadoutBuilt::Loading(seg_id, meta) => {
+                            s.pending_loadouts.push((req_id, seg_id, guid));
+                            let engine = sources.engine_mut(i.unwrap_or(0));
+                            request_load(engine, loader, seg_id, meta);
+                        }
                     }
-                    LoadoutBuilt::Loading(seg_id, meta) => {
-                        s.pending_loadouts.push((req_id, seg_id, guid));
-                        request_load(engine, loader, seg_id, meta);
-                    }
-                },
+                }
                 // v20: history one-shots go to the history thread with the
                 // session id; the reply comes back as `HubMsg::History`. A
                 // disabled store — or a full queue — answers empty right
@@ -559,28 +622,41 @@ fn handle(
             sessions.retain(|s| s.id != id);
         }
         HubMsg::Loaded { id, result } => {
-            engine.loading.remove(&id);
+            // v49: to the source that asked for it. A slice whose log
+            // rotated away while it was parsed is no source's: its meter is
+            // dropped, never installed where no id resolves to it (one
+            // source installed it all the same, an LRU slot spent on a meter
+            // nothing could read) — its waiters are answered as before.
+            let claimed = sources.for_load(id);
             let loaded_ok = result.is_ok();
             match result {
                 Ok(meter) => {
-                    engine.install_loaded(id, *meter);
-                    if engine.history_pending.remove(&id)
-                        && history.enabled()
-                        && let Some(fight) = engine.take_closed(id)
-                    {
-                        let _ = history.send(HistoryReq::Store(Box::new(fight)));
+                    if let Some(i) = claimed {
+                        let engine = sources.engine_mut(i);
+                        engine.loading.remove(&id);
+                        engine.install_loaded(id, *meter);
+                        if engine.history_pending.remove(&id)
+                            && history.enabled()
+                            && let Some(fight) = engine.take_closed(id)
+                        {
+                            let _ = history.send(HistoryReq::Store(Box::new(fight)));
+                        }
                     }
                     // Whoever is waiting on this segment gets it now, not at
                     // the next tick.
                     for s in sessions.iter_mut() {
                         if cursor_wants(s.cursor.as_ref(), id) {
-                            push_cursor(s, engine, loader, *game_running);
+                            push_cursor(s, sources, loader);
                         }
                     }
                 }
                 Err(e) => {
                     // The sweep after the next start stores it from the file.
-                    engine.history_pending.remove(&id);
+                    if let Some(i) = claimed {
+                        let engine = sources.engine_mut(i);
+                        engine.loading.remove(&id);
+                        engine.history_pending.remove(&id);
+                    }
                     for s in sessions.iter_mut() {
                         if cursor_wants(s.cursor.as_ref(), id) && s.last_load_error != Some(id) {
                             s.last_load_error = Some(id);
@@ -600,8 +676,10 @@ fn handle(
                     .partition(|(_, sid, _)| *sid == id);
                 s.pending_loadouts = rest;
                 for (req_id, sid, guid) in matching {
-                    let loadout = match (loaded_ok, engine.loadout(SegmentRef::Id(sid), &guid)) {
-                        (true, LoadoutBuilt::Ready(l)) => l,
+                    let answer =
+                        claimed.map(|i| sources.engine_mut(i).loadout(SegmentRef::Id(sid), &guid));
+                    let loadout = match (loaded_ok, answer) {
+                        (true, Some(LoadoutBuilt::Ready(l))) => l,
                         _ => None,
                     };
                     s.push_control(DaemonMsg::Loadout {
@@ -612,10 +690,14 @@ fn handle(
                 }
             }
         }
-        HubMsg::Game(g) => {
-            *game_running = g;
-            engine.game_running = g;
-            let cmds = supervisor.on_game(g);
+        HubMsg::Game(running) => {
+            // v49: which editions run: each source's liveness follows its
+            // own game, and the live edition the running game's.
+            sources.set_running(running);
+            sources.choose_live(None);
+            resync(sources, sessions);
+            // The overlay is shown while any game runs, as it always was.
+            let cmds = supervisor.on_game(sources.running().any());
             deliver(sessions, cmds);
         }
         // v20: a one-shot's answer, with control-message ordering; the
@@ -635,26 +717,60 @@ fn handle(
     }
 }
 
-/// The list changed (its ids, or v49 the edition its source names): the
-/// list to every session, not just List watchers, each as its edition
-/// answers it (`Engine::list_for`) — this source's list stamped with the
-/// edition it is answered in, or, to a session pinned to an edition this
-/// source is not, that edition's empty list: one that stops being served
-/// is emptied then, never left holding another edition's ids. With
-/// `pinned_only`, to pinned sessions alone (a following one's list did not
-/// change).
-fn broadcast_list(
-    engine: &Engine,
-    sessions: &mut [Session],
-    game_running: bool,
-    pinned_only: bool,
-) {
-    let list = engine.build_list(game_running);
+/// The tick: v49 the live edition chosen again — a pull or a log going
+/// quiet moves it within a tick, not at the next event (one source is
+/// always live, and moves nothing) — then every session's cursor rebuilt
+/// and pushed when changed.
+fn tick(sources: &mut Sources, sessions: &mut [Session], loader: &Sender<LoadReq>) {
+    if sources.choose_live(None) {
+        resync(sources, sessions);
+    }
+    for s in sessions.iter_mut() {
+        push_cursor(s, sources, loader);
+    }
+}
+
+/// Source `i`'s list changed (its ids, or v49 the edition its source
+/// names): the list to every session it answers (`Sources::for_scope`),
+/// not just List watchers, each as its edition answers it
+/// (`Engine::list_for`) — this source's list stamped with the edition it is
+/// answered in, or, to a session pinned to an edition this source is not
+/// (and no other source is), that edition's empty list: one that stops
+/// being served is emptied then, never left holding another edition's ids.
+/// With `pinned_only`, to pinned sessions alone (a following one's list did
+/// not change).
+fn broadcast_list(sources: &Sources, sessions: &mut [Session], i: usize, pinned_only: bool) {
+    let engine = sources.engine(i);
+    let list = engine.build_list(engine.game_running);
     for s in sessions
         .iter_mut()
         .filter(|s| !pinned_only || s.edition != EditionRef::Follow)
+        .filter(|s| sources.for_scope(s.edition) == i)
     {
         s.push_list(engine.list_for(s.edition, &list));
+        s.answered_by = Some(i);
+    }
+}
+
+/// v49: a session holding one source's list but now answered by another —
+/// the live edition moved under a follower, or a pin's edition is another
+/// source's now — is sent that source's list as it answers it: the frame
+/// that moves the client (another edition, or another log). A daemon of
+/// one source never sends one.
+fn resync(sources: &Sources, sessions: &mut [Session]) {
+    for s in sessions.iter_mut() {
+        let i = sources.for_scope(s.edition);
+        if s.answered_by.is_some_and(|was| was != i) {
+            let engine = sources.engine(i);
+            let list = engine.build_list(engine.game_running);
+            let msg = engine.list_for(s.edition, &list);
+            // A list the session holds already (an unserved pin's empty
+            // one, the same from every source) moves nothing: not re-sent.
+            if !s.holds_empty_list(&msg) {
+                s.push_list(msg);
+            }
+            s.answered_by = Some(i);
+        }
     }
 }
 
@@ -687,14 +803,34 @@ fn request_load(engine: &mut Engine, loader: &Sender<LoadReq>, id: SegmentId, me
     }
 }
 
-/// Build and (dedup-)push whatever `s` is watching.
-fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, game: bool) {
+/// Build and (dedup-)push whatever `s` is watching. v49: from the source
+/// that answers it — the one holding a watched segment id (an id no source
+/// holds fails: rotated away, or never issued), else the session's
+/// edition's (`Sources::for_scope`).
+fn push_cursor(s: &mut Session, sources: &mut Sources, loader: &Sender<LoadReq>) {
     let Some(cursor) = s.cursor.as_ref() else {
         return;
     };
+    let i = match sources.for_cursor(cursor, s.edition) {
+        Ok(i) => i,
+        Err((id, error)) => {
+            if s.last_load_error != Some(id) {
+                s.last_load_error = Some(id);
+                s.push_control(DaemonMsg::LoadFailed { segment: id, error });
+            }
+            return;
+        }
+    };
+    // A cursor answered in the session's edition (the list, `Live`) is the
+    // source whose list it holds from now; an id's frame moves nothing.
+    if cursor_id(cursor).is_none() {
+        s.answered_by = Some(i);
+    }
+    let engine = sources.engine_mut(i);
+    let running = engine.game_running;
     // v49: in the edition the session looks in — one entry for the hub and
     // the mock (`Engine::build_cursor`).
-    let built = engine.build_cursor(s.kind, cursor, s.edition, game);
+    let built = engine.build_cursor(s.kind, cursor, s.edition, running);
     match built {
         Built::Ready(msg) => s.push_snapshot(*msg),
         Built::Loading(msg, id, meta) => {
@@ -718,6 +854,7 @@ mod tests {
     use crate::session::OUTBOX;
     use std::path::{Path, PathBuf};
     use std::sync::mpsc::{Receiver, channel, sync_channel};
+    use wowdps_model::Edition;
     use wowdps_proto::SegmentRef;
 
     /// A session wired to an in-test receiver, the way the server's writer
@@ -733,7 +870,7 @@ mod tests {
             idle_grace: Duration::from_secs(30),
             tick: Duration::from_millis(20),
             version: "test".to_string(),
-            source_spec: None,
+            sources: Vec::new(),
         }
     }
 
@@ -793,28 +930,28 @@ mod tests {
     /// When the engine does change, the next push carries a higher seq.
     #[test]
     fn unchanged_snapshots_are_not_repushed_and_seq_stays_monotonic() {
-        let mut engine = Engine::new();
+        let mut engine = Sources::new(&[]);
         let (loader, _loader_rx) = fake_loader();
         let (mut s, rx) = session(1);
         s.set_cursor(Cursor::List, wowdps_proto::EditionRef::Follow);
 
-        push_cursor(&mut s, &mut engine, &loader, false);
+        push_cursor(&mut s, &mut engine, &loader);
         let first = rx.try_recv().expect("the first push always lands");
         let DaemonMsg::SegmentList { seq: seq1, .. } = first else {
             panic!("a List cursor is answered with SegmentList, got {first:?}");
         };
 
         // Two more ticks with nothing changed: dedup swallows both.
-        push_cursor(&mut s, &mut engine, &loader, false);
-        push_cursor(&mut s, &mut engine, &loader, false);
+        push_cursor(&mut s, &mut engine, &loader);
+        push_cursor(&mut s, &mut engine, &loader);
         assert!(
             rx.try_recv().is_err(),
             "unchanged list must not be repushed"
         );
 
         // The engine changes shape; the next tick pushes, seq strictly up.
-        engine.on_tail(TailEvent::Lines(vec![hit(0, 0)]), &mut Vec::new());
-        push_cursor(&mut s, &mut engine, &loader, false);
+        engine.on_tail(0, TailEvent::Lines(vec![hit(0, 0)]), &mut Vec::new());
+        push_cursor(&mut s, &mut engine, &loader);
         let DaemonMsg::SegmentList {
             seq: seq2, entries, ..
         } = rx.try_recv().expect("a changed list is pushed")
@@ -831,22 +968,18 @@ mod tests {
     /// the identical snapshot pushed a moment ago.
     #[test]
     fn watch_is_answered_immediately_and_redeclaring_resets_dedup() {
-        let mut engine = Engine::new();
+        let mut engine = Sources::new(&[]);
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_list = ListKey::default();
-        let mut game = false;
         let mut shutdown = false;
 
         let (s, rx) = session(1);
         let mut sessions = vec![s];
 
         let watch = |sessions: &mut Vec<Session>,
-                     engine: &mut Engine,
+                     engine: &mut Sources,
                      supervisor: &mut Supervisor,
-                     last_list: &mut ListKey,
-                     game: &mut bool,
                      shutdown: &mut bool| {
             handle(
                 HubMsg::Client {
@@ -858,21 +991,12 @@ mod tests {
                 &loader,
                 supervisor,
                 &opts,
-                last_list,
-                game,
                 shutdown,
                 &HistoryLink::disabled("test"),
             );
         };
 
-        watch(
-            &mut sessions,
-            &mut engine,
-            &mut supervisor,
-            &mut last_list,
-            &mut game,
-            &mut shutdown,
-        );
+        watch(&mut sessions, &mut engine, &mut supervisor, &mut shutdown);
         assert!(
             matches!(rx.try_recv(), Ok(DaemonMsg::SegmentList { .. })),
             "the reply is already queued when handle returns"
@@ -880,14 +1004,7 @@ mod tests {
 
         // Same cursor again: identical content, but set_cursor cleared the
         // dedup slot, so the client still gets its answer.
-        watch(
-            &mut sessions,
-            &mut engine,
-            &mut supervisor,
-            &mut last_list,
-            &mut game,
-            &mut shutdown,
-        );
+        watch(&mut sessions, &mut engine, &mut supervisor, &mut shutdown);
         assert!(
             matches!(rx.try_recv(), Ok(DaemonMsg::SegmentList { .. })),
             "re-watching must be answered even when nothing changed"
@@ -900,12 +1017,10 @@ mod tests {
     /// extends the open segment changes no ids and broadcasts nothing.
     #[test]
     fn id_table_changes_broadcast_the_list_to_every_session() {
-        let mut engine = Engine::new();
+        let mut engine = Sources::new(&[]);
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_list = ListKey::default();
-        let mut game = false;
         let mut shutdown = false;
 
         let (mut lister, list_rx) = session(1);
@@ -918,26 +1033,21 @@ mod tests {
         let (idle, idle_rx) = session(3); // connected, no cursor yet
         let mut sessions = vec![lister, watcher, idle];
 
-        let mut tail = |sessions: &mut Vec<Session>,
-                        engine: &mut Engine,
-                        last_list: &mut ListKey,
-                        line: String| {
+        let mut tail = |sessions: &mut Vec<Session>, engine: &mut Sources, line: String| {
             handle(
-                HubMsg::Tail(TailEvent::Lines(vec![line])),
+                HubMsg::Tail(0, TailEvent::Lines(vec![line])),
                 engine,
                 sessions,
                 &loader,
                 &mut supervisor,
                 &opts,
-                last_list,
-                &mut game,
                 &mut shutdown,
                 &HistoryLink::disabled("test"),
             );
         };
 
         // First line: a segment appears, the table changes shape.
-        tail(&mut sessions, &mut engine, &mut last_list, hit(0, 0));
+        tail(&mut sessions, &mut engine, hit(0, 0));
         for (name, rx) in [
             ("lister", &list_rx),
             ("watcher", &watch_rx),
@@ -950,7 +1060,7 @@ mod tests {
         }
 
         // Second line inside the same segment: same ids, no broadcast.
-        tail(&mut sessions, &mut engine, &mut last_list, hit(0, 1));
+        tail(&mut sessions, &mut engine, hit(0, 1));
         for (name, rx) in [
             ("lister", &list_rx),
             ("watcher", &watch_rx),
@@ -967,12 +1077,10 @@ mod tests {
     /// once — a broken cursor is reported one time, not at 10 Hz.
     #[test]
     fn a_failed_load_notifies_only_its_waiters_and_only_once() {
-        let mut engine = Engine::new();
+        let mut engine = Sources::new(&[]);
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_list = ListKey::default();
-        let mut game = false;
         let mut shutdown = false;
 
         let wanted = SegmentId(3);
@@ -988,7 +1096,7 @@ mod tests {
         );
         let mut sessions = vec![a, b];
 
-        let mut fail = |sessions: &mut Vec<Session>, engine: &mut Engine| {
+        let mut fail = |sessions: &mut Vec<Session>, engine: &mut Sources| {
             handle(
                 HubMsg::Loaded {
                     id: wanted,
@@ -999,8 +1107,6 @@ mod tests {
                 &loader,
                 &mut supervisor,
                 &opts,
-                &mut last_list,
-                &mut game,
                 &mut shutdown,
                 &HistoryLink::disabled("test"),
             );
@@ -1031,33 +1137,46 @@ mod tests {
 
     /// Every argument `handle` takes, bundled so a test reads as messages.
     struct Hub {
-        engine: Engine,
+        sources: Sources,
         sessions: Vec<Session>,
         loader: Sender<LoadReq>,
         loader_rx: Receiver<LoadReq>,
         supervisor: Supervisor,
         opts: HubOptions,
-        last_list: ListKey,
-        game: bool,
         shutdown: bool,
         history: HistoryLink,
     }
 
     impl Hub {
         fn new() -> Self {
+            Self::with_sources(Vec::new())
+        }
+
+        /// v49: a hub following one source per setup, in order.
+        fn with_sources(setups: Vec<SourceSetup>) -> Self {
             let (loader, loader_rx) = fake_loader();
+            let mut opts = hub_opts();
+            opts.sources = setups;
             Hub {
-                engine: Engine::new(),
+                sources: Sources::new(&opts.sources),
                 sessions: Vec::new(),
                 loader,
                 loader_rx,
                 supervisor: Supervisor::new(false, Duration::ZERO, None),
-                opts: hub_opts(),
-                last_list: ListKey::default(),
-                game: false,
+                opts,
                 shutdown: false,
                 history: HistoryLink::disabled("test"),
             }
+        }
+
+        /// The first source's engine: a daemon of one source's only one.
+        fn engine(&self) -> &Engine {
+            self.sources.primary()
+        }
+
+        /// A tick: every session's cursor rebuilt and pushed when changed.
+        fn tick(&mut self) {
+            tick(&mut self.sources, &mut self.sessions, &self.loader);
         }
 
         fn connect(&mut self, id: u64, kind: ClientKind) -> Receiver<DaemonMsg> {
@@ -1078,13 +1197,11 @@ mod tests {
         fn handle(&mut self, msg: HubMsg) {
             handle(
                 msg,
-                &mut self.engine,
+                &mut self.sources,
                 &mut self.sessions,
                 &self.loader,
                 &mut self.supervisor,
                 &self.opts,
-                &mut self.last_list,
-                &mut self.game,
                 &mut self.shutdown,
                 &self.history,
             );
@@ -1099,13 +1216,16 @@ mod tests {
         fn index_fixture(&mut self) -> Vec<SegmentId> {
             let mut file = std::fs::File::open(FIXTURE).unwrap();
             let idx = wowdps_core::index::scan(&mut file);
-            self.handle(HubMsg::Tail(TailEvent::Switched(FIXTURE.into())));
-            self.handle(HubMsg::Tail(TailEvent::Index {
-                index: Box::new(idx),
-                file_age_ms: Some(0),
-            }));
-            self.handle(HubMsg::Tail(TailEvent::CaughtUp));
-            self.engine.list_ids()
+            self.handle(HubMsg::Tail(0, TailEvent::Switched(FIXTURE.into())));
+            self.handle(HubMsg::Tail(
+                0,
+                TailEvent::Index {
+                    index: Box::new(idx),
+                    file_age_ms: Some(0),
+                },
+            ));
+            self.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+            self.engine().list_ids()
         }
     }
 
@@ -1137,25 +1257,29 @@ mod tests {
                 edition: EditionRef::Pin(Edition::Forever),
             },
         );
-        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
-            "/logs/a.txt",
-        ))));
-        hub.handle(HubMsg::Tail(TailEvent::CaughtUp));
-        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
-            "7/27/2026 21:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,2769".to_string(),
-            hit(0, 11),
-            "7/27/2026 21:00:40.000-4  ENCOUNTER_END,3130,\"Boss\",1,5,1,30000".to_string(),
-        ])));
-        let ids = hub.engine.list_ids();
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/logs/a.txt")),
+        ));
+        hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Lines(vec![
+                "7/27/2026 21:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,2769".to_string(),
+                hit(0, 11),
+                "7/27/2026 21:00:40.000-4  ENCOUNTER_END,3130,\"Boss\",1,5,1,30000".to_string(),
+            ]),
+        ));
+        let ids = hub.engine().list_ids();
         assert!(!ids.is_empty());
-        assert_eq!(hub.engine.edition(), None);
+        assert_eq!(hub.engine().edition(), None);
         drain(&follower);
         drain(&pinned);
-        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(vec![
             "7/27/2026 21:05:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18".to_string(),
         ])));
-        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
-        assert_eq!(hub.engine.list_ids(), ids, "no id moved");
+        assert_eq!(hub.engine().edition(), Some(Edition::Forever));
+        assert_eq!(hub.engine().list_ids(), ids, "no id moved");
 
         let last_list = |msgs: Vec<DaemonMsg>| {
             msgs.into_iter().rev().find_map(|m| match m {
@@ -1180,6 +1304,12 @@ mod tests {
     /// A log as the tail delivers it: `Switched`, `Index`, then its seed
     /// lines; what the hub had sent each receiver drained after each.
     fn deliver_log(hub: &mut Hub, path: &str) -> usize {
+        deliver_log_to(hub, 0, path, 0)
+    }
+
+    /// A log as the tail delivers it to the first source, in its three
+    /// messages: `Switched`, `Index` (written just now), `Seeds`.
+    fn log_parts(path: &str) -> (HubMsg, HubMsg, HubMsg) {
         let bytes = std::fs::read(path).unwrap();
         let idx = wowdps_core::index::scan(&mut &bytes[..]);
         let seed_ranges = match idx.open.as_ref() {
@@ -1194,13 +1324,46 @@ mod tests {
                     .to_string()
             })
             .collect();
-        hub.handle(HubMsg::Tail(TailEvent::Switched(path.into())));
-        hub.handle(HubMsg::Tail(TailEvent::Index {
-            index: Box::new(idx),
-            file_age_ms: Some(0),
-        }));
-        let rows = hub.engine.list_ids().len();
-        hub.handle(HubMsg::Tail(TailEvent::Seeds(seeds)));
+        (
+            HubMsg::Tail(0, TailEvent::Switched(path.into())),
+            HubMsg::Tail(
+                0,
+                TailEvent::Index {
+                    index: Box::new(idx),
+                    file_age_ms: Some(0),
+                },
+            ),
+            HubMsg::Tail(0, TailEvent::Seeds(seeds)),
+        )
+    }
+
+    /// v49: [`deliver_log`] to source `i`, the log last written `age_ms`
+    /// ago.
+    fn deliver_log_to(hub: &mut Hub, i: usize, path: &str, age_ms: u64) -> usize {
+        let bytes = std::fs::read(path).unwrap();
+        let idx = wowdps_core::index::scan(&mut &bytes[..]);
+        let seed_ranges = match idx.open.as_ref() {
+            Some(open) => open.seeds.clone(),
+            None => idx.checkpoint.seeds.clone(),
+        };
+        let seeds: Vec<String> = seed_ranges
+            .iter()
+            .map(|&(a, b)| {
+                String::from_utf8_lossy(&bytes[a as usize..b as usize])
+                    .trim_end()
+                    .to_string()
+            })
+            .collect();
+        hub.handle(HubMsg::Tail(i, TailEvent::Switched(path.into())));
+        hub.handle(HubMsg::Tail(
+            i,
+            TailEvent::Index {
+                index: Box::new(idx),
+                file_age_ms: Some(age_ms),
+            },
+        ));
+        let rows = hub.sources.engine(i).list_ids().len();
+        hub.handle(HubMsg::Tail(i, TailEvent::Seeds(seeds)));
         rows
     }
 
@@ -1246,7 +1409,7 @@ mod tests {
 
         let rows = deliver_log(&mut hub, FOREVER);
         assert!(rows > 0, "the Forever index has rows to leak");
-        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
+        assert_eq!(hub.engine().edition(), Some(Edition::Forever));
         let after = lists(drain(&retail));
         assert!(!after.is_empty());
         assert!(
@@ -1276,15 +1439,19 @@ mod tests {
         );
         drain(&follower);
         drain(&retail);
-        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
-            "/logs/WoWCombatLog-new.txt",
-        ))));
-        assert!(!hub.engine.serves(EditionRef::Pin(Edition::Retail)));
-        hub.handle(HubMsg::Tail(TailEvent::Index {
-            index: Box::default(),
-            file_age_ms: Some(0),
-        }));
-        assert!(hub.engine.serves(EditionRef::Pin(Edition::Retail)));
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/logs/WoWCombatLog-new.txt")),
+        ));
+        assert!(!hub.engine().serves(EditionRef::Pin(Edition::Retail)));
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Index {
+                index: Box::default(),
+                file_age_ms: Some(0),
+            },
+        ));
+        assert!(hub.engine().serves(EditionRef::Pin(Edition::Retail)));
         let got = drain(&retail);
         assert!(
             got.iter().any(|m| matches!(
@@ -1321,12 +1488,13 @@ mod tests {
             },
         );
         drain(&retail);
-        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
-            "/logs/a.txt",
-        ))));
-        hub.handle(HubMsg::Tail(TailEvent::CaughtUp));
-        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 1)])));
-        assert_eq!(hub.engine.edition(), None);
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/logs/a.txt")),
+        ));
+        hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(vec![hit(0, 1)])));
+        assert_eq!(hub.engine().edition(), None);
         let list = |msgs: Vec<DaemonMsg>| {
             msgs.into_iter().rev().find_map(|m| match m {
                 DaemonMsg::SegmentList {
@@ -1340,10 +1508,10 @@ mod tests {
             Some((1, Some(Edition::Retail))),
             "a log naming none serves a Retail pin"
         );
-        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(vec![
             "7/27/2026 21:05:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18".to_string(),
         ])));
-        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
+        assert_eq!(hub.engine().edition(), Some(Edition::Forever));
         assert_eq!(
             list(drain(&retail)),
             Some((0, Some(Edition::Retail))),
@@ -1403,15 +1571,16 @@ mod tests {
             [(0, Some(Edition::Forever))]
         );
 
-        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
-            "/logs/a.txt",
-        ))));
-        hub.handle(HubMsg::Tail(TailEvent::CaughtUp));
-        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/logs/a.txt")),
+        ));
+        hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(vec![
             "7/27/2026 21:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1".to_string(),
             hit(0, 1),
         ])));
-        assert_eq!(hub.engine.edition(), Some(Edition::Retail));
+        assert_eq!(hub.engine().edition(), Some(Edition::Retail));
         for rx in [&follower, &retail] {
             let got = drain(rx);
             assert!(
@@ -1508,20 +1677,23 @@ mod tests {
             out
         };
 
-        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
-            "/logs/a.txt",
-        ))));
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/logs/a.txt")),
+        ));
         assert!(retired(&rx).is_empty(), "nothing precedes the first log");
-        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
-            "/logs/a.txt",
-        ))));
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/logs/a.txt")),
+        ));
         assert!(retired(&rx).is_empty(), "the same file is not a switch");
-        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
-            "/logs/b.txt",
-        ))));
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/logs/b.txt")),
+        ));
         assert_eq!(retired(&rx), vec![PathBuf::from("/logs/a.txt")]);
         assert_eq!(
-            hub.engine.source_path.as_deref(),
+            hub.engine().source_path.as_deref(),
             Some(Path::new("/logs/b.txt"))
         );
     }
@@ -1536,8 +1708,8 @@ mod tests {
         let tui = hub.connect(1, ClientKind::Tui);
         let overlay = hub.connect(2, ClientKind::Overlay);
 
-        hub.handle(HubMsg::Game(true));
-        assert!(hub.game);
+        hub.handle(HubMsg::Game(Running::unnamed()));
+        assert!(hub.sources.running().any());
         assert_eq!(drain(&overlay), vec![DaemonMsg::SetVisible(true)]);
         assert!(drain(&tui).is_empty(), "a meter client hears nothing");
 
@@ -1556,9 +1728,9 @@ mod tests {
             other => panic!("status must reflect the game and the manual hide: {other:?}"),
         }
 
-        hub.handle(HubMsg::Game(false));
+        hub.handle(HubMsg::Game(Running::default()));
         assert_eq!(drain(&overlay), vec![DaemonMsg::SetVisible(false)]);
-        hub.handle(HubMsg::Game(false));
+        hub.handle(HubMsg::Game(Running::default()));
         assert!(drain(&overlay).is_empty(), "no transition, no command");
 
         // Hello and Shutdown: the former is a no-op here, the latter stops.
@@ -1600,7 +1772,7 @@ mod tests {
                 );
                 let _ = done_tx.send(());
             });
-            tx.send(HubMsg::Game(true)).unwrap();
+            tx.send(HubMsg::Game(Running::unnamed())).unwrap();
             if shutdown {
                 tx.send(HubMsg::Client {
                     id: 1,
@@ -1636,7 +1808,7 @@ mod tests {
         let ids = hub.index_fixture();
         // The boss pulls: COMBATANT_INFO fires at ENCOUNTER_START, so their
         // slices know the build (the opening trash does not).
-        let bosses: Vec<SegmentId> = match hub.engine.build_list(false) {
+        let bosses: Vec<SegmentId> = match hub.engine().build_list(false) {
             DaemonMsg::SegmentList { entries, .. } => entries
                 .iter()
                 .filter(|e| e.row.kind == wowdps_model::SegmentKind::Encounter)
@@ -1744,7 +1916,10 @@ mod tests {
         let mut hub = Hub::new();
         let rx = hub.connect(1, ClientKind::Tui);
         // Two hits a trash-gap apart: one closed trash, one live segment.
-        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 0), hit(10, 0)])));
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Lines(vec![hit(0, 0), hit(10, 0)]),
+        ));
         let before = drain(&rx);
         assert!(matches!(
             before.last(),
@@ -1772,7 +1947,7 @@ mod tests {
     fn compare_cursors_are_pushed_and_disconnects_reap() {
         let mut hub = Hub::new();
         let rx = hub.connect(1, ClientKind::Window);
-        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 0)])));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(vec![hit(0, 0)])));
         drain(&rx);
         hub.client(
             1,
@@ -1810,7 +1985,7 @@ mod tests {
             .iter()
             .map(|(id, kind, want)| (hub.connect(*id, *kind), *kind, *want))
             .collect();
-        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 0)])));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(vec![hit(0, 0)])));
         for (rx, _, _) in &rxs {
             drain(rx);
         }
@@ -1834,6 +2009,968 @@ mod tests {
                 _ => None,
             });
             assert_eq!(raid, Some(*want), "{kind:?}");
+        }
+    }
+
+    // ---- v49: one source and one engine per edition ----------------------
+
+    const FOREVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+
+    fn lines(lines: &[&str]) -> Vec<String> {
+        lines.iter().map(|l| l.to_string()).collect()
+    }
+
+    /// A boss pull opening on Retail's clock after `sample.txt`'s end, at
+    /// `min` minutes past 20:00.
+    fn retail_pull(min: u32) -> Vec<String> {
+        vec![
+            format!(
+                "7/27/2026 20:{min:02}:00.000-4  ENCOUNTER_START,3130,\"The Ashen Warden\",15,3,2769"
+            ),
+            format!(
+                "7/27/2026 20:{min:02}:01.000-4  SPELL_DAMAGE,Player-1168-0A1B2C01,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil"
+            ),
+        ]
+    }
+
+    fn retail_end(min: u32) -> Vec<String> {
+        vec![format!(
+            "7/27/2026 20:{min:02}:30.000-4  ENCOUNTER_END,3130,\"The Ashen Warden\",15,3,1,30000"
+        )]
+    }
+
+    /// A boss pull opening on Forever's clock after `forever.txt`'s end.
+    fn forever_pull(min: u32) -> Vec<String> {
+        vec![
+            format!("11/1/2026 20:{min:02}:00.000-8  ENCOUNTER_START,2914,\"Geilhast\",1,5,48"),
+            format!(
+                "11/1/2026 20:{min:02}:01.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990001-0000A0B001,\"Geilhast\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990001-0000A0B001,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST"
+            ),
+        ]
+    }
+
+    fn forever_end(min: u32) -> Vec<String> {
+        vec![format!(
+            "11/1/2026 20:{min:02}:31.000-8  ENCOUNTER_END,2914,\"Geilhast\",1,5,1,21000"
+        )]
+    }
+
+    /// Retail's folder and Forever's, each named by its product folder.
+    fn two_editions() -> Hub {
+        Hub::with_sources(vec![
+            SourceSetup {
+                spec: Some("logs:/wow/_retail_/Logs".to_string()),
+                edition: Some(Edition::Retail),
+            },
+            SourceSetup {
+                spec: Some("logs:/wow/_forever_/Logs".to_string()),
+                edition: Some(Edition::Forever),
+            },
+        ])
+    }
+
+    /// Both logs delivered and caught up: Retail's written an hour ago,
+    /// Forever's just now.
+    fn deliver_both(hub: &mut Hub) {
+        deliver_log_to(hub, 0, FIXTURE, 3_600_000);
+        hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+        deliver_log_to(hub, 1, FOREVER, 0);
+        hub.handle(HubMsg::Tail(1, TailEvent::CaughtUp));
+    }
+
+    /// The last list in `msgs`: its rows' editions, the edition it names and
+    /// the log it names.
+    fn last_list(msgs: &[DaemonMsg]) -> Option<(Vec<Edition>, Option<Edition>, Option<String>)> {
+        msgs.iter().rev().find_map(|m| match m {
+            DaemonMsg::SegmentList {
+                entries,
+                edition,
+                source,
+                ..
+            } => Some((
+                entries.iter().map(|e| e.row.edition).collect(),
+                *edition,
+                source.clone(),
+            )),
+            _ => None,
+        })
+    }
+
+    fn opened(msgs: &[DaemonMsg]) -> Vec<SegmentId> {
+        msgs.iter()
+            .filter_map(|m| match m {
+                DaemonMsg::SegmentOpened { id } => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A frame a scenario recorded: the step, the session and the message.
+    struct Frame {
+        step: &'static str,
+        session: u64,
+        msg: DaemonMsg,
+    }
+
+    impl Frame {
+        /// The frame as a reader sees it, for a failing assertion.
+        fn line(&self) -> String {
+            format!("{} s{}: {:?}", self.step, self.session, self.msg)
+        }
+
+        /// The golden's line: step, session, message kind, and FNV-1a of
+        /// the frame's wire bytes (`DaemonMsg::encode`: length, tag, body)
+        /// — what the session's socket carries, not how it prints.
+        fn golden(&self) -> String {
+            let text = format!("{:?}", self.msg);
+            let kind: String = text.chars().take_while(|c| c.is_alphanumeric()).collect();
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in self.msg.encode() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            format!("{} s{} {kind} {h:016x}", self.step, self.session)
+        }
+    }
+
+    /// Every frame of a scenario that exercises everything a session can
+    /// be answered — following and pinned, the list, `Live`, an id cold and
+    /// loaded, one-shots, the trash can, a comparison, rotated and unknown
+    /// ids, the game, and a rotation to another edition's log — per step
+    /// and session, in order.
+    fn one_source_scenario(mut hub: Hub) -> Vec<Frame> {
+        let mut dump = Vec::new();
+        let kinds = [
+            (
+                1,
+                ClientKind::Window,
+                EditionRef::Follow,
+                seg_cursor(SegmentRef::Live),
+            ),
+            (
+                2,
+                ClientKind::Tui,
+                EditionRef::Pin(Edition::Retail),
+                Cursor::List,
+            ),
+            (
+                3,
+                ClientKind::Tui,
+                EditionRef::Pin(Edition::Forever),
+                seg_cursor(SegmentRef::Live),
+            ),
+            (4, ClientKind::Mcp, EditionRef::Follow, Cursor::List),
+            (
+                5,
+                ClientKind::Overlay,
+                EditionRef::Follow,
+                seg_cursor(SegmentRef::Live),
+            ),
+        ];
+        let rxs: Vec<(u64, Receiver<DaemonMsg>)> = kinds
+            .iter()
+            .map(|(id, kind, _, _)| (*id, hub.connect(*id, *kind)))
+            .collect();
+        let record = |step: &'static str, dump: &mut Vec<Frame>| {
+            for (id, rx) in &rxs {
+                for msg in drain(rx) {
+                    dump.push(Frame {
+                        step,
+                        session: *id,
+                        msg,
+                    });
+                }
+            }
+        };
+        for (id, _, edition, cursor) in &kinds {
+            hub.client(
+                *id,
+                ClientMsg::Watch {
+                    cursor: cursor.clone(),
+                    edition: *edition,
+                },
+            );
+        }
+        record("watch", &mut dump);
+        hub.tick();
+        record("tick", &mut dump);
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Retail])));
+        record("game", &mut dump);
+        let (switch, index, seeds) = log_parts(FIXTURE);
+        hub.handle(switch);
+        record("deliver switched", &mut dump);
+        hub.handle(index);
+        hub.handle(seeds);
+        record("deliver", &mut dump);
+        hub.tick();
+        hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+        hub.tick();
+        record("caught up", &mut dump);
+        let boss = hub
+            .engine()
+            .list_ids()
+            .into_iter()
+            .zip(hub.engine().list_rows())
+            .find(|(_, r)| r.kind == wowdps_model::SegmentKind::Encounter)
+            .map(|(id, _)| id)
+            .unwrap();
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Id(boss))));
+        let req = hub.loader_rx.try_recv().expect("a load");
+        let text = wowdps_core::index::load_segment_text(&req.path, &req.meta).unwrap();
+        hub.handle(HubMsg::Loaded {
+            id: req.id,
+            result: Ok(Box::new(text.meter())),
+        });
+        record("loaded", &mut dump);
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull(20))));
+        hub.tick();
+        record("pull", &mut dump);
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_end(20))));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(lines(&[
+            "7/27/2026 20:22:00.000-4  SPELL_DAMAGE,Player-1168-0A1B2C01,\"Ana-Realm\",0x511,0x0,Creature-0-8,\"Trash\",0xa48,0x0,116,\"Frostbolt\",16,300,300,0,0,0,0,0,nil,nil",
+        ]))));
+        hub.tick();
+        record("trash", &mut dump);
+        hub.client(4, ClientMsg::GetStatus { req_id: 7 });
+        for (session, req_id) in [(1, 8), (3, 9)] {
+            hub.client(
+                session,
+                ClientMsg::GetLoadout {
+                    req_id,
+                    segment: SegmentRef::Live,
+                    guid: "Player-1168-0A1B2C01".to_string(),
+                },
+            );
+        }
+        hub.client(4, ClientMsg::DiscardTrash);
+        hub.tick();
+        record("one-shots", &mut dump);
+        hub.client(
+            1,
+            ClientMsg::watch(Cursor::Compare {
+                segment: SegmentRef::Live,
+                a: "Player-1168-0A1B2C01".to_string(),
+                b: "Player-1168-0A1B2C02".to_string(),
+                view: wowdps_model::View::Damage,
+                range: None,
+                spell: None,
+            }),
+        );
+        hub.client(
+            5,
+            ClientMsg::watch(seg_cursor(SegmentRef::Id(SegmentId(999_999)))),
+        );
+        hub.client(
+            4,
+            ClientMsg::watch(seg_cursor(SegmentRef::Id(SegmentId(0)))),
+        );
+        hub.tick();
+        record("ids", &mut dump);
+        hub.handle(HubMsg::Game(Running::default()));
+        hub.tick();
+        record("no game", &mut dump);
+        let (switch, index, seeds) = log_parts(FOREVER);
+        hub.handle(switch);
+        record("rotate switched", &mut dump);
+        hub.handle(index);
+        hub.handle(seeds);
+        record("rotate", &mut dump);
+        hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+        hub.tick();
+        hub.client(4, ClientMsg::watch(seg_cursor(SegmentRef::Id(boss))));
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        hub.client(
+            3,
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition: EditionRef::Pin(Edition::Forever),
+            },
+        );
+        hub.tick();
+        hub.client(4, ClientMsg::GetStatus { req_id: 10 });
+        record("end", &mut dump);
+        dump
+    }
+
+    /// How a daemon of one source words its first source in `Status`.
+    const RETAIL_SPEC: &str = "logs:/wow/_retail_/Logs";
+
+    /// The one-source scenario's frames as the daemon sent them before it
+    /// followed more than one source: produced by `0b5714f`'s hub over the
+    /// same scenario (`one_source_scenario`, ported to that hub's API), a
+    /// line per frame — step, session, kind, and FNV-1a of its wire bytes.
+    const ONE_SOURCE_GOLDEN: &str = include_str!("../tests/golden/one_source_frames.txt");
+
+    /// The Retail guard: a daemon of one source — as production follows an
+    /// install while discovery follows Retail alone — queues every session
+    /// of the scenario the same frames, in the same order, byte for byte on
+    /// the wire, as `0b5714f`'s daemon did (`ONE_SOURCE_GOLDEN`). It proves
+    /// that scenario's frames and nothing wider. `WOWDPS_BLESS=1` rewrites
+    /// the golden and then fails, so no run passes by blessing; a re-bless
+    /// changes what every Retail client is sent, and its commit says why.
+    #[test]
+    fn one_source_frames_are_the_daemon_s_before_editions() {
+        let frames = one_source_scenario(Hub::with_sources(vec![SourceSetup {
+            spec: Some(RETAIL_SPEC.to_string()),
+            edition: Some(Edition::Retail),
+        }]));
+        let got: Vec<String> = frames.iter().map(Frame::golden).collect();
+        if std::env::var_os("WOWDPS_BLESS").is_some() {
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/golden/one_source_frames.txt"
+            );
+            let head: String = ONE_SOURCE_GOLDEN
+                .lines()
+                .take_while(|l| l.starts_with('#'))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            std::fs::write(path, head + &got.join("\n") + "\n").unwrap();
+            panic!("WOWDPS_BLESS rewrote {path}: rerun without it, and say why in the commit");
+        }
+        let want: Vec<&str> = ONE_SOURCE_GOLDEN
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+            .collect();
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!(g, w, "frame {i} moved: {}", frames[i].line());
+        }
+        assert_eq!(got.len(), want.len(), "the frame count moved");
+    }
+
+    /// The steps of the scenario between a log's switch and its index.
+    const SWITCHED: [&str; 2] = ["deliver switched", "rotate switched"];
+
+    /// The frames of every other step, seq zeroed (each session numbers its
+    /// own frames).
+    fn outside_switches(frames: &[Frame]) -> Vec<(&'static str, u64, DaemonMsg)> {
+        frames
+            .iter()
+            .filter(|f| !SWITCHED.contains(&f.step))
+            .map(|f| (f.step, f.session, crate::session::stamp(f.msg.clone(), 0)))
+            .collect()
+    }
+
+    /// The frames of one step as lists: session, entries, log named,
+    /// edition named, `active`, and whether a log id is named; anything but
+    /// a list fails.
+    #[allow(clippy::type_complexity)]
+    fn lists_in(
+        frames: &[Frame],
+        step: &str,
+    ) -> Vec<(u64, usize, Option<String>, Option<Edition>, bool, bool)> {
+        frames
+            .iter()
+            .filter(|f| f.step == step)
+            .map(|f| match &f.msg {
+                DaemonMsg::SegmentList {
+                    entries,
+                    source,
+                    edition,
+                    active,
+                    log_id,
+                    ..
+                } => (
+                    f.session,
+                    entries.len(),
+                    source.clone(),
+                    *edition,
+                    *active,
+                    log_id.is_some(),
+                ),
+                _ => panic!("not a list: {}", f.line()),
+            })
+            .collect()
+    }
+
+    /// The same guard with a second source, configured as a real daemon
+    /// following two editions configures it — each source named by its
+    /// folder — whose folder never holds a log. Every frame of every step
+    /// is the one-source daemon's, sequence numbers aside, but those sent
+    /// while a log switched to awaits its index: there the first source is
+    /// named Retail by its folder where one source names nothing, so (v49's
+    /// rule for a named source) its list is broadcast at the first switch,
+    /// followers' lists name Retail, and its Retail pin is served the
+    /// unread log's empty list. Those frames are asserted one by one.
+    #[test]
+    fn a_second_source_changes_no_frame_but_those_of_an_unread_log() {
+        let one = one_source_scenario(Hub::with_sources(vec![SourceSetup {
+            spec: Some(RETAIL_SPEC.to_string()),
+            edition: Some(Edition::Retail),
+        }]));
+        let two = one_source_scenario(two_editions());
+        assert!(one.len() > 60, "the scenario says something: {}", one.len());
+        let (a, b) = (outside_switches(&one), outside_switches(&two));
+        for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+            assert_eq!(x, y, "frame {i}");
+        }
+        assert_eq!(a.len(), b.len());
+
+        let (r, f) = (Some(Edition::Retail), Some(Edition::Forever));
+        let log = |name: &str| Some(name.to_string());
+        assert_eq!(
+            lists_in(&one, "deliver switched"),
+            [],
+            "no list moved for one"
+        );
+        assert_eq!(
+            lists_in(&two, "deliver switched"),
+            [
+                (1, 0, log("sample.txt"), r, false, true),
+                (2, 0, log("sample.txt"), r, false, true),
+                (3, 0, None, f, false, false),
+                (4, 0, log("sample.txt"), r, false, true),
+                (5, 0, log("sample.txt"), r, false, true),
+            ]
+        );
+        assert_eq!(
+            lists_in(&one, "rotate switched"),
+            [
+                (1, 0, log("forever.txt"), None, false, true),
+                (2, 0, None, r, false, false),
+                (3, 0, None, f, false, false),
+                (4, 0, log("forever.txt"), None, false, true),
+                (5, 0, log("forever.txt"), None, false, true),
+            ]
+        );
+        assert_eq!(
+            lists_in(&two, "rotate switched"),
+            [
+                (1, 0, log("forever.txt"), r, false, true),
+                (2, 0, log("forever.txt"), r, false, true),
+                (3, 0, None, f, false, false),
+                (4, 0, log("forever.txt"), r, false, true),
+                (5, 0, log("forever.txt"), r, false, true),
+            ]
+        );
+    }
+
+    /// v49: an empty list is held only since the session's last Watch: one
+    /// that leaves its pin (here for Retail's, on `Live`, which is sent no
+    /// list) and comes back is sent its edition's empty list at the next
+    /// move of the live edition, though it was sent the same one before.
+    #[test]
+    fn a_new_watch_forgets_the_empty_list_the_session_held() {
+        let mut hub = two_editions();
+        deliver_both(&mut hub);
+        let rx = hub.connect(1, ClientKind::Tui);
+        let watch = |hub: &mut Hub, cursor: Cursor, edition: Edition| {
+            hub.client(
+                1,
+                ClientMsg::Watch {
+                    cursor,
+                    edition: EditionRef::Pin(edition),
+                },
+            );
+        };
+        watch(&mut hub, Cursor::List, Edition::Classic(2));
+        assert!(matches!(
+            drain(&rx).as_slice(),
+            [DaemonMsg::SegmentList { entries, .. }] if entries.is_empty()
+        ));
+        watch(&mut hub, seg_cursor(SegmentRef::Live), Edition::Retail);
+        watch(&mut hub, seg_cursor(SegmentRef::Live), Edition::Classic(2));
+        drain(&rx);
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Retail])));
+        assert_eq!(hub.sources.live(), 0, "the live edition moved");
+        let got = drain(&rx);
+        assert!(
+            got.iter().any(|m| matches!(
+                m,
+                DaemonMsg::SegmentList { entries, edition: Some(Edition::Classic(2)), .. }
+                    if entries.is_empty()
+            )),
+            "{got:?}"
+        );
+    }
+
+    /// v49: a pin no source serves holds its edition's empty list from
+    /// every source alike, so a move of the live edition sends it none.
+    #[test]
+    fn an_unserved_pin_is_not_resent_its_empty_list_on_a_move() {
+        let mut hub = two_editions();
+        let classic = hub.connect(1, ClientKind::Tui);
+        hub.client(
+            1,
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition: EditionRef::Pin(Edition::Classic(2)),
+            },
+        );
+        deliver_both(&mut hub);
+        drain(&classic);
+        for running in [
+            Running::of(&[Edition::Retail]),
+            Running::of(&[Edition::Forever]),
+            Running::of(&[Edition::Retail]),
+        ] {
+            let was = hub.sources.live();
+            hub.handle(HubMsg::Game(running));
+            assert_ne!(hub.sources.live(), was, "the live edition moved");
+            let got = drain(&classic);
+            assert!(got.is_empty(), "{got:?}");
+        }
+    }
+
+    /// Each edition's log has its own engine: one's index, live meter and
+    /// ids are untouched by the other's, ids never repeat across the two,
+    /// and an id resolves in the source holding it whatever the session
+    /// looks in. A rotation in one source retires its ids alone: Rotated
+    /// for them, NotFound for an id never issued, and the other's resolve.
+    #[test]
+    fn each_edition_has_its_own_engine_and_one_id_counter() {
+        let mut hub = two_editions();
+        deliver_both(&mut hub);
+        let retail = hub.sources.engine(0).list_ids();
+        let forever = hub.sources.engine(1).list_ids();
+        assert!(!retail.is_empty() && !forever.is_empty());
+        assert!(
+            retail.iter().all(|id| !forever.contains(id)),
+            "{retail:?} {forever:?}"
+        );
+        assert_eq!(hub.sources.engine(0).edition(), Some(Edition::Retail));
+        assert_eq!(hub.sources.engine(1).edition(), Some(Edition::Forever));
+        assert_eq!(hub.sources.owner_of(retail[0]), Some(0));
+        assert_eq!(hub.sources.owner_of(forever[0]), Some(1));
+
+        // A Retail pin watching a Forever segment by id is answered from
+        // Forever's source, the frame naming it.
+        let rx = hub.connect(1, ClientKind::Tui);
+        hub.client(
+            1,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Id(forever[0])),
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        match drain(&rx).as_slice() {
+            [
+                DaemonMsg::Snapshot {
+                    id: Some(id),
+                    edition: Some(Edition::Forever),
+                    source: Some(log),
+                    ..
+                },
+            ] => {
+                assert_eq!(*id, forever[0]);
+                assert_eq!(log, "forever.txt");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // Forever's log rotates (the same fixture under another name).
+        let dir = std::env::temp_dir().join(format!("wowdps-hub-rot-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let next = dir.join("WoWCombatLog-110226_200000.txt");
+        std::fs::copy(FOREVER, &next).unwrap();
+        deliver_log_to(&mut hub, 1, next.to_str().unwrap(), 0);
+        assert_eq!(
+            hub.sources.engine(0).list_ids(),
+            retail,
+            "Retail's state kept"
+        );
+        let rotated = hub.sources.engine(1).list_ids();
+        assert!(
+            rotated
+                .iter()
+                .all(|id| !forever.contains(id) && !retail.contains(id))
+        );
+        assert_eq!(hub.sources.owner_of(forever[0]), None);
+        assert_eq!(hub.sources.lost(forever[0]), LoadError::Rotated);
+        assert_eq!(hub.sources.lost(SegmentId(1_000_000)), LoadError::NotFound);
+        hub.tick();
+        assert!(
+            drain(&rx).iter().any(|m| matches!(
+                m,
+                DaemonMsg::LoadFailed { segment, error: LoadError::Rotated } if *segment == forever[0]
+            )),
+            "the rotated id fails as rotated"
+        );
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Id(retail[0]))));
+        assert!(matches!(
+            drain(&rx).as_slice(),
+            [DaemonMsg::Snapshot { id: Some(id), edition: Some(Edition::Retail), .. }] if *id == retail[0]
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Following is the live edition's source; a pin is its edition's, or
+    /// the empty answer for an edition no source holds. With no game
+    /// running the live edition is the one whose log was written last.
+    /// `Status` lists both sources, the live one marked.
+    #[test]
+    fn a_session_follows_the_live_edition_or_its_pin() {
+        let mut hub = two_editions();
+        let sessions = [
+            EditionRef::Follow,
+            EditionRef::Pin(Edition::Retail),
+            EditionRef::Pin(Edition::Forever),
+            EditionRef::Pin(Edition::Classic(2)),
+        ];
+        let rxs: Vec<Receiver<DaemonMsg>> =
+            (1..=4).map(|id| hub.connect(id, ClientKind::Tui)).collect();
+        for (id, edition) in (1..).zip(sessions) {
+            hub.client(
+                id,
+                ClientMsg::Watch {
+                    cursor: Cursor::List,
+                    edition,
+                },
+            );
+        }
+        deliver_both(&mut hub);
+        assert_eq!(hub.sources.live(), 1, "Forever's log was written last");
+        let lists: Vec<_> = rxs
+            .iter()
+            .map(|rx| last_list(&drain(rx)).unwrap())
+            .collect();
+        let every = |rows: &[Edition], e: Edition| !rows.is_empty() && rows.iter().all(|r| *r == e);
+        assert!(every(&lists[0].0, Edition::Forever), "{:?}", lists[0]);
+        assert_eq!(lists[0].1, Some(Edition::Forever));
+        assert!(every(&lists[1].0, Edition::Retail), "{:?}", lists[1]);
+        assert_eq!(lists[1].1, Some(Edition::Retail));
+        assert_eq!(lists[1].2.as_deref(), Some("sample.txt"));
+        assert!(every(&lists[2].0, Edition::Forever));
+        assert_eq!(lists[3], (Vec::new(), Some(Edition::Classic(2)), None));
+
+        hub.client(1, ClientMsg::GetStatus { req_id: 3 });
+        match drain(&rxs[0]).as_slice() {
+            [
+                DaemonMsg::Status {
+                    source, editions, ..
+                },
+            ] => {
+                assert_eq!(source.as_deref(), Some("logs:/wow/_retail_/Logs"));
+                let got: Vec<_> = editions
+                    .iter()
+                    .map(|e| (e.edition, e.log.clone(), e.live, e.running))
+                    .collect();
+                assert_eq!(
+                    got,
+                    [
+                        (
+                            Some(Edition::Retail),
+                            Some("sample.txt".to_string()),
+                            false,
+                            false
+                        ),
+                        (
+                            Some(Edition::Forever),
+                            Some("forever.txt".to_string()),
+                            true,
+                            false
+                        ),
+                    ]
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The live edition's transitions: the log written last with no game;
+    /// the running game's when one runs (a following session moved, its
+    /// frames naming the new edition); with both running, kept while it has
+    /// a pull open or until the other opens one while it has none — and a
+    /// pull opening in the edition not live draws no follower. With none
+    /// running again, the log written last.
+    #[test]
+    fn the_live_edition_follows_the_running_game() {
+        let mut hub = two_editions();
+        let follower = hub.connect(1, ClientKind::Window);
+        let retail = hub.connect(2, ClientKind::Tui);
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Live)));
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        deliver_both(&mut hub);
+        hub.tick();
+        assert_eq!(hub.sources.live(), 1);
+        let got = drain(&follower);
+        assert_eq!(last_list(&got).map(|l| l.1), Some(Some(Edition::Forever)));
+        drain(&retail);
+
+        // Retail's game starts: Retail is live, and the follower is sent
+        // Retail's list — the frame that moves it.
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Retail])));
+        assert_eq!(hub.sources.live(), 0);
+        let got = drain(&follower);
+        assert_eq!(
+            last_list(&got).map(|l| (l.1, l.2)),
+            Some((Some(Edition::Retail), Some("sample.txt".to_string())))
+        );
+        assert!(drain(&retail).is_empty(), "the pin did not move");
+
+        // Both run. A Forever pull opening while Retail has none moves the
+        // live edition there; the follower hears of it, the Retail pin not.
+        hub.handle(HubMsg::Game(Running::of(&[
+            Edition::Retail,
+            Edition::Forever,
+        ])));
+        assert_eq!(hub.sources.live(), 0, "both running: kept");
+        assert!(drain(&follower).is_empty());
+        hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_pull(10))));
+        assert_eq!(hub.sources.live(), 1);
+        let got = drain(&follower);
+        assert_eq!(opened(&got).len(), 1, "{got:?}");
+        assert_eq!(last_list(&got).map(|l| l.1), Some(Some(Edition::Forever)));
+        assert!(opened(&drain(&retail)).is_empty());
+        hub.tick();
+        assert!(matches!(
+            drain(&follower).last(),
+            Some(DaemonMsg::Snapshot { edition: Some(Edition::Forever), info, .. }) if info.live
+        ));
+
+        // A Retail pull opening while Forever's is open moves nothing: the
+        // Retail pin hears of it, the follower not.
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull(30))));
+        assert_eq!(hub.sources.live(), 1, "Forever's pull is open");
+        assert!(opened(&drain(&follower)).is_empty());
+        assert_eq!(opened(&drain(&retail)).len(), 1);
+
+        // Forever's pull ends while Retail's is open: the open pull is
+        // Retail's, and so is the live edition.
+        hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_end(10))));
+        assert_eq!(hub.sources.live(), 0);
+        assert_eq!(
+            last_list(&drain(&follower)).map(|l| l.1),
+            Some(Some(Edition::Retail))
+        );
+        // Neither has a pull open: it stays, until the other opens one.
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_end(30))));
+        assert_eq!(hub.sources.live(), 0, "neither open: kept");
+        hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_pull(20))));
+        assert_eq!(hub.sources.live(), 1);
+        hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_end(20))));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull(40))));
+        assert_eq!(hub.sources.live(), 0);
+        assert_eq!(
+            last_list(&drain(&follower)).map(|l| l.1),
+            Some(Some(Edition::Retail))
+        );
+
+        // Forever quits, then Retail: Retail stays — its log was written
+        // last.
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Retail])));
+        hub.handle(HubMsg::Game(Running::default()));
+        assert_eq!(hub.sources.live(), 0);
+        // Only Forever runs: Forever's.
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Forever])));
+        assert_eq!(hub.sources.live(), 1);
+        assert_eq!(
+            last_list(&drain(&follower)).map(|l| l.1),
+            Some(Some(Edition::Forever))
+        );
+    }
+
+    /// A buff landing out of combat on Retail's clock: written, and no
+    /// segment opened or extended.
+    fn retail_passive(sec: u32) -> Vec<String> {
+        vec![format!(
+            "7/27/2026 20:50:{sec:02}.000-4  SPELL_AURA_APPLIED,Player-1168-0A1B2C02,\"Mirelle-Realm\",0x514,0x80000000,Player-1168-0A1B2C01,\"Ana-Realm\",0x511,0x80000000,17,\"Power Word: Shield\",0x2,BUFF,15600"
+        )]
+    }
+
+    /// v49: a session pinned to an edition no source serves holds an empty
+    /// list, and its trash can tombstones nothing — not the live log's
+    /// trash. A following session's does, as it always did.
+    #[test]
+    fn a_pin_no_source_serves_discards_no_trash() {
+        let mut hub = Hub::new();
+        let follower = hub.connect(1, ClientKind::Tui);
+        let forever = hub.connect(2, ClientKind::Tui);
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition: EditionRef::Pin(Edition::Forever),
+            },
+        );
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Lines(vec![hit(0, 0), hit(10, 0)]),
+        ));
+        assert_eq!(hub.engine().list_rows().len(), 2, "closed trash + live");
+        drain(&follower);
+        drain(&forever);
+        hub.client(2, ClientMsg::DiscardTrash);
+        assert_eq!(
+            hub.engine().list_rows().len(),
+            2,
+            "the Retail log's trash kept"
+        );
+        assert!(drain(&follower).is_empty() && drain(&forever).is_empty());
+        hub.client(1, ClientMsg::DiscardTrash);
+        assert_eq!(hub.engine().list_rows().len(), 1);
+        drain(&forever);
+        // A one-shot's `Live` in that edition is nobody's.
+        hub.client(
+            2,
+            ClientMsg::GetLoadout {
+                req_id: 3,
+                segment: SegmentRef::Live,
+                guid: "Player-1-A".to_string(),
+            },
+        );
+        assert!(matches!(
+            drain(&forever).as_slice(),
+            [DaemonMsg::Loadout {
+                req_id: 3,
+                loadout: None,
+                ..
+            }]
+        ));
+    }
+
+    /// v49: a slice whose log rotated away while it was parsed is no
+    /// source's: dropped, never installed where nothing resolves it (one
+    /// source installed it all the same, spending an LRU slot); the waiter
+    /// is told its segment rotated away, as before.
+    #[test]
+    fn a_slice_of_a_rotated_log_is_dropped() {
+        let mut hub = Hub::new();
+        let rx = hub.connect(1, ClientKind::Window);
+        let ids = hub.index_fixture();
+        let boss = ids
+            .iter()
+            .copied()
+            .zip(hub.engine().list_rows())
+            .find(|(_, r)| r.kind == wowdps_model::SegmentKind::Encounter)
+            .map(|(id, _)| id)
+            .unwrap();
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Id(boss))));
+        let req = hub.loader_rx.try_recv().expect("a load");
+        deliver_log(&mut hub, FOREVER);
+        drain(&rx);
+        let text = wowdps_core::index::load_segment_text(&req.path, &req.meta).unwrap();
+        hub.handle(HubMsg::Loaded {
+            id: req.id,
+            result: Ok(Box::new(text.meter())),
+        });
+        assert_eq!(hub.engine().resident(), 0, "no meter nothing resolves");
+        assert!(
+            drain(&rx).iter().any(|m| matches!(
+                m,
+                DaemonMsg::LoadFailed { segment, error: LoadError::Rotated } if *segment == boss
+            )),
+            "the waiter hears its segment rotated away"
+        );
+    }
+
+    /// v49: with no game named, the live edition stays where it is while
+    /// its log is still being written, though the other is written later —
+    /// two clients the watcher cannot name, out of combat, writing in turn
+    /// move no follower — and gives way once its log has gone quiet, on the
+    /// next tick, no event needed.
+    #[test]
+    fn with_no_game_the_live_edition_stays_while_its_log_is_written() {
+        let mut hub = two_editions();
+        let follower = hub.connect(1, ClientKind::Tui);
+        hub.client(1, ClientMsg::watch(Cursor::List));
+        deliver_both(&mut hub);
+        assert_eq!(hub.sources.live(), 1, "Forever's log was written last");
+        assert!(hub.sources.engine(1).being_written());
+        drain(&follower);
+        for sec in 0..3 {
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_passive(sec))));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 1, "Forever's log is still written");
+        }
+        let got = drain(&follower);
+        assert!(
+            got.iter().all(|m| !matches!(
+                m,
+                DaemonMsg::SegmentList { edition, .. } if *edition != Some(Edition::Forever)
+            )),
+            "the follower was not moved: {got:?}"
+        );
+        // Forever's log goes quiet: the next tick moves it to Retail's.
+        hub.sources
+            .engine_mut(1)
+            .age_for_test(Duration::from_secs(120));
+        hub.tick();
+        assert_eq!(hub.sources.live(), 0);
+        assert_eq!(
+            last_list(&drain(&follower)).map(|l| l.1),
+            Some(Some(Edition::Retail))
+        );
+    }
+
+    /// A game the watcher cannot name, or of an edition no source follows,
+    /// counts for every source, as any game did with one source: a daemon
+    /// following Retail alone reads a Forever client as its game running,
+    /// as it always has. With both followed, each source's game is its own.
+    #[test]
+    fn a_game_no_source_is_of_counts_for_every_source() {
+        let mut hub = Hub::new();
+        deliver_log(&mut hub, FIXTURE);
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Forever])));
+        assert!(hub.engine().game_running);
+        hub.handle(HubMsg::Game(Running::unnamed()));
+        assert!(hub.engine().game_running);
+        hub.handle(HubMsg::Game(Running::default()));
+        assert!(!hub.engine().game_running);
+
+        let mut hub = two_editions();
+        deliver_both(&mut hub);
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Forever])));
+        assert!(!hub.sources.engine(0).game_running);
+        assert!(hub.sources.engine(1).game_running);
+        hub.handle(HubMsg::Game(Running::unnamed()));
+        assert!(hub.sources.engine(0).game_running && hub.sources.engine(1).game_running);
+        assert_eq!(hub.sources.live(), 1, "a game it cannot name moves nothing");
+    }
+
+    /// The header decides, not the folder: a Forever log found in Retail's
+    /// folder makes that source Forever's while it follows that log — a
+    /// Forever pin is answered from it, a Retail pin is sent Retail's empty
+    /// list (no other source holds a Retail log) — and a source whose
+    /// folder has never held a log is not listed in `Status`.
+    #[test]
+    fn a_log_is_filed_by_its_header_not_its_folder() {
+        let mut hub = two_editions();
+        let retail = hub.connect(1, ClientKind::Tui);
+        let forever = hub.connect(2, ClientKind::Tui);
+        for (id, e) in [(1, Edition::Retail), (2, Edition::Forever)] {
+            hub.client(
+                id,
+                ClientMsg::Watch {
+                    cursor: Cursor::List,
+                    edition: EditionRef::Pin(e),
+                },
+            );
+        }
+        assert_eq!(hub.sources.engine(0).edition(), None, "no log yet");
+        deliver_log_to(&mut hub, 0, FOREVER, 0);
+        assert_eq!(hub.sources.engine(0).edition(), Some(Edition::Forever));
+        assert_eq!(
+            last_list(&drain(&retail)),
+            Some((Vec::new(), Some(Edition::Retail), None))
+        );
+        let (rows, edition, log) = last_list(&drain(&forever)).unwrap();
+        assert!(!rows.is_empty() && rows.iter().all(|r| *r == Edition::Forever));
+        assert_eq!(
+            (edition, log.as_deref()),
+            (Some(Edition::Forever), Some("forever.txt"))
+        );
+
+        hub.client(1, ClientMsg::GetStatus { req_id: 1 });
+        match drain(&retail).as_slice() {
+            [DaemonMsg::Status { editions, .. }] => {
+                assert_eq!(editions.len(), 1, "Forever's folder holds no log yet");
+                assert_eq!(editions[0].edition, Some(Edition::Forever));
+                assert!(editions[0].live);
+            }
+            other => panic!("{other:?}"),
         }
     }
 

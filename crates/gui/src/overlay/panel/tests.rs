@@ -269,6 +269,101 @@ fn segment_name(cx: &mut TestAppContext, rig: &Rig) -> Option<String> {
     rig.session.read_with(cx, |s, _| s.state().segment_name())
 }
 
+/// v49: a daemon whose live edition moves: Retail's `sample.txt` answers
+/// until `moved`, then Forever's log does, and the move itself is the
+/// Forever list the daemon sends a following session (`hub::resync`).
+struct MovingLink {
+    retail: wowdps_daemon::mock::MockDaemon,
+    forever: wowdps_daemon::mock::MockDaemon,
+    moved: std::rc::Rc<Cell<bool>>,
+    sent_move: bool,
+    inbox: Vec<wowdps_proto::DaemonMsg>,
+}
+
+impl crate::session::Link for MovingLink {
+    fn send(&mut self, msg: &wowdps_proto::ClientMsg) {
+        let mock = if self.moved.get() {
+            &mut self.forever
+        } else {
+            &mut self.retail
+        };
+        let replies = mock.handle(msg.clone());
+        self.inbox.extend(replies);
+    }
+
+    fn poll(&mut self) -> Vec<wowdps_proto::DaemonMsg> {
+        if self.moved.get() && !self.sent_move {
+            self.sent_move = true;
+            let list = self
+                .forever
+                .handle(wowdps_proto::ClientMsg::watch(wowdps_proto::Cursor::List));
+            self.inbox.extend(list);
+        }
+        std::mem::take(&mut self.inbox)
+    }
+
+    fn reconnect(&mut self) -> wowdps_proto::Reconnect {
+        wowdps_proto::Reconnect::Connected
+    }
+}
+
+/// v49: the overlay follows the running game: parked on an older Retail
+/// pull, it is moved when the live edition becomes Forever's — the frames
+/// name the other edition and log — and re-pins to Forever's newest pull,
+/// following it live.
+#[gpui_kit::test]
+fn the_overlay_re_pins_when_the_live_edition_moves(cx: &mut TestAppContext) {
+    use wowdps_model::Edition;
+    own_config();
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/fixtures");
+    let moved = std::rc::Rc::new(Cell::new(false));
+    let link = MovingLink {
+        retail: wowdps_daemon::mock::MockDaemon::fixture_at(&fixtures.join("sample.txt")),
+        forever: wowdps_daemon::mock::MockDaemon::fixture_at(&fixtures.join("forever.txt")),
+        moved: std::rc::Rc::clone(&moved),
+        sent_move: false,
+        inbox: Vec::new(),
+    };
+    let link = std::cell::RefCell::new(Some(link));
+    let (window, overlay) = testkit::open(cx, size(px(PANEL.0), px(SCREEN_H)), |_, cx| {
+        let session = cx.new(|_| Session::new(link.borrow_mut().take().expect("one link")));
+        let split: super::AuxMaker = std::rc::Rc::new(|_| Err("no split".to_string()));
+        cx.new(|cx| {
+            let mut overlay = Overlay::new(session, config(), split, cx);
+            overlay.expanded = true;
+            overlay
+        })
+    });
+    let session = overlay.read_with(cx, |o, _| o.session().clone());
+    let rig = Rig {
+        window,
+        overlay,
+        session,
+    };
+    to_the_kill(cx, &rig);
+    rig.session.read_with(cx, |s, _| {
+        assert_eq!(s.state().edition(), Some(Edition::Retail));
+        assert!(!s.state().following_live(), "parked on an older pull");
+    });
+
+    // The reset lands on the list, and the overlay opens the newest of its
+    // own accord, as it does on any list.
+    moved.set(true);
+    settle(cx, &rig.session);
+    rig.session.read_with(cx, |s, _| {
+        let st = s.state();
+        assert_eq!(st.edition(), Some(Edition::Forever));
+        assert_eq!(st.source.as_deref(), Some("forever.txt"));
+        assert!(st.following_live(), "re-pinned to the live segment");
+        assert!(
+            st.entries()
+                .iter()
+                .all(|e| e.row.edition == Edition::Forever),
+            "nothing of Retail's list kept"
+        );
+    });
+}
+
 #[gpui_kit::test]
 fn the_overlay_opens_on_the_newest_pull_and_steps_to_the_kill(cx: &mut TestAppContext) {
     let rig = kill(cx);

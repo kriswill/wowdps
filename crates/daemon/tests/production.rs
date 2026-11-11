@@ -104,6 +104,49 @@ fn the_source_comes_from_the_override_the_config_or_nowhere() {
     .expect("override");
     assert_eq!(opts.source, SourceSpec::File(PathBuf::from(FIXTURE)));
     assert!(!opts.linger);
+    assert_eq!(opts.editions, Default::default(), "--file: one source");
+    // A folder outside an install: followed alone.
+    let opts = DaemonOptions::production(&configured, None, true).expect("configured");
+    assert_eq!(opts.editions, Default::default());
+    assert_eq!(opts.followed().len(), 1);
+}
+
+/// v49: a `logs_dir` inside an install names the install — its product
+/// folder names the source's edition — but discovery follows Retail alone
+/// for now, so an install holding Forever's folder too is still one source:
+/// a Forever session changes nothing. `--logs` is one source whatever it
+/// names.
+#[test]
+fn an_install_is_followed_by_retail_alone_for_now() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = sandbox();
+    let wow = root.join("home/Games/World of Warcraft");
+    std::fs::create_dir_all(wow.join("Data/data")).unwrap();
+    std::fs::write(wow.join(".build.info"), "x").unwrap();
+    for product in ["_retail_", "_forever_"] {
+        std::fs::create_dir_all(wow.join(product).join("Logs")).unwrap();
+        std::fs::copy(FIXTURE, wow.join(product).join("Logs/WoWCombatLog-1.txt")).unwrap();
+    }
+    for product in ["_retail_", "_forever_"] {
+        let cfg = Config {
+            logs_dir: Some(wow.join(product).join("Logs")),
+            ..Config::default()
+        };
+        let opts = DaemonOptions::production(&cfg, None, true).expect("configured");
+        let want = wowdps_core::cli::product_edition(&wow.join(product).join("Logs"));
+        assert!(want.is_some());
+        assert_eq!(opts.editions.source, want, "{product}");
+        assert!(
+            opts.editions.more.is_empty(),
+            "{product}: nothing beside it"
+        );
+        assert_eq!(opts.followed().len(), 1);
+    }
+    let cfg = Config::default();
+    let logs = wow.join("_retail_/Logs");
+    let opts = DaemonOptions::production(&cfg, Some(SourceSpec::Dir(logs)), true).unwrap();
+    assert_eq!(opts.editions, Default::default(), "--logs: one source");
+    let _ = std::fs::remove_dir_all(&wow);
 }
 
 /// A production-shaped daemon — index cache on, game watcher on, a gui

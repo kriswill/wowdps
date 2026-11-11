@@ -5,11 +5,80 @@
 
 use std::path::{Path, PathBuf};
 
+use wowdps_model::Edition;
+
 pub use crate::tail::SourceSpec;
+
+/// The editions whose product folder an install is known to keep them in
+/// (`Edition::product_dir`): what the game watcher can name a running
+/// client by, and what an install may hold beside Retail.
+pub const PRODUCTS: [Edition; 2] = [Edition::Retail, Edition::Forever];
+
+/// The editions the daemon follows in an install: a `logs_dir` inside an
+/// install whose product folder is one of these names the install, and
+/// each other one's `Logs` folder is followed beside it. Retail alone for
+/// now: Forever's logs are read by `wowdps history import` and by tests
+/// that name its folder, never followed on their own. Following Forever
+/// is adding it here.
+pub const FOLLOWED: &[Edition] = &[Edition::Retail];
 
 /// A WoW install root: the folder holding `.build.info` and `Data/data`.
 pub fn is_wow_install(p: &Path) -> bool {
     p.join(".build.info").is_file() && p.join("Data").join("data").is_dir()
+}
+
+/// The install a logs folder sits in and the product folder's name:
+/// `<install>/<product>/Logs`, the install validated. `None` for a folder
+/// anywhere else (a copied folder, a test's).
+fn install_of(logs_dir: &Path) -> Option<(PathBuf, String)> {
+    if logs_dir.file_name()?.to_str()? != "Logs" {
+        return None;
+    }
+    let product = logs_dir.parent()?;
+    let root = product.parent()?;
+    let name = product.file_name()?.to_str()?.to_string();
+    is_wow_install(root).then(|| (root.to_path_buf(), name))
+}
+
+/// The edition a logs folder's product folder names: `Retail` for
+/// `<install>/_retail_/Logs`, `Forever` for `_forever_`; `None` for a
+/// folder outside an install or in a product folder not in [`PRODUCTS`]
+/// (a test realm, a beta). The folder's word, not the log's: the header
+/// decides a log's edition once read.
+pub fn product_edition(logs_dir: &Path) -> Option<Edition> {
+    let (_, product) = install_of(logs_dir)?;
+    PRODUCTS
+        .into_iter()
+        .find(|e| e.product_dir() == Some(product.as_str()))
+}
+
+/// Each of `editions`' logs folder in `install`, one per edition with a
+/// known product folder, in the order given — whether or not it exists
+/// yet: a folder is followed from when it first holds a log.
+pub fn install_logs(install: &Path, editions: &[Edition]) -> Vec<(Edition, PathBuf)> {
+    editions
+        .iter()
+        .filter_map(|e| Some((*e, install.join(e.product_dir()?).join("Logs"))))
+        .collect()
+}
+
+/// The logs folders followed beside `logs_dir`: when it is a followed
+/// product's folder inside an install, every other edition of `followed`
+/// in that install ([`install_logs`]); else none — a folder outside an
+/// install, or one of a product not followed, is followed alone, as it
+/// always was.
+pub fn sibling_logs(logs_dir: &Path, followed: &[Edition]) -> Vec<(Edition, PathBuf)> {
+    let Some((install, _)) = install_of(logs_dir) else {
+        return Vec::new();
+    };
+    let Some(own) = product_edition(logs_dir) else {
+        return Vec::new();
+    };
+    if !followed.contains(&own) {
+        return Vec::new();
+    }
+    let others: Vec<Edition> = followed.iter().copied().filter(|e| *e != own).collect();
+    install_logs(&install, &others)
 }
 
 /// The retail logs directory to tail when no `logs_dir` is configured:
@@ -355,6 +424,64 @@ mod tests {
             .unwrap_or_else(|| panic!("{} is not in {found:?}", want.display()));
         assert!(is_wow_install(mine));
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// A logs folder inside an install names its product's edition and the
+    /// followed editions' folders beside it; one outside an install, or of
+    /// a product not followed, is followed alone. Discovery follows Retail
+    /// alone today: an install's Forever folder is never a sibling.
+    #[test]
+    fn a_logs_folder_names_its_install_and_the_followed_products_beside_it() {
+        let root = std::env::temp_dir().join(format!("wowdps-cli-sib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let wow = root.join("World of Warcraft");
+        std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+        std::fs::write(wow.join(".build.info"), "x").unwrap();
+        let retail = wow.join("_retail_").join("Logs");
+        let forever = wow.join("_forever_").join("Logs");
+        let beta = wow.join("_classic_beta_").join("Logs");
+
+        assert_eq!(product_edition(&retail), Some(Edition::Retail));
+        assert_eq!(product_edition(&forever), Some(Edition::Forever));
+        assert_eq!(product_edition(&beta), None, "a product not known");
+        assert_eq!(
+            product_edition(&wow.join("_retail_")),
+            None,
+            "not a Logs folder"
+        );
+        assert_eq!(product_edition(&root.join("_retail_").join("Logs")), None);
+
+        // Today: Retail alone is followed, so no folder has a sibling.
+        assert_eq!(FOLLOWED, &[Edition::Retail]);
+        assert!(sibling_logs(&retail, FOLLOWED).is_empty());
+        assert!(
+            sibling_logs(&forever, FOLLOWED).is_empty(),
+            "Forever's folder alone"
+        );
+        // Both followed: each names the other, whether it exists yet or not.
+        let both = [Edition::Retail, Edition::Forever];
+        assert_eq!(
+            sibling_logs(&retail, &both),
+            vec![(Edition::Forever, forever.clone())]
+        );
+        assert_eq!(
+            sibling_logs(&forever, &both),
+            vec![(Edition::Retail, retail.clone())]
+        );
+        assert!(
+            sibling_logs(&beta, &both).is_empty(),
+            "a product not followed"
+        );
+        assert!(sibling_logs(Path::new("/tmp/Logs"), &both).is_empty());
+        assert_eq!(
+            install_logs(
+                &wow,
+                &[Edition::Forever, Edition::Unknown(7), Edition::Retail]
+            ),
+            vec![(Edition::Forever, forever), (Edition::Retail, retail)],
+            "an edition with no known folder has none"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
