@@ -1222,8 +1222,8 @@ rewrites a file it cannot read whole.
 Git-style subcommands: `wowdps [--file|--logs] [--edition <name>]` (TUI client; source
 conflict with a running daemon is a hard error naming both; v49: its header names the
 edition the daemon answers in ahead of the log; it follows the live edition, and
-`--edition` pins it to one, `retail` or `forever` in any case (`cli::PRODUCTS`' keys),
-whichever runs — an edition no source carries is an empty list under its name, and
+`--edition` pins it to one, `retail` or `forever` in any case (`cli::PRODUCTS`' keys):
+that edition's logs when the daemon follows them, else an empty list under its name;
 any other name is refused with the names it takes, exit 2), `wowdps gui [--file|--logs]`,
 `wowdps daemon [--linger] [--file|--logs]`, `wowdps status` (v49: a pair of lines per
 edition's source, the first source's first — `source:` what is followed, then

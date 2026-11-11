@@ -35,7 +35,7 @@ Usage:
   wowdps --file <path>   ...with the daemon replaying/following one log file
   wowdps --logs <dir>    ...with the daemon following the newest log in <dir>
   wowdps --edition <e>   ...showing one edition's logs, retail or forever,
-                         whichever runs (without it: the live edition's)
+                         when the daemon follows them (default: the live one)
   wowdps gui             start the daemon if needed, launch wowdps-gui, exit
   wowdps daemon          run the daemon in the foreground (systemd target)
           [--linger]     ...and never idle-exit
