@@ -119,7 +119,7 @@ spell_id, label, applied, consumed, wasted, count, unknown; Σ consumed per
 (fight, guid) = the card's absorbed, and applied = consumed + wasted on
 every row with unknown 0. role-night is the daemon's fixed question in
 SQL: per friendly player of the night's non-aborted pulls, the most-played
-spec and its role, pulls, the MEAN per-pull role measure (effective dps /
+spec and its role (with no spec, the role stored most often), pulls, the MEAN per-pull role measure (effective dps /
 hps / mitigated_pct by role) and its best, Σ taken, mean dtps, mean
 am_uptime_pct, mean overheal %, absorb_efficiency as a ratio of sums over
 the pulls with a known waste, Σ externals_given — tanks, healers, dps,

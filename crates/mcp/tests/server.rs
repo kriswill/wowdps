@@ -89,6 +89,29 @@ fn start_daemon_with(tmp: &Temp, log: &str, tweak: impl FnOnce(&mut DaemonOption
         assert!(Instant::now() < deadline, "daemon never bound {socket:?}");
         thread::sleep(Duration::from_millis(5));
     }
+    // A bound socket is not a read log: the engine's first read of its
+    // file comes after it, and a call sent at once can find an empty list.
+    // Ready is a list with a fight on it, asked on a connection of its own
+    // that is shut down before the caller connects (a dropped client's
+    // reader thread holds the stream open; the shutdown ends it).
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let closer = stream.try_clone().expect("clone the probe's stream");
+    let mut probe = Bridge::over(stream).expect("handshake");
+    loop {
+        let reply = drive(&mut probe, &[&call_line(1, "list_fights", "{}")]);
+        let listed = reply.first().is_some_and(|r| {
+            !is_error(r) && matches!(tool_doc(r).get("fights"), Some(Json::Arr(f)) if !f.is_empty())
+        });
+        if listed {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daemon never listed a fight: {reply:?}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    let _ = closer.shutdown(std::net::Shutdown::Both);
     socket
 }
 
@@ -1103,7 +1126,16 @@ fn status_words_the_overlay_and_a_lost_daemon() {
         let replies = drive(bridge, &[&call_line(1, "status", "{}")]);
         tool_doc(&replies[0])
     };
-    let doc = status(&mut bridge);
+    // The bridge and the overlay; the readiness probe's close (in
+    // `start_daemon_with`) may still be on its way to the hub.
+    let deadline = Instant::now() + DEADLINE;
+    let doc = loop {
+        let doc = status(&mut bridge);
+        if num_of(&doc, "clients") == 2.0 || Instant::now() >= deadline {
+            break doc;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
     assert_eq!(str_of(&doc, "overlay"), "visible");
     assert_eq!(num_of(&doc, "clients"), 2.0);
 

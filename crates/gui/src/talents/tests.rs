@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::talents::fixture::{Sandbox, full_string, simc_paste, string_for};
 use wowdps_gui_logic::talents::{Tab, picker_spots};
-use wowdps_model::{GearItem, Loadout, TalentPick};
+use wowdps_model::{Edition, GearItem, Loadout, TalentPick};
 use wowdps_proto::{ClientMsg, ClientState, DaemonMsg, Reconnect, SegmentRef};
 
 use super::{Player, TalentEvent, TalentViewer, bindings};
@@ -41,7 +41,7 @@ struct Rig {
 fn open_at(cx: &mut TestAppContext, at: (f32, f32), player: Option<Player>) -> Rig {
     cx.update(|cx| cx.bind_keys(bindings()));
     let (window, viewer) = testkit::open(cx, size(px(at.0), px(at.1)), move |window, cx| {
-        cx.new(|cx| TalentViewer::open(player, window, cx))
+        cx.new(|cx| TalentViewer::open(Edition::Retail, player, window, cx))
     });
     // Motion is a delight on top: these tests read the settled pixels.
     cx.update(|cx| cx.set_reduce_motion(true));

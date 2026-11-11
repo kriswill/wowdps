@@ -90,8 +90,13 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   follows again once its game has been live and moved on. It rides
   `ClientState::set_edition` for the meter and, only once the census knows
   more than one edition, every history read (`Store::rescope`). With one
-  edition known nothing is drawn or asked differently. Logos go through
-  `images::edition_emblem`, `None` until their cache exists.
+  edition known nothing is drawn or asked differently. Emblems go through
+  `images::edition_emblem`: the launcher's own for each game, from the
+  per-machine `edition-emblems.bin` (`tools/gen-emblems.sh`), rasterized by
+  GPUI's SVG renderer at the device pixels drawn, once per game and size.
+  Without one a game is its name alone, with no gap
+  (`editions::tests::an_emblem_keeps_the_bar_s_rhythm`). The talent viewer
+  reads the fight's game's trees (`Viewer::edition`).
 - **The chrome budget is a test.** At 1440×900 the first meter row starts
   under 290 px with 18 rows showing
   (`window::tests::the_chrome_leaves_a_raid_its_rows`, every `cargo test`).

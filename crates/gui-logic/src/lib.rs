@@ -14,6 +14,7 @@ pub mod config;
 pub mod deaths;
 pub mod drill;
 pub mod editions;
+pub mod emblems;
 pub mod fight_head;
 pub mod fold;
 pub mod fonts;

@@ -25,8 +25,8 @@ serde/toml, no UI framework.
   chrome `"gold"` the theme's own). `wowdps-gui --print-theme <name>`
   prints every key.
 - **Readers never panic.** The art-cache readers (`icons`, `spell_icons`,
-  `talent_art`, `lazy_tiles`) answer `None` for an absent, truncated or
-  garbage file.
+  `talent_art`, `emblems`, `lazy_tiles`) answer `None` for an absent,
+  truncated or garbage file.
 - **Test hooks cross the crate line by feature:** gate a hook the GUI's
   tests call with `cfg(any(test, feature = "test-support"))`, never plain
   `#[cfg(test)]`. A release build never carries it.

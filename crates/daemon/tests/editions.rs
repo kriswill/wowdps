@@ -1150,6 +1150,93 @@ fn every_query_takes_an_edition_filter() {
     assert_eq!(role_night(Some(Edition::Retail)), (0, 0));
 }
 
+/// A Forever night is rostered by the roles R30 stored, not under an
+/// unknown role: the Forever fixture's log names no spec, so the Priest who
+/// healed the others is the night's healer and the other four deal damage,
+/// each folded over the one pull by their role's measure.
+#[test]
+fn a_forever_night_is_rostered_by_its_stored_roles() {
+    let path = Path::new(FOREVER_LOG);
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut engine = Engine::new();
+    let mut events = Vec::new();
+    engine.on_tail(TailEvent::Switched(path.to_path_buf()), &mut events);
+    engine.on_tail(
+        TailEvent::Lines(text.lines().map(str::to_string).collect()),
+        &mut events,
+    );
+    engine.on_tail(TailEvent::CaughtUp, &mut events);
+    let facts = LogFacts::read(path);
+    let mut store = Store::open(MemBackend::new(), Retention::default());
+    for e in &events {
+        if let EngineEvent::Closed(id) = e
+            && let Some(fight) = engine.take_closed(*id)
+        {
+            store.store(&fight, facts);
+        }
+    }
+    let kill = store
+        .cards()
+        .iter()
+        .find(|c| c.name == "Geilhast")
+        .expect("the kill is stored")
+        .clone();
+    assert_eq!(kill.edition(), Edition::Forever);
+    assert!(kill.players.iter().all(|p| p.spec.is_none()), "no spec");
+    let healer = "Player-6101-0A2B3C04";
+    let night = match store.answer(&HistoryQuery::Progression {
+        encounter: 2914,
+        difficulty: 1,
+        local_cutover_hour: None,
+        edition: None,
+    }) {
+        HistoryAnswer::Progression { nights, .. } => nights[0].day_utc_ms,
+        other => panic!("{other:?}"),
+    };
+    for edition in [None, Some(Edition::Forever)] {
+        let rows = match store.answer(&HistoryQuery::RoleNight {
+            encounter: 2914,
+            difficulty: 1,
+            night,
+            local_cutover_hour: None,
+            edition,
+        }) {
+            HistoryAnswer::RoleNight { night, rows } => {
+                assert_eq!(night.pulls, 1);
+                rows
+            }
+            other => panic!("{other:?}"),
+        };
+        let roster: Vec<(&str, Option<Role>, u32)> = rows
+            .iter()
+            .map(|r| (r.guid.as_str(), r.role, r.pulls))
+            .collect();
+        assert_eq!(
+            roster,
+            [
+                (healer, Some(Role::Healer), 1),
+                // Damage dealers by effective DPS: 670, 205, 180, 140.
+                ("Player-6101-0A2B3C02", Some(Role::Dps), 1),
+                ("Player-6101-0A2B3C05", Some(Role::Dps), 1),
+                ("Player-6101-0A2B3C01", Some(Role::Dps), 1),
+                ("Player-6101-0A2B3C03", Some(Role::Dps), 1),
+            ],
+            "{edition:?}"
+        );
+        for r in &rows {
+            let p = kill.players.iter().find(|p| p.guid == r.guid).unwrap();
+            assert_eq!(r.role, p.role(), "the card's role");
+            assert_eq!(r.spec, None);
+            let want = if r.guid == healer {
+                p.hps
+            } else {
+                p.effective_dps(kill.rate_ms())
+            };
+            assert_eq!(r.measure.to_bits(), want.to_bits(), "{}", r.guid);
+        }
+    }
+}
+
 // ---- v49: the live side, one source ----------------------------------------------
 
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");

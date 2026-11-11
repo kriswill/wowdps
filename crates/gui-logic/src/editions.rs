@@ -25,8 +25,8 @@
 //!   says so where the talents and gear would be ([`builds_gap`]); a game
 //!   with no fights says how to get some ([`empty_stage`]).
 //!
-//! Logos are a later step: an entry is its name here, and the GUI draws an
-//! emblem beside it once one is cached.
+//! An entry is its name here; the GUI draws the game's emblem beside it
+//! when the per-machine cache holds one ([`crate::emblems`]).
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
