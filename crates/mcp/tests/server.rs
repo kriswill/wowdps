@@ -2966,9 +2966,10 @@ fn an_empowered_ability_carries_its_stages() {
 const FOREVER_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
 
 /// A daemon following two editions' folders, a source each — Retail's with
-/// `retail`, Forever's with `forever` — the way install discovery sets one
-/// up. With no game running the live edition is the one whose log was
-/// written last: `stale` is set an hour back.
+/// `retail`, Forever's with `forever` — as an install's Retail folder names
+/// them (`Followed::of_logs_dir`), the way the config or install discovery
+/// sets one up. With no game running the live edition is the one whose log
+/// was written last: `stale` is set an hour back.
 fn start_two_editions(
     tmp: &Temp,
     retail: &[(&str, &str)],
@@ -2977,8 +2978,11 @@ fn start_two_editions(
     history: bool,
 ) -> PathBuf {
     use wowdps_model::Edition;
-    let rdir = tmp.0.join("retail");
-    let fdir = tmp.0.join("forever");
+    let wow = tmp.0.join("World of Warcraft");
+    std::fs::create_dir_all(wow.join("Data/data")).expect("mkdir");
+    std::fs::write(wow.join(".build.info"), "x").expect("write");
+    let rdir = wow.join("_retail_/Logs");
+    let fdir = forever_logs(tmp);
     for (dir, logs) in [(&rdir, retail), (&fdir, forever)] {
         std::fs::create_dir_all(dir).expect("mkdir");
         for (name, text) in logs {
@@ -2997,14 +3001,24 @@ fn start_two_editions(
         }
     }
     let opts = history.then(|| history_opts(tmp));
-    start_daemon_with(tmp, FIXTURE, move |o| {
-        o.source = SourceSpec::Dir(rdir);
-        o.editions = wowdps_daemon::Followed {
+    let editions = wowdps_daemon::Followed::of_logs_dir(&rdir);
+    assert_eq!(
+        editions,
+        wowdps_daemon::Followed {
             source: Some(Edition::Retail),
             more: vec![(Edition::Forever, fdir)],
-        };
+        }
+    );
+    start_daemon_with(tmp, FIXTURE, move |o| {
+        o.source = SourceSpec::Dir(rdir);
+        o.editions = editions;
         o.history = opts;
     })
+}
+
+/// Forever's logs folder in [`start_two_editions`]' install.
+fn forever_logs(tmp: &Temp) -> PathBuf {
+    tmp.0.join("World of Warcraft/_forever_/Logs")
 }
 
 fn call(bridge: &mut Bridge, tool: &str, args: &str) -> Json {
@@ -3129,7 +3143,7 @@ fn the_live_tools_follow_or_pin_an_edition() {
     // Following answers the live edition; the calls in turn, each its own —
     // while Forever's log is written, so frames for its live fight are
     // still arriving when a call moves to Retail's.
-    let flog = tmp.0.join("forever").join("WoWCombatLog-110126_200000.txt");
+    let flog = forever_logs(&tmp).join("WoWCombatLog-110126_200000.txt");
     let mut sec = 0;
     let mut write_forever = || {
         let line = format!(

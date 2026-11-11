@@ -12,13 +12,14 @@
 )]
 
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use wowdps_core::tail::SourceSpec;
 use wowdps_daemon::config::Config;
 use wowdps_daemon::{DaemonOptions, run, spec_display};
+use wowdps_model::Edition;
 use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg, socket_path};
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
@@ -111,41 +112,354 @@ fn the_source_comes_from_the_override_the_config_or_nowhere() {
     assert_eq!(opts.followed().len(), 1);
 }
 
+const FOREVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+
+/// A WoW install at `wow` holding the logs folder of each of `products`.
+fn install(wow: &Path, products: &[&str]) {
+    let _ = std::fs::remove_dir_all(wow);
+    std::fs::create_dir_all(wow.join("Data/data")).unwrap();
+    std::fs::write(wow.join(".build.info"), "x").unwrap();
+    for product in products {
+        std::fs::create_dir_all(wow.join(product).join("Logs")).unwrap();
+    }
+}
+
+/// `$WOWDPS_WOW_DIR` naming `wow` while it lives: install discovery's
+/// override, cleared again however the test ends.
+struct WowDir;
+
+impl WowDir {
+    fn set(wow: &Path) -> Self {
+        unsafe { std::env::set_var("WOWDPS_WOW_DIR", wow) };
+        WowDir
+    }
+}
+
+impl Drop for WowDir {
+    fn drop(&mut self) {
+        unsafe { std::env::remove_var("WOWDPS_WOW_DIR") };
+    }
+}
+
 /// v49: a `logs_dir` inside an install names the install — its product
-/// folder names the source's edition — but discovery follows Retail alone
-/// for now, so an install holding Forever's folder too is still one source:
-/// a Forever session changes nothing. `--logs` is one source whatever it
-/// names.
+/// folder names the source's edition — and the other followed product's
+/// folder is followed beside it: Retail's and Forever's, whichever the
+/// config names, and with no config the install discovery finds, Retail's
+/// first. A Retail-only install follows Forever's folder too, though it
+/// does not exist yet. `--logs` is one source whatever it names.
 #[test]
-fn an_install_is_followed_by_retail_alone_for_now() {
+fn an_install_is_followed_edition_by_edition() {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = sandbox();
     let wow = root.join("home/Games/World of Warcraft");
-    std::fs::create_dir_all(wow.join("Data/data")).unwrap();
-    std::fs::write(wow.join(".build.info"), "x").unwrap();
-    for product in ["_retail_", "_forever_"] {
-        std::fs::create_dir_all(wow.join(product).join("Logs")).unwrap();
-        std::fs::copy(FIXTURE, wow.join(product).join("Logs/WoWCombatLog-1.txt")).unwrap();
-    }
-    for product in ["_retail_", "_forever_"] {
+    install(&wow, &["_retail_", "_forever_"]);
+    let retail = wow.join("_retail_/Logs");
+    let forever = wow.join("_forever_/Logs");
+    for (logs, own, beside) in [
+        (&retail, Edition::Retail, (Edition::Forever, &forever)),
+        (&forever, Edition::Forever, (Edition::Retail, &retail)),
+    ] {
         let cfg = Config {
-            logs_dir: Some(wow.join(product).join("Logs")),
+            logs_dir: Some(logs.clone()),
             ..Config::default()
         };
         let opts = DaemonOptions::production(&cfg, None, true).expect("configured");
-        let want = wowdps_core::cli::product_edition(&wow.join(product).join("Logs"));
-        assert!(want.is_some());
-        assert_eq!(opts.editions.source, want, "{product}");
-        assert!(
-            opts.editions.more.is_empty(),
-            "{product}: nothing beside it"
-        );
-        assert_eq!(opts.followed().len(), 1);
+        assert_eq!(opts.source, SourceSpec::Dir(logs.clone()));
+        assert_eq!(opts.editions.source, Some(own));
+        assert_eq!(opts.editions.more, vec![(beside.0, beside.1.clone())]);
+        assert_eq!(opts.followed().len(), 2, "{own:?}");
     }
-    let cfg = Config::default();
-    let logs = wow.join("_retail_/Logs");
-    let opts = DaemonOptions::production(&cfg, Some(SourceSpec::Dir(logs)), true).unwrap();
+
+    // No logs_dir: discovery names the install, and Retail's folder leads.
+    let opts = {
+        let _wow = WowDir::set(&wow);
+        DaemonOptions::production(&Config::default(), None, true).expect("discovered")
+    };
+    assert_eq!(opts.source, SourceSpec::Dir(retail.clone()));
+    assert_eq!(
+        opts.followed(),
+        vec![
+            (Some(Edition::Retail), SourceSpec::Dir(retail.clone())),
+            (Some(Edition::Forever), SourceSpec::Dir(forever.clone())),
+        ]
+    );
+
+    // A Retail-only install: Forever's folder is followed from when it
+    // first holds a log.
+    let only = root.join("home/Retail Only/World of Warcraft");
+    install(&only, &["_retail_"]);
+    let opts = {
+        let _wow = WowDir::set(&only);
+        DaemonOptions::production(&Config::default(), None, true).expect("discovered")
+    };
+    assert!(!only.join("_forever_").exists());
+    assert_eq!(
+        opts.editions.more,
+        vec![(Edition::Forever, only.join("_forever_/Logs"))]
+    );
+
+    let opts = DaemonOptions::production(
+        &Config::default(),
+        Some(SourceSpec::Dir(retail.clone())),
+        true,
+    )
+    .unwrap();
     assert_eq!(opts.editions, Default::default(), "--logs: one source");
+    let _ = std::fs::remove_dir_all(&wow);
+    let _ = std::fs::remove_dir_all(root.join("home/Retail Only"));
+}
+
+/// Stops the daemon on `.0` when dropped, so a failing test never leaves
+/// one holding the sandbox's socket for the next.
+struct Stop(PathBuf);
+
+impl Drop for Stop {
+    fn drop(&mut self) {
+        if let Ok(mut s) = UnixStream::connect(&self.0) {
+            let _ = std::io::Write::write_all(&mut s, &ClientMsg::Shutdown.encode());
+        }
+    }
+}
+
+/// A production-shaped daemon over `opts` with its own store and index
+/// cache under `dir`, the watcher looking for no process; the socket.
+fn start(
+    mut opts: DaemonOptions,
+    dir: &Path,
+) -> (thread::JoinHandle<std::io::Result<()>>, PathBuf, Stop) {
+    opts.idle_grace = Duration::from_secs(30);
+    opts.tick = Duration::from_millis(20);
+    opts.cache_dir = Some(dir.join("cache"));
+    if let Some(h) = opts.history.as_mut() {
+        h.dir = dir.join("history");
+        h.cache_dir = Some(dir.join("cache"));
+    }
+    let socket = opts.socket.clone();
+    let _ = std::fs::remove_file(&socket);
+    let daemon = thread::spawn(move || run(opts));
+    let deadline = Instant::now() + DEADLINE;
+    while UnixStream::connect(&socket).is_err() {
+        assert!(Instant::now() < deadline, "daemon never bound {socket:?}");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let stop = Stop(socket.clone());
+    (daemon, socket, stop)
+}
+
+/// Status, asked until `done` holds of it.
+fn status_until(
+    client: &mut DaemonClient,
+    what: &str,
+    done: impl Fn(&DaemonMsg) -> bool,
+) -> DaemonMsg {
+    let deadline = Instant::now() + DEADLINE;
+    let mut last = None;
+    let mut req_id = 1;
+    while Instant::now() < deadline {
+        client.send(&ClientMsg::GetStatus { req_id });
+        req_id += 1;
+        let until = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < until {
+            for msg in client.poll() {
+                if matches!(msg, DaemonMsg::Status { .. }) {
+                    if done(&msg) {
+                        return msg;
+                    }
+                    last = Some(msg);
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    panic!("{what}: {last:#?}");
+}
+
+/// Each listed source's (edition, log), in `Status` order.
+fn sources_of(msg: &DaemonMsg) -> Vec<(Option<Edition>, Option<String>)> {
+    match msg {
+        DaemonMsg::Status { editions, .. } => editions
+            .iter()
+            .map(|e| (e.edition, e.log.clone()))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn fights_of(msg: &DaemonMsg) -> Option<(u32, u32)> {
+    match msg {
+        DaemonMsg::Status { history, .. } => Some((history.fights, history.importing)),
+        _ => None,
+    }
+}
+
+/// Index checkpoints in a cache folder.
+fn checkpoints(cache: &Path) -> usize {
+    std::fs::read_dir(cache).map_or(0, |d| {
+        d.flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "bin"))
+            .count()
+    })
+}
+
+/// v49 end to end: a daemon of the default config over an install that
+/// holds both editions' logs — found by install discovery, no logs_dir —
+/// follows both: `Status` lists each edition's source with its log, the
+/// store files each log's fights by its edition, and the index cache keeps
+/// its checkpoints per edition: ten Retail logs leave eight of Retail's,
+/// and Forever's one is never evicted by them.
+#[test]
+fn a_default_daemon_follows_both_editions_of_an_install() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = sandbox();
+    let wow = root.join("home/Both/World of Warcraft");
+    install(&wow, &["_retail_", "_forever_"]);
+    let retail = wow.join("_retail_/Logs");
+    let forever = wow.join("_forever_/Logs");
+    // Ten copies of one Retail log, older than Forever's: one log's fights
+    // to the store, ten checkpoints offered to the cache.
+    let hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+    for i in 0..10 {
+        let log = retail.join(format!("WoWCombatLog-0727260{i}_200000.txt"));
+        std::fs::copy(FIXTURE, &log).unwrap();
+        let at = hour_ago + Duration::from_secs(i);
+        std::fs::File::options()
+            .write(true)
+            .open(&log)
+            .and_then(|f| f.set_modified(at))
+            .unwrap();
+    }
+    std::fs::copy(FOREVER, forever.join("WoWCombatLog-110126_200000.txt")).unwrap();
+    let cfg = Config {
+        game_process: "wowdps-no-such-process-5e1c".to_string(),
+        auto_overlay: false,
+        ..Config::default()
+    };
+    let opts = {
+        let _wow = WowDir::set(&wow);
+        DaemonOptions::production(&cfg, None, true).expect("discovered")
+    };
+    let dir = root.join("both");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (daemon, socket, _stop) = start(opts, &dir);
+
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).expect("handshake");
+    let status = status_until(&mut client, "both sources listed", |m| {
+        sources_of(m).len() == 2 && sources_of(m).iter().all(|(e, _)| e.is_some())
+    });
+    assert_eq!(
+        sources_of(&status),
+        [
+            (
+                Some(Edition::Retail),
+                Some("WoWCombatLog-07272609_200000.txt".to_string())
+            ),
+            (
+                Some(Edition::Forever),
+                Some("WoWCombatLog-110126_200000.txt".to_string())
+            ),
+        ]
+    );
+    // Sample's two bosses, once however many copies, and its visit's Σ,
+    // closed in the nine copies not tailed; Forever's one boss.
+    status_until(&mut client, "every log stored", |m| {
+        fights_of(m) == Some((4, 0))
+    });
+    let cache = dir.join("cache");
+    let deadline = Instant::now() + DEADLINE;
+    while checkpoints(&cache) < 9 {
+        assert!(
+            Instant::now() < deadline,
+            "checkpoints: {}",
+            checkpoints(&cache)
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    client.send(&ClientMsg::Shutdown);
+    assert!(daemon.join().expect("daemon thread").is_ok());
+    assert_eq!(
+        checkpoints(&cache),
+        9,
+        "eight of Retail's and Forever's one"
+    );
+    let store = wowdps_daemon::history::Store::open(
+        wowdps_daemon::history::DirBackend::new(dir.join("history")),
+        Default::default(),
+    );
+    let mut editions: Vec<Edition> = store.cards().iter().map(|c| c.edition()).collect();
+    editions.sort();
+    assert_eq!(
+        editions,
+        [
+            Edition::Retail,
+            Edition::Retail,
+            Edition::Retail,
+            Edition::Forever
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&wow);
+}
+
+/// v49: a Retail-only install's daemon lists Retail's source alone, as a
+/// daemon of one source did — Forever's folder missing, then there but
+/// empty — and once Forever's first log appears in it, it is followed and
+/// stored with no restart.
+#[test]
+fn forevers_folder_is_followed_from_its_first_log() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = sandbox();
+    let wow = root.join("home/Later/World of Warcraft");
+    install(&wow, &["_retail_"]);
+    std::fs::copy(
+        FIXTURE,
+        wow.join("_retail_/Logs/WoWCombatLog-072726_200000.txt"),
+    )
+    .unwrap();
+    let cfg = Config {
+        logs_dir: Some(wow.join("_retail_/Logs")),
+        game_process: "wowdps-no-such-process-5e1c".to_string(),
+        auto_overlay: false,
+        ..Config::default()
+    };
+    let opts = DaemonOptions::production(&cfg, None, true).expect("configured");
+    assert_eq!(opts.followed().len(), 2);
+    let dir = root.join("later");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (daemon, socket, _stop) = start(opts, &dir);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).expect("handshake");
+    let retail_only = [(
+        Some(Edition::Retail),
+        Some("WoWCombatLog-072726_200000.txt".to_string()),
+    )];
+    let status = status_until(&mut client, "Retail stored", |m| {
+        fights_of(m) == Some((2, 0)) && sources_of(m).first().is_some_and(|s| s.0.is_some())
+    });
+    assert_eq!(sources_of(&status), retail_only, "Forever's folder missing");
+
+    // The folder appears, empty: still Retail's alone.
+    let forever = wow.join("_forever_/Logs");
+    std::fs::create_dir_all(&forever).unwrap();
+    thread::sleep(Duration::from_millis(500));
+    let status = status_until(&mut client, "Retail's alone", |_| true);
+    assert_eq!(sources_of(&status), retail_only, "Forever's folder empty");
+
+    // Its first log: followed beside Retail's, its fight stored.
+    std::fs::copy(FOREVER, forever.join("WoWCombatLog-110126_200000.txt")).unwrap();
+    let status = status_until(&mut client, "Forever followed", |m| {
+        sources_of(m).len() == 2 && fights_of(m) == Some((3, 0))
+    });
+    assert_eq!(
+        sources_of(&status).get(1),
+        Some(&(
+            Some(Edition::Forever),
+            Some("WoWCombatLog-110126_200000.txt".to_string())
+        ))
+    );
+    client.send(&ClientMsg::Shutdown);
+    assert!(daemon.join().expect("daemon thread").is_ok());
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&wow);
 }
 

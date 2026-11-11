@@ -75,8 +75,9 @@ libGL at runtime. On NixOS use the dev shell (`nix develop` or devenv), or
 wowdps                       # follow the configured or discovered logs dir
 wowdps --file some-log.txt   # follow a specific log
 wowdps --edition forever     # one edition's logs (retail or forever) when
-                             # the daemon follows them, else an empty list
-                             # under its name; without it, the live edition's
+                             # the daemon follows them (an install's are both
+                             # followed), else an empty list under its name;
+                             # without it, the live edition's
 wowdps status                # daemon state: each edition's source, its log
                              # and which is live
 wowdps stop                  # stop the daemon
@@ -101,7 +102,10 @@ persist across sessions as JSON under `~/.local/share/wowdps/history/`;
 `wowdps history sql "…"` runs DuckDB over them, and the MCP server exposes the
 same store as `history`, `progression`, `trend`, `stored_fight`, `pin_fight`
 and `history_sql`). Log discovery checks `$WOWDPS_WOW_DIR`, then
-scans Steam/Proton prefixes for the newest install.
+scans Steam/Proton prefixes for the newest install. In an install the daemon
+follows each edition's logs folder, Retail's `_retail_/Logs` and Forever's
+`_forever_/Logs`, from when it first holds a log, whichever of the two
+`logs_dir` names; `--logs` and `--file` follow the one source they name.
 
 ### Themes
 
@@ -155,7 +159,12 @@ season_start = "2026-11-10"   # Home counts from here; unset, from the
 ```
 
 With one edition the window shows no switch. The overlay has none: it
-always follows the game that is running.
+always follows the game that is running. The defaults find both games: the
+daemon's `game_process` (`wow.exe`) matches either client and names each by
+its product folder, and the overlay's `game_match` (`world of warcraft`)
+matches either window. With both games open at once the two windows look
+the same to the compositor, so the overlay shows and hides by whichever of
+them Hyprland lists first, not necessarily the one being played.
 
 ### Game data caches
 

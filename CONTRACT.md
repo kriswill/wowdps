@@ -735,9 +735,9 @@ answers; when a session comes to be answered by another source than the one
 whose list it holds (the live edition moved under a follower, a pin's edition
 is another source's now) it is sent that source's list as it answers it, the
 frame that moves it. With one source — `--file`, `--logs`, a folder outside an
-install, and every install while discovery follows Retail alone — every
-session is answered by it, and following is exactly what every client had
-before. The daemon pushes snapshots for exactly what is
+install — and with one source holding a log — an install whose other followed
+product's folder never holds one — every session is answered by it, and
+following is exactly what every client had before. The daemon pushes snapshots for exactly what is
 watched, breakdown included when drilled. `Compare` is answered with
 `CompareSnapshot` (the answered `View`, then two `CompareSide { guid,
 total: Row, spells: Vec<Row>, timeline, spell_timeline, mitigation }`s — every
@@ -1128,15 +1128,18 @@ inside an install, `<install>/<product>/Logs` of a followed product (`cli::FOLLO
 install: each other followed product's `Logs` folder there is followed beside it
 (`cli::sibling_logs`), no new key; a folder of a product not on the list (a test realm, a beta) is
 not followed beside it, and one outside an install is followed alone. Discovery follows Retail
-alone for now (`FOLLOWED` is `[Retail]`), so every install is one source as before; following
-Forever is adding it there. Each source has its own tailer and engine, started when its folder
-first holds a log (listed in `Status` from then, the first source always): its index, live meter
+and Forever (`FOLLOWED`), so an install's Forever logs are tailed beside Retail's with no config
+change, whichever of the two folders the config names (install discovery names Retail's). Each
+source has its own tailer and engine, started when its folder first holds a log (listed in
+`Status` from then, the first source always; a folder missing or empty polls for one, no scan):
+its index, live meter
 and loaded segments are its own, so one edition's new log never wipes another's, and its
 switches retire its own logs to the history. The header decides a log's edition, not the folder:
 a log in one product's folder whose header names another edition makes that folder's source that
 edition's while it follows that log (its rows and frames name the header's edition, a pin to it
 is answered from it, the history files its fights by it); the folder names a source only until
-its header is read, and only while the daemon follows more than one. The LIVE edition (what a
+its header is read, and only once more than one source has held a log, so a daemon over an install
+with no Forever log sends every frame a daemon of one source sends. The LIVE edition (what a
 following session is answered from, `Status`'s `live`): with one followed edition's game running
 (`Running`: by name), that one; with both, the one with a pull open (`Engine::pull_open`, lines
 having arrived since the backlog: a boss fight begun and not ended — while the watcher NAMES
@@ -1161,11 +1164,11 @@ looked for in every source's folder. A role the log's spec does not say is a STO
 (`CardPlayer::stored_role`, v49): `role()` is the spec's role, else it; R30 infers one for an
 edition whose log carries no spec, set at extraction for each friendly player with no spec. A
 card stored before gains it only by a regrade, and a regrade finds a card's log only in a
-followed source's folder or among the logs this daemon has read since it started (an import
-reads them; a restart forgets them): while discovery follows Retail alone, a Forever card's
-log is found by `wowdps history import` of it (or of Forever's `Logs` folder) and a
-`wowdps history regrade` once that import's scan is done, in the same daemon run (the import
-stores nothing it already holds). The role night still reads the spec's role alone, and an
+followed source's folder (an install's Retail and Forever folders alike) or among the logs this
+daemon has read since it started (an import reads them; a restart forgets them): a card whose
+log sits in no followed folder (a daemon on `--logs` or `--file`, a log moved away) is found by
+`wowdps history import` of it and a `wowdps history regrade` once that import's scan is done, in
+the same daemon run (the import stores nothing it already holds). The role night still reads the spec's role alone, and an
 import may name one for a specless player. The lake's `fights` and `players` views
 carry `edition` (the key, named off `project_id`; `players` carries `project_id` too), and
 `stats.kept.progression` is reckoned per edition as the store does. The MCP's stored cards say
@@ -1281,7 +1284,8 @@ Git-style subcommands: `wowdps [--file|--logs] [--edition <name>]` (TUI client; 
 conflict with a running daemon is a hard error naming both; v49: its header names the
 edition the daemon answers in ahead of the log; it follows the live edition, and
 `--edition` pins it to one, `retail` or `forever` in any case (`cli::PRODUCTS`' keys):
-that edition's logs when the daemon follows them, else an empty list under its name;
+that edition's logs when the daemon follows them (an install's are both followed), else an
+empty list under its name;
 any other name is refused with the names it takes, exit 2), `wowdps gui [--file|--logs]`,
 `wowdps daemon [--linger] [--file|--logs]`, `wowdps status` (v49: a pair of lines per
 edition's source, the first source's first — `source:` what is followed, then
