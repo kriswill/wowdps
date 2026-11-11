@@ -1,0 +1,447 @@
+use std::time::{Duration, Instant};
+
+use wowdps_daemon::mock::MockDaemon;
+use wowdps_model::Edition;
+use wowdps_proto::history::FightCard;
+use wowdps_proto::{ClientMsg, EditionRef, EditionSource, HistoryAnswer, HistoryQuery};
+
+use super::*;
+
+fn fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../core/fixtures")
+        .join(name)
+}
+
+/// A store holding the Retail fixture's fights and, with `forever`, the
+/// Forever fixture's: one store, as a daemon following both keeps.
+fn store(forever: bool) -> MockDaemon {
+    let mock = MockDaemon::fixture().with_history();
+    if forever {
+        mock.with_history_of(&fixture("forever.txt"))
+    } else {
+        mock
+    }
+}
+
+/// Every question the census asks, answered by `mock`, until it asks
+/// nothing more at `now`.
+fn settle(census: &mut Census, mock: &mut MockDaemon, now: Instant) -> bool {
+    let mut changed = false;
+    let mut id = 100;
+    while let Some(msg) = census.next_request(id, now) {
+        for reply in mock.handle(msg) {
+            if let wowdps_proto::DaemonMsg::History { req_id, answer } = reply {
+                changed |= census.absorb(req_id, &answer, now).1;
+            }
+        }
+        id += 1;
+    }
+    changed
+}
+
+fn card(edition: Edition, build: (u16, u16, u16), start: i64) -> FightCard {
+    FightCard {
+        id: format!("{}-{start}", edition.key()),
+        project_id: edition.project_id(),
+        build,
+        start_utc_ms: start,
+        ..FightCard::default()
+    }
+}
+
+#[test]
+fn retail_goes_by_its_expansion_and_forever_by_its_name() {
+    assert_eq!(expansion(12), Some("Midnight"));
+    assert_eq!(expansion(11), Some("The War Within"));
+    assert_eq!(expansion(13), None, "an expansion this build does not know");
+    assert_eq!(name(Edition::Retail, Some((12, 1, 5))), "Midnight");
+    assert_eq!(name(Edition::Unknown(0), Some((12, 0, 0))), "Midnight");
+    assert_eq!(name(Edition::Retail, Some((13, 0, 0))), "Retail");
+    // No build known yet: the newest expansion, so the name does not
+    // change when the first fight is stored.
+    assert_eq!(newest_expansion(), "Midnight");
+    assert_eq!(name(Edition::Retail, Some((0, 0, 0))), "Midnight");
+    assert_eq!(name(Edition::Retail, None), "Midnight");
+    assert_eq!(name(Edition::Forever, Some((1, 60, 1))), "Forever");
+    assert_eq!(name(Edition::Classic(2), None), "Classic");
+    assert_eq!(name(Edition::Unknown(7), None), "Unknown edition");
+}
+
+#[test]
+fn the_build_is_the_tooltip_s() {
+    assert_eq!(
+        tip(Edition::Retail, Some((12, 1, 5))),
+        "Retail, build 12.1.5"
+    );
+    assert_eq!(tip(Edition::Retail, None), "Retail");
+    assert_eq!(
+        empty_stage("Forever"),
+        (
+            "No Forever fights yet".to_string(),
+            "Play a fight in Forever with combat logging on and it shows up here.".to_string()
+        )
+    );
+    assert_eq!(tip(Edition::Retail, Some((13, 0, 2))), "Build 13.0.2");
+    assert_eq!(tip(Edition::Forever, Some((1, 60, 1))), "Build 1.60.1");
+    assert_eq!(tip(Edition::Forever, None), "Forever");
+    assert_eq!(tip(Edition::Unknown(7), None), "Unknown edition 7");
+    assert_eq!(build_words(Some((0, 0, 0))), None);
+}
+
+#[test]
+fn entry_ids_name_the_edition_by_its_key() {
+    assert_eq!(entry_id(Edition::Retail), "edition-retail");
+    assert_eq!(entry_id(Edition::Unknown(0)), "edition-retail");
+    assert_eq!(entry_id(Edition::Forever), "edition-forever");
+    assert_eq!(entry_id(Edition::Classic(2)), "edition-classic-2");
+}
+
+/// Picking the game the window would follow anyway is following; any
+/// other is a pin. With nothing named live, every pick pins.
+#[test]
+fn a_pick_follows_the_game_being_followed_and_pins_any_other() {
+    assert_eq!(
+        choice_for(Edition::Retail, Some(Edition::Retail)),
+        EditionRef::Follow
+    );
+    assert_eq!(
+        choice_for(Edition::Unknown(0), Some(Edition::Retail)),
+        EditionRef::Follow
+    );
+    assert_eq!(
+        choice_for(Edition::Forever, Some(Edition::Retail)),
+        EditionRef::Pin(Edition::Forever)
+    );
+    assert_eq!(
+        choice_for(Edition::Retail, Some(Edition::Forever)),
+        EditionRef::Pin(Edition::Retail)
+    );
+    assert_eq!(
+        choice_for(Edition::Forever, None),
+        EditionRef::Pin(Edition::Forever)
+    );
+}
+
+/// Forever's log carries no builds, and the talent viewer says so; every
+/// other edition's does, and it says nothing.
+#[test]
+fn an_edition_without_logged_builds_says_so() {
+    assert!(logs_builds(Edition::Retail));
+    assert!(!logs_builds(Edition::Forever));
+    assert_eq!(builds_gap(Some(Edition::Retail)), None);
+    assert_eq!(builds_gap(None), None);
+    assert_eq!(
+        builds_gap(Some(Edition::Forever)).as_deref(),
+        Some("Forever's combat log does not carry talents or gear.")
+    );
+}
+
+/// Following, the window is in the live edition — until one is named, the
+/// edition it was in, so a pick never passes through Retail on its way;
+/// pinned, in the pin. History reads are scoped only once several editions
+/// are known.
+#[test]
+fn the_window_s_edition_and_what_its_reads_ask_for() {
+    let follow = |live, last| window_edition(EditionRef::Follow, live, last);
+    assert_eq!(follow(None, Edition::Retail), Edition::Retail);
+    assert_eq!(follow(None, Edition::Forever), Edition::Forever, "kept");
+    assert_eq!(
+        follow(Some(Edition::Forever), Edition::Retail),
+        Edition::Forever
+    );
+    assert_eq!(
+        follow(Some(Edition::Unknown(0)), Edition::Forever),
+        Edition::Retail
+    );
+    assert_eq!(
+        window_edition(
+            EditionRef::Pin(Edition::Forever),
+            Some(Edition::Retail),
+            Edition::Retail
+        ),
+        Edition::Forever
+    );
+    assert_eq!(history_edition(false, Edition::Forever), None);
+    assert_eq!(
+        history_edition(true, Edition::Forever),
+        Some(Edition::Forever)
+    );
+    assert_eq!(
+        history_edition(true, Edition::Unknown(0)),
+        Some(Edition::Retail)
+    );
+}
+
+/// A Forever fight names Forever wherever it is drawn (step 2's rule); a
+/// Retail fight names its expansion only in another edition's window; a
+/// stage with no fight names no edition.
+#[test]
+fn a_fight_header_names_its_edition_where_another_could_be_meant() {
+    let heroic = || "Heroic, 20 players".to_string();
+    let b = Some((12, 0, 0));
+    assert_eq!(
+        header_meta(heroic(), Some(Edition::Retail), None, b),
+        heroic()
+    );
+    assert_eq!(
+        header_meta(heroic(), Some(Edition::Retail), Some(Edition::Retail), b),
+        heroic()
+    );
+    assert_eq!(
+        header_meta(heroic(), Some(Edition::Retail), Some(Edition::Forever), b),
+        "Midnight, Heroic, 20 players"
+    );
+    assert_eq!(
+        header_meta(
+            String::new(),
+            Some(Edition::Unknown(0)),
+            Some(Edition::Forever),
+            b
+        ),
+        "Midnight"
+    );
+    assert_eq!(
+        header_meta(heroic(), Some(Edition::Forever), Some(Edition::Retail), b),
+        "Forever, Heroic, 20 players"
+    );
+    assert_eq!(
+        header_meta(heroic(), Some(Edition::Forever), None, b),
+        "Forever, Heroic, 20 players"
+    );
+    assert_eq!(
+        header_meta(String::new(), None, Some(Edition::Forever), b),
+        "",
+        "nothing on the stage, nothing said"
+    );
+}
+
+/// The census over a store of Retail's fights alone: Retail is known by
+/// its fights and named by its newest card's build, Forever is asked about
+/// twice (an empty answer may be a refused read) and stays unknown, and no
+/// switch is drawn.
+#[test]
+fn one_edition_known_draws_no_switch() {
+    let mut mock = store(false);
+    let mut census = Census::new();
+    let now = Instant::now();
+    assert!(settle(&mut census, &mut mock, now), "Retail is known");
+    assert_eq!(census.known(), vec![Edition::Retail]);
+    assert!(!census.several());
+    assert_eq!(census.name(Edition::Retail), "Midnight");
+    assert_eq!(census.tip(Edition::Retail), "Retail, build 12.0.0");
+    // Forever's empty answer is asked once more after the pause.
+    let later = now + Duration::from_secs(2);
+    assert!(census.next_request(1, now).is_none(), "the pause first");
+    let again = census.next_request(1, later);
+    assert!(
+        matches!(
+            again,
+            Some(ClientMsg::GetHistory {
+                query: HistoryQuery::Fights {
+                    edition: Some(Edition::Forever),
+                    limit: 1,
+                    ..
+                },
+                ..
+            })
+        ),
+        "{again:?}"
+    );
+    census.absorb(
+        1,
+        &HistoryAnswer::Fights {
+            cards: Vec::new(),
+            total: 0,
+        },
+        later,
+    );
+    assert!(
+        census.next_request(2, later).is_none(),
+        "the store's answer"
+    );
+    assert_eq!(entries(&census, Edition::Retail), None);
+}
+
+/// Both editions' fights in the store: both known, each named, and the
+/// switch lists the games alone — Midnight, then Forever — the one shown
+/// lit, the one being played noted, the face its name with the live dot
+/// only while it is the game being played.
+#[test]
+fn two_editions_known_draw_the_switch() {
+    let mut mock = store(true);
+    let mut census = Census::new();
+    settle(&mut census, &mut mock, Instant::now());
+    assert_eq!(census.known(), vec![Edition::Retail, Edition::Forever]);
+    assert!(census.several());
+    assert_eq!(census.name(Edition::Forever), "Forever");
+    assert_eq!(census.tip(Edition::Forever), "Build 1.60.1");
+    let e = entries(&census, Edition::Retail).expect("a switch");
+    let names: Vec<&str> = e.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["Midnight", "Forever"],
+        "the games, nothing else"
+    );
+    assert!(e[0].on && !e[1].on);
+    assert_eq!((e[0].note, e[1].note), (None, None), "no game running");
+    assert_eq!(e[0].tip, "Retail, build 12.0.0");
+    assert_eq!(e[1].id, "edition-forever");
+    let shown = entries(&census, Edition::Forever).expect("a switch");
+    assert!(!shown[0].on && shown[1].on);
+    let f = face(&census, Edition::Retail);
+    assert_eq!((f.name.as_str(), f.playing), ("Midnight", false));
+
+    // Retail's game runs: its row says so, and its face wears the dot.
+    census.on_sources(&[EditionSource {
+        edition: Some(Edition::Retail),
+        live: true,
+        running: true,
+        ..EditionSource::default()
+    }]);
+    assert_eq!(census.live(), Some(Edition::Retail));
+    let e = entries(&census, Edition::Forever).expect("a switch");
+    assert_eq!((e[0].note, e[1].note), (Some(PLAYING_NOW), None));
+    assert!(face(&census, Edition::Retail).playing);
+    assert!(
+        !face(&census, Edition::Forever).playing,
+        "looking at another game: no dot"
+    );
+}
+
+/// An edition the daemon follows is known before it has a fight, and a
+/// card read elsewhere makes its edition known and names its build — the
+/// newest card's, whatever order they come in.
+#[test]
+fn sources_and_cards_make_an_edition_known() {
+    let mut census = Census::new();
+    let source = |e: Option<Edition>| EditionSource {
+        edition: e,
+        ..EditionSource::default()
+    };
+    assert!(census.on_sources(&[source(Some(Edition::Retail)), source(None)]));
+    assert_eq!(census.known(), vec![Edition::Retail]);
+    assert!(
+        !census.on_sources(&[source(Some(Edition::Retail))]),
+        "no change"
+    );
+    assert!(census.learn([&card(Edition::Forever, (1, 60, 1), 20)]));
+    assert!(census.several());
+    census.learn([&card(Edition::Retail, (12, 0, 7), 50)]);
+    census.learn([&card(Edition::Retail, (11, 2, 0), 10)]);
+    assert_eq!(
+        census.build(Edition::Retail),
+        Some((12, 0, 7)),
+        "the newest card's"
+    );
+    assert_eq!(census.name(Edition::Retail), "Midnight");
+    // A source gone (the daemon restarted following less) leaves an
+    // edition known by it alone known for the session: a switch once drawn
+    // never goes away under the reader.
+    let mut census = Census::new();
+    census.on_sources(&[
+        source(Some(Edition::Retail)),
+        source(Some(Edition::Forever)),
+    ]);
+    assert!(census.several());
+    census.on_sources(&[source(Some(Edition::Retail))]);
+    assert_eq!(census.known(), vec![Edition::Retail, Edition::Forever]);
+    assert!(census.several(), "still drawn");
+}
+
+/// A store write asks again about the editions it held no fight of, and
+/// never about one it already knows.
+#[test]
+fn a_store_write_asks_again_about_an_edition_with_no_fights() {
+    let mut mock = store(false);
+    let mut census = Census::new();
+    let now = Instant::now();
+    settle(&mut census, &mut mock, now);
+    settle(&mut census, &mut mock, now + Duration::from_secs(1));
+    census.store_changed();
+    let asked = census.next_request(7, now + Duration::from_secs(2));
+    assert!(
+        matches!(
+            &asked,
+            Some(ClientMsg::GetHistory {
+                query: HistoryQuery::Fights {
+                    edition: Some(Edition::Forever),
+                    ..
+                },
+                ..
+            })
+        ),
+        "only Forever, which had none: {asked:?}"
+    );
+    census.absorb(
+        7,
+        &HistoryAnswer::Fights {
+            cards: vec![card(Edition::Forever, (1, 60, 1), 5)],
+            total: 1,
+        },
+        now + Duration::from_secs(2),
+    );
+    assert!(census.several());
+}
+
+/// Two store writes within `REPROBE_EVERY` ask once: the second round
+/// waits out the interval, then asks.
+#[test]
+fn store_writes_ask_again_at_most_every_interval() {
+    let mut mock = store(false);
+    let mut census = Census::new();
+    let now = Instant::now();
+    settle(&mut census, &mut mock, now);
+    settle(&mut census, &mut mock, now + Duration::from_secs(1));
+    assert!(!census.several(), "Forever still has no fight");
+    let empty = HistoryAnswer::Fights {
+        cards: Vec::new(),
+        total: 0,
+    };
+    let t0 = now + Duration::from_secs(2);
+    census.store_changed();
+    assert!(
+        census.next_request(20, t0).is_some(),
+        "the first round asks"
+    );
+    census.absorb(20, &empty, t0);
+    census.store_changed();
+    let soon = t0 + Duration::from_secs(1);
+    // The first round's own retry (a pause after an empty answer) comes
+    // due; answer it, and the second round still waits.
+    let mut retries = 0;
+    while let Some(ClientMsg::GetHistory { req_id, .. }) = census.next_request(21, soon) {
+        census.absorb(req_id, &empty, soon);
+        retries += 1;
+    }
+    assert_eq!(retries, 1, "the retry, once");
+    assert!(
+        census
+            .next_request(22, t0 + Duration::from_secs(4))
+            .is_none(),
+        "the second round waits out the interval"
+    );
+    assert!(
+        census
+            .next_request(23, t0 + REPROBE_EVERY + Duration::from_millis(1))
+            .is_some(),
+        "then asks"
+    );
+}
+
+/// A question lost with the connection is asked again.
+#[test]
+fn a_lost_question_is_asked_again() {
+    let mut census = Census::new();
+    let now = Instant::now();
+    let first = census.next_request(1, now);
+    assert!(first.is_some());
+    assert!(census.next_request(2, now).is_none(), "one in flight");
+    census.lost();
+    let again = census.next_request(3, now);
+    assert_eq!(
+        format!("{first:?}").replace("req_id: 1", "req_id: 3"),
+        format!("{again:?}"),
+        "the same question again"
+    );
+}

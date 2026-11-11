@@ -13,6 +13,7 @@
 //! hang over a scrim that takes the press that closes them; the ⚙ card has
 //! none, and the pointer leaving it closes it.
 
+mod editions;
 mod menu;
 mod options;
 mod sheet;
@@ -21,6 +22,9 @@ mod toast;
 #[cfg(test)]
 mod tests;
 
+pub use editions::view as editions;
+#[cfg(test)]
+pub use menu::row_id as menu_row_id;
 pub use menu::view as menu;
 pub use options::view as options;
 pub use sheet::view as sheet;
@@ -92,19 +96,21 @@ pub(super) fn enter<E: Styled>(
     el.opacity(eased).relative().top(w.z(RISE * (1.0 - eased)))
 }
 
-/// Which of the three menus.
+/// Which of the menus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Menu {
     Options,
     Sheet,
     Picker,
+    /// The edition switch's.
+    Edition,
 }
 
 impl Gui {
     /// Is a menu up — the sheet, the ⚙ card or the character menu? Then
     /// the keys are its: any key closes it and does nothing else.
     pub(crate) fn modal(&self) -> bool {
-        self.cards.options || self.cards.sheet || self.cards.picker
+        self.cards.options || self.cards.sheet || self.cards.picker || self.cards.edition
     }
 
     /// Close every menu.
@@ -112,6 +118,7 @@ impl Gui {
         self.cards.options = false;
         self.cards.sheet = false;
         self.cards.picker = false;
+        self.cards.edition = false;
         cx.notify();
     }
 
@@ -123,10 +130,12 @@ impl Gui {
             Menu::Options => self.cards.options,
             Menu::Sheet => self.cards.sheet,
             Menu::Picker => self.cards.picker,
+            Menu::Edition => self.cards.edition,
         };
         self.cards.options = open && menu == Menu::Options;
         self.cards.sheet = open && menu == Menu::Sheet;
         self.cards.picker = open && menu == Menu::Picker;
+        self.cards.edition = open && menu == Menu::Edition;
         if open {
             window.focus(&self.focus, cx);
         }
@@ -188,12 +197,12 @@ impl Gui {
     /// owner's class when the window knows it — learned once and held: a
     /// class chrome picked now wears it, and the session's next word keeps
     /// it.
-    fn repaint(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn repaint(&mut self, cx: &mut Context<Self>) {
         let chrome = self.cfg.chrome();
         let class = self
             .played(cx)
             .and_then(|p| p.class)
-            .or_else(|| self.cfg.character_class());
+            .or_else(|| self.cfg.character_class_in(self.keys()));
         let accent = match chrome {
             Chrome::Class => class.map(class_accent),
             Chrome::Theme => None,
@@ -213,9 +222,10 @@ impl Gui {
     /// following means; the window's "you" never left it.
     pub(crate) fn picker_follow(&mut self, cx: &mut Context<Self>) {
         self.cards.picker = false;
-        if self.cfg.character.is_some() {
-            self.cfg.character = None;
-            wowdps_gui_logic::config::Config::store_character(None);
+        let keys = self.keys();
+        if self.cfg.character_in(keys).is_some() {
+            self.cfg.set_character_in(keys, None);
+            wowdps_gui_logic::config::Config::store(|c| c.set_character_in(keys, None));
         }
         if let Some(home) = self.hist.store.home.as_mut() {
             home.scope = None;

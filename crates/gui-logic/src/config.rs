@@ -8,10 +8,12 @@
 //! stderr is a pipe to the daemon, and `eprintln!` panics once that reader
 //! is gone.
 
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use wowdps_model::Edition;
 
 /// Which screen edge the overlay tab pins to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +112,21 @@ pub struct Config {
     pub density: String,
     /// Open Home at launch when nothing is live.
     pub home_on_start: bool,
+    /// `[editions.<key>]`: the window's keys of each edition but Retail
+    /// (`forever`; [`edition_key`]) — the character Home opens on, its
+    /// class and the dates Home counts from, as the top-level
+    /// `character`, `character_class`, `season_start` and `season_end` are
+    /// Retail's. Tables, which the daemon's reader skips: none of these is
+    /// a daemon key. Read through [`KeysOf`]: while the window knows one
+    /// edition, a key its table lacks reads the top-level one. A value that
+    /// is no table of tables fails nothing: what does not parse is left out
+    /// (`tolerant_editions`).
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "tolerant_editions"
+    )]
+    pub editions: BTreeMap<String, EditionKeys>,
     /// Every key this struct does not own — the daemon's `logs_dir`,
     /// `game_process`, `auto_overlay`, `history_*` and anything a future
     /// version adds — round-trips through a save untouched. Without this a
@@ -150,9 +167,104 @@ impl Default for Config {
             themes: None,
             density: crate::theme::Density::default().name().to_string(),
             home_on_start: true,
+            editions: BTreeMap::new(),
             extra: toml::Table::new(),
             load_failed: false,
         }
+    }
+}
+
+/// One edition's own window keys (`[editions.forever]`), each read as its
+/// top-level namesake is for Retail.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EditionKeys {
+    /// The scope Home opens on in this edition (a player guid).
+    pub character: Option<String>,
+    /// The class of the character played last in it ("Death Knight").
+    pub character_class: Option<String>,
+    /// The first day Home counts from, `YYYY-MM-DD`, UTC; unset, the
+    /// edition's default (`home::Season::default_for`).
+    pub season_start: Option<String>,
+    /// `YYYY-MM-DD`, UTC, exclusive.
+    pub season_end: Option<String>,
+    /// Keys a later version adds, kept through a save.
+    #[serde(flatten)]
+    pub extra: toml::Table,
+}
+
+impl EditionKeys {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// `editions` as written, each table that parses: a value of another
+/// shape (`editions = 3`), or one edition's table that does not parse, is
+/// left out with a notice rather than failing the whole file — a config
+/// that did not parse is never saved, and the window would draw in the
+/// defaults.
+fn tolerant_editions<'de, D>(d: D) -> Result<BTreeMap<String, EditionKeys>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = toml::Value::deserialize(d)?;
+    let mut out = BTreeMap::new();
+    let notice = |what: String| {
+        let _ = writeln!(std::io::stderr(), "wowdps: config: {what}; left out");
+    };
+    match value {
+        toml::Value::Table(t) => {
+            for (key, v) in t {
+                match EditionKeys::deserialize(v) {
+                    Ok(keys) => {
+                        out.insert(key, keys);
+                    }
+                    Err(e) => notice(format!("editions.{key}: {e}")),
+                }
+            }
+        }
+        other => notice(format!("editions = {other} is not a table")),
+    }
+    Ok(out)
+}
+
+/// Whose window keys are read: an edition's, and whether it is the only
+/// edition the window knows — then a key its table lacks reads the
+/// top-level one, so a config written before editions (a player of one
+/// game, whichever) reads as it did. Writes always go to the edition's own
+/// key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeysOf {
+    pub edition: Edition,
+    pub alone: bool,
+}
+
+impl KeysOf {
+    /// Retail's keys: the top-level ones.
+    pub const RETAIL: KeysOf = KeysOf {
+        edition: Edition::Retail,
+        alone: true,
+    };
+
+    pub fn new(edition: Edition, alone: bool) -> Self {
+        Self {
+            edition: edition.counts_as(),
+            alone,
+        }
+    }
+}
+
+/// The `[editions.<key>]` table an edition's window keys live in: `None`
+/// for Retail (and a fight that names no edition, reckoned with it), whose
+/// keys are the top-level ones; `forever`; a Classic client or an unknown
+/// number by its id (`classic-2`), each its own game with its own
+/// characters.
+pub fn edition_key(edition: Edition) -> Option<String> {
+    match edition.counts_as() {
+        Edition::Retail => None,
+        Edition::Forever => Some("forever".to_string()),
+        other => Some(format!("{}-{}", other.key(), other.project_id())),
     }
 }
 
@@ -251,6 +363,100 @@ impl Config {
         self.character_class
             .as_deref()
             .and_then(crate::theme::class_named)
+    }
+
+    fn keys_of(&self, edition: Edition) -> Option<&EditionKeys> {
+        self.editions.get(&edition_key(edition)?)
+    }
+
+    /// One edition's keys to change, made when it has none.
+    fn keys_mut(&mut self, key: String) -> &mut EditionKeys {
+        self.editions.entry(key).or_default()
+    }
+
+    /// Drop an edition's table once nothing is left in it.
+    fn tidy(&mut self, key: &str) {
+        if self.editions.get(key).is_some_and(EditionKeys::is_empty) {
+            self.editions.remove(key);
+        }
+    }
+
+    /// One of `keys`' values: its edition's own, else — Retail, or the only
+    /// edition known — the top-level one.
+    fn read<'a>(
+        &'a self,
+        keys: KeysOf,
+        own: impl Fn(&'a EditionKeys) -> Option<&'a str>,
+        top: Option<&'a str>,
+    ) -> Option<&'a str> {
+        match edition_key(keys.edition) {
+            None => top,
+            Some(_) => self
+                .keys_of(keys.edition)
+                .and_then(own)
+                .or(top.filter(|_| keys.alone)),
+        }
+    }
+
+    /// The scope Home opens on: Retail's is `character`.
+    pub fn character_in(&self, keys: KeysOf) -> Option<&str> {
+        self.read(keys, |k| k.character.as_deref(), self.character.as_deref())
+    }
+
+    /// Set the scope Home opens on in `keys`' edition. While it is the
+    /// only edition known the top-level `character` is written too, as the
+    /// read falls back to it: a pick, or its clearing, lands where it is
+    /// read, and a config of one game keeps the key it always had.
+    pub fn set_character_in(&mut self, keys: KeysOf, guid: Option<String>) {
+        match edition_key(keys.edition) {
+            None => self.character = guid,
+            Some(key) => {
+                if keys.alone {
+                    self.character = guid.clone();
+                }
+                self.keys_mut(key.clone()).character = guid;
+                self.tidy(&key);
+            }
+        }
+    }
+
+    /// The remembered class of the character played last: Retail's is
+    /// `character_class`.
+    pub fn character_class_in(&self, keys: KeysOf) -> Option<wowdps_model::Class> {
+        self.read(
+            keys,
+            |k| k.character_class.as_deref(),
+            self.character_class.as_deref(),
+        )
+        .and_then(crate::theme::class_named)
+    }
+
+    /// Set the class of the character played last in `edition` — and the
+    /// top-level `character_class` with it, the class played last whatever
+    /// the game, which the overlay and the window's first frame read.
+    pub fn set_character_class_in(&mut self, edition: Edition, class: Option<String>) {
+        if let Some(key) = edition_key(edition) {
+            self.keys_mut(key.clone()).character_class = class.clone();
+            self.tidy(&key);
+        }
+        self.character_class = class;
+    }
+
+    /// The dates Home counts from, as written: Retail's are `season_start`
+    /// and `season_end`.
+    pub fn season_in(&self, keys: KeysOf) -> (Option<&str>, Option<&str>) {
+        (
+            self.read(
+                keys,
+                |k| k.season_start.as_deref(),
+                self.season_start.as_deref(),
+            ),
+            self.read(
+                keys,
+                |k| k.season_end.as_deref(),
+                self.season_end.as_deref(),
+            ),
+        )
     }
 
     pub fn load() -> Self {
@@ -466,6 +672,14 @@ mod tests {
             )),
             density: "compact".to_string(),
             home_on_start: false,
+            editions: BTreeMap::from([(
+                "forever".to_string(),
+                EditionKeys {
+                    character: Some("Player-6101-0A2B3C01".to_string()),
+                    season_start: Some("2026-11-10".to_string()),
+                    ..EditionKeys::default()
+                },
+            )]),
             extra: toml::Table::new(),
             load_failed: false,
         };
@@ -813,5 +1027,163 @@ mod passthrough {
         assert_eq!(cfg.history_characters(), vec!["C-Realm-US"]);
         cfg.extra.remove("history_characters");
         assert!(cfg.history_characters().is_empty());
+    }
+
+    /// Each edition keeps its own character, class and dates once the
+    /// window knows several: Retail's are the top-level keys, every other
+    /// edition's sit in its own table, and clearing an edition's last key
+    /// drops its table. The class is the top-level one too: the class
+    /// played last, whatever the game.
+    #[test]
+    fn each_edition_keeps_its_own_keys() {
+        let mut cfg = Config {
+            character: Some("Player-1".to_string()),
+            character_class: Some("Mage".to_string()),
+            season_start: Some("2026-08-12".to_string()),
+            ..Config::default()
+        };
+        let retail = KeysOf::new(Edition::Retail, false);
+        let forever = KeysOf::new(Edition::Forever, false);
+        assert_eq!(cfg.character_in(retail), Some("Player-1"));
+        assert_eq!(
+            cfg.character_in(KeysOf::new(Edition::Unknown(0), false)),
+            Some("Player-1")
+        );
+        assert_eq!(cfg.character_in(forever), None, "its own");
+        assert_eq!(
+            cfg.character_class_in(retail),
+            Some(wowdps_model::Class::Mage)
+        );
+        assert_eq!(cfg.character_class_in(forever), None);
+        assert_eq!(cfg.season_in(retail), (Some("2026-08-12"), None));
+        assert_eq!(cfg.season_in(forever), (None, None));
+
+        cfg.set_character_in(forever, Some("Player-2".to_string()));
+        cfg.set_character_class_in(Edition::Forever, Some("Shaman".to_string()));
+        assert_eq!(cfg.character_in(forever), Some("Player-2"));
+        assert_eq!(
+            cfg.character_class_in(forever),
+            Some(wowdps_model::Class::Shaman)
+        );
+        assert_eq!(cfg.character.as_deref(), Some("Player-1"), "Retail's stand");
+        assert_eq!(
+            cfg.character_class.as_deref(),
+            Some("Shaman"),
+            "the class played last, for the overlay"
+        );
+
+        cfg.set_character_in(retail, None);
+        assert_eq!(cfg.character, None);
+        assert_eq!(cfg.character_in(forever), Some("Player-2"));
+
+        cfg.set_character_in(forever, None);
+        cfg.set_character_class_in(Edition::Forever, None);
+        assert!(cfg.editions.is_empty(), "an empty table is dropped");
+        assert_eq!(
+            edition_key(Edition::Classic(2)).as_deref(),
+            Some("classic-2")
+        );
+        assert_eq!(
+            edition_key(Edition::Unknown(7)).as_deref(),
+            Some("unknown-7")
+        );
+    }
+
+    /// While the window knows one edition, a key its table lacks reads the
+    /// top-level one: a player of Forever alone, whose config predates
+    /// editions, keeps their pick, class and dates. Its own key, once
+    /// written, wins.
+    #[test]
+    fn one_edition_alone_falls_back_to_the_top_level_keys() {
+        let mut cfg = Config {
+            character: Some("Player-1".to_string()),
+            character_class: Some("Warrior".to_string()),
+            season_start: Some("2026-11-10".to_string()),
+            season_end: Some("2027-01-01".to_string()),
+            ..Config::default()
+        };
+        let alone = KeysOf::new(Edition::Forever, true);
+        assert_eq!(cfg.character_in(alone), Some("Player-1"));
+        assert_eq!(
+            cfg.character_class_in(alone),
+            Some(wowdps_model::Class::Warrior)
+        );
+        assert_eq!(
+            cfg.season_in(alone),
+            (Some("2026-11-10"), Some("2027-01-01"))
+        );
+        cfg.set_character_in(alone, Some("Player-2".to_string()));
+        assert_eq!(cfg.character_in(alone), Some("Player-2"));
+        assert_eq!(
+            cfg.character.as_deref(),
+            Some("Player-2"),
+            "the top-level key written with it, as it is read"
+        );
+        // Clearing the pick clears it where it is read: "All characters".
+        cfg.set_character_in(alone, None);
+        assert_eq!(cfg.character_in(alone), None);
+        assert_eq!(cfg.character, None);
+        // A pick that came from the top-level key alone clears too.
+        cfg.character = Some("Player-1".to_string());
+        assert_eq!(cfg.character_in(alone), Some("Player-1"));
+        cfg.set_character_in(alone, None);
+        assert_eq!(cfg.character_in(alone), None, "cleared, not stuck");
+        // With several known the top-level keys are Retail's alone.
+        let beside = KeysOf::new(Edition::Forever, false);
+        assert_eq!(cfg.season_in(beside), (None, None));
+    }
+
+    /// An `editions` key of the wrong shape, or one edition's table that
+    /// does not parse, fails nothing: the rest of the file loads, and the
+    /// tables that parse are read.
+    #[test]
+    fn a_malformed_editions_key_fails_nothing() {
+        let cfg: Config = toml::from_str("zoom = 2.0\neditions = 3\n").expect("loads");
+        assert_eq!(cfg.zoom, 2.0);
+        assert!(cfg.editions.is_empty());
+        let cfg: Config = toml::from_str(
+            "zoom = 2.0\n[editions.forever]\ncharacter = \"Player-2\"\n[editions.classic-2]\ncharacter = 7\n",
+        )
+        .expect("loads");
+        assert_eq!(
+            cfg.character_in(KeysOf::new(Edition::Forever, false)),
+            Some("Player-2")
+        );
+        assert!(!cfg.editions.contains_key("classic-2"), "left out");
+    }
+
+    /// An edition's table reads as written, keeps a key this version does
+    /// not know, and a gesture's key goes into it alone, over the file as
+    /// it is on disk.
+    #[test]
+    fn an_edition_s_table_round_trips_and_stores_alone() {
+        let dir =
+            std::env::temp_dir().join(format!("wowdps-config-editions-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            "offset = 100\nlogs_dir = \"/games\"\n\n[editions.forever]\nseason_start = \"2026-11-10\"\nlater = 3\n",
+        )
+        .unwrap();
+        let cfg = Config::load_from(&path);
+        assert!(!cfg.load_failed);
+        let forever = KeysOf::new(Edition::Forever, false);
+        assert_eq!(cfg.season_in(forever), (Some("2026-11-10"), None));
+        Config::store_at(&path, |c| {
+            c.set_character_in(
+                KeysOf::new(Edition::Forever, false),
+                Some("Player-2".to_string()),
+            )
+        });
+        let text = std::fs::read_to_string(&path).unwrap();
+        let now = Config::load_from(&path);
+        assert_eq!(now.offset, 100);
+        assert_eq!(now.character_in(forever), Some("Player-2"));
+        assert_eq!(now.character, None, "Retail's untouched");
+        assert_eq!(now.season_in(forever), (Some("2026-11-10"), None));
+        assert!(text.contains("later = 3"), "an unknown key kept: {text}");
+        assert!(text.contains("logs_dir"), "the daemon's key kept: {text}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -128,6 +128,8 @@ struct Meta {
     hide_realms: bool,
     /// The night it is now, which words how long ago the lead night was.
     tonight: i64,
+    /// The game Home shows, when it is not Retail among several.
+    game: Option<String>,
 }
 
 /// The whole page: the title and its scope chips, the night, and the
@@ -142,12 +144,16 @@ pub fn view(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
         state_line: state_line(home),
         hide_realms: gui.cfg.hide_realms,
         tonight: gui.tonight(),
+        game: gui
+            .header_edition()
+            .filter(|e| *e != wowdps_model::Edition::Retail)
+            .map(|e| gui.hist.store.census.name(e)),
     };
     let panels = gui.hist.store.panels.clone();
     // The chips stand still: by name, not by how much each was played.
     let mut chars: Vec<CharLine> = gui
         .hist
-        .known
+        .known()
         .iter()
         .filter(|c| !c.guid.is_empty())
         .cloned()
@@ -431,6 +437,7 @@ fn last_night(
             meta.state_line.as_deref(),
             panels,
             scope.as_deref(),
+            meta.game.as_deref(),
         );
         return card
             .flex()

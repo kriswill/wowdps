@@ -74,8 +74,9 @@ pub fn icon_button(
 
 /// `words` under the pointer (`.tip`), Kit's tooltip in the theme's
 /// floating surface.
-pub fn tip<E: StatefulInteractiveElement>(el: E, words: &'static str) -> E {
-    el.tooltip(move |window, cx| Tooltip::new(SharedString::from(words)).build(window, cx))
+pub fn tip<E: StatefulInteractiveElement>(el: E, words: impl Into<SharedString>) -> E {
+    let words: SharedString = words.into();
+    el.tooltip(move |window, cx| Tooltip::new(words.clone()).build(window, cx))
 }
 
 /// A top-bar place (`.place`): 15 px at 500, 42 tall with its 2 px

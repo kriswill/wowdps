@@ -13,6 +13,7 @@ pub mod axis;
 pub mod config;
 pub mod deaths;
 pub mod drill;
+pub mod editions;
 pub mod fight_head;
 pub mod fold;
 pub mod fonts;

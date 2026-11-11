@@ -123,7 +123,7 @@ impl Gui {
             items(
                 &self.rail(cx),
                 &players,
-                &self.hist.known,
+                self.hist.known(),
                 self.cfg.hide_realms,
             ),
             &pal.p.query,
@@ -166,6 +166,7 @@ impl Gui {
         self.cards.options = false;
         self.cards.sheet = false;
         self.cards.picker = false;
+        self.cards.edition = false;
         cx.notify();
     }
 

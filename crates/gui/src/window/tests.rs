@@ -76,7 +76,12 @@ pub(crate) fn rig(cx: &mut TestAppContext, w: f32, h: f32) -> Rig {
 }
 
 /// The window, `w` × `h`, over `link`, settled.
-pub(crate) fn rig_on(cx: &mut TestAppContext, w: f32, h: f32, link: MockLink) -> Rig {
+pub(crate) fn rig_on(
+    cx: &mut TestAppContext,
+    w: f32,
+    h: f32,
+    link: impl crate::session::Link,
+) -> Rig {
     own_config();
     cx.update(crate::keys::bind);
     let (window, gui) = testkit::open(cx, size(px(w), px(h)), |window, cx| {

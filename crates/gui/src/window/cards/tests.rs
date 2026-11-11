@@ -253,7 +253,11 @@ fn known() -> Vec<CharLine> {
 fn the_character_menu_follows_and_scopes_home(cx: &mut TestAppContext) {
     let follow = row_id(None);
     let rig = rig(cx, 1440., 900.);
-    rig.gui.update(cx, |g, _| g.hist.known = known());
+    rig.gui.update(cx, |g, _| {
+        g.hist
+            .known_by
+            .insert(wowdps_model::Edition::Retail, known());
+    });
     open(cx, &rig, Menu::Picker);
     assert!(shown(cx, &rig, "picker-menu"));
     assert!(
@@ -302,7 +306,9 @@ fn the_character_menu_follows_and_scopes_home(cx: &mut TestAppContext) {
 fn the_character_menu_hides_realms_when_asked(cx: &mut TestAppContext) {
     let rig = rig(cx, 1440., 900.);
     rig.gui.update(cx, |g, _| {
-        g.hist.known = known();
+        g.hist
+            .known_by
+            .insert(wowdps_model::Edition::Retail, known());
         g.cfg.hide_realms = true;
     });
     open(cx, &rig, Menu::Picker);

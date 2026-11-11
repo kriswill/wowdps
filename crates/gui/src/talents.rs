@@ -117,6 +117,10 @@ pub struct TalentViewer {
     focus: FocusHandle,
     /// The `GetLoadout` this viewer is waiting on.
     pending: Option<u32>,
+    /// What the fight's edition's log does not carry (its players' talents
+    /// and gear: `editions::builds_gap`), said where the logged build
+    /// would be — until one arrives after all.
+    pub(crate) gap: Option<String>,
     /// Per pane (class, hero, spec), what its pointer was last over —
     /// iced's per-canvas hover, so a stale leave from one pane never
     /// clears a fresh enter in another.
@@ -164,6 +168,7 @@ impl TalentViewer {
             input,
             focus: cx.focus_handle(),
             pending: None,
+            gap: None,
             pane_hover: [None; 3],
             ripples: Vec::new(),
             ripple_gen: 0,
@@ -217,8 +222,17 @@ impl TalentViewer {
         });
     }
 
+    /// Say what the fight's edition's log does not carry, in place of the
+    /// logged build (`None`: nothing to say).
+    pub fn say_gap(&mut self, gap: Option<String>, cx: &mut Context<Self>) {
+        self.gap = gap;
+        cx.notify();
+    }
+
     /// Install a logged loadout (the daemon's, or a stored pull's answer).
     pub fn adopt_logged(&mut self, loadout: &Loadout, cx: &mut Context<Self>) {
+        // A log that carried the build after all has nothing missing.
+        self.gap = None;
         self.ui.adopt_logged(loadout);
         cx.notify();
     }
@@ -523,6 +537,13 @@ impl Render for TalentViewer {
                         cx,
                     )),
             );
+        }
+        if let Some(gap) = &self.gap {
+            body = body.child(div().id("talents-gap").test_support().child(p.text(
+                gap.clone(),
+                12.,
+                ink_2,
+            )));
         }
         if let Some(e) = &ui.error {
             body = body.child(p.text(e.clone(), 12., p.w(|t| t.bad)));

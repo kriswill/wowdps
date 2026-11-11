@@ -28,15 +28,15 @@ use crate::theme::hsla;
 /// 10px;padding:7px 12px}`, `.menu hr{margin:6px 0}`): the lit row's
 /// accent edge taking two of the row's 12 px, 2 px between rows, and never
 /// nearer the window's left edge than 10 px.
-const RADIUS: f32 = 8.0;
-const PAD_Y: f32 = 6.0;
-const GAP: f32 = 10.0;
-const ROW_GAP: f32 = 2.0;
+pub(super) const RADIUS: f32 = 8.0;
+pub(super) const PAD_Y: f32 = 6.0;
+pub(super) const GAP: f32 = 10.0;
+pub(super) const ROW_GAP: f32 = 2.0;
 const ROW_PAD: (f32, f32) = (7.0, 10.0);
 const EDGE: f32 = 2.0;
-const RULE_Y: f32 = 6.0;
+pub(super) const RULE_Y: f32 = 6.0;
 const ROW_RADIUS: f32 = 3.0;
-const SIDE: f32 = 10.0;
+pub(super) const SIDE: f32 = 10.0;
 
 /// A menu row's id: "follow", or the character's guid.
 pub fn row_id(guid: Option<&str>) -> ElementId {
@@ -52,7 +52,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
     // opens on.
     let selected = match (gui.place, gui.hist.store.home.as_ref()) {
         (super::super::Place::Home, Some(home)) => home.scope.clone(),
-        _ => gui.cfg.character.clone(),
+        _ => gui.cfg.character_in(gui.keys()).map(str::to_string),
     };
     let tonight = gui.tonight();
     let hide_realms = gui.cfg.hide_realms;
@@ -64,10 +64,10 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
     // The follow item, only while a character is picked: the way back to
     // the character played. With nothing picked the picker names them
     // already, and the item had nothing to do.
-    if gui.cfg.character.is_some() {
+    if gui.cfg.character_in(gui.keys()).is_some() {
         let follow = row(
             FOLLOW.into(),
-            None,
+            row_id(None),
             false,
             div()
                 .flex()
@@ -90,13 +90,13 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
             // `.menu hr`: the follow item is ruled off from the characters.
             .child(div().py(w.z(RULE_Y)).child(hairline(w)));
     }
-    for c in &gui.hist.known {
+    for c in gui.hist.known() {
         let on = selected.as_deref() == Some(c.guid.as_str());
         let guid = c.guid.clone();
         list = list.child(
             row(
                 shown_name(c, hide_realms).into(),
-                Some(&c.guid),
+                row_id(Some(&c.guid)),
                 on,
                 character(c, hide_realms, tonight, w),
                 w,
@@ -187,16 +187,16 @@ fn character(c: &CharLine, hide_realms: bool, tonight: i64, w: &W) -> Div {
 /// One row: the lit one raised with the accent's edge at its left; the
 /// rest washed under the pointer, fainter and borderless, so a hover can
 /// sit on the lit row without arguing with it.
-fn row(
+pub(super) fn row(
     label: SharedString,
-    guid: Option<&str>,
+    id: ElementId,
     on: bool,
     line: Div,
     w: &W,
 ) -> gpui_kit::base::ObservedElement<gpui_kit::Stateful<Div>> {
     let accent = w.accent();
     div()
-        .id(row_id(guid))
+        .id(id)
         .aria_label(label)
         .test_support()
         .aria_selected(on)

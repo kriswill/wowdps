@@ -262,11 +262,13 @@ impl ClientState {
         self.snapshot.as_ref().map(|s| s.info.edition)
     }
 
-    /// Opt-in (the TUI calls it for `--edition`): look in one edition, or
-    /// follow the live one again. Another edition is another set of logs, so
-    /// the state starts over on that edition's list, as on a rotated log,
-    /// and keeps what a reset keeps. A no-op when already there. The pin is
-    /// kept as it reads once it has travelled (`EditionRef::canonical`:
+    /// Opt-in (the TUI calls it for `--edition`; the window from its
+    /// edition switch, on a pick and when a pinned game it caught up with
+    /// stops being the live one): look in one edition, or follow the live
+    /// one again. Another edition is another set of logs, so the state
+    /// starts over on that edition's list, as on a rotated log, and keeps
+    /// what a reset keeps. A no-op when already there. The pin is kept as
+    /// it reads once it has travelled (`EditionRef::canonical`:
     /// `Pin(Unknown(1))` is a pin to Retail), so the daemon's frames, which
     /// name it by its number, are its own.
     ///
