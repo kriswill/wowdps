@@ -190,6 +190,7 @@ fn raid_with(
         pars_ms: None,
         arena: false,
         encounter,
+        edition: wowdps_model::Edition::Retail,
     };
     let mut state = ClientState::new();
     let _ = state.on_msg(DaemonMsg::SegmentList {
@@ -207,11 +208,13 @@ fn raid_with(
                 pars_ms: None,
                 arena: false,
                 encounter,
+                edition: wowdps_model::Edition::Retail,
             },
         }],
         source: Some("raid.txt".to_string()),
         active: true,
         log_id: None,
+        edition: None,
     });
     state.view = view;
     let _ = state.on_msg(DaemonMsg::Snapshot {
@@ -227,6 +230,7 @@ fn raid_with(
         source: Some("raid.txt".to_string()),
         status: None,
         raid: timeline,
+        edition: None,
     });
     assert_eq!(state.screen, wowdps_model::Screen::Meter);
     state

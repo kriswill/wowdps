@@ -43,7 +43,7 @@ fn live_answers_with_the_fixture_players_logged_build() {
 fn a_historical_segment_loads_lazily_and_answers_identically() {
     let mut mock = MockDaemon::fixture();
     // Resolve a closed historical segment's id off the list.
-    let out = mock.handle(ClientMsg::Watch(wowdps_proto::Cursor::List));
+    let out = mock.handle(ClientMsg::watch(wowdps_proto::Cursor::List));
     let ids: Vec<_> = out
         .iter()
         .find_map(|m| match m {

@@ -9,11 +9,11 @@ use wowdps_core::index::SegmentMeta;
 use wowdps_core::model::{Meter, SegmentId};
 use wowdps_core::tail::TailEvent;
 use wowdps_proto::{
-    ClientKind, ClientMsg, Cursor, DaemonMsg, HistoryAnswer, HistoryQuery, LoadError, Night,
-    PROTO_VERSION, SegmentRef,
+    ClientKind, ClientMsg, Cursor, DaemonMsg, EditionRef, HistoryAnswer, HistoryQuery, LoadError,
+    Night, PROTO_VERSION, SegmentRef,
 };
 
-use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
+use crate::engine::{Built, Engine, EngineEvent, ListKey, LoadoutBuilt};
 use crate::history::{Ask, HistoryLink, HistoryReq, LogRef};
 use crate::loader::{LoadReply, LoadReq};
 use crate::overlay::{Cmd, Supervisor};
@@ -73,7 +73,7 @@ pub fn run(
 ) {
     let mut engine = Engine::new();
     let mut sessions: Vec<Session> = Vec::new();
-    let mut last_ids: Vec<SegmentId> = Vec::new();
+    let mut last_list = ListKey::default();
     let mut game_running = false;
     let mut shutdown = false;
     let mut idle_since: Option<Instant> = Some(Instant::now());
@@ -92,7 +92,7 @@ pub fn run(
                 &loader,
                 &mut supervisor,
                 &opts,
-                &mut last_ids,
+                &mut last_list,
                 &mut game_running,
                 &mut shutdown,
                 &history,
@@ -260,7 +260,7 @@ fn handle(
     loader: &Sender<LoadReq>,
     supervisor: &mut Supervisor,
     opts: &HubOptions,
-    last_ids: &mut Vec<SegmentId>,
+    last_list: &mut ListKey,
     game_running: &mut bool,
     shutdown: &mut bool,
     history: &HistoryLink,
@@ -290,12 +290,15 @@ fn handle(
                     overalls: index.overalls.clone(),
                 });
             }
+            let awaiting = engine.awaiting_index();
             let mut events = Vec::new();
             engine.on_tail(ev, &mut events);
             for ev in events {
                 match ev {
+                    // v49: to the sessions this source answers — a pin to
+                    // another edition has no fight starting here.
                     EngineEvent::Opened(id) => {
-                        for s in sessions.iter_mut() {
+                        for s in sessions.iter_mut().filter(|s| engine.serves(s.edition)) {
                             s.push_control(DaemonMsg::SegmentOpened { id });
                         }
                     }
@@ -321,14 +324,18 @@ fn handle(
             // session, not just List watchers. Off-list navigation resolves
             // neighbors by id, and a segment that opened *and closed* inside
             // one flush burst never gets a `SegmentOpened` of its own
-            // (`Opened` only covers a batch's still-open tail).
-            let ids = engine.list_ids();
-            if ids != *last_ids {
-                *last_ids = ids;
-                let list = engine.build_list(*game_running);
-                for s in sessions.iter_mut() {
-                    s.push_list(list.clone());
-                }
+            // (`Opened` only covers a batch's still-open tail). v49: so does
+            // a change of the source's edition with no id moving (`ListKey`).
+            // And a log switched to is served to pinned sessions only once
+            // its index (or a line) lands (`Engine::serves`): they are sent
+            // the list then, whether its key moved or not — an empty,
+            // header-less new log's has not.
+            let key = engine.list_key();
+            if key != *last_list {
+                *last_list = key;
+                broadcast_list(engine, sessions, *game_running, false);
+            } else if awaiting && !engine.awaiting_index() {
+                broadcast_list(engine, sessions, *game_running, true);
             }
         }
         HubMsg::Connected { id, kind, pid, tx } => {
@@ -352,8 +359,8 @@ fn handle(
                 return;
             };
             match msg {
-                ClientMsg::Watch(cursor) => {
-                    s.set_cursor(cursor);
+                ClientMsg::Watch { cursor, edition } => {
+                    s.set_cursor(cursor, edition);
                     // Answer immediately: a view change or drilldown open is
                     // one round trip, not one round trip plus a tick.
                     push_cursor(s, engine, loader, *game_running);
@@ -363,6 +370,8 @@ fn handle(
                     let source = opts.source_spec.clone();
                     let overlay = supervisor.state();
                     let history = history.status();
+                    // v49: every edition's source — today the one.
+                    let editions = vec![engine.edition_source(source.clone(), *game_running)];
                     let Some(s) = sessions.iter_mut().find(|s| s.id == id) else {
                         return;
                     };
@@ -374,6 +383,7 @@ fn handle(
                         linger: opts.linger,
                         overlay,
                         history,
+                        editions,
                     });
                 }
                 ClientMsg::VisibilityChanged { visible } => {
@@ -386,13 +396,10 @@ fn handle(
                 // new list to every session, exactly like a tail change.
                 ClientMsg::DiscardTrash => {
                     engine.discard_trash();
-                    let ids = engine.list_ids();
-                    if ids != *last_ids {
-                        *last_ids = ids;
-                        let list = engine.build_list(*game_running);
-                        for s in sessions.iter_mut() {
-                            s.push_list(list.clone());
-                        }
+                    let key = engine.list_key();
+                    if key != *last_list {
+                        *last_list = key;
+                        broadcast_list(engine, sessions, *game_running, false);
                     }
                 }
                 // v19: a one-shot, answered like GetStatus when the segment
@@ -402,7 +409,7 @@ fn handle(
                     req_id,
                     segment,
                     guid,
-                } => match engine.loadout(segment, &guid) {
+                } => match engine.loadout_in(s.edition, segment, &guid) {
                     LoadoutBuilt::Ready(loadout) => {
                         s.push_control(DaemonMsg::Loadout {
                             req_id,
@@ -510,6 +517,7 @@ fn handle(
                     encounter,
                     difficulty,
                     kind,
+                    edition,
                 } => {
                     forward_history(
                         history,
@@ -521,6 +529,7 @@ fn handle(
                             encounter,
                             difficulty,
                             kind,
+                            edition,
                         },
                     );
                 }
@@ -626,6 +635,29 @@ fn handle(
     }
 }
 
+/// The list changed (its ids, or v49 the edition its source names): the
+/// list to every session, not just List watchers, each as its edition
+/// answers it (`Engine::list_for`) — this source's list stamped with the
+/// edition it is answered in, or, to a session pinned to an edition this
+/// source is not, that edition's empty list: one that stops being served
+/// is emptied then, never left holding another edition's ids. With
+/// `pinned_only`, to pinned sessions alone (a following one's list did not
+/// change).
+fn broadcast_list(
+    engine: &Engine,
+    sessions: &mut [Session],
+    game_running: bool,
+    pinned_only: bool,
+) {
+    let list = engine.build_list(game_running);
+    for s in sessions
+        .iter_mut()
+        .filter(|s| !pinned_only || s.edition != EditionRef::Follow)
+    {
+        s.push_list(engine.list_for(s.edition, &list));
+    }
+}
+
 fn cursor_wants(cursor: Option<&Cursor>, id: SegmentId) -> bool {
     // R12: a comparison waits on its segment's slice exactly like a meter.
     let watching = match cursor {
@@ -657,41 +689,12 @@ fn request_load(engine: &mut Engine, loader: &Sender<LoadReq>, id: SegmentId, me
 
 /// Build and (dedup-)push whatever `s` is watching.
 fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, game: bool) {
-    let Some(cursor) = s.cursor.clone() else {
+    let Some(cursor) = s.cursor.as_ref() else {
         return;
     };
-    let built = match cursor {
-        Cursor::List => {
-            s.push_snapshot(engine.build_list(game));
-            return;
-        }
-        Cursor::Compare {
-            segment,
-            a,
-            b,
-            view,
-            range,
-            spell,
-        } => engine.build_compare(segment, &a, &b, view, range, spell.as_deref()),
-        Cursor::Segment {
-            segment,
-            view,
-            top_n,
-            drill,
-            death,
-            spell,
-            range,
-        } => engine.build_segment_for(
-            s.kind,
-            segment,
-            view,
-            top_n,
-            drill.as_deref(),
-            death,
-            spell.as_deref(),
-            range,
-        ),
-    };
+    // v49: in the edition the session looks in — one entry for the hub and
+    // the mock (`Engine::build_cursor`).
+    let built = engine.build_cursor(s.kind, cursor, s.edition, game);
     match built {
         Built::Ready(msg) => s.push_snapshot(*msg),
         Built::Loading(msg, id, meta) => {
@@ -793,7 +796,7 @@ mod tests {
         let mut engine = Engine::new();
         let (loader, _loader_rx) = fake_loader();
         let (mut s, rx) = session(1);
-        s.set_cursor(Cursor::List);
+        s.set_cursor(Cursor::List, wowdps_proto::EditionRef::Follow);
 
         push_cursor(&mut s, &mut engine, &loader, false);
         let first = rx.try_recv().expect("the first push always lands");
@@ -832,7 +835,7 @@ mod tests {
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut last_list = ListKey::default();
         let mut game = false;
         let mut shutdown = false;
 
@@ -842,20 +845,20 @@ mod tests {
         let watch = |sessions: &mut Vec<Session>,
                      engine: &mut Engine,
                      supervisor: &mut Supervisor,
-                     last_ids: &mut Vec<SegmentId>,
+                     last_list: &mut ListKey,
                      game: &mut bool,
                      shutdown: &mut bool| {
             handle(
                 HubMsg::Client {
                     id: 1,
-                    msg: ClientMsg::Watch(Cursor::List),
+                    msg: ClientMsg::watch(Cursor::List),
                 },
                 engine,
                 sessions,
                 &loader,
                 supervisor,
                 &opts,
-                last_ids,
+                last_list,
                 game,
                 shutdown,
                 &HistoryLink::disabled("test"),
@@ -866,7 +869,7 @@ mod tests {
             &mut sessions,
             &mut engine,
             &mut supervisor,
-            &mut last_ids,
+            &mut last_list,
             &mut game,
             &mut shutdown,
         );
@@ -881,7 +884,7 @@ mod tests {
             &mut sessions,
             &mut engine,
             &mut supervisor,
-            &mut last_ids,
+            &mut last_list,
             &mut game,
             &mut shutdown,
         );
@@ -901,20 +904,23 @@ mod tests {
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut last_list = ListKey::default();
         let mut game = false;
         let mut shutdown = false;
 
         let (mut lister, list_rx) = session(1);
-        lister.set_cursor(Cursor::List);
+        lister.set_cursor(Cursor::List, wowdps_proto::EditionRef::Follow);
         let (mut watcher, watch_rx) = session(2);
-        watcher.set_cursor(seg_cursor(SegmentRef::Live));
+        watcher.set_cursor(
+            seg_cursor(SegmentRef::Live),
+            wowdps_proto::EditionRef::Follow,
+        );
         let (idle, idle_rx) = session(3); // connected, no cursor yet
         let mut sessions = vec![lister, watcher, idle];
 
         let mut tail = |sessions: &mut Vec<Session>,
                         engine: &mut Engine,
-                        last_ids: &mut Vec<SegmentId>,
+                        last_list: &mut ListKey,
                         line: String| {
             handle(
                 HubMsg::Tail(TailEvent::Lines(vec![line])),
@@ -923,7 +929,7 @@ mod tests {
                 &loader,
                 &mut supervisor,
                 &opts,
-                last_ids,
+                last_list,
                 &mut game,
                 &mut shutdown,
                 &HistoryLink::disabled("test"),
@@ -931,7 +937,7 @@ mod tests {
         };
 
         // First line: a segment appears, the table changes shape.
-        tail(&mut sessions, &mut engine, &mut last_ids, hit(0, 0));
+        tail(&mut sessions, &mut engine, &mut last_list, hit(0, 0));
         for (name, rx) in [
             ("lister", &list_rx),
             ("watcher", &watch_rx),
@@ -944,7 +950,7 @@ mod tests {
         }
 
         // Second line inside the same segment: same ids, no broadcast.
-        tail(&mut sessions, &mut engine, &mut last_ids, hit(0, 1));
+        tail(&mut sessions, &mut engine, &mut last_list, hit(0, 1));
         for (name, rx) in [
             ("lister", &list_rx),
             ("watcher", &watch_rx),
@@ -965,15 +971,21 @@ mod tests {
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut last_list = ListKey::default();
         let mut game = false;
         let mut shutdown = false;
 
         let wanted = SegmentId(3);
         let (mut a, a_rx) = session(1);
-        a.set_cursor(seg_cursor(SegmentRef::Id(wanted)));
+        a.set_cursor(
+            seg_cursor(SegmentRef::Id(wanted)),
+            wowdps_proto::EditionRef::Follow,
+        );
         let (mut b, b_rx) = session(2);
-        b.set_cursor(seg_cursor(SegmentRef::Id(SegmentId(4))));
+        b.set_cursor(
+            seg_cursor(SegmentRef::Id(SegmentId(4))),
+            wowdps_proto::EditionRef::Follow,
+        );
         let mut sessions = vec![a, b];
 
         let mut fail = |sessions: &mut Vec<Session>, engine: &mut Engine| {
@@ -987,7 +999,7 @@ mod tests {
                 &loader,
                 &mut supervisor,
                 &opts,
-                &mut last_ids,
+                &mut last_list,
                 &mut game,
                 &mut shutdown,
                 &HistoryLink::disabled("test"),
@@ -1025,7 +1037,7 @@ mod tests {
         loader_rx: Receiver<LoadReq>,
         supervisor: Supervisor,
         opts: HubOptions,
-        last_ids: Vec<SegmentId>,
+        last_list: ListKey,
         game: bool,
         shutdown: bool,
         history: HistoryLink,
@@ -1041,7 +1053,7 @@ mod tests {
                 loader_rx,
                 supervisor: Supervisor::new(false, Duration::ZERO, None),
                 opts: hub_opts(),
-                last_ids: Vec::new(),
+                last_list: ListKey::default(),
                 game: false,
                 shutdown: false,
                 history: HistoryLink::disabled("test"),
@@ -1071,7 +1083,7 @@ mod tests {
                 &self.loader,
                 &mut self.supervisor,
                 &self.opts,
-                &mut self.last_ids,
+                &mut self.last_list,
                 &mut self.game,
                 &mut self.shutdown,
                 &self.history,
@@ -1103,6 +1115,379 @@ mod tests {
             out.push(m);
         }
         out
+    }
+
+    /// v49: the list's change is its ids OR its edition: a log whose first
+    /// pull closed before any version line, then a line naming Forever —
+    /// no id moves, the source's edition does. The list is broadcast again:
+    /// a session pinned to Forever (watching `Live`, so the broadcast is
+    /// its only id table) is sent it now, and a follower's names Forever.
+    #[test]
+    fn the_list_is_broadcast_again_when_only_its_edition_changes() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        let mut hub = Hub::new();
+        let follower = hub.connect(1, ClientKind::Tui);
+        let pinned = hub.connect(2, ClientKind::Tui);
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Live)));
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Forever),
+            },
+        );
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/a.txt",
+        ))));
+        hub.handle(HubMsg::Tail(TailEvent::CaughtUp));
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+            "7/27/2026 21:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,2769".to_string(),
+            hit(0, 11),
+            "7/27/2026 21:00:40.000-4  ENCOUNTER_END,3130,\"Boss\",1,5,1,30000".to_string(),
+        ])));
+        let ids = hub.engine.list_ids();
+        assert!(!ids.is_empty());
+        assert_eq!(hub.engine.edition(), None);
+        drain(&follower);
+        drain(&pinned);
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+            "7/27/2026 21:05:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18".to_string(),
+        ])));
+        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
+        assert_eq!(hub.engine.list_ids(), ids, "no id moved");
+
+        let last_list = |msgs: Vec<DaemonMsg>| {
+            msgs.into_iter().rev().find_map(|m| match m {
+                DaemonMsg::SegmentList {
+                    entries, edition, ..
+                } => Some((entries.len(), edition)),
+                _ => None,
+            })
+        };
+        assert_eq!(
+            last_list(drain(&pinned)),
+            Some((ids.len(), Some(Edition::Forever))),
+            "the pinned session's list"
+        );
+        assert_eq!(
+            last_list(drain(&follower)),
+            Some((ids.len(), Some(Edition::Forever))),
+            "the follower's list names the edition"
+        );
+    }
+
+    /// A log as the tail delivers it: `Switched`, `Index`, then its seed
+    /// lines; what the hub had sent each receiver drained after each.
+    fn deliver_log(hub: &mut Hub, path: &str) -> usize {
+        let bytes = std::fs::read(path).unwrap();
+        let idx = wowdps_core::index::scan(&mut &bytes[..]);
+        let seed_ranges = match idx.open.as_ref() {
+            Some(open) => open.seeds.clone(),
+            None => idx.checkpoint.seeds.clone(),
+        };
+        let seeds: Vec<String> = seed_ranges
+            .iter()
+            .map(|&(a, b)| {
+                String::from_utf8_lossy(&bytes[a as usize..b as usize])
+                    .trim_end()
+                    .to_string()
+            })
+            .collect();
+        hub.handle(HubMsg::Tail(TailEvent::Switched(path.into())));
+        hub.handle(HubMsg::Tail(TailEvent::Index {
+            index: Box::new(idx),
+            file_age_ms: Some(0),
+        }));
+        let rows = hub.engine.list_ids().len();
+        hub.handle(HubMsg::Tail(TailEvent::Seeds(seeds)));
+        rows
+    }
+
+    /// v49: a session pinned to Retail, watching `Live`, on a rotation from
+    /// a Retail log to a Forever one, delivered as the tail delivers it: it
+    /// is never sent the Forever log, not even its name — between the
+    /// switch and the index nothing names the new log's edition, so a pin
+    /// is not served it, and the index names it Forever — only Retail's
+    /// empty list, which names no log.
+    #[test]
+    fn a_pin_is_never_listed_another_editions_log_while_its_seeds_are_on_the_way() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        const FOREVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+        let mut hub = Hub::new();
+        let retail = hub.connect(1, ClientKind::Tui);
+        hub.client(
+            1,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        assert!(deliver_log(&mut hub, FIXTURE) > 0);
+        let lists = |msgs: Vec<DaemonMsg>| -> Vec<(usize, Option<Edition>, Option<String>)> {
+            msgs.into_iter()
+                .filter_map(|m| match m {
+                    DaemonMsg::SegmentList {
+                        entries,
+                        edition,
+                        source,
+                        ..
+                    } => Some((entries.len(), edition, source)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let before = lists(drain(&retail));
+        assert!(
+            before.last().is_some_and(|l| l.0 > 0 && l.2.is_some()),
+            "served the Retail log: {before:?}"
+        );
+
+        let rows = deliver_log(&mut hub, FOREVER);
+        assert!(rows > 0, "the Forever index has rows to leak");
+        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
+        let after = lists(drain(&retail));
+        assert!(!after.is_empty());
+        assert!(
+            after.iter().all(|l| *l == (0, Some(Edition::Retail), None)),
+            "only Retail's empty list, naming no log: {after:?}"
+        );
+    }
+
+    /// v49: the index landing ends a pin's wait, even an empty index of a
+    /// log with no header yet (whose list key does not move): a Retail pin
+    /// is then served that log (naming none, it is reckoned Retail's) and
+    /// sent its list; a follower is sent nothing it was not sent before.
+    #[test]
+    fn an_empty_index_ends_a_pins_wait() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        let mut hub = Hub::new();
+        let follower = hub.connect(1, ClientKind::Tui);
+        let retail = hub.connect(2, ClientKind::Tui);
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Live)));
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        drain(&follower);
+        drain(&retail);
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/WoWCombatLog-new.txt",
+        ))));
+        assert!(!hub.engine.serves(EditionRef::Pin(Edition::Retail)));
+        hub.handle(HubMsg::Tail(TailEvent::Index {
+            index: Box::default(),
+            file_age_ms: Some(0),
+        }));
+        assert!(hub.engine.serves(EditionRef::Pin(Edition::Retail)));
+        let got = drain(&retail);
+        assert!(
+            got.iter().any(|m| matches!(
+                m,
+                DaemonMsg::SegmentList {
+                    source: Some(s),
+                    edition: Some(Edition::Retail),
+                    ..
+                } if s == "WoWCombatLog-new.txt"
+            )),
+            "{got:?}"
+        );
+        assert!(
+            drain(&follower).is_empty(),
+            "the follower's list did not change"
+        );
+    }
+
+    /// v49: a session that STOPS being served — a log whose first fight came
+    /// before any version line (reckoned Retail's), then a line naming
+    /// Forever — is sent its pinned edition's empty list at once, never left
+    /// holding the other edition's ids.
+    #[test]
+    fn a_session_that_stops_being_served_is_sent_its_empty_list() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        let mut hub = Hub::new();
+        let retail = hub.connect(1, ClientKind::Tui);
+        hub.client(
+            1,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        drain(&retail);
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/a.txt",
+        ))));
+        hub.handle(HubMsg::Tail(TailEvent::CaughtUp));
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 1)])));
+        assert_eq!(hub.engine.edition(), None);
+        let list = |msgs: Vec<DaemonMsg>| {
+            msgs.into_iter().rev().find_map(|m| match m {
+                DaemonMsg::SegmentList {
+                    entries, edition, ..
+                } => Some((entries.len(), edition)),
+                _ => None,
+            })
+        };
+        assert_eq!(
+            list(drain(&retail)),
+            Some((1, Some(Edition::Retail))),
+            "a log naming none serves a Retail pin"
+        );
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+            "7/27/2026 21:05:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18".to_string(),
+        ])));
+        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
+        assert_eq!(
+            list(drain(&retail)),
+            Some((0, Some(Edition::Retail))),
+            "emptied when it stops being served"
+        );
+    }
+
+    /// v49: one source, three sessions — following, pinned to the edition
+    /// the log names, pinned to another. The first two are answered alike,
+    /// every frame naming the log's edition; the third is answered the
+    /// empty list of its own edition and hears nothing of this log: no
+    /// fight opening, never its list (a broadcast sends it its own empty
+    /// one), no `Live` loadout.
+    #[test]
+    fn a_session_pinned_to_another_edition_hears_nothing_of_this_log() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        let mut hub = Hub::new();
+        let follower = hub.connect(1, ClientKind::Tui);
+        let retail = hub.connect(2, ClientKind::Tui);
+        let forever = hub.connect(3, ClientKind::Tui);
+        hub.client(1, ClientMsg::watch(Cursor::List));
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        hub.client(
+            3,
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition: EditionRef::Pin(Edition::Forever),
+            },
+        );
+        let list_edition = |msgs: &[DaemonMsg]| -> Vec<(usize, Option<Edition>)> {
+            msgs.iter()
+                .filter_map(|m| match m {
+                    DaemonMsg::SegmentList {
+                        entries, edition, ..
+                    } => Some((entries.len(), *edition)),
+                    _ => None,
+                })
+                .collect()
+        };
+        // Before any log: nothing named, and a pin to an edition no source
+        // has is still answered — empty, in its own edition.
+        assert_eq!(list_edition(&drain(&follower)), [(0, None)]);
+        assert_eq!(
+            list_edition(&drain(&retail)),
+            [(0, Some(Edition::Retail))],
+            "a log yet to name one is reckoned Retail's"
+        );
+        assert_eq!(
+            list_edition(&drain(&forever)),
+            [(0, Some(Edition::Forever))]
+        );
+
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/a.txt",
+        ))));
+        hub.handle(HubMsg::Tail(TailEvent::CaughtUp));
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+            "7/27/2026 21:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1".to_string(),
+            hit(0, 1),
+        ])));
+        assert_eq!(hub.engine.edition(), Some(Edition::Retail));
+        for rx in [&follower, &retail] {
+            let got = drain(rx);
+            assert!(
+                got.iter()
+                    .any(|m| matches!(m, DaemonMsg::SegmentOpened { .. })),
+                "{got:?}"
+            );
+            assert_eq!(list_edition(&got), [(1, Some(Edition::Retail))]);
+        }
+        let got = drain(&forever);
+        assert!(
+            !got.iter()
+                .any(|m| matches!(m, DaemonMsg::SegmentOpened { .. })),
+            "another edition's fight: {got:?}"
+        );
+        assert!(
+            list_edition(&got)
+                .iter()
+                .all(|l| *l == (0, Some(Edition::Forever))),
+            "only its own empty list: {got:?}"
+        );
+
+        // Its Watch is answered at once, and `Live` there is nobody's.
+        hub.client(
+            3,
+            ClientMsg::Watch {
+                cursor: Cursor::Segment {
+                    segment: SegmentRef::Live,
+                    view: wowdps_model::View::Damage,
+                    top_n: None,
+                    drill: None,
+                    death: None,
+                    spell: None,
+                    range: None,
+                },
+                edition: EditionRef::Pin(Edition::Forever),
+            },
+        );
+        hub.client(
+            3,
+            ClientMsg::GetLoadout {
+                req_id: 5,
+                segment: SegmentRef::Live,
+                guid: "Player-1-A".to_string(),
+            },
+        );
+        match drain(&forever).as_slice() {
+            [
+                DaemonMsg::Snapshot {
+                    id: None,
+                    rows,
+                    info,
+                    source: None,
+                    edition: Some(Edition::Forever),
+                    ..
+                },
+                DaemonMsg::Loadout {
+                    req_id: 5,
+                    loadout: None,
+                    ..
+                },
+            ] if rows.is_empty() && info.edition == Edition::Forever => {}
+            other => panic!("an empty answer in Forever: {other:?}"),
+        }
+
+        // Status lists the one source, live, named by its log.
+        hub.client(1, ClientMsg::GetStatus { req_id: 6 });
+        match drain(&follower).as_slice() {
+            [DaemonMsg::Status { editions, .. }] => {
+                assert_eq!(editions.len(), 1);
+                assert_eq!(editions[0].edition, Some(Edition::Retail));
+                assert_eq!(editions[0].log.as_deref(), Some("a.txt"));
+                assert!(editions[0].live);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// A switch to a newer log retires the one left behind to the history
@@ -1391,7 +1776,7 @@ mod tests {
         drain(&rx);
         hub.client(
             1,
-            ClientMsg::Watch(Cursor::Compare {
+            ClientMsg::watch(Cursor::Compare {
                 segment: SegmentRef::Live,
                 a: "Player-1-A".to_string(),
                 b: "Player-1-B".to_string(),
@@ -1432,7 +1817,7 @@ mod tests {
         for (id, _, _) in kinds {
             hub.client(
                 id,
-                ClientMsg::Watch(Cursor::Segment {
+                ClientMsg::watch(Cursor::Segment {
                     segment: SegmentRef::Live,
                     view: wowdps_model::View::Damage,
                     top_n: None,

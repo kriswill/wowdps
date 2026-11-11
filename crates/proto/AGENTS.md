@@ -18,9 +18,10 @@ the engine. Wire spec: CONTRACT.md, "Wire protocol".
   replaces the old daemon and restarts every client (root `AGENTS.md`,
   "The live daemon").
 - **`ClientState` changes only by opt-in.** `set_follow`, `open_death` and
-  `select_player` are the window's; the TUI calls none of them. A new
-  capability for one frontend is opt-in too, and every other frontend keeps
-  its semantics.
+  `select_player` are the window's; the TUI calls none of them.
+  `set_edition` (v49: pin an edition, or follow the live one) no frontend
+  calls yet. A new capability for one frontend is opt-in too, and every
+  other frontend keeps its semantics.
 - **Held keys never round-trip.** `j`/`k` clamp against the cached
   snapshot.
 - **Tick-driven clients never wait.** The window, overlay and TUI reconnect

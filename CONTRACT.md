@@ -141,6 +141,9 @@ impl Meter {
                                                    // R8: its build / project_id / log_version its first member's
     pub fn current_index(&self) -> usize;
     pub fn loadout(&self, player_guid: &str) -> Option<&Loadout>; // v19: latest COMBATANT_INFO build
+    pub fn project_id(&self) -> u8;                 // v49: the latest COMBAT_LOG_VERSION's PROJECT_ID
+                                                   // (seeds included), 0 before any — the daemon's
+                                                   // source edition (`Engine::edition`)
 }
 
 pub enum SegmentKind { Encounter, Trash, Overall }  // Overall never appears in segments() (R10)
@@ -612,7 +615,7 @@ the consumer replays through `Meter::seed`), then `Lines` from the index's
 `live_offset` — history is never replayed line by line. `CaughtUp` fires once
 when the backlog drains; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 48`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 49`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives
@@ -647,7 +650,49 @@ Messages (tags):
 
 A `Watch` carries a `Cursor` — `List`; `Segment { SegmentRef (Live | Id), View,
 top_n, drill, spell }`; or `Compare { SegmentRef, a, b, View, range, spell }` — and
-replaces any prior cursor. The daemon pushes snapshots for exactly what is
+(v49) an `EditionRef` — `Follow` (the live edition) or `Pin(Edition)` — and
+replaces any prior cursor. `Live` and the list resolve INSIDE the edition the
+Watch names; a segment id names one segment of one edition's log wherever it
+lives, so it resolves whatever the edition; a one-shot's `Live` (`GetLoadout`)
+resolves in the session's last Watch's edition, `Follow` before any. A pin is
+the edition its number names (`EditionRef::canonical`: a hand-made
+`Pin(Unknown(1))` is a pin to Retail, in process as on the wire). Every
+`Snapshot`, `SegmentList` and `CompareSnapshot` names the edition it answers in
+(`edition`: the pin, or following the edition the daemon names the live source
+by — its log's header's, else, before the header is read, the edition it knows
+the source by from where it came from (`Engine::set_source_edition`, which
+nothing sets with one source), and `None` only while it knows neither), and a
+client resets on a change of it as on a changed `source` (Client state below).
+The list is broadcast to every session whenever its ids change OR the edition
+its source names does — each session sent it as its edition answers it: this
+source's list, or, to a session pinned to an edition this source is not, that
+edition's EMPTY list, so a session that stops being served is emptied at once
+and never keeps another edition's ids. The daemon names a log's edition from
+the moment its index lands (the scan read the header: `Engine::edition` takes
+the checkpoint's `PROJECT_ID` before the seed lines replay it), so a log whose
+header names an edition is never listed, nor named, under another: from the
+switch to a new log until its index (or a line of it) lands — a moment when
+nothing has named its edition yet — no pinned session is served it (it is sent
+its own edition's empty list, naming no log), and when the index lands, even
+an empty one, every pinned session is sent the list as it now answers it;
+following sessions are answered throughout exactly as before. The choice for a
+source whose edition is still unknown once its index has landed — a log that
+names none, a file whose header is not yet written — is to reckon it Retail's
+and let it serve Retail pins, as a fight that names none is Retail's in the
+history, rather than withhold its list: such a source holds no other edition's
+fights, and a pin to Retail is then answered at once. A frame answering a SEGMENT ID (`segment: Id`) is the exception: it
+names where its segment lives — `source` that source's log and `edition` that
+source's edition — whatever the session looks in, and a client takes it as it
+is and lets it move nothing. A pin to an edition no source carries is
+the EMPTY answer — a `SegmentList` with no entries and no source, and on `Live`
+the snapshot of nothing (no id, no rows) — naming the edition asked for; never
+an error or a wait, and such a session hears no `SegmentOpened` of another
+edition's log and, when the list is broadcast, is sent its own edition's empty
+list in place of that log's. One source today: following is what every
+client had before, a pin serves when the source's edition is reckoned with it
+(`Edition::counts_as`; a source the daemon can name no edition for is reckoned
+Retail's, as a fight that names none is), and anything else is the empty
+answer. The daemon pushes snapshots for exactly what is
 watched, breakdown included when drilled. `Compare` is answered with
 `CompareSnapshot` (the answered `View`, then two `CompareSide { guid,
 total: Row, spells: Vec<Row>, timeline, spell_timeline, mitigation }`s — every
@@ -705,8 +750,11 @@ Guarantees:
 
 - `SegmentId`s are monotonic for the daemon's lifetime and never reused; after
   rotation a stale id resolves to `LoadFailed(Rotated | NotFound)`, never to
-  another file's fight. A changed `source` on any snapshot means rotation:
-  clients reset and re-`Watch`.
+  another file's fight. A changed `source` on any snapshot of the list or of
+  `Live` means rotation: clients reset and re-`Watch`. (v49) A frame answering a
+  segment id names its segment's own source and moves nothing; a rotation
+  reaches such a cursor by the list broadcast and the id's `LoadFailed`. Ids
+  are opaque `u64`s: no client indexes by one or assumes they are dense.
 - Snapshot/list `seq` is per-session monotonic. Snapshots are idempotent: a
   lagging client is caught up by dropping stale ones (the client library
   coalesces to the newest per (segment, view)); control messages are ordered and
@@ -768,6 +816,7 @@ variants take the next code):
 | 45 | The replay tier (R29; the socket is renamed `wowdps-v45.sock`): `ClientMsg::GetReplay` 0x0D (u32 req_id \| string fight_id) answered by `DaemonMsg::Replay` 0x8E (u32 req_id \| string fight_id \| Option of u32-length bytes: the `replay/<id>.bin` file, `None` for a fight unknown, keeping no replay or past a frame); `HistoryStatus` + trailing u32 `replays` \| u64 `replay_bytes` \| u32 `kept_kills` \| `kept_keys` \| `kept_progression` \| `kept_pins` (the first pinned `Status` frame, 0x3e). Store (record, not wire): `replay/<id>.bin` — `WDRP` \| u8 format 1 \| u32 LE index length \| a section index (tag, offset, length) \| strings, head, units, posts, events, placed, markers, spells; varints and zigzag deltas, each post against its unit's last (`proto::replay`; ~1.6 MB for a 10-minute 26-player raid pull against its 17 MB of CSV). Replay FORMAT 2, still v45 (the wire carries the file's bytes opaquely and the decoder takes both): every floor's posts (each post's UiMap id, a `maps` section 9 coding only the tracks that leave the head's floor) and the boss rows (ENCOUNTER_START/END in the slice, kinds 13–15, `has` bit 5 for no unit); `tracks.csv` gains a trailing `map_id`. Format 1 reads (every post on its floor) and the rewrite queue recuts every format-1 file from its log while idle — no regrade. Not a field, a meaning: (v45) a wipe on a boss the store has not seen killed at its difficulty is PROGRESSION, kept whole as a kill is — details, series, replay, protected from the caps — until the first kill there (`history_keep_progression_whole`); the rewrite queue backfills what that rule and the new tier want, no regrade needed. The parser now reads `DAMAGE_SPLIT`'s advanced block (R29): a regrade picks up its power seconds and health reports, a handful per pull. Replay FORMAT 3, still v45: each post's shields (an `absorb` section 10, the changes per track) and its last reading of every pool kind (a `pools` section 11, written only at the posts where an entry of a cast's `a\|b` lists after the first set a reading the post's own pool does not — a second kind, or a new value of one already held; every format reads the rest from the posts), the buff rows that matter to the fight (kinds 16–18) and the players' debuffs on NPCs; `tracks.csv` gains trailing `absorb` and `pools`. Format 2 reads (no shields, its posts' own pools) and the rewrite queue recuts every older file from its log while idle — no regrade. Replay FORMAT 4, still v45: format 3's codec but the head's number, moved with the cut's aura rules (an aura R18 counts from the pull's start opens at t 0, and a player's debuff on an NPC alike) so the rewrite queue recuts every format-1, 2 and 3 file; a decoder refuses a power type at or above 64 and a pools list past 8, and `encode` writes tidied pools — no regrade, no wire change. Replay FORMAT 5, still v45 (2026-10-11): format 4's codec but the head's number, moved with the cut's pool readings (a cast's success read after its cost, block field 13; an energize's gain on the pool it names that its target's block does not, in the block's units) so the rewrite queue recuts every format-1 to 4 file; `tracks.csv`'s `power` and `pools` read the same way — no wire change. The same parser change moves R28's power series (a cast's second reads after its cost): a stored fight's details tier moves with `wowdps history regrade`. |
 | 46 | Imported fights (the import ruling, Daemon section; the socket is renamed `wowdps-v46.sock`): `ClientMsg::ImportReplay` 0x0E (u32 req_id \| `ImportedCard` \| u32-length bytes: the replay tier as `proto::replay::encode` writes it), the card being string name \| Option<Encounter> \| u8 kind (a `FightKind` code; the store takes `Encounter` alone) \| i64 start_utc_ms \| Option<i64> start_local_ms \| Option<u16> tz_min (as bits) \| i64 duration_ms \| Option<bool> success \| Option<u16> best_pct \| Vec<player: string guid \| string name \| Option<u8 class> \| u16 specID, 0 = none> \| Option<string> owner \| string source \| u16 ×3 build \| u32 log_version (`(0,0,0)` / 0 unknown); `HistoryAnswer` + `ImportedReplay { fight_id: string, replaced: bool }` = tag 7 and `Refused { reason: string }` = tag 8 (a write the store would not take, and why) — tag 9 is `BadTag`; `FightCard` + trailing `Origin` after `bosses` (u8 0 `Local` \| 1 `Imported` then string `source`; ≥ 2 `BadTag`), in every frame a card rides (`Fights`, `Progression.first_kill`, `StoredFight.card`); `HistoryQuery::Fights` + trailing u8 `origin` filter after `role` (0 `Local` \| 1 `Imported` \| 2 `Any`; ≥ 3 `BadTag`) — every client that predates imports asks `Local` and reads what it read before (the pinned Fights golden grew 0x13 → 0x14); `HistoryStatus` + trailing u32 `kept_imports` (the pinned `Status` frame 0x3e → 0x42; and the daemon now publishes v45's `replays` / `replay_bytes` / `kept_*` into `Status`, which v45 reckoned but never sent). Store (record, not wire): a card writes `"origin": {"kind": "imported", "source": …}` LAST and only when imported, so every local card's document is byte for byte what it was; a card without the key, or with `null`, reads `Local`, and any origin object reads as an import (its `source` when a string). An imported fight's id is `proto::history::imported_id` — `fight_id`'s `<hash>-<start>` with the hash fnv64 over `import:` + the source and the start its UTC start. The lake's `fights` and `players` views gain `imported` (`origin IS NOT NULL`, `false` on a lake without imports), and `best-kill`, `progression`, `trend` and `role-night` count `NOT imported` as the daemon does; `stats.kept` gains `imports`. |
 | 47 | A key's affixes (R10, 2026-10-17; the socket is renamed `wowdps-v47.sock`): `KeyInfo` — a card's key, in every frame a card rides (`Fights`, `Progression.first_kill`, `StoredFight.card`) — + trailing Vec<u32> `affixes` after `completed`, embedded (the card's fields follow), so its count is always written: four `00` bytes for a key with none, then a u32 per affix in the START's order (the pinned codec test reads a key ending `01 01 03000000 0a000000 09000000 93000000`). The live snapshot names no key (a Σ row's level is in its name, its timers in `pars_ms`), so no live frame moves. Store (record, not wire): the card's `key` writes `"affixes": [10, 9, 147]` LAST and only when the key names some, so every card without them — an unkeyed visit's, a run joined mid-way, every card written before v47 — is byte for byte what it was; a key without the field, or with anything but a list of numbers, reads none, and an item that is no u32 is dropped alone. `wowdps history regrade --kind key` refills a stored key's card from its log while the log survives. Replay FORMAT 6 with it (R29's TIER FORMAT 6: the head's key gains its affixes, and the rewrite queue recuts every older file from its log, no regrade; `pull.txt` gains `affixes`). The lake's `fights` view gains `affixes` (`key.affixes`; NULL off a key, for a key the log joined mid-run and on an older card, its type probed so a lake without one still has the column), and the mcp card's `instance` gains `affixes` (an empty list for none). |
+| 49 | Editions on the wire (the Daemon section's editions paragraph; the socket is renamed `wowdps-v49.sock`). An edition travels as the one byte of the `PROJECT_ID` it was read from (`Edition::project_id`; every byte decodes, `Edition::from_project_id`, an unknown number kept, so no byte is a bad edition), and an `Option<Edition>` as a presence byte then that byte. `ClientMsg::Watch(Cursor)` → `Watch { cursor, edition: EditionRef }`: the cursor's bytes then the ref — u8 0 `Follow` \| 1 `Pin` then the edition; ≥ 2 `BadTag` (every Watch grew a trailing byte, `00` following: the pinned Watch golden 0x28 → 0x29, the compare Watch 0x11 → 0x12). `SegmentInfo` + trailing u8 `edition` after `combat_ms` (the segment's: a live segment's version line, else its log's), embedded in every `Snapshot` and `CompareSnapshot`; `ListRow` + trailing u8 `edition` after `encounter`, in every `SegmentList` entry; `Snapshot` + trailing Option<Edition> `edition` after `raid`, `SegmentList` after `log_id`, `CompareSnapshot` after `status` — the edition the cursor resolved in (the pinned snapshot golden 0xbd → 0xc0, `01` after its combat clock and `01 01` closing it; the zeroed compare 0x0128 → 0x012a). `Status` + trailing Vec<EditionSource> `editions` (opt edition \| opt string source \| opt string log \| bool live \| bool running; the pinned Status frame, one Forever source, 0x42 → 0x56): every edition's source, the live one marked — one today, live, `source` the spec `Status.source` names, `log` the followed file, `running` the game watcher's verdict. `HistoryQuery::{Fights, Progression, Trend, RoleNight}` + trailing Option<Edition> `edition` each (the pinned Fights golden, Forever `01 12`, 0x14 → 0x16; Trend `00`, 0x16 → 0x17; RoleNight, a Classic client `01 02`, 0x18 → 0x1a) and `ClientMsg::Regrade` + the same after `kind`: one edition's cards (`FightCard::of_edition`: by `counts_as`, so a card that names none answers for Retail), `None` every edition, each card naming its own (`project_id`). `CardPlayer` + trailing Option<Role> `stored_role` after `heal_absorbed` (a presence byte, then Tank 0 / Healer 1 / Dps 2), in every frame a card rides: a role the card keeps for a player whose log named no spec; `CardPlayer::role` is the spec's role, else it — Retail's role stays its spec's, and nothing sets one yet. `ImportedCard`'s player + trailing Option<Role> `role` after `heal_curve` (kept as the card's `stored_role` only where the import names no spec) and the card + trailing u8 `edition` after `log_version` (its `project_id`; `Unknown(0)`, what every import recorded before, when the converter does not say) — the pinned ImportReplay golden 0xbe → 0xc1. Store (record, not wire): a card's player writes `"stored_role"` LAST and only when set, so every card without one is byte for byte what it was and an older card reads `None`; the derived `"role"` key is `CardPlayer::role` (unchanged for every card with a spec, and still never read back). The lake's `players` view gains `stored_role` (VARCHAR, NULL on a lake whose cards carry none, and for a word that names no role, as the codec reads `None`) and its `role` is the spec's, else the stored one; `role-night` keeps the spec's role alone, as the daemon's does, until the ruling that infers a role says how it joins. No `series`, `replay` or `creatures` format moves; the store stays `v1`. |
 | 48 | An import's meter (the import ruling, Daemon section; the socket is renamed `wowdps-v48.sock`): `ImportedCard`'s player — inside `ClientMsg::ImportReplay` 0x0E, the one frame that carries it — + after its u16 `spec`, embedded (the next player, then the card's `owner`, follow), so every field is always written: u64 `damage` \| u64 `healing` \| u64 `overheal` \| u64 `absorbed` \| u64 `heal_absorbed` \| u64 `taken` \| u32 `deaths` \| u64 `support_given` \| u64 `support_received` \| u64 `healed_received` \| u64 `self_healed` \| Vec<u64> `damage_curve` \| Vec<u64> `heal_curve` (each a u32 count, then a u64 per second from the fight's start on the meter's 1 s grid, `series::BUCKET_MS`; four `00` bytes for none) — 92 bytes more a player without curves (the pinned ImportReplay golden, one player with curves [4, 6] and [20], grew 0x4a → 0xbe). No rate is sent: the store derives `dps`, `hps` and `dtps` (`wowdps_model::rate`) over the card's rate clock, and an imported card's `combat_ms` is now its `duration_ms` (an encounter's START..END, R7) where v46 wrote `null`. The daemon refuses (`Refused`, nothing written) an import whose curve does not sum to its player's total or runs past the fight's end (`duration_ms / 1000 + 1` seconds at most; `ImportedCard::check_curves`). No answer and no other frame moves: the cards an import makes ride `Fights` and `StoredFight` in the shape every card has, and a v46 or v47 client, an importer among them, cannot reach a v48 daemon (another socket); rebuilt, an importer that fills none of the new fields sends zeros and no curves, and stores what a v46 import stored, its `combat_ms` aside. Store (record, not wire): an imported card's players write their totals and derived rates in the fields every card has always written (a v46 import's read as it was, zeros, until it is imported again); an import that brings curves writes `details/<id>.json` — one entry per player with a curve, `damage_timeline` / `heal_timeline` at `bucket_ms` 1000 and no marks, every list empty — through `FightDetails::to_json`, the very codec a local fight's details go through, so every reader of the tier (`replay-export`'s `raid.csv`, the replay's `dps.tsv`) reads an import as a local fight; no rows or series tier is written, so `GetFight` answers an import's card alone (tier 1) as before. |
 
 ## Client state & behavior (owner: proto; keybinds owner: clients)
@@ -828,6 +877,39 @@ death), a drill already on the player keeping its pane, and nothing sent when
 it is already there. The window's ribbon (skulls) and its Deaths view's
 chronological table (rows, and `j`/`k` walking the deaths in time order) are
 its callers.
+
+Editions (v49): every Watch the state sends names `ClientState::edition_ref()`
+— `Follow` unless a frontend opts in to a pin with `set_edition(EditionRef)`,
+which no frontend calls yet; it starts the state over on that edition's list,
+as a rotated log does. `edition()` is the edition the daemon last answered in
+(kept through a frame that names none) and `segment_edition()` the watched
+segment's own (a stored pull's from its card). A frame naming ANOTHER edition
+than the last is a move — the live edition changed under a following state —
+and resets it exactly as a changed `source` does, its `EditionRef`, `top_n`
+and opt-ins kept; a pinned state drops a frame naming another edition than its
+pin as stale (answered before the pin), never a move, editions compared as
+their numbers name them (`Edition::canonical`; `set_edition` keeps the pin so).
+Editions are compared as they are reckoned (`counts_as` of the number's
+edition): a frame naming `Unknown(0)` and one naming Retail are one edition,
+neither a move nor stale. A rotation is judged against the log the daemon last
+NAMED: a frame naming no source (an edition no source carries, a daemon waiting
+for a log) sets `source` for the header but erases nothing, so the next log is
+still a rotation. A frame answering a segment id is taken whatever source and
+edition it names — it names its segment's — and moves nothing: no rotation, no
+move, never stale, `source` and `edition()` staying the list's; a state whose
+first frame answered an id (no client starts so) knows no log until a list
+lands, and takes that one as its first. Leaving a pin to follow, one
+frame the daemon sent for the pin before it read the new Watch may still land
+and is taken — no frame says which Watch it answers, and a following state
+cannot tell it from the live edition's when they are the same edition, when it
+is the right answer — and when they are not, the live edition's first frame is a
+move and the state starts over once more. A stored pull's state (the window's,
+`gui_logic::history::Stored`) is answered in its card's edition: its synthetic
+frames name it, as a daemon's name their source's — one edition for the pull's
+life (the rail card's, else the first answer's), so its own frames never move
+it, whatever number a later answer's card carries; its header reads the
+answered card's own. The multi-source daemon
+only has to send another edition for a following client to be moved.
 
 Ability tree (v36, R26): `ClientState::drill_tree()` is the drilled snapshot's
 tree, empty with no drill and until the drilled snapshot arrives. The state
@@ -944,7 +1026,8 @@ the snapshot's rows, drill and raid deaths; the store marks a stored fight's
 at answer time. Nothing is stored with the flag, and a daemon without a store
 marks nothing.
 
-**Editions of the game** (record and wire unchanged: the card's `project_id` is the record):
+**Editions of the game** (record unchanged: the card's `project_id` is the record; v49 puts
+editions on the wire, the version table's row 49):
 model `Edition`, read from a log's `COMBAT_LOG_VERSION` `PROJECT_ID` — `from_project_id` gives
 `Retail` (1), `Forever` (18), `Classic(n)` for the Classic clients' published ids (2, 5, 11,
 14, 19) and `Unknown(n)` for any other number, kept (0: no number recorded — a card stored
@@ -961,12 +1044,23 @@ an unlisted nonzero id apart from Retail: some other game): the kill set that en
 progression, the retention groups and with them the fastest kill and the owner's bests, and
 the owner's inference. One edition's kill ends no progression of another's, its fights never
 take another's place under the caps or race another's for a best, and a store of Retail cards
-and cards with no number keeps exactly the grouping it had. The fixed questions take no edition yet: `Fights`, `Progression`,
-`Trend` and `RoleNight` answer over every edition an id names, `Fights` reading each card's own
-edition's owner for its role subject and `OwnerPerSec`. The lake's `fights` and `players` views
+and cards with no number keeps exactly the grouping it had. (v49) Every fixed question takes an
+optional edition, as `Fights` takes an origin: `Fights`, `Progression`, `Trend` and `RoleNight`
+(and `Regrade`) answer one edition's cards when it names one (by `counts_as`, so a card that names
+none answers for Retail), and every edition an id names without, `Fights` reading each card's own
+edition's owner for its role subject and `OwnerPerSec`. The live side names editions too: the
+daemon's one source names its log's edition (`Engine::edition`: the latest version line's
+`PROJECT_ID`, `None` before one or when it is 0), its live and indexed segments and rows wear it
+(a live segment its own version line's), and a session follows the live edition or pins one (the
+wire section's `EditionRef`). A role the log's spec does not say is a STORED role
+(`CardPlayer::stored_role`, v49): `role()` is the spec's role, else it; nothing infers one yet
+(an edition whose log carries no spec gets one from the ruling that does), the role night reads
+the spec's role alone until then, and an import may name one for a specless player. The lake's `fights` and `players` views
 carry `edition` (the key, named off `project_id`; `players` carries `project_id` too), and
 `stats.kept.progression` is reckoned per edition as the store does. The MCP's stored cards say
-`edition`, `edition_name` and `project_id`, and a card by reference its `edition`.
+`edition`, `edition_name` and `project_id`, and a card by reference its `edition`; (v49) its live
+fights and list rows say `edition`, `status` lists `editions`, and the history tools (`history`,
+`progression`, `trend`, `role_night`, `regrade_fights`) take an `edition` filter.
 
 **Imported fights** (v46, `ClientMsg::ImportReplay`): a fight from outside this machine's
 logs — a client converted it (a Warcraft Logs fight, say) and hands the daemon what its source
@@ -1062,8 +1156,10 @@ rewrites a file it cannot read whole.
 ## CLI (owner: tui)
 
 Git-style subcommands: `wowdps [--file|--logs]` (TUI client; source conflict with
-a running daemon is a hard error naming both), `wowdps gui [--file|--logs]`,
-`wowdps daemon [--linger] [--file|--logs]`, `wowdps status`, `wowdps stop`,
+a running daemon is a hard error naming both; v49: its header names the edition the
+daemon answers in ahead of the log), `wowdps gui [--file|--logs]`,
+`wowdps daemon [--linger] [--file|--logs]`, `wowdps status` (v49: a line per edition's
+source — its edition, `(live)`, the log it follows), `wowdps stop`,
 `wowdps addon [status | install]` (v31: the wowdps addon in the game's AddOns folder —
 `status` needs no daemon and reports install / interface / state / each account's
 SavedVariables, its players and creatures counted; `install` writes it),

@@ -774,6 +774,31 @@ fn status_answers_without_a_cursor() {
         doc.get("proto_version"),
         Some(&Json::u64(u64::from(wowdps_proto::PROTO_VERSION)))
     );
+    // v49: the one source, named by its log's edition, live.
+    let editions = match doc.get("editions") {
+        Some(Json::Arr(e)) => e.clone(),
+        other => panic!("editions: {other:?}"),
+    };
+    assert_eq!(editions.len(), 1);
+    assert_eq!(str_of(&editions[0], "edition"), "retail");
+    assert_eq!(str_of(&editions[0], "edition_name"), "Retail");
+    assert_eq!(editions[0].get("live"), Some(&Json::Bool(true)));
+    assert!(str_of(&editions[0], "log").contains("sample.txt"));
+
+    // v49: the list and each fight name the edition too.
+    let replies = drive(&mut bridge, &[&call_line(2, "list_fights", "{}")]);
+    let list = tool_doc(&replies[0]);
+    assert_eq!(str_of(&list, "edition"), "retail");
+    let fights = match list.get("fights") {
+        Some(Json::Arr(f)) => f.clone(),
+        other => panic!("fights: {other:?}"),
+    };
+    assert!(!fights.is_empty());
+    assert!(fights.iter().all(|f| str_of(f, "edition") == "retail"));
+    let replies = drive(&mut bridge, &[&call_line(3, "fight", "{}")]);
+    let fight = tool_doc(&replies[0]);
+    let head = fight.get("fight").expect("the fight's header");
+    assert_eq!(str_of(head, "edition"), "retail");
 }
 
 const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");

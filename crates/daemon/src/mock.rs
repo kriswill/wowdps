@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use wowdps_core::index::{self, load_segment_text};
 use wowdps_core::tail::TailEvent;
-use wowdps_proto::{ClientKind, ClientMsg, Cursor, DaemonMsg};
+use wowdps_proto::{ClientKind, ClientMsg, Cursor, DaemonMsg, EditionRef};
 
-use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
+use crate::engine::{Built, Engine, EngineEvent, ListKey, LoadoutBuilt};
 use crate::history::{Ask, LogFacts, MemBackend, Retention, Store};
 use crate::session::stamp;
 
@@ -20,12 +20,15 @@ pub struct MockDaemon {
     engine: Engine,
     path: PathBuf,
     cursor: Option<Cursor>,
+    /// v49: the edition the cursor looks in, as the hub's session keeps it.
+    edition: EditionRef,
     seq: u64,
     game_running: bool,
     /// Pushes produced by feeds that the next `handle`/`drain` returns.
     pending: Vec<DaemonMsg>,
-    /// Mirrors the hub's id-change detector for the list broadcast.
-    last_ids: Vec<wowdps_core::model::SegmentId>,
+    /// Mirrors the hub's change detector for the list broadcast: the id
+    /// table and (v49) the source's edition.
+    last_list: ListKey,
     /// The history store over an in-memory backend, fed every `Closed`
     /// exactly as the hub feeds the real thread — synchronously.
     history: Store<MemBackend>,
@@ -112,15 +115,16 @@ impl MockDaemon {
             .collect();
         engine.on_tail(TailEvent::Lines(tail), &mut events);
         engine.on_tail(TailEvent::CaughtUp, &mut events);
-        let last_ids = engine.list_ids();
+        let last_list = engine.list_key();
         let mut mock = Self {
             engine,
             path: path.to_path_buf(),
             cursor: None,
+            edition: EditionRef::Follow,
             seq: 0,
             game_running: false,
             pending: Vec::new(),
-            last_ids,
+            last_list,
             history: Store::open(MemBackend::new(), Retention::default()),
             log_facts: LogFacts::read(path),
             characters: Vec::new(),
@@ -135,8 +139,9 @@ impl MockDaemon {
     pub fn handle(&mut self, msg: ClientMsg) -> Vec<DaemonMsg> {
         let mut out = std::mem::take(&mut self.pending);
         match msg {
-            ClientMsg::Watch(cursor) => {
+            ClientMsg::Watch { cursor, edition } => {
                 self.cursor = Some(cursor);
+                self.edition = edition;
                 self.push_cursor(&mut out);
             }
             // v19: loads serviced inline, like the snapshot paths.
@@ -146,7 +151,7 @@ impl MockDaemon {
                 guid,
             } => {
                 let loadout = loop {
-                    match self.engine.loadout(segment, &guid) {
+                    match self.engine.loadout_in(self.edition, segment, &guid) {
                         LoadoutBuilt::Ready(l) => break l,
                         LoadoutBuilt::Loading(id, meta) => {
                             let text = load_segment_text(&self.path, &meta);
@@ -213,25 +218,26 @@ impl MockDaemon {
             // A client that gates on the store's state (is it off? empty?
             // degraded?) needs this answered, not silently swallowed.
             ClientMsg::GetStatus { req_id } => {
+                let source = Some(self.path.to_string_lossy().into_owned());
                 out.push(DaemonMsg::Status {
                     req_id,
                     game_running: self.game_running,
-                    source: Some(self.path.to_string_lossy().into_owned()),
+                    source: source.clone(),
                     clients: 1,
                     linger: false,
                     overlay: wowdps_proto::OverlayState::Absent,
                     history: self.history.status(),
+                    editions: vec![self.engine.edition_source(source, self.game_running)],
                 });
             }
             // R11, as the hub does it: the id table shrinks and the new
             // list goes out, then the cursor's push.
             ClientMsg::DiscardTrash => {
                 self.engine.discard_trash();
-                let ids = self.engine.list_ids();
-                if ids != self.last_ids {
-                    self.last_ids = ids;
-                    self.seq += 1;
-                    out.push(stamp(self.engine.build_list(self.game_running), self.seq));
+                let key = self.engine.list_key();
+                if key != self.last_list {
+                    self.last_list = key;
+                    self.push_list(&mut out);
                     self.push_cursor(&mut out);
                 }
             }
@@ -286,18 +292,20 @@ impl MockDaemon {
         self.engine.on_tail(TailEvent::Lines(lines), &mut events);
         let mut out = Vec::new();
         for ev in &events {
-            if let EngineEvent::Opened(id) = ev {
+            // v49: as the hub: only to a session this source answers.
+            if let EngineEvent::Opened(id) = ev
+                && self.engine.serves(self.edition)
+            {
                 out.push(DaemonMsg::SegmentOpened { id: *id });
             }
         }
         self.record_closed(&events);
         // Mirror the hub: an id-table change broadcasts the list to every
         // session regardless of cursor.
-        let ids = self.engine.list_ids();
-        if ids != self.last_ids {
-            self.last_ids = ids;
-            self.seq += 1;
-            out.push(stamp(self.engine.build_list(self.game_running), self.seq));
+        let key = self.engine.list_key();
+        if key != self.last_list {
+            self.last_list = key;
+            self.push_list(&mut out);
         }
         self.push_cursor(&mut out);
         out
@@ -417,6 +425,16 @@ impl MockDaemon {
         &self.history
     }
 
+    /// The hub's list broadcast, as the hub sends it (`Engine::list_for`):
+    /// this source's list, or (v49) the session's edition's empty one when
+    /// this source does not answer it.
+    fn push_list(&mut self, out: &mut Vec<DaemonMsg>) {
+        let list = self.engine.build_list(self.game_running);
+        let list = self.engine.list_for(self.edition, &list);
+        self.seq += 1;
+        out.push(stamp(list, self.seq));
+    }
+
     fn push_cursor(&mut self, out: &mut Vec<DaemonMsg>) {
         let Some(cursor) = self.cursor.clone() else {
             return;
@@ -443,40 +461,14 @@ impl MockDaemon {
                 }
             };
         }
-        let msg = match cursor {
-            Cursor::List => self.engine.build_list(self.game_running),
-            Cursor::Segment {
-                segment,
-                view,
-                top_n,
-                drill,
-                death,
-                spell,
-                range,
-            } => settle!(self.engine.build_segment(
-                segment,
-                view,
-                top_n,
-                drill.as_deref(),
-                death,
-                spell.as_deref(),
-                range
-            )),
-            // R12
-            Cursor::Compare {
-                segment,
-                a,
-                b,
-                view,
-                range,
-                spell,
-            } => {
-                settle!(
-                    self.engine
-                        .build_compare(segment, &a, &b, view, range, spell.as_deref())
-                )
-            }
-        };
+        // As the hub answers a window — the client every mock snapshot is
+        // built for — in the session's edition (v49).
+        let msg = settle!(self.engine.build_cursor(
+            ClientKind::Window,
+            &cursor,
+            self.edition,
+            self.game_running
+        ));
         self.seq += 1;
         out.push(stamp(msg, self.seq));
     }

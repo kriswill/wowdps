@@ -11,12 +11,12 @@
 )]
 
 use wowdps_model::{
-    Action, Drill, GraphMode, ListRow, Loadout, Pane, Row, Screen, SegmentId, SegmentInfo,
+    Action, Drill, Edition, GraphMode, ListRow, Loadout, Pane, Row, Screen, SegmentId, SegmentInfo,
     SegmentKind, Timeline, View,
 };
 use wowdps_proto::{
-    Breakdown, ClientMsg, ClientState, CompareSide, Cursor, DaemonMsg, HistoryStatus, ListEntry,
-    LoadError, OverlayState, SegmentRef,
+    Breakdown, ClientMsg, ClientState, CompareSide, Cursor, DaemonMsg, EditionRef, HistoryStatus,
+    ListEntry, LoadError, OverlayState, SegmentRef,
 };
 
 fn list_row(kind: SegmentKind, start_ms: i64, duration_ms: i64) -> ListRow {
@@ -31,6 +31,7 @@ fn list_row(kind: SegmentKind, start_ms: i64, duration_ms: i64) -> ListRow {
         pars_ms: None,
         arena: false,
         encounter: None,
+        edition: wowdps_model::Edition::Retail,
     }
 }
 
@@ -51,6 +52,7 @@ fn segment_list(n: u64, active: bool, source: Option<&str>) -> DaemonMsg {
         source: source.map(str::to_string),
         active,
         log_id: None,
+        edition: None,
     }
 }
 
@@ -67,6 +69,7 @@ fn info(kind: SegmentKind) -> SegmentInfo {
         pars_ms: None,
         arena: false,
         encounter: None,
+        edition: wowdps_model::Edition::Retail,
     }
 }
 
@@ -110,6 +113,7 @@ fn snapshot(
         source: Some("log.txt".to_string()),
         status: None,
         raid: None,
+        edition: None,
     }
 }
 
@@ -166,6 +170,7 @@ fn compare_snapshot(
         range,
         source: source.map(str::to_string),
         status: Some("note".to_string()),
+        edition: None,
     }
 }
 
@@ -180,10 +185,13 @@ fn on_meter() -> ClientState {
     assert_eq!(st.screen, Screen::Meter);
     assert!(matches!(
         &reqs[..],
-        [ClientMsg::Watch(Cursor::Segment {
-            segment: SegmentRef::Live,
+        [ClientMsg::Watch {
+            cursor: Cursor::Segment {
+                segment: SegmentRef::Live,
+                ..
+            },
             ..
-        })]
+        }]
     ));
     st.on_msg(snapshot(
         SegmentRef::Live,
@@ -198,7 +206,7 @@ fn on_meter() -> ClientState {
 
 fn watch_of(reqs: &[ClientMsg]) -> &Cursor {
     match reqs {
-        [ClientMsg::Watch(c)] => c,
+        [ClientMsg::Watch { cursor: c, .. }] => c,
         other => panic!("expected exactly one Watch, got {other:?}"),
     }
 }
@@ -207,7 +215,7 @@ fn watch_of(reqs: &[ClientMsg]) -> &Cursor {
 fn default_and_with_top_n_shape_the_first_request() {
     let st = ClientState::default();
     assert_eq!(st.screen, Screen::List);
-    assert_eq!(st.initial_request(), ClientMsg::Watch(Cursor::List));
+    assert_eq!(st.initial_request(), ClientMsg::watch(Cursor::List));
     assert_eq!(st.watched_segment(), SegmentRef::Live);
     assert!(st.following_live());
     assert_eq!(st.segment_count(), 0);
@@ -608,6 +616,7 @@ fn back_walks_ability_then_drill_then_list_with_the_cursor_on_the_segment() {
         source: Some("log.txt".to_string()),
         status: None,
         raid: None,
+        edition: None,
     });
     st.apply(Action::Open);
     st.on_msg(DaemonMsg::Snapshot {
@@ -623,6 +632,7 @@ fn back_walks_ability_then_drill_then_list_with_the_cursor_on_the_segment() {
         source: Some("log.txt".to_string()),
         status: None,
         raid: None,
+        edition: None,
     });
     st.apply(Action::Open);
     st.set_drill_range(Some((0, 5)));
@@ -767,6 +777,7 @@ fn segment_navigation_clamps_at_both_ends_and_unknown_ids_read_as_newest() {
         source: None,
         active: false,
         log_id: None,
+        edition: None,
     });
     assert_eq!(st.segment_index(), 0);
 }
@@ -902,6 +913,7 @@ fn load_failures_fatal_and_benign_messages_land_in_the_status() {
             linger: false,
             overlay: OverlayState::Absent,
             history: HistoryStatus::default(),
+            editions: Vec::new(),
         },
         DaemonMsg::SetVisible(false),
         DaemonMsg::Loadout {
@@ -1223,6 +1235,7 @@ fn encounter_spans_skip_degenerate_and_misaligned_members() {
         source: None,
         active: false,
         log_id: None,
+        edition: None,
     });
     st.screen = Screen::Meter;
     let overall = |instance: Option<u32>| DaemonMsg::Snapshot {
@@ -1242,6 +1255,7 @@ fn encounter_spans_skip_degenerate_and_misaligned_members() {
         source: None,
         status: None,
         raid: None,
+        edition: None,
     };
     st.on_msg(overall(None));
     assert!(
@@ -1294,11 +1308,14 @@ fn the_meter_graph_toggle_is_local_and_odd_states_still_watch_something() {
     st.screen = Screen::Compare;
     assert!(matches!(
         st.initial_request(),
-        ClientMsg::Watch(Cursor::Segment {
-            drill: None,
-            spell: None,
+        ClientMsg::Watch {
+            cursor: Cursor::Segment {
+                drill: None,
+                spell: None,
+                ..
+            },
             ..
-        })
+        }
     ));
 }
 
@@ -1438,4 +1455,324 @@ fn open_death_on_the_death_on_screen_still_leaves_a_comparison() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+// ---- v49: editions ----------------------------------------------------------
+
+fn list_in(edition: Option<Edition>, source: Option<&str>, n: u64) -> DaemonMsg {
+    DaemonMsg::SegmentList {
+        seq: 1,
+        entries: entries(n),
+        source: source.map(str::to_string),
+        active: false,
+        log_id: None,
+        edition,
+    }
+}
+
+fn live_in(edition: Option<Edition>, source: &str) -> DaemonMsg {
+    DaemonMsg::Snapshot {
+        seq: 3,
+        segment: SegmentRef::Live,
+        id: Some(SegmentId(2)),
+        view: View::Damage,
+        info: info(SegmentKind::Encounter),
+        rows: vec![row("Player-1-A", 10)],
+        total_rows: 1,
+        breakdown: None,
+        segment_count: 2,
+        source: Some(source.to_string()),
+        status: None,
+        raid: None,
+        edition,
+    }
+}
+
+/// The Watch a state just sent, with the edition it looks in.
+fn sent_watch(sent: &[ClientMsg]) -> (Cursor, EditionRef) {
+    match sent {
+        [ClientMsg::Watch { cursor, edition }] => (cursor.clone(), *edition),
+        other => panic!("one Watch, got {other:?}"),
+    }
+}
+
+/// A state follows until a frontend opts in to a pin, and says so on every
+/// Watch: the daemon resolves `Live` and the list in the live edition.
+#[test]
+fn a_state_follows_the_live_edition_unless_pinned() {
+    let st = ClientState::new();
+    assert_eq!(st.edition_ref(), EditionRef::Follow);
+    assert_eq!(
+        st.initial_request(),
+        ClientMsg::Watch {
+            cursor: Cursor::List,
+            edition: EditionRef::Follow
+        }
+    );
+    assert_eq!(st.edition(), None, "nothing answered yet");
+}
+
+/// The live edition moving under a following state is a move, as a new log
+/// is: back to the new edition's list, still following — even when the two
+/// logs share a file name. A frame that names no edition is no move, and the
+/// edition last named is kept through it.
+#[test]
+fn a_following_state_is_moved_when_the_live_edition_changes() {
+    let mut st = ClientState::new();
+    let _ = st.on_msg(list_in(Some(Edition::Retail), Some("log.txt"), 2));
+    let _ = st.goto_list_pos(1);
+    let _ = st.on_msg(live_in(Some(Edition::Retail), "log.txt"));
+    assert_eq!(st.screen, Screen::Meter);
+    assert_eq!(st.edition(), Some(Edition::Retail));
+    assert_eq!(st.segment_edition(), Some(Edition::Retail));
+
+    // Unnamed: no move, and Retail is still the edition last answered in.
+    assert!(st.on_msg(live_in(None, "log.txt")).is_empty());
+    assert_eq!(st.screen, Screen::Meter);
+    assert_eq!(st.edition(), Some(Edition::Retail));
+
+    // Forever went live: the same file name, another edition's log.
+    let sent = st.on_msg(live_in(Some(Edition::Forever), "log.txt"));
+    assert_eq!(sent_watch(&sent), (Cursor::List, EditionRef::Follow));
+    assert_eq!(st.screen, Screen::List);
+    assert_eq!(st.edition(), Some(Edition::Forever));
+    assert!(st.entries().is_empty(), "the old edition's ids are gone");
+    // Its list lands as any list does.
+    assert!(
+        st.on_msg(list_in(Some(Edition::Forever), Some("log.txt"), 1))
+            .is_empty()
+    );
+    assert_eq!(st.entries().len(), 1);
+}
+
+/// A pin is an opt-in: the state starts over on that edition's list and
+/// every Watch names it. A frame answered before the pin — another edition
+/// — is dropped, never taken for a move; the pinned edition's frames land.
+#[test]
+fn a_pinned_state_takes_only_its_editions_frames() {
+    let mut st = ClientState::new();
+    let _ = st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3));
+    assert_eq!(st.entries().len(), 3);
+    let sent = st.set_edition(EditionRef::Pin(Edition::Forever));
+    assert_eq!(
+        sent_watch(&sent),
+        (Cursor::List, EditionRef::Pin(Edition::Forever))
+    );
+    assert!(st.entries().is_empty());
+    assert_eq!(st.edition(), Some(Edition::Forever));
+    assert!(
+        st.set_edition(EditionRef::Pin(Edition::Forever)).is_empty(),
+        "already there"
+    );
+
+    // A Retail list still in flight from before the pin: dropped.
+    assert!(
+        st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3))
+            .is_empty()
+    );
+    assert!(st.entries().is_empty());
+    assert_eq!(st.source, None);
+    // The pinned edition's empty list (no source carries it): taken.
+    assert!(
+        st.on_msg(list_in(Some(Edition::Forever), None, 0))
+            .is_empty()
+    );
+    assert_eq!(st.edition(), Some(Edition::Forever));
+    // Its log rotating is a move; the pin outlives it.
+    let _ = st.on_msg(list_in(Some(Edition::Forever), Some("f1.txt"), 1));
+    let sent = st.on_msg(list_in(Some(Edition::Forever), Some("f2.txt"), 1));
+    assert_eq!(
+        sent_watch(&sent),
+        (Cursor::List, EditionRef::Pin(Edition::Forever))
+    );
+    assert_eq!(st.edition_ref(), EditionRef::Pin(Edition::Forever));
+
+    // Following again starts over too, and takes whatever is live.
+    let sent = st.set_edition(EditionRef::Follow);
+    assert_eq!(sent_watch(&sent), (Cursor::List, EditionRef::Follow));
+    assert_eq!(st.edition(), None);
+    assert!(
+        st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3))
+            .is_empty()
+    );
+    assert_eq!(st.entries().len(), 3);
+}
+
+/// A pin made of a value no `PROJECT_ID` decodes to — `Unknown(1)` is
+/// Retail's number, `Classic(18)` Forever's — is the pin that number names:
+/// the Watch says it, and the daemon's frames, which name the edition by
+/// its number, are taken rather than dropped as another edition's.
+#[test]
+fn a_hand_made_pin_is_the_edition_its_number_names() {
+    for (made, named) in [
+        (Edition::Unknown(1), Edition::Retail),
+        (Edition::Classic(18), Edition::Forever),
+        (Edition::Unknown(18), Edition::Forever),
+    ] {
+        let mut st = ClientState::new();
+        let sent = st.set_edition(EditionRef::Pin(made));
+        assert_eq!(sent_watch(&sent), (Cursor::List, EditionRef::Pin(named)));
+        assert_eq!(st.edition_ref(), EditionRef::Pin(named));
+        assert!(st.on_msg(list_in(Some(named), Some("a.txt"), 2)).is_empty());
+        assert_eq!(st.entries().len(), 2, "{made:?} takes {named:?}'s list");
+        assert!(
+            st.set_edition(EditionRef::Pin(named)).is_empty(),
+            "already there"
+        );
+    }
+}
+
+/// Leaving a pin to follow: a frame the daemon sent for the pin before it
+/// read the new Watch may land first, and is taken — no frame says which
+/// Watch it answers — then the live edition's first frame is a move, and
+/// the state settles on the live edition's list after one more Watch.
+#[test]
+fn leaving_a_pin_takes_one_late_frame_of_it_then_settles() {
+    let mut st = ClientState::new();
+    let _ = st.set_edition(EditionRef::Pin(Edition::Forever));
+    let _ = st.on_msg(list_in(Some(Edition::Forever), None, 0));
+    let sent = st.set_edition(EditionRef::Follow);
+    assert_eq!(sent_watch(&sent), (Cursor::List, EditionRef::Follow));
+    // Late: the pin's empty list.
+    assert!(
+        st.on_msg(list_in(Some(Edition::Forever), None, 0))
+            .is_empty()
+    );
+    assert_eq!(st.edition(), Some(Edition::Forever));
+    // The live edition's answer: a move, one more Watch, then its list.
+    let sent = st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3));
+    assert_eq!(sent_watch(&sent), (Cursor::List, EditionRef::Follow));
+    assert!(
+        st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3))
+            .is_empty()
+    );
+    assert_eq!(st.entries().len(), 3);
+    assert_eq!(st.edition(), Some(Edition::Retail));
+}
+
+/// A frame answering a SEGMENT ID names the source that segment is in and
+/// that source's edition, which need not be the ones the state's list is
+/// of: it is taken as it is, and it moves nothing — no rotation, no move,
+/// never stale for a pin — and the state's source and edition stay its
+/// list's. A frame for `Live` naming another log still is a rotation.
+#[test]
+fn a_segment_ids_frame_is_taken_whatever_source_it_names() {
+    let mut st = ClientState::new();
+    let _ = st.set_edition(EditionRef::Pin(Edition::Retail));
+    let _ = st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3));
+    let sent = st.goto_list_pos(0);
+    let (cursor, edition) = sent_watch(&sent);
+    assert_eq!(edition, EditionRef::Pin(Edition::Retail));
+    let Cursor::Segment {
+        segment: SegmentRef::Id(id),
+        ..
+    } = cursor
+    else {
+        panic!("an id cursor: {cursor:?}");
+    };
+    // Its segment lives in another edition's log.
+    let elsewhere = |edition| DaemonMsg::Snapshot {
+        seq: 4,
+        segment: SegmentRef::Id(id),
+        id: Some(id),
+        view: View::Damage,
+        info: SegmentInfo {
+            edition: Edition::Forever,
+            ..info(SegmentKind::Encounter)
+        },
+        rows: vec![row("Player-1-A", 10)],
+        total_rows: 1,
+        breakdown: None,
+        segment_count: 3,
+        source: Some("b.txt".to_string()),
+        status: None,
+        raid: None,
+        edition,
+    };
+    assert!(st.on_msg(elsewhere(Some(Edition::Forever))).is_empty());
+    assert_eq!(st.screen, Screen::Meter, "not reset");
+    assert_eq!(st.rows().len(), 1, "taken");
+    assert_eq!(st.segment_edition(), Some(Edition::Forever));
+    assert_eq!(st.source.as_deref(), Some("a.txt"), "the list's");
+    assert_eq!(st.edition(), Some(Edition::Retail));
+    assert_eq!(st.edition_ref(), EditionRef::Pin(Edition::Retail));
+    // Nor does a frame naming no edition, or the pin's own, move it.
+    assert!(st.on_msg(elsewhere(None)).is_empty());
+    assert_eq!(st.entries().len(), 3);
+    // The pinned list goes on landing as before: no second reset.
+    assert!(
+        st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3))
+            .is_empty()
+    );
+    assert_eq!(st.screen, Screen::Meter);
+    // A rotation of the list's own log still resets.
+    let sent = st.on_msg(list_in(Some(Edition::Retail), Some("a2.txt"), 1));
+    assert_eq!(
+        sent_watch(&sent),
+        (Cursor::List, EditionRef::Pin(Edition::Retail))
+    );
+}
+
+/// A frame naming NO source — the empty answer of an edition no source
+/// carries, a daemon waiting for a log — erases nothing: the next log is
+/// still a rotation, judged against the log last named, though the header
+/// says what the last frame did.
+#[test]
+fn a_frame_naming_no_source_does_not_hide_the_next_rotation() {
+    let mut st = ClientState::new();
+    let _ = st.set_edition(EditionRef::Pin(Edition::Retail));
+    let _ = st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3));
+    let _ = st.goto_list_pos(2);
+    assert_eq!(st.screen, Screen::Meter);
+    // The source stops serving Retail: `Live` there is the snapshot of
+    // nothing, naming no source.
+    let nothing = DaemonMsg::Snapshot {
+        seq: 5,
+        segment: SegmentRef::Live,
+        id: None,
+        view: View::Damage,
+        info: SegmentInfo {
+            edition: Edition::Retail,
+            ..info(SegmentKind::Trash)
+        },
+        rows: Vec::new(),
+        total_rows: 0,
+        breakdown: None,
+        segment_count: 0,
+        source: None,
+        status: None,
+        raid: None,
+        edition: Some(Edition::Retail),
+    };
+    assert!(st.on_msg(nothing).is_empty());
+    assert_eq!(st.source, None, "the header's");
+    // The next Retail log is a rotation: the state starts over.
+    let sent = st.on_msg(list_in(Some(Edition::Retail), Some("b.txt"), 1));
+    assert_eq!(
+        sent_watch(&sent),
+        (Cursor::List, EditionRef::Pin(Edition::Retail))
+    );
+    assert_eq!(st.screen, Screen::List);
+}
+
+/// Editions are compared as they are reckoned: a frame naming `Unknown(0)`
+/// (a log or a card that named none) and one naming Retail are one edition
+/// — no move for a following state, never stale for a Retail pin.
+#[test]
+fn naming_no_edition_then_retail_is_no_move() {
+    let mut st = ClientState::new();
+    let _ = st.on_msg(list_in(Some(Edition::Unknown(0)), Some("a.txt"), 2));
+    assert!(
+        st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3))
+            .is_empty()
+    );
+    assert_eq!(st.entries().len(), 3, "taken, not a reset");
+    let mut pinned = ClientState::new();
+    let _ = pinned.set_edition(EditionRef::Pin(Edition::Retail));
+    assert!(
+        pinned
+            .on_msg(list_in(Some(Edition::Unknown(0)), Some("a.txt"), 2))
+            .is_empty()
+    );
+    assert_eq!(pinned.entries().len(), 2, "not stale");
 }

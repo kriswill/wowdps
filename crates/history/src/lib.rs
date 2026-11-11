@@ -55,6 +55,18 @@ fn role_case() -> String {
     sql
 }
 
+/// v49: `CASE <col> WHEN 'tank' THEN 'tank' … END` over every role's name
+/// (`Role::name`), so a stored role the codec reads (`Role::from_name`) is
+/// the one SQL reads, and any other word is NULL, as it is `None` there.
+fn stored_role_case(col: &str) -> String {
+    let mut sql = format!("CASE {col}");
+    for role in [Role::Tank, Role::Healer, Role::Dps] {
+        sql.push_str(&format!(" WHEN '{0}' THEN '{0}'", role.name()));
+    }
+    sql.push_str(" END");
+    sql
+}
+
 /// `CASE p.spec WHEN 1473 THEN true ELSE false END` — R19's support flag,
 /// derived from the spec the way `role` is (`Spec::support`: Augmentation
 /// only). No card stores it; a specless player reads false.
@@ -640,6 +652,33 @@ impl Lake {
             } else {
                 ", CAST(0 AS BIGINT) AS heal_absorbed"
             };
+            // v49: the stored role — a role no spec says, for a player whose
+            // log named none (an edition without specs). Written last and
+            // only when set, so most lakes have no such field: a VARCHAR is
+            // read, anything else (absent, or typed JSON by an all-null lake,
+            // `role`'s trap) is synthesized NULL. A word that is no role's
+            // name reads NULL, as `CardPlayer::from_json` reads it `None`
+            // (`stored_role_case`). `role` is the spec's role, else this one,
+            // exactly as `CardPlayer::role` reads it.
+            let stored_role_typed = self
+                .sql(
+                    "DESCRIBE SELECT stored_role FROM \
+                     (SELECT unnest(players, recursive := true) FROM fights)",
+                )
+                .map(|t| {
+                    t.rows.iter().any(|r| {
+                        r.get(1)
+                            .and_then(Json::as_str)
+                            .is_some_and(|ty| ty == "VARCHAR")
+                    })
+                })
+                .unwrap_or(false);
+            let stored_role = if stored_role_typed {
+                excluded.push("stored_role");
+                stored_role_case("p.stored_role")
+            } else {
+                "CAST(NULL AS VARCHAR)".to_string()
+            };
             let exclude = if excluded.is_empty() {
                 String::new()
             } else {
@@ -654,7 +693,8 @@ impl Lake {
                      f.start_utc_ms, f.duration_ms, f.success, f.aborted, f.imported, \
                      f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
                      f.project_id, f.edition, \
-                     p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql}{am_sql}\
+                     p.* {exclude}, coalesce({}, {stored_role}) AS role, \
+                     {stored_role} AS stored_role, {} AS support{pct_sql}{effective_sql}{am_sql}\
                      {shields_sql}{heal_absorbed_sql} \
                      FROM fights f, unnest(f.players) AS u(p);",
                     role_case(),
@@ -1274,11 +1314,14 @@ impl Lake {
         // `wowdps_model::mitigated_pct` operation for operation, and the
         // overheal share `overheal as f64 * 100.0 / (healing + overheal)
         // as f64` likewise — so the two readers agree bit for bit.
+        // v49: the night's roles are the SPEC'S alone, as the daemon's — a
+        // stored role joins the roster with the ruling that sets one.
+        let spec_role = role_case();
         let t = self.sql_with(
             &format!(
                 "WITH n AS (\
-                   SELECT p.guid, p.name, p.spec, p.role, p.start_utc_ms, \
-                          CASE p.role WHEN 'healer' THEN p.hps \
+                   SELECT p.guid, p.name, p.spec, {spec_role} AS role, p.start_utc_ms, \
+                          CASE {spec_role} WHEN 'healer' THEN p.hps \
                                       WHEN 'tank' THEN \
                                         CASE WHEN {taken} + {prevented} + {reduced} = 0 THEN 0.0 \
                                              ELSE CAST({mitigated} AS DOUBLE) * 100.0 \

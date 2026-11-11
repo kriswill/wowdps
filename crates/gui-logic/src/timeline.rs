@@ -513,6 +513,7 @@ mod tests {
                 pars_ms: None,
                 arena: false,
                 encounter: None,
+                edition: wowdps_model::Edition::Retail,
             },
         }
     }

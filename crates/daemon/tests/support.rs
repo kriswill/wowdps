@@ -561,6 +561,7 @@ fn trend_of(store: &Store<MemBackend>, guid: &str, measure: TrendMeasure) -> Vec
         since_utc_ms: None,
         limit: 0,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::Trend(points) => points,
         other => panic!("{other:?}"),
@@ -613,6 +614,7 @@ fn a_trend_by_effective_dps_reads_the_derived_rate() {
         since_utc_ms: None,
         limit: 0,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::Trend(points) => points,
         other => panic!("{other:?}"),

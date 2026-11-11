@@ -8,7 +8,7 @@ use wowdps_model::{
     AbilitySeries, Empower, GroupKind, PowerSeries, SpellGroup, SpellMeta, SpellPart, SpellTree,
 };
 use wowdps_model::{
-    Class, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
+    Class, Edition, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
     MissKind, Mitigation, RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId,
     SegmentInfo, SegmentKind, ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick,
     Timeline, UptimeCell, View,
@@ -21,7 +21,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 48;
+pub const PROTO_VERSION: u16 = 49;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -38,6 +38,61 @@ pub enum ClientKind {
 pub enum SegmentRef {
     Live,
     Id(SegmentId),
+}
+
+/// v49: the edition a session's cursor looks in — what `SegmentRef::Live`
+/// and the segment list resolve inside. A segment id names one segment of
+/// one edition's log wherever it lives, so it needs none. A session that
+/// never says is following.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum EditionRef {
+    /// The live edition: the running game's, else the one whose log was
+    /// written last. A following client is moved when it changes, as it is
+    /// when the log file changes.
+    #[default]
+    Follow,
+    /// One edition, whichever runs. An edition no source carries is an
+    /// empty answer — no live segment, an empty list — never an error.
+    Pin(Edition),
+}
+
+impl EditionRef {
+    /// The ref as it reads once it has travelled: a pin to the edition its
+    /// number names ([`Edition::canonical`]), so `Pin(Unknown(1))` is a pin
+    /// to Retail wherever it is compared, in process or over the wire.
+    pub fn canonical(self) -> Self {
+        match self {
+            EditionRef::Follow => EditionRef::Follow,
+            EditionRef::Pin(e) => EditionRef::Pin(e.canonical()),
+        }
+    }
+
+    /// Whether a source the daemon names `source` answers this ref.
+    /// Following takes any; a pin takes the source its edition is reckoned
+    /// with ([`Edition::counts_as`]). `source` is the daemon's to name: the
+    /// edition its log's header says, or — before the header is read, or
+    /// for a log whose header says none — the edition it knows the source
+    /// by from where it came from, or `None` when it knows neither. Only
+    /// that last, `None`, is reckoned as Retail here, as the history
+    /// reckons a fight that names no edition.
+    pub fn serves(self, source: Option<Edition>) -> bool {
+        match self.canonical() {
+            EditionRef::Follow => true,
+            EditionRef::Pin(e) => {
+                source.unwrap_or(Edition::Unknown(0)).counts_as() == e.counts_as()
+            }
+        }
+    }
+
+    /// The edition a frame answering this ref names: the pin, or —
+    /// following — the edition the daemon names the answering source by
+    /// (`serves`'s `source`).
+    pub fn named(self, source: Option<Edition>) -> Option<Edition> {
+        match self.canonical() {
+            EditionRef::Follow => source,
+            EditionRef::Pin(e) => Some(e),
+        }
+    }
 }
 
 /// What a client is rendering; the daemon pushes snapshots for exactly this.
@@ -103,8 +158,13 @@ pub enum ClientMsg {
         client: ClientKind,
         pid: u32,
     },
-    /// The client's cursor: replaces any prior Watch.
-    Watch(Cursor),
+    /// The client's cursor: replaces any prior Watch. v49: with the edition
+    /// it looks in — `Live` and the list resolve inside `edition`, and a
+    /// one-shot's `Live` (`GetLoadout`) inside the session's last Watch's.
+    Watch {
+        cursor: Cursor,
+        edition: EditionRef,
+    },
     GetStatus {
         req_id: u32,
     },
@@ -194,6 +254,9 @@ pub enum ClientMsg {
         /// Every card of this kind (with the other filters): `key` regrades
         /// all keystone Σs, which have no encounter id to select by.
         kind: Option<FightKind>,
+        /// v49: only cards of this edition (by `Edition::counts_as`), with
+        /// the other filters; `None` is every edition.
+        edition: Option<Edition>,
     },
     /// v45 (R29): one stored fight's replay tier — its `replay/<id>.bin`
     /// bytes (`proto::replay`), answered by `DaemonMsg::Replay`.
@@ -339,6 +402,10 @@ pub enum HistoryQuery {
         /// v46: which origins are listed — `Local` (this machine's own,
         /// what every answer held before imports) unless a client asks.
         origin: OriginFilter,
+        /// v49: only fights of this edition (`Edition::counts_as`, so a
+        /// card that names none answers for Retail); `None` is every
+        /// edition, each card naming its own. Every query takes it.
+        edition: Option<Edition>,
     },
     Progression {
         encounter: u32,
@@ -347,6 +414,8 @@ pub enum HistoryQuery {
         /// evening never straddles it), using each card's log timezone;
         /// `None` = UTC calendar days.
         local_cutover_hour: Option<u8>,
+        /// v49: as `Fights`' — the pulls of one edition, `None` every one.
+        edition: Option<Edition>,
     },
     Trend {
         guid: String,
@@ -363,6 +432,8 @@ pub enum HistoryQuery {
         /// v20: `Day` / `Week` buckets on LOCAL days starting at this hour;
         /// `None` = UTC.
         local_cutover_hour: Option<u8>,
+        /// v49: as `Fights`'.
+        edition: Option<Edition>,
     },
     /// v26 (step 5): one night of one boss as a role roster — every
     /// player's non-aborted pulls that night folded into a `RoleNightRow`.
@@ -374,6 +445,8 @@ pub enum HistoryQuery {
         difficulty: u32,
         night: i64,
         local_cutover_hour: Option<u8>,
+        /// v49: as `Fights`'.
+        edition: Option<Edition>,
     },
 }
 
@@ -714,6 +787,26 @@ pub struct HistoryStatus {
     pub kept_imports: u32,
 }
 
+/// v49: one edition's source as `Status` lists it: the edition its log
+/// names, what is followed, the log followed now, and whether it is the
+/// live edition's (what a following client is shown). A daemon with one
+/// source lists it alone and live; one per edition follows.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EditionSource {
+    /// The edition the followed log names; `None` before its header is
+    /// read, without a log, or when it names none.
+    pub edition: Option<Edition>,
+    /// What is followed, as `Status::source` words it: the folder searched
+    /// for logs, or the one file.
+    pub source: Option<String>,
+    /// The log file followed now, by name; `None` while none is.
+    pub log: Option<String>,
+    /// The live edition's source.
+    pub live: bool,
+    /// The game of this source is running, as far as the watcher tells.
+    pub running: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayState {
     /// Not running and not wanted (no game, or auto_overlay off).
@@ -764,6 +857,20 @@ pub enum DaemonMsg {
         /// lust windows. `None` while the segment is still being parsed and
         /// when there is nothing to describe.
         raid: Option<RaidTimeline>,
+        /// v49: the edition the cursor resolved in — the session's pin, or
+        /// (following) the edition the daemon names the live source by: its
+        /// log's header's, else (before the header is read) where the
+        /// source came from; `None` while it knows neither. Like `source`,
+        /// a change means the client moved: it resets and re-watches. The
+        /// segment's own edition is `info.edition`.
+        ///
+        /// A frame answering a SEGMENT ID (`segment` is `SegmentRef::Id`)
+        /// instead names where that segment lives — `source` its source's
+        /// log, `edition` that source's edition — whatever the session looks
+        /// in: an id names its segment in whichever edition's source holds
+        /// it. A client takes such a frame as it is, and it moves nothing
+        /// (`ClientState`).
+        edition: Option<Edition>,
     },
     /// Pushed to `Cursor::List` watchers: the full list, oldest first,
     /// coalesced by `seq` like snapshots. Each row carries its stable id —
@@ -783,6 +890,11 @@ pub enum DaemonMsg {
         /// row's history-store fight id. `None` before the header lands and
         /// while no log is followed.
         log_id: Option<u64>,
+        /// v49: the edition this is the list of (`Snapshot::edition`'s
+        /// meaning): a pin's list of an edition no source carries is empty.
+        /// The list is broadcast again whenever it would name another
+        /// edition, as when its ids change.
+        edition: Option<Edition>,
     },
     /// R12: answers a `Cursor::Compare`. Coalesced by `seq` exactly like
     /// `Snapshot`, and equally idempotent — a lagging client is caught up by
@@ -808,6 +920,8 @@ pub enum DaemonMsg {
         range: Option<(u32, u32)>,
         source: Option<String>,
         status: Option<String>,
+        /// v49: as `Snapshot::edition`.
+        edition: Option<Edition>,
     },
     /// A new segment just opened on live combat — the client decides whether
     /// to snap to it.
@@ -827,6 +941,9 @@ pub enum DaemonMsg {
         overlay: OverlayState,
         /// v20: the history store's state.
         history: HistoryStatus,
+        /// v49: every edition's source (`source` names the first's), the
+        /// live one marked.
+        editions: Vec<EditionSource>,
     },
     /// Overlay lifecycle command from the supervisor.
     SetVisible(bool),
@@ -932,6 +1049,66 @@ fn role_from(b: u8) -> Result<Role> {
         1 => Role::Healer,
         2 => Role::Dps,
         _ => return Err(DecodeError::BadTag(b)),
+    })
+}
+
+/// v49: an edition on the wire is the `PROJECT_ID` it was read from, one
+/// byte: every number reads back as the edition it named
+/// (`Edition::from_project_id`), an unknown one kept, so no byte is a bad
+/// tag and a later build's edition decodes as `Unknown(n)`.
+fn put_edition(buf: &mut Vec<u8>, e: Edition) {
+    wire::put_u8(buf, e.project_id());
+}
+
+fn get_edition(rd: &mut Reader) -> Result<Edition> {
+    Ok(Edition::from_project_id(rd.u8()?))
+}
+
+fn put_opt_edition(buf: &mut Vec<u8>, e: Option<Edition>) {
+    wire::put_opt(buf, e.as_ref(), |b, e| put_edition(b, *e));
+}
+
+fn get_opt_edition(rd: &mut Reader) -> Result<Option<Edition>> {
+    rd.opt(get_edition)
+}
+
+/// v49: `EditionRef` = u8 0 `Follow` | 1 `Pin` then the edition's byte;
+/// ≥ 2 is `BadTag`.
+fn put_edition_ref(buf: &mut Vec<u8>, r: EditionRef) {
+    match r {
+        EditionRef::Follow => wire::put_u8(buf, 0),
+        EditionRef::Pin(e) => {
+            wire::put_u8(buf, 1);
+            put_edition(buf, e);
+        }
+    }
+}
+
+fn get_edition_ref(rd: &mut Reader) -> Result<EditionRef> {
+    match rd.u8()? {
+        0 => Ok(EditionRef::Follow),
+        1 => Ok(EditionRef::Pin(get_edition(rd)?)),
+        b => Err(DecodeError::BadTag(b)),
+    }
+}
+
+/// v49: `EditionSource` = opt edition | opt string source | opt string log
+/// | bool live | bool running.
+fn put_edition_source(buf: &mut Vec<u8>, s: &EditionSource) {
+    put_opt_edition(buf, s.edition);
+    put_opt_str(buf, s.source.as_deref());
+    put_opt_str(buf, s.log.as_deref());
+    wire::put_bool(buf, s.live);
+    wire::put_bool(buf, s.running);
+}
+
+fn get_edition_source(rd: &mut Reader) -> Result<EditionSource> {
+    Ok(EditionSource {
+        edition: get_opt_edition(rd)?,
+        source: rd.opt(|r| r.string())?,
+        log: rd.opt(|r| r.string())?,
+        live: rd.bool()?,
+        running: rd.bool()?,
     })
 }
 
@@ -1105,6 +1282,8 @@ fn put_info(buf: &mut Vec<u8>, i: &SegmentInfo) {
     wire::put_opt(buf, i.encounter.as_ref(), put_encounter);
     // v40: the combat clock the rows' `per_sec` ran on.
     wire::put_i64(buf, i.combat_ms);
+    // v49: the segment's edition (its log's PROJECT_ID), trailing.
+    put_edition(buf, i.edition);
 }
 
 fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
@@ -1120,6 +1299,7 @@ fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
         arena: rd.bool()?,
         encounter: rd.opt(get_encounter)?,
         combat_ms: rd.i64()?,
+        edition: get_edition(rd)?,
     })
 }
 
@@ -1172,6 +1352,8 @@ fn put_list_row(buf: &mut Vec<u8>, r: &ListRow) {
     wire::put_bool(buf, r.arena);
     // v20: encounter identity (id, difficulty, group size).
     wire::put_opt(buf, r.encounter.as_ref(), put_encounter);
+    // v49: the segment's edition, trailing.
+    put_edition(buf, r.edition);
 }
 
 fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
@@ -1186,6 +1368,7 @@ fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
         pars_ms: rd.opt(get_pars)?,
         arena: rd.bool()?,
         encounter: rd.opt(get_encounter)?,
+        edition: get_edition(rd)?,
     })
 }
 
@@ -1940,6 +2123,11 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     wire::put_u64(buf, p.reduced);
     // v44 (R2): what a heal-absorb ate of the healing, trailing.
     wire::put_u64(buf, p.heal_absorbed);
+    // v49: the stored role (a role no spec says), trailing — a presence
+    // byte, then the role code.
+    wire::put_opt(buf, p.stored_role.as_ref(), |b, r| {
+        wire::put_u8(b, role_code(*r))
+    });
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1978,6 +2166,7 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         // on the wire.
         reduced: rd.u64()?,
         heal_absorbed: rd.u64()?,
+        stored_role: rd.opt(|r| role_from(r.u8()?))?,
     })
 }
 
@@ -2076,8 +2265,8 @@ fn origin_filter_from(b: u8) -> Result<OriginFilter> {
 /// damage | u64 healing | u64 overheal | u64 absorbed | u64 heal_absorbed |
 /// u64 taken | u32 deaths | u64 support_given | u64 support_received | u64
 /// healed_received | u64 self_healed | vec u64 damage_curve | vec u64
-/// heal_curve) | opt string owner | string source | u16 ×3 build | u32
-/// log_version.
+/// heal_curve | v49: opt u8 role) | opt string owner | string source | u16
+/// ×3 build | u32 log_version | v49: u8 edition.
 fn put_imported_card(buf: &mut Vec<u8>, c: &ImportedCard) {
     wire::put_str(buf, &c.name);
     wire::put_opt(buf, c.encounter.as_ref(), put_encounter);
@@ -2115,6 +2304,8 @@ fn put_imported_card(buf: &mut Vec<u8>, c: &ImportedCard) {
         }
         wire::put_vec(b, &p.damage_curve, |b, v| wire::put_u64(b, *v));
         wire::put_vec(b, &p.heal_curve, |b, v| wire::put_u64(b, *v));
+        // v49: the role the source says they played, where no spec says it.
+        wire::put_opt(b, p.role.as_ref(), |b, r| wire::put_u8(b, role_code(*r)));
     });
     put_opt_str(buf, c.owner.as_deref());
     wire::put_str(buf, &c.source);
@@ -2122,6 +2313,8 @@ fn put_imported_card(buf: &mut Vec<u8>, c: &ImportedCard) {
     wire::put_u16(buf, c.build.1);
     wire::put_u16(buf, c.build.2);
     wire::put_u32(buf, c.log_version);
+    // v49: the edition the converter says the fight is of.
+    put_edition(buf, c.edition);
 }
 
 fn get_imported_card(rd: &mut Reader) -> Result<ImportedCard> {
@@ -2154,12 +2347,14 @@ fn get_imported_card(rd: &mut Reader) -> Result<ImportedCard> {
                 self_healed: r.u64()?,
                 damage_curve: r.vec(|r| r.u64())?,
                 heal_curve: r.vec(|r| r.u64())?,
+                role: r.opt(|r| role_from(r.u8()?))?,
             })
         })?,
         owner: rd.opt(|r| r.string())?,
         source: rd.string()?,
         build: (rd.u16()?, rd.u16()?, rd.u16()?),
         log_version: rd.u32()?,
+        edition: get_edition(rd)?,
     })
 }
 
@@ -2224,6 +2419,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             after_id,
             role,
             origin,
+            edition,
         } => {
             wire::put_u8(buf, 0);
             put_opt_u32(buf, *encounter);
@@ -2247,16 +2443,20 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             wire::put_opt(buf, role.as_ref(), |b, r| wire::put_u8(b, role_code(*r)));
             // v46: trailing u8 origin filter (0 Local / 1 Imported / 2 Any).
             wire::put_u8(buf, origin_filter_code(*origin));
+            // v49: trailing opt edition filter, on every query.
+            put_opt_edition(buf, *edition);
         }
         HistoryQuery::Progression {
             encounter,
             difficulty,
             local_cutover_hour,
+            edition,
         } => {
             wire::put_u8(buf, 1);
             wire::put_u32(buf, *encounter);
             wire::put_u32(buf, *difficulty);
             wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
+            put_opt_edition(buf, *edition);
         }
         HistoryQuery::Trend {
             guid,
@@ -2268,6 +2468,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             since_utc_ms,
             limit,
             local_cutover_hour,
+            edition,
         } => {
             wire::put_u8(buf, 2);
             wire::put_str(buf, guid);
@@ -2287,6 +2488,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             put_opt_i64(buf, *since_utc_ms);
             wire::put_u32(buf, *limit);
             wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
+            put_opt_edition(buf, *edition);
         }
         // v26: tag 3 = u32 encounter | u32 difficulty | i64 night | opt u8
         // local_cutover_hour (Progression's encoding of the hour).
@@ -2295,12 +2497,14 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             difficulty,
             night,
             local_cutover_hour,
+            edition,
         } => {
             wire::put_u8(buf, 3);
             wire::put_u32(buf, *encounter);
             wire::put_u32(buf, *difficulty);
             wire::put_i64(buf, *night);
             wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
+            put_opt_edition(buf, *edition);
         }
     }
 }
@@ -2323,11 +2527,13 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             after_id: rd.opt(|r| r.string())?,
             role: rd.opt(|r| role_from(r.u8()?))?,
             origin: origin_filter_from(rd.u8()?)?,
+            edition: get_opt_edition(rd)?,
         },
         1 => HistoryQuery::Progression {
             encounter: rd.u32()?,
             difficulty: rd.u32()?,
             local_cutover_hour: rd.opt(|r| r.u8())?,
+            edition: get_opt_edition(rd)?,
         },
         2 => HistoryQuery::Trend {
             guid: rd.string()?,
@@ -2344,12 +2550,14 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             since_utc_ms: rd.opt(|r| r.i64())?,
             limit: rd.u32()?,
             local_cutover_hour: rd.opt(|r| r.u8())?,
+            edition: get_opt_edition(rd)?,
         },
         3 => HistoryQuery::RoleNight {
             encounter: rd.u32()?,
             difficulty: rd.u32()?,
             night: rd.i64()?,
             local_cutover_hour: rd.opt(|r| r.u8())?,
+            edition: get_opt_edition(rd)?,
         },
         other => return Err(DecodeError::BadTag(other)),
     })
@@ -2747,6 +2955,15 @@ const T_GET_REPLAY: u8 = 0x0D;
 const T_IMPORT_REPLAY: u8 = 0x0E;
 
 impl ClientMsg {
+    /// v49: a Watch that follows the live edition — every client's Watch
+    /// before editions, and still the one that names none.
+    pub fn watch(cursor: Cursor) -> Self {
+        ClientMsg::Watch {
+            cursor,
+            edition: EditionRef::Follow,
+        }
+    }
+
     /// One complete on-the-wire frame.
     pub fn encode(&self) -> Vec<u8> {
         let mut body = Vec::new();
@@ -2757,8 +2974,10 @@ impl ClientMsg {
                 wire::put_u32(&mut body, *pid);
                 T_HELLO
             }
-            ClientMsg::Watch(cursor) => {
+            ClientMsg::Watch { cursor, edition } => {
                 put_cursor(&mut body, cursor);
+                // v49: the edition the cursor looks in, trailing.
+                put_edition_ref(&mut body, *edition);
                 T_WATCH
             }
             ClientMsg::GetStatus { req_id } => {
@@ -2830,6 +3049,7 @@ impl ClientMsg {
                 encounter,
                 difficulty,
                 kind,
+                edition,
             } => {
                 wire::put_u32(&mut body, *req_id);
                 put_opt_str(&mut body, fight_id.as_deref());
@@ -2838,6 +3058,8 @@ impl ClientMsg {
                 wire::put_opt(&mut body, kind.as_ref(), |b, k| {
                     wire::put_u8(b, fight_kind_code(*k))
                 });
+                // v49: the edition filter, trailing.
+                put_opt_edition(&mut body, *edition);
                 T_REGRADE
             }
             ClientMsg::GetReplay { req_id, fight_id } => {
@@ -2867,7 +3089,10 @@ impl ClientMsg {
                 client: client_kind_from(rd.u8()?)?,
                 pid: rd.u32()?,
             },
-            T_WATCH => ClientMsg::Watch(get_cursor(&mut rd)?),
+            T_WATCH => ClientMsg::Watch {
+                cursor: get_cursor(&mut rd)?,
+                edition: get_edition_ref(&mut rd)?,
+            },
             T_GET_STATUS => ClientMsg::GetStatus { req_id: rd.u32()? },
             T_VISIBILITY => ClientMsg::VisibilityChanged {
                 visible: rd.bool()?,
@@ -2909,6 +3134,7 @@ impl ClientMsg {
                 encounter: rd.opt(|r| r.u32())?,
                 difficulty: rd.opt(|r| r.u32())?,
                 kind: rd.opt(|r| fight_kind_from(r.u8()?))?,
+                edition: get_opt_edition(&mut rd)?,
             },
             T_GET_REPLAY => ClientMsg::GetReplay {
                 req_id: rd.u32()?,
@@ -2966,6 +3192,7 @@ impl DaemonMsg {
                 source,
                 status,
                 raid,
+                edition,
             } => {
                 wire::put_u64(&mut body, *seq);
                 put_segment_ref(&mut body, *segment);
@@ -2980,6 +3207,8 @@ impl DaemonMsg {
                 wire::put_opt(&mut body, status.as_ref(), |b, s| wire::put_str(b, s));
                 // v35 (R25): trailing.
                 wire::put_opt(&mut body, raid.as_ref(), put_raid);
+                // v49: the edition the cursor resolved in, trailing.
+                put_opt_edition(&mut body, *edition);
                 T_SNAPSHOT
             }
             DaemonMsg::SegmentList {
@@ -2988,12 +3217,15 @@ impl DaemonMsg {
                 source,
                 active,
                 log_id,
+                edition,
             } => {
                 wire::put_u64(&mut body, *seq);
                 wire::put_vec(&mut body, entries, put_list_entry);
                 wire::put_opt(&mut body, source.as_ref(), |b, s| wire::put_str(b, s));
                 wire::put_bool(&mut body, *active);
                 wire::put_opt(&mut body, log_id.as_ref(), |b, v| wire::put_u64(b, *v));
+                // v49: whose list this is, trailing.
+                put_opt_edition(&mut body, *edition);
                 T_SEGMENT_LIST
             }
             DaemonMsg::CompareSnapshot {
@@ -3007,6 +3239,7 @@ impl DaemonMsg {
                 range,
                 source,
                 status,
+                edition,
             } => {
                 wire::put_u64(&mut body, *seq);
                 put_segment_ref(&mut body, *segment);
@@ -3018,6 +3251,8 @@ impl DaemonMsg {
                 put_range(&mut body, *range);
                 wire::put_opt(&mut body, source.as_ref(), |b, s| wire::put_str(b, s));
                 wire::put_opt(&mut body, status.as_ref(), |b, s| wire::put_str(b, s));
+                // v49: trailing.
+                put_opt_edition(&mut body, *edition);
                 T_COMPARE_SNAPSHOT
             }
             DaemonMsg::SegmentOpened { id } => {
@@ -3037,6 +3272,7 @@ impl DaemonMsg {
                 linger,
                 overlay,
                 history,
+                editions,
             } => {
                 wire::put_u32(&mut body, *req_id);
                 wire::put_bool(&mut body, *game_running);
@@ -3046,6 +3282,8 @@ impl DaemonMsg {
                 put_overlay_state(&mut body, overlay);
                 // v20: trailing history status.
                 put_history_status(&mut body, history);
+                // v49: every edition's source, trailing.
+                wire::put_vec(&mut body, editions, put_edition_source);
                 T_STATUS
             }
             DaemonMsg::SetVisible(v) => {
@@ -3114,6 +3352,7 @@ impl DaemonMsg {
                 source: rd.opt(|r| r.string())?,
                 status: rd.opt(|r| r.string())?,
                 raid: rd.opt(get_raid)?,
+                edition: get_opt_edition(&mut rd)?,
             },
             T_SEGMENT_LIST => DaemonMsg::SegmentList {
                 seq: rd.u64()?,
@@ -3121,6 +3360,7 @@ impl DaemonMsg {
                 source: rd.opt(|r| r.string())?,
                 active: rd.bool()?,
                 log_id: rd.opt(|r| r.u64())?,
+                edition: get_opt_edition(&mut rd)?,
             },
             T_COMPARE_SNAPSHOT => DaemonMsg::CompareSnapshot {
                 seq: rd.u64()?,
@@ -3133,6 +3373,7 @@ impl DaemonMsg {
                 range: get_range(&mut rd)?,
                 source: rd.opt(|r| r.string())?,
                 status: rd.opt(|r| r.string())?,
+                edition: get_opt_edition(&mut rd)?,
             },
             T_SEGMENT_OPENED => DaemonMsg::SegmentOpened {
                 id: SegmentId(rd.u64()?),
@@ -3149,6 +3390,7 @@ impl DaemonMsg {
                 linger: rd.bool()?,
                 overlay: get_overlay_state(&mut rd)?,
                 history: get_history_status(&mut rd)?,
+                editions: rd.vec(get_edition_source)?,
             },
             T_SET_VISIBLE => DaemonMsg::SetVisible(rd.bool()?),
             T_FATAL => DaemonMsg::Fatal(rd.string()?),

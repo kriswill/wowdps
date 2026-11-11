@@ -229,6 +229,16 @@ impl Edition {
         }
     }
 
+    /// The edition [`Edition::from_project_id`] makes of this one's number:
+    /// itself for every value that function returns, and the edition the
+    /// number names for one it never returns (`Unknown(1)` is Retail,
+    /// `Classic(18)` Forever) — what such a value reads as once it has
+    /// travelled as its number. Compare editions that may be hand-made
+    /// through it.
+    pub fn canonical(self) -> Self {
+        Self::from_project_id(self.project_id())
+    }
+
     /// The `PROJECT_ID` this edition was read from.
     pub fn project_id(self) -> u8 {
         match self {
@@ -314,6 +324,16 @@ impl Role {
             Role::Healer => "healer",
             Role::Dps => "dps",
         }
+    }
+
+    /// The inverse of [`Role::name`]; anything else is `None`.
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s {
+            "tank" => Role::Tank,
+            "healer" => Role::Healer,
+            "dps" => Role::Dps,
+            _ => return None,
+        })
     }
 }
 
@@ -2140,6 +2160,9 @@ pub struct ListRow {
     /// v20: ENCOUNTER_START identity (id, difficulty, group size); `None`
     /// off raid-boss Encounter rows.
     pub encounter: Option<Encounter>,
+    /// v49: the game edition the segment's log was written by (its
+    /// COMBAT_LOG_VERSION `PROJECT_ID`); `Unknown(0)` where it named none.
+    pub edition: Edition,
 }
 
 /// Stable identity of one segment for the daemon's lifetime: assigned at scan
@@ -2175,6 +2198,9 @@ pub struct SegmentInfo {
     pub arena: bool,
     /// v20: ENCOUNTER_START identity (see [`ListRow::encounter`]).
     pub encounter: Option<Encounter>,
+    /// v49: the game edition the segment's log was written by (see
+    /// [`ListRow::edition`]).
+    pub edition: Edition,
 }
 
 #[cfg(test)]

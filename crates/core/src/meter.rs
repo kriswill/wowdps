@@ -5354,6 +5354,13 @@ impl Meter {
         Tables::of_project(self.project_id)
     }
 
+    /// The PROJECT_ID the latest COMBAT_LOG_VERSION line named (seed lines
+    /// included), 0 before any: the edition the log is being read as. The
+    /// daemon names its source's edition by it (v49).
+    pub fn project_id(&self) -> u8 {
+        self.project_id
+    }
+
     /// Remember a unit's display name and flags, globally and in the open segment.
     /// Called before segment creation so a freshly opened segment inherits it.
     fn learn(&mut self, u: &Unit) {

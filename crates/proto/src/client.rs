@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::msg::{ClientKind, ClientMsg, Cursor, DaemonMsg, PROTO_VERSION};
+use crate::msg::{ClientKind, ClientMsg, Cursor, DaemonMsg, EditionRef, PROTO_VERSION};
 use crate::wire;
 
 /// The directory the socket (and the daemon's lockfile) live in:
@@ -237,8 +237,9 @@ pub struct DaemonClient {
     daemon_bin: PathBuf,
     source: Option<SourceArg>,
     kind: ClientKind,
-    /// Re-declared automatically after a reconnect.
-    last_watch: Option<Cursor>,
+    /// Re-declared automatically after a reconnect, with (v49) the edition
+    /// it looked in.
+    last_watch: Option<(Cursor, EditionRef)>,
     dead: bool,
     /// `try_reconnect`'s respawn throttle: when the next spawn may happen
     /// and how long the one after it waits. Reset on a successful connect.
@@ -284,14 +285,20 @@ impl DaemonClient {
         })
     }
 
-    /// Declare the cursor; replaces any prior Watch.
+    /// Declare the cursor, following the live edition; replaces any prior
+    /// Watch.
     pub fn watch(&mut self, cursor: Cursor) {
-        self.send(&ClientMsg::Watch(cursor));
+        self.send(&ClientMsg::watch(cursor));
+    }
+
+    /// v49: declare the cursor in one edition (or following, `Follow`).
+    pub fn watch_in(&mut self, cursor: Cursor, edition: EditionRef) {
+        self.send(&ClientMsg::Watch { cursor, edition });
     }
 
     pub fn send(&mut self, msg: &ClientMsg) {
-        if let ClientMsg::Watch(cursor) = msg {
-            self.last_watch = Some(cursor.clone());
+        if let ClientMsg::Watch { cursor, edition } = msg {
+            self.last_watch = Some((cursor.clone(), *edition));
         }
         if self.stream.write_all(&msg.encode()).is_err() {
             self.dead = true;
@@ -390,8 +397,8 @@ impl DaemonClient {
         self.dead = false;
         self.next_spawn = None;
         self.spawn_backoff = RESPAWN_BACKOFF_MIN;
-        if let Some(cursor) = self.last_watch.clone() {
-            self.send(&ClientMsg::Watch(cursor));
+        if let Some((cursor, edition)) = self.last_watch.clone() {
+            self.send(&ClientMsg::Watch { cursor, edition });
         }
     }
 }

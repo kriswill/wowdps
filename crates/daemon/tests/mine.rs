@@ -28,7 +28,7 @@ fn watch(
     view: View,
     drill: Option<&str>,
 ) -> (Vec<Row>, Option<Breakdown>, Option<RaidTimeline>) {
-    let replies = mock.handle(ClientMsg::Watch(Cursor::Segment {
+    let replies = mock.handle(ClientMsg::watch(Cursor::Segment {
         segment: SegmentRef::Live,
         view,
         top_n: None,
@@ -130,6 +130,7 @@ fn a_stored_fight_marks_its_rows_when_it_answers() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     });
     let cards = replies.into_iter().find_map(|m| match m {

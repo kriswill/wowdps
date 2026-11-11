@@ -165,6 +165,7 @@ fn card() -> FightCard {
                 guild: None,
                 reduced: 0,
                 heal_absorbed: 0,
+                stored_role: None,
             },
             CardPlayer {
                 guid: "Player-1-B".to_string(),
@@ -200,6 +201,7 @@ fn card() -> FightCard {
                 guild: None,
                 reduced: 0,
                 heal_absorbed: 9,
+                stored_role: None,
             },
         ],
         bosses: Vec::new(),
@@ -804,6 +806,81 @@ fn a_stored_role_that_contradicts_the_spec_is_ignored() {
         CARD_GOLDEN,
         "and the lie is not written back"
     );
+}
+
+/// v49: a STORED role — for a player whose log named no spec — is a field
+/// of its own, `stored_role`, written last and only when set: every card
+/// without one (every card so far) is byte for byte the golden, and an
+/// older card reads `None`. It answers `role()` where there is no spec, so
+/// the derived `role` key says it too; beside a spec the spec's role wins
+/// and the stored one is only kept. Never read from the derived key.
+#[test]
+fn a_stored_role_is_written_only_when_set_and_answers_without_a_spec() {
+    assert!(!CARD_GOLDEN.contains("stored_role"));
+    assert_eq!(card().to_json().to_line(), CARD_GOLDEN);
+    let v = json::parse(CARD_GOLDEN).unwrap();
+    assert!(
+        FightCard::from_json(&v)
+            .unwrap()
+            .players
+            .iter()
+            .all(|p| p.stored_role.is_none())
+    );
+
+    let mut c = card();
+    assert_eq!(c.players[1].spec, None, "the specless player");
+    c.players[1].stored_role = Some(Role::Healer);
+    assert_eq!(c.players[1].role(), Some(Role::Healer));
+    let line = c.to_json().to_line();
+    assert!(line.contains(r#""role":"healer""#), "{line}");
+    // Last on the player's line, right after `heal_absorbed`.
+    assert!(
+        line.contains(r#""heal_absorbed":9,"stored_role":"healer"}"#),
+        "{line}"
+    );
+    let back = FightCard::from_json(&json::parse(&line).unwrap()).unwrap();
+    assert_eq!(back, c);
+    assert_eq!(back.players[1].role(), Some(Role::Healer));
+
+    // Beside a spec, the spec's role is the role.
+    c.players[0].stored_role = Some(Role::Tank);
+    assert_eq!(c.players[0].role(), Some(Role::Dps), "Frost mage");
+    // An unknown word is no role, not an error.
+    let odd = line.replace(r#""stored_role":"healer""#, r#""stored_role":"bard""#);
+    let read = FightCard::from_json(&json::parse(&odd).unwrap()).unwrap();
+    assert_eq!(read.players[1].stored_role, None);
+}
+
+/// v49: an import names its edition (the card's `project_id`) and a role
+/// for a player whose spec does not say one; a role beside a spec is not
+/// kept, and an import that names no edition records 0, as before.
+#[test]
+fn an_import_carries_its_edition_and_a_specless_players_role() {
+    let player = |spec, role| ImportedPlayer {
+        guid: "Player-1-A".to_string(),
+        name: "A".to_string(),
+        spec,
+        role,
+        ..ImportedPlayer::default()
+    };
+    let import = ImportedCard {
+        name: "B".to_string(),
+        source: "s".to_string(),
+        edition: Edition::Forever,
+        players: vec![
+            player(None, Some(Role::Tank)),
+            player(Some(Spec::FrostMage), Some(Role::Healer)),
+        ],
+        ..ImportedCard::default()
+    };
+    let c = import.card();
+    assert_eq!(c.edition(), Edition::Forever);
+    assert_eq!(c.project_id, 18);
+    assert_eq!(c.players[0].stored_role, Some(Role::Tank));
+    assert_eq!(c.players[0].role(), Some(Role::Tank));
+    assert_eq!(c.players[1].stored_role, None, "the spec says it");
+    assert_eq!(c.players[1].role(), Some(Role::Dps));
+    assert_eq!(ImportedCard::default().card().project_id, 0);
 }
 
 #[test]
@@ -2054,6 +2131,7 @@ fn imported() -> ImportedCard {
         source: "import:test-1".to_string(),
         build: (12, 0, 7),
         log_version: 22,
+        edition: wowdps_model::Edition::Unknown(0),
     }
 }
 

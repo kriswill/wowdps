@@ -27,7 +27,9 @@
 
 use std::time::{Duration, Instant};
 
-use wowdps_model::{Drill, ListRow, Loadout, Screen, SegmentId, SegmentInfo, SegmentKind, View};
+use wowdps_model::{
+    Drill, Edition, ListRow, Loadout, Screen, SegmentId, SegmentInfo, SegmentKind, View,
+};
 use wowdps_proto::history::{FightCard, FightKind};
 use wowdps_proto::{
     ClientMsg, ClientState, Cursor, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, ListEntry,
@@ -179,6 +181,8 @@ impl Earlier {
                 after_id,
                 role: None,
                 origin: OriginFilter::Local,
+                // Every edition's: each card names its own.
+                edition: None,
             },
         })
     }
@@ -341,6 +345,12 @@ pub struct Stored {
     /// v42: what the last answer could serve beyond the rows; `None` until
     /// the store has answered.
     kept: Option<Kept>,
+    /// v49: the edition every frame of this pull names — the rail card's,
+    /// else the first answer's card's — one for the pull's life, so its
+    /// own frames can never move its state: a card answered with another
+    /// number than the rail's (a regrade between them) still opens. The
+    /// header reads the answered card's own (`info_of`).
+    edition: Option<Edition>,
 }
 
 impl Stored {
@@ -367,6 +377,7 @@ impl Stored {
         // The row is a placeholder until the card is known: the header reads
         // the answer's own, and the list holds only the pull's id.
         let row = list_row(&card.as_ref().map_or_else(pending_info, info_of));
+        let edition = card.as_ref().map(FightCard::edition);
         let _ = state.on_msg(DaemonMsg::SegmentList {
             seq: 0,
             entries: vec![ListEntry {
@@ -376,6 +387,11 @@ impl Stored {
             source: Some(source_of(&fight_id)),
             active: false,
             log_id: None,
+            // v49: a stored pull's frames name its card's edition, as a
+            // daemon's frames name their source's: the state is answered in
+            // that edition (and a state pinned to it takes them). Unknown
+            // until the card is: nothing named yet.
+            edition,
         });
         // The player carries over, their list with them; a spell of theirs
         // does not — another pull's ability need not be this one's.
@@ -398,6 +414,7 @@ impl Stored {
             bare: false,
             loadout: None,
             kept: None,
+            edition,
         };
         let asked = stored.route(sent, next_id);
         (stored, asked)
@@ -427,14 +444,18 @@ impl Stored {
     /// when that one answers.
     pub fn route(&mut self, sent: Vec<ClientMsg>, next_id: &mut u32) -> Vec<ClientMsg> {
         let Some(want) = sent.into_iter().rev().find_map(|m| match m {
-            ClientMsg::Watch(Cursor::Segment {
-                view,
-                drill,
-                death,
-                range,
-                spell,
+            ClientMsg::Watch {
+                cursor:
+                    Cursor::Segment {
+                        view,
+                        drill,
+                        death,
+                        range,
+                        spell,
+                        ..
+                    },
                 ..
-            }) => Some(Want {
+            } => Some(Want {
                 view,
                 drill,
                 death,
@@ -443,14 +464,18 @@ impl Stored {
                 pair: None,
             }),
             // v42: the pair, its first player the drill.
-            ClientMsg::Watch(Cursor::Compare {
-                a,
-                b,
-                view,
-                range,
-                spell,
+            ClientMsg::Watch {
+                cursor:
+                    Cursor::Compare {
+                        a,
+                        b,
+                        view,
+                        range,
+                        spell,
+                        ..
+                    },
                 ..
-            }) => Some(Want {
+            } => Some(Want {
                 view,
                 drill: Some(a),
                 death: None,
@@ -563,6 +588,9 @@ impl Stored {
         self.bare = pair.is_none() && drill.is_some() && fight.breakdown.is_none();
         self.loadout = drill.zip(fight.loadout);
         let info = info_of(&fight.card);
+        // v49: the edition this pull's frames name: the first card's, kept.
+        let edition = *self.edition.get_or_insert(info.edition);
+        let edition = Some(edition);
         self.card = Some(fight.card);
         // v39: a fight that keeps the series tier answers a zoom window as
         // the live drill does; any other's zoom stays the graph's alone.
@@ -584,6 +612,7 @@ impl Stored {
                     range: p.range,
                     source: Some(source_of(&self.fight_id)),
                     status: None,
+                    edition,
                 })),
                 // The ability first, then the pair: two steps at most.
                 None => {
@@ -611,6 +640,7 @@ impl Stored {
             // v35 (R25): the store's rebuild of the pull's raid timeline —
             // the ribbon, the Deaths table and the stat line's deaths.
             raid: fight.raid,
+            edition,
         }));
         self.route(sent, next_id)
     }
@@ -691,6 +721,8 @@ pub fn info_of(card: &FightCard) -> SegmentInfo {
         pars_ms: card.pars_ms,
         arena: card.kind == FightKind::Arena,
         encounter: card.encounter,
+        // v49: the edition the card's log was written by.
+        edition: card.edition(),
     }
 }
 
@@ -708,6 +740,7 @@ fn pending_info() -> SegmentInfo {
         pars_ms: None,
         arena: false,
         encounter: None,
+        edition: Edition::Unknown(0),
     }
 }
 
@@ -723,6 +756,7 @@ fn list_row(info: &SegmentInfo) -> ListRow {
         pars_ms: info.pars_ms,
         arena: info.arena,
         encounter: info.encounter,
+        edition: info.edition,
     }
 }
 
@@ -963,6 +997,140 @@ mod tests {
     /// A stored pull opens on the stage's view, asks the store for it, and
     /// takes the answer as its own snapshot — then follows the selection
     /// as a live pull does, each move its own `GetFight`.
+    /// v49: a stored pull's frames name its card's edition, as a daemon's
+    /// name their source's: the pull's state is answered in that edition —
+    /// the list from the open, the snapshot from the store's answer — and
+    /// a state pinned to it would take them.
+    #[test]
+    fn a_stored_pull_is_answered_in_its_cards_edition() {
+        let forever = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+        let mut mock = MockDaemon::fixture_at(std::path::Path::new(forever)).with_history();
+        let card = mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.kind == FightKind::Encounter)
+            .cloned()
+            .expect("a stored Forever pull");
+        assert_eq!(card.edition(), Edition::Forever);
+        let mut next = 10;
+        let (mut s, mut asked) = Stored::open(
+            card.id.clone(),
+            Some(card.clone()),
+            View::Damage,
+            None,
+            None,
+            &mut next,
+        );
+        assert_eq!(s.state.edition(), Some(Edition::Forever), "the list's");
+        for _ in 0..4 {
+            let mut replies = Vec::new();
+            for m in std::mem::take(&mut asked) {
+                for reply in mock.handle(m) {
+                    if let DaemonMsg::Fight { req_id, fight } = reply {
+                        replies.push((req_id, fight));
+                    }
+                }
+            }
+            for (req_id, fight) in replies {
+                asked.extend(s.absorb(req_id, fight, &mut next));
+            }
+            if asked.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(s.state.segment_name().as_deref(), Some(card.name.as_str()));
+        assert_eq!(s.state.segment_edition(), Some(Edition::Forever));
+        assert_eq!(s.state.edition(), Some(Edition::Forever), "the snapshot's");
+    }
+
+    /// Answer a stored pull's asks from the mock until it settles.
+    fn settle(s: &mut Stored, mock: &mut MockDaemon, mut asked: Vec<ClientMsg>, next: &mut u32) {
+        for _ in 0..4 {
+            let mut replies = Vec::new();
+            for m in std::mem::take(&mut asked) {
+                for reply in mock.handle(m) {
+                    if let DaemonMsg::Fight { req_id, fight } = reply {
+                        replies.push((req_id, fight));
+                    }
+                }
+            }
+            for (req_id, fight) in replies {
+                asked.extend(s.absorb(req_id, fight, next));
+            }
+            if asked.is_empty() {
+                return;
+            }
+        }
+    }
+
+    /// v49: a pull opened by id alone (no card yet) is answered in the
+    /// edition of the card the store answers with: its list named none,
+    /// and the answer's frames name the card's.
+    #[test]
+    fn a_pull_opened_by_id_is_answered_in_the_answered_cards_edition() {
+        let forever = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+        let mut mock = MockDaemon::fixture_at(std::path::Path::new(forever)).with_history();
+        let card = mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.kind == FightKind::Encounter)
+            .cloned()
+            .expect("a stored Forever pull");
+        let mut next = 10;
+        let (mut s, asked) =
+            Stored::open(card.id.clone(), None, View::Damage, None, None, &mut next);
+        assert_eq!(s.state.edition(), None, "nothing named yet");
+        settle(&mut s, &mut mock, asked, &mut next);
+        assert_eq!(s.state.segment_name().as_deref(), Some(card.name.as_str()));
+        assert_eq!(s.state.edition(), Some(Edition::Forever));
+    }
+
+    /// v49: the rail's card and the store's answer can name different
+    /// editions (a card stored with no number, regraded since; a rail older
+    /// than the store): the pull still opens — its own frames never move
+    /// its state — its frames naming the rail card's edition, its header
+    /// the answered card's.
+    #[test]
+    fn a_pull_opens_whatever_edition_its_answer_names() {
+        for rail in [0u8, 18] {
+            let mut mock = MockDaemon::fixture().with_history();
+            let card = mock
+                .history()
+                .cards()
+                .iter()
+                .find(|c| c.kind == FightKind::Encounter && c.success == Some(true))
+                .cloned()
+                .expect("a stored kill");
+            assert_eq!(card.edition(), Edition::Retail);
+            let mut next = 10;
+            let (mut s, asked) = Stored::open(
+                card.id.clone(),
+                Some(FightCard {
+                    project_id: rail,
+                    ..card.clone()
+                }),
+                View::Damage,
+                None,
+                None,
+                &mut next,
+            );
+            settle(&mut s, &mut mock, asked, &mut next);
+            assert_eq!(
+                s.state.segment_name().as_deref(),
+                Some(card.name.as_str()),
+                "rail {rail}: opened, not blank"
+            );
+            assert_eq!(s.state.segment_edition(), Some(Edition::Retail));
+            assert_eq!(
+                s.state.edition(),
+                Some(Edition::from_project_id(rail)),
+                "rail {rail}"
+            );
+        }
+    }
+
     #[test]
     fn a_stored_pull_asks_the_store_what_its_state_watches() {
         let mut mock = MockDaemon::fixture().with_history();
@@ -1068,7 +1236,7 @@ mod tests {
         // v42: a comparison is the store's to answer — the pair rides the
         // GetFight, its first player the drill.
         let pair = s.route(
-            vec![ClientMsg::Watch(Cursor::Compare {
+            vec![ClientMsg::watch(Cursor::Compare {
                 segment: SegmentRef::Live,
                 a: "a".into(),
                 b: "b".into(),

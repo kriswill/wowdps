@@ -223,6 +223,7 @@ fn fights(store: &Store<MemBackend>, origin: OriginFilter, sort: FightSort) -> V
         after_id: None,
         role: None,
         origin,
+        edition: None,
     }) {
         HistoryAnswer::Fights { cards, .. } => cards,
         other => panic!("{other:?}"),
@@ -426,6 +427,7 @@ fn an_import_is_not_this_machines_history() {
         encounter: 3130,
         difficulty: 15,
         local_cutover_hour: None,
+        edition: None,
     })
     else {
         panic!("progression");
@@ -441,6 +443,7 @@ fn an_import_is_not_this_machines_history() {
         since_utc_ms: None,
         limit: 0,
         local_cutover_hour: None,
+        edition: None,
     }) else {
         panic!("trend");
     };
@@ -451,6 +454,7 @@ fn an_import_is_not_this_machines_history() {
         difficulty: 15,
         night: nights[0].day_utc_ms,
         local_cutover_hour: None,
+        edition: None,
     }) else {
         panic!("role night");
     };
@@ -924,6 +928,7 @@ fn the_mock_answers_an_import_as_the_thread_does() {
                 after_id: None,
                 role: None,
                 origin,
+                edition: None,
             },
         });
         match out.first() {

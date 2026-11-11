@@ -260,9 +260,17 @@ so a question across fights groups by edition too, as this one does. The
 daemon's bookkeeping (the kills that end a progression, retention, bests,
 the owner) counts a card with no number (`project_id` 0) as Retail and
 keeps every other number apart, so group by `case project_id when 0 then
-1 else project_id end` to reckon as it does; its fixed questions and
-`best-kill`, `progression`, `trend` and `role-night` do not narrow by
-edition yet.
+1 else project_id end` to reckon as it does. Its fixed questions take an
+edition (the MCP history tools' `edition`) and answer every edition
+without one; `best-kill`, `progression`, `trend` and `role-night` here do
+not narrow by edition yet.
+
+A player whose log named no spec (an edition whose log carries none) may
+carry a stored role, `players.stored_role` (NULL for a word that names
+no role, as the daemon reads it); `players.role` is the spec's role, else
+that one, as the daemon reads it. No card carries one yet, so
+the column is NULL on every lake so far; `role-night` reads the spec's
+role alone.
 
 ## The replay tier (R29, v45) — no view, by design
 

@@ -12,7 +12,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, Div, MouseButton, TestSupportExt as _, div, relative};
 use wowdps_gui_logic::fight_head::{
     GONE, NEWER_TIP, OLDER_TIP, RAIL_TIP, READING, RunClocks, Seen, Stats, Verdict, WAITING, You,
-    meta, outcome, pairs, pending, you,
+    edition_meta, meta, outcome, pairs, pending, you,
 };
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::home::wipe_pct;
@@ -54,7 +54,8 @@ pub struct Head {
     /// The fight's name; `None` before there is a fight, when the line says
     /// it is waiting, in the quiet ink of a status.
     pub title: Option<String>,
-    /// "Heroic, 25 players"; empty off a boss pull.
+    /// "Heroic, 25 players"; empty off a boss pull. A fight of an edition
+    /// other than Retail leads with it ("Forever, Normal, 5 players").
     pub meta: String,
     pub outcome: Option<(String, Tone)>,
     /// Empty before there is a fight to time.
@@ -105,7 +106,8 @@ impl Head {
                 .map_or_else(String::new, |_| duration(app.duration_ms())),
             stats: name.is_some().then(|| stats_of(gui, cx)),
             title: name,
-            meta: meta(app.segment_encounter()),
+            // v49: a fight of another edition than Retail says which.
+            meta: edition_meta(meta(app.segment_encounter()), app.segment_edition()),
             outcome: outcome(Verdict {
                 wipe_pct: card.and_then(wipe_pct),
                 ..Verdict::of(app)
