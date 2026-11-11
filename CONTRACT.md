@@ -335,6 +335,7 @@ impl Segment {
     /// ledgers merged, on their summed clocks.
     pub fn role_scores(&self) -> Vec<RoleScore>;
     /// R30: the roles `role_scores` names, by guid; a player named none is absent.
+    /// (v50) What the daemon sets on the rows it answers with (`Row::inferred_role`).
     pub fn inferred_roles(&self) -> BTreeMap<String, Role>;
     /// v35: the display name the segment knows a guid by — what a drill row
     /// keyed by NAME is matched against when the daemon marks it `mine`.
@@ -350,7 +351,8 @@ pub struct RaidDeath { pub guid: String, pub name: String, pub class: Option<Cla
                        pub at_ms: i64, pub blow: String, pub source: String, // "" / "" = no damage logged
                        pub hit: u64, pub overkill: Option<u64>, pub rez: Option<Rez>,
                        pub mine: bool,       // the daemon's owner resolution (v35), never the meter's
-                       pub enemy: bool }     // R13: an arena's hostile team (flags 0x40), never the group's
+                       pub enemy: bool,      // R13: an arena's hostile team (flags 0x40), never the group's
+                       pub inferred_role: Option<Role> } // v50 (R30): as the player's row's; role() as Row::role()
 pub struct Rez { pub at_ms: i64, pub by: String /* rezzer's guid, own on a self-rez */,
                  pub by_name: String /* the rezzer's name as the segment knows it, else the guid */,
                  pub spell: String }
@@ -446,7 +448,13 @@ pub struct Row {
     pub absorb: Option<u64>,       // v43, death-recap rows only (R9): the victim's shields after
                                    // the event, from `hp`'s own report; None wherever `hp` is
     pub heal_absorbed: u64,        // v44 (R2), Healing meter and by-ability rows: the part of
-}                                  // `amount` a heal-absorb ate; 0 elsewhere and on series rows
+                                   // `amount` a heal-absorb ate; 0 elsewhere and on series rows
+    pub inferred_role: Option<Role>, // v50 (R30): the role of a player NO SPEC names, set by
+}                                  // the daemon when it answers (never by the meter): the segment's
+                                   // `inferred_roles` on rows keyed by a player's guid, a stored
+                                   // fight's card's `stored_role`; None beside a spec
+// Row::role() = spec.map(Spec::role).or(inferred_role): the one accessor every reader of a row's
+// role goes through (gui-logic's place and filters, the window's role glyph, the MCP's `role`).
 ```
 
 ## src/roles.rs (owner: core) — R30
@@ -645,7 +653,7 @@ the consumer replays through `Meter::seed`), then `Lines` from the index's
 `live_offset` — history is never replayed line by line. `CaughtUp` fires once
 when the backlog drains; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 49`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 50`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives
@@ -769,7 +777,16 @@ loading, when nothing is watched, and on an overlay or TUI session: only a
 10 Hz for a client that reads none of it). Its rows, a drill's player-naming rows,
 each `CompareSide.total` and the timeline's deaths wear `mine` (v35) — the
 daemon's owner resolution — and a stored fight's rows wear it too, set when
-the store answers. A stored fight (`Fight`) carries the store's rebuild of its
+the store answers. The same answers' rows keyed by a player's guid (the
+meter's, each `CompareSide.total`, a drill's) and the timeline's deaths wear
+(v50, R30) the role of a player no spec names, `inferred_role`: the
+segment's `inferred_roles`, solved once per answer — for both sides of a
+comparison at once — and not at all for an edition whose log carries a spec,
+so a Retail answer wears none and is the bytes v49 sent; on a stored fight's
+rows, the card's `stored_role`, set when the store answers. A row with a
+spec wears none: its role is its spec's. A live fight's roles move as it
+goes (none under R30's 10 s of combat), and a change is pushed as any row
+change is. A stored fight (`Fight`) carries the store's rebuild of its
 timeline (R25), so a pull of an earlier night opens with the same ribbon,
 Deaths table and stat line as a live one.
 
@@ -863,6 +880,7 @@ variants take the next code):
 | 47 | A key's affixes (R10, 2026-10-17; the socket is renamed `wowdps-v47.sock`): `KeyInfo` — a card's key, in every frame a card rides (`Fights`, `Progression.first_kill`, `StoredFight.card`) — + trailing Vec<u32> `affixes` after `completed`, embedded (the card's fields follow), so its count is always written: four `00` bytes for a key with none, then a u32 per affix in the START's order (the pinned codec test reads a key ending `01 01 03000000 0a000000 09000000 93000000`). The live snapshot names no key (a Σ row's level is in its name, its timers in `pars_ms`), so no live frame moves. Store (record, not wire): the card's `key` writes `"affixes": [10, 9, 147]` LAST and only when the key names some, so every card without them — an unkeyed visit's, a run joined mid-way, every card written before v47 — is byte for byte what it was; a key without the field, or with anything but a list of numbers, reads none, and an item that is no u32 is dropped alone. `wowdps history regrade --kind key` refills a stored key's card from its log while the log survives. Replay FORMAT 6 with it (R29's TIER FORMAT 6: the head's key gains its affixes, and the rewrite queue recuts every older file from its log, no regrade; `pull.txt` gains `affixes`). The lake's `fights` view gains `affixes` (`key.affixes`; NULL off a key, for a key the log joined mid-run and on an older card, its type probed so a lake without one still has the column), and the mcp card's `instance` gains `affixes` (an empty list for none). |
 | 49 | Editions on the wire (the Daemon section's editions paragraph; the socket is renamed `wowdps-v49.sock`). An edition travels as the one byte of the `PROJECT_ID` it was read from (`Edition::project_id`; every byte decodes, `Edition::from_project_id`, an unknown number kept, so no byte is a bad edition), and an `Option<Edition>` as a presence byte then that byte. `ClientMsg::Watch(Cursor)` → `Watch { cursor, edition: EditionRef }`: the cursor's bytes then the ref — u8 0 `Follow` \| 1 `Pin` then the edition; ≥ 2 `BadTag` (every Watch grew a trailing byte, `00` following: the pinned Watch golden 0x28 → 0x29, the compare Watch 0x11 → 0x12). `SegmentInfo` + trailing u8 `edition` after `combat_ms` (the segment's: a live segment's version line, else its log's), embedded in every `Snapshot` and `CompareSnapshot`; `ListRow` + trailing u8 `edition` after `encounter`, in every `SegmentList` entry; `Snapshot` + trailing Option<Edition> `edition` after `raid`, `SegmentList` after `log_id`, `CompareSnapshot` after `status` — the edition the cursor resolved in (the pinned snapshot golden 0xbd → 0xc0, `01` after its combat clock and `01 01` closing it; the zeroed compare 0x0128 → 0x012a). `Status` + trailing Vec<EditionSource> `editions` (opt edition \| opt string source \| opt string log \| bool live \| bool running; the pinned Status frame, one Forever source, 0x42 → 0x56): every edition's source, the live one marked — one, and live, for a daemon of one source or until another source's folder holds a log, `source` the spec `Status.source` names, `log` the followed file, `running` the game watcher's verdict. `HistoryQuery::{Fights, Progression, Trend, RoleNight}` + trailing Option<Edition> `edition` each (the pinned Fights golden, Forever `01 12`, 0x14 → 0x16; Trend `00`, 0x16 → 0x17; RoleNight, a Classic client `01 02`, 0x18 → 0x1a) and `ClientMsg::Regrade` + the same after `kind`: one edition's cards (`FightCard::of_edition`: by `counts_as`, so a card that names none answers for Retail), `None` every edition, each card naming its own (`project_id`). `CardPlayer` + trailing Option<Role> `stored_role` after `heal_absorbed` (a presence byte, then Tank 0 / Healer 1 / Dps 2), in every frame a card rides: a role the card keeps for a player whose log named no spec; `CardPlayer::role` is the spec's role, else it — Retail's role stays its spec's, and nothing sets one yet (R30 sets it since, for an edition whose log carries no spec, on the wire as it was). `ImportedCard`'s player + trailing Option<Role> `role` after `heal_curve` (kept as the card's `stored_role` only where the import names no spec) and the card + trailing u8 `edition` after `log_version` (its `project_id`; `Unknown(0)`, what every import recorded before, when the converter does not say) — the pinned ImportReplay golden 0xbe → 0xc1. Store (record, not wire): a card's player writes `"stored_role"` LAST and only when set, so every card without one is byte for byte what it was and an older card reads `None`; the derived `"role"` key is `CardPlayer::role` (unchanged for every card with a spec, and still never read back). The lake's `players` view gains `stored_role` (VARCHAR, NULL on a lake whose cards carry none, and for a word that names no role, as the codec reads `None`) and its `role` is the spec's, else the stored one; `role-night` keeps the spec's role alone, as the daemon's does, until the ruling that infers a role says how it joins (since R30, both roster a specless player under the role their pulls stored most often). No `series`, `replay` or `creatures` format moves; the store stays `v1`. |
 | 48 | An import's meter (the import ruling, Daemon section; the socket is renamed `wowdps-v48.sock`): `ImportedCard`'s player — inside `ClientMsg::ImportReplay` 0x0E, the one frame that carries it — + after its u16 `spec`, embedded (the next player, then the card's `owner`, follow), so every field is always written: u64 `damage` \| u64 `healing` \| u64 `overheal` \| u64 `absorbed` \| u64 `heal_absorbed` \| u64 `taken` \| u32 `deaths` \| u64 `support_given` \| u64 `support_received` \| u64 `healed_received` \| u64 `self_healed` \| Vec<u64> `damage_curve` \| Vec<u64> `heal_curve` (each a u32 count, then a u64 per second from the fight's start on the meter's 1 s grid, `series::BUCKET_MS`; four `00` bytes for none) — 92 bytes more a player without curves (the pinned ImportReplay golden, one player with curves [4, 6] and [20], grew 0x4a → 0xbe). No rate is sent: the store derives `dps`, `hps` and `dtps` (`wowdps_model::rate`) over the card's rate clock, and an imported card's `combat_ms` is now its `duration_ms` (an encounter's START..END, R7) where v46 wrote `null`. The daemon refuses (`Refused`, nothing written) an import whose curve does not sum to its player's total or runs past the fight's end (`duration_ms / 1000 + 1` seconds at most; `ImportedCard::check_curves`). No answer and no other frame moves: the cards an import makes ride `Fights` and `StoredFight` in the shape every card has, and a v46 or v47 client, an importer among them, cannot reach a v48 daemon (another socket); rebuilt, an importer that fills none of the new fields sends zeros and no curves, and stores what a v46 import stored, its `combat_ms` aside. Store (record, not wire): an imported card's players write their totals and derived rates in the fields every card has always written (a v46 import's read as it was, zeros, until it is imported again); an import that brings curves writes `details/<id>.json` — one entry per player with a curve, `damage_timeline` / `heal_timeline` at `bucket_ms` 1000 and no marks, every list empty — through `FightDetails::to_json`, the very codec a local fight's details go through, so every reader of the tier (`replay-export`'s `raid.csv`, the replay's `dps.tsv`) reads an import as a local fight; no rows or series tier is written, so `GetFight` answers an import's card alone (tier 1) as before. |
+| 50 | The inferred role on the live row (R30; the socket is renamed `wowdps-v50.sock`): `Row` + `inferred_role` and `RaidDeath` + `inferred_role`, each carried in the u16 spec slot it already had, so no byte is added: the slot is a specID, else, for a row or death with no spec, `ROLE_SLOT` (0xFF00) + the role's code (Tank 0, Healer 1, Dps 2: `00ff`, `01ff`, `02ff` on the wire), else 0. A slot from 0xFF03 up is `BadTag`; below 0xFF00 an id no spec has still decodes `None`. A role beside a spec is not sent: the spec's role is the row's, and one slot cannot carry both to disagree. Every row and death with a spec, or with neither, is the bytes it was, so every pinned golden stands and the daemon's one-source frames (`tests/golden/one_source_frames.txt`, `0b5714f`'s) stand unblessed; a Retail answer wears no role (R30 infers none there), so a Retail frame moves nowhere but the version in `HelloAck`. The daemon sets it on each answer's guid-keyed rows and deaths, live and stored (the paragraph on `mine` above). `Row::role` / `RaidDeath::role` are the spec's role, else it: what gui-logic's `fight_head::Place`, its row and death filters, `inspect::power::healer_mana` (given a role now, not a spec), the window's role glyph and the MCP live rows' `role` read, an inferred role looking exactly like a spec's (no mark in the window, no `inferred` key in the MCP, as a stored card's `role` has none). No message gains a field; no `series`, `replay` or `creatures` format moves and the store stays `v1` (the role is set when answering, never written), so no regrade. |
 
 ## Client state & behavior (owner: proto; keybinds owner: clients)
 
@@ -1176,7 +1194,10 @@ was with one), or its edition is not known and any game runs. The history takes 
 sources: it sweeps each on start, each source's tailed log is live, and a stored fight's log is
 looked for in every source's folder. A role the log's spec does not say is a STORED role
 (`CardPlayer::stored_role`, v49): `role()` is the spec's role, else it; R30 infers one for an
-edition whose log carries no spec, set at extraction for each friendly player with no spec. A
+edition whose log carries no spec, set at extraction for each friendly player with no spec, and
+(v50) the daemon sets the same solver's roles on the live rows it answers with
+(`Row::inferred_role`; the wire paragraph on `mine`), so a fight names one role per player live,
+loaded lazily and stored. A
 card stored before gains it only by a regrade, and a regrade finds a card's log only in a
 followed source's folder (an install's Retail and Forever folders alike) or among the logs this
 daemon has read since it started (an import reads them; a restart forgets them): a card whose
@@ -1188,8 +1209,9 @@ pulls stored most often (a tie: tank, healer, dps), and each fold counts only th
 role; an import may name one for a specless player. The lake's `fights` and `players` views
 carry `edition` (the key, named off `project_id`; `players` carries `project_id` too), and
 `stats.kept.progression` is reckoned per edition as the store does. The MCP's stored cards say
-`edition`, `edition_name` and `project_id`, and a card by reference its `edition`; (v49) its live
-fights and list rows say `edition`, `status` lists `editions` and names the `live_edition`, and
+`edition`, `edition_name` and `project_id`, and a card by reference its `edition`; (v50) a live
+row's `role` is `Row::role` (the spec's, else the inferred one, unmarked, as a card's `role` is);
+(v49) its live fights and list rows say `edition`, `status` lists `editions` and names the `live_edition`, and
 every tool that takes an edition takes it in one shape (`retail`, `forever` or a PROJECT_ID). The
 history tools (`history`, `progression`, `trend`, `role_night`, `regrade_fights`) filter by it;
 without it they answer every edition, each card naming its own, but count and rank each edition's

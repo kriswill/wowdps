@@ -74,6 +74,8 @@ fn row(key: &str, class: Option<Class>) -> Row {
         offset_ms: class.map(|_| -250),
         absorb: None,
         heal_absorbed: 0,
+        // v50: the spec slot's role arm on the specless rows.
+        inferred_role: class.is_none().then_some(Role::Dps),
     }
 }
 
@@ -362,6 +364,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     }),
                     mine: true,
                     enemy: true,
+                    inferred_role: None,
                 }],
                 lust: vec![LustWindow {
                     at_ms: 2_000,

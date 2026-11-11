@@ -208,8 +208,8 @@ fn row_matches(r: &Row, needle: &[char]) -> bool {
     fold::contains(&r.label, needle)
         || r.class.is_some_and(|c| fold::contains(c.name(), needle))
         || r.spec.is_some_and(|s| fold::contains(s.name(), needle))
-        || r.spec
-            .is_some_and(|s| fold::contains(s.role().name(), needle))
+        || r.role()
+            .is_some_and(|role| fold::contains(role.name(), needle))
 }
 
 /// Accent-folded, case-insensitive substring over what a row IS — its
@@ -552,6 +552,33 @@ mod tests {
         assert_eq!(meter_step(rows(), "", up, 2, Action::Down), Some(0));
     }
 
+    /// v50 (R30): the filter finds a player by an inferred role as it finds
+    /// one by a spec's — "tank" keeps the specless tank and the Protection
+    /// warrior alike — and a row with no role answers to no role's name.
+    #[test]
+    fn the_filter_matches_an_inferred_role_as_a_specs() {
+        let rows = vec![
+            Row {
+                inferred_role: Some(wowdps_model::Role::Tank),
+                ..row("Garrond", 30, 1, 0)
+            },
+            Row {
+                spec: Some(wowdps_model::Spec::ProtectionWarrior),
+                ..row("Brann", 20, 1, 0)
+            },
+            row("Ashvel", 10, 1, 0),
+        ];
+        let kept = |f: &str| -> Vec<usize> {
+            filtered_indexed(rows.clone(), f)
+                .into_iter()
+                .map(|(i, _)| i)
+                .collect()
+        };
+        assert_eq!(kept("tank"), [0, 1]);
+        assert_eq!(kept("dps"), Vec::<usize>::new());
+        assert_eq!(kept(""), [0, 1, 2]);
+    }
+
     fn row(label: &str, amount: u64, count: u64, crits: u64) -> Row {
         Row {
             key: label.to_string(),
@@ -573,6 +600,7 @@ mod tests {
             offset_ms: None,
             absorb: None,
             heal_absorbed: 0,
+            inferred_role: None,
         }
     }
 

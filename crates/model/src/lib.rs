@@ -1868,9 +1868,18 @@ pub struct RaidDeath {
     /// holds every death window the segment kept, and never counted among
     /// the group's own deaths.
     pub enemy: bool,
+    /// v50 (R30): the player's role where no spec names one, as their meter
+    /// row carries it ([`Row::inferred_role`]). Read [`RaidDeath::role`].
+    pub inferred_role: Option<Role>,
 }
 
 impl RaidDeath {
+    /// The role the spec plays, else (v50) the inferred one: the role a
+    /// death is filtered by, as its player's row is ([`Row::role`]).
+    pub fn role(&self) -> Option<Role> {
+        self.spec.map(Spec::role).or(self.inferred_role)
+    }
+
     /// A battle rez undid this death: someone ELSE raised them. A self-rez
     /// (Reincarnation — R23 records it with the dead player as the rezzer)
     /// is no battle rez, and a death that nothing undid is none either.
@@ -1975,9 +1984,24 @@ pub struct Row {
     /// per-second series build (a zoom window's, a comparison's — the
     /// series keep no such split), and on rows stored before v44.
     pub heal_absorbed: u64,
+    /// v50 (R30): the role of a player no spec names — in an edition whose
+    /// log carries no spec, the one the fight's own lines give them
+    /// (`Segment::inferred_roles`), set by the daemon when it answers, on
+    /// the rows keyed by a player's guid; on a stored fight's rows the
+    /// card's stored role. `None` beside a spec, whose role is the spec's,
+    /// and wherever none was inferred (under 10 s of combat, Retail). Read
+    /// [`Row::role`], never this field alone.
+    pub inferred_role: Option<Role>,
 }
 
 impl Row {
+    /// The role the spec plays, else (v50) the inferred one — the one
+    /// accessor every reader of a row's role goes through, so an inferred
+    /// role reads exactly as a spec's does.
+    pub fn role(&self) -> Option<Role> {
+        self.spec.map(Spec::role).or(self.inferred_role)
+    }
+
     /// Crit rate over the contributing events, 0..100. 0.0 when nothing hit.
     pub fn crit_pct(&self) -> f64 {
         if self.count == 0 {
