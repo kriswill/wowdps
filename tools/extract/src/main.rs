@@ -108,15 +108,15 @@ mod tests {
     /// own (its own committed table or data-home cache is Retail's), and
     /// with an `-o` naming any of Retail's committed tables or review
     /// twins, not only its own. A generator with a Forever table goes
-    /// through with no `-o`, as far as the absent install, and writes
-    /// nothing.
+    /// through with no `-o`, as far as the absent install (or, census-backed,
+    /// the census it is not given), and writes nothing.
     #[test]
     fn every_generator_keeps_another_product_off_retails_outputs() {
         let gens: Vec<_> = EXTRACT
             .iter()
             .filter(|c| c.name.starts_with("gen-"))
             .collect();
-        assert_eq!(gens.len(), 13);
+        assert_eq!(gens.len(), 14);
         let others = [
             committed("crates/core/src/item_spells.rs"),
             committed("crates/core/src/proc_spells.expected.md"),
@@ -127,15 +127,13 @@ mod tests {
             "gen-item-spells",
             "gen-keystone-timers",
             "gen-open-world-maps",
+            "gen-role-signals",
         ];
         for c in gens {
             let e = run(c.name, &[&["--product", "wowf"][..], &absent[..]].concat());
             if forevers.contains(&c.name) {
-                assert!(
-                    e.contains(".build.info") && !e.contains("needs -o"),
-                    "{}: {e}",
-                    c.name
-                );
+                let through = e.contains(".build.info") || e.contains("requires --census");
+                assert!(through && !e.contains("needs -o"), "{}: {e}", c.name);
             } else {
                 assert!(e.ends_with(REFUSED), "{}: {e}", c.name);
             }
@@ -152,6 +150,33 @@ mod tests {
                 .join("crates")
                 .exists(),
             "nothing written under the working directory"
+        );
+    }
+
+    /// R30's role signals are Forever's alone: a Retail run (the default
+    /// product) has no committed table to write and says so, before the
+    /// install or the census is read; with an `-o` elsewhere it goes
+    /// through to the census it is not given.
+    #[test]
+    fn the_role_signals_have_no_retail_table() {
+        let absent = ["--wow-dir", "/nonexistent", "--dbd-dir", "/nonexistent"];
+        let e = run("gen-role-signals", &absent);
+        assert_eq!(
+            e,
+            "gen-role-signals: product wow has no committed table of its own; -o names the place"
+        );
+        let elsewhere = std::env::temp_dir()
+            .join(format!("wowdps-extract-signals-{}", std::process::id()))
+            .join("out.rs");
+        let elsewhere = elsewhere.display().to_string();
+        let e = run(
+            "gen-role-signals",
+            &[&["-o", &elsewhere][..], &absent[..]].concat(),
+        );
+        assert!(e.contains("requires --census"), "{e}");
+        assert!(
+            !std::path::Path::new(&elsewhere).exists(),
+            "nothing written"
         );
     }
 
@@ -301,7 +326,8 @@ mod tests {
     /// table added without its entry there fails here), is claimed by
     /// exactly one edition's entry in that list, and its header names that
     /// edition's product where it is not Retail's; every table generator
-    /// has its one Retail table. Each table and twin is refused to every
+    /// has its one Retail table, but one only another edition has (R30's
+    /// role signals). Each table and twin is refused to every
     /// other edition's run, and its own goes through to the (absent)
     /// install.
     #[test]
@@ -396,7 +422,8 @@ mod tests {
                     first.starts_with(&header) && !second.contains("(product ")
                 })
                 .count();
-            assert_eq!(retail, 1, "{}", c.name);
+            let want = usize::from(tablegen::has_retail_table(c.name));
+            assert_eq!(retail, want, "{}", c.name);
         }
     }
 }

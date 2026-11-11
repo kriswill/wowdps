@@ -505,7 +505,7 @@ impl Csv {
 /// generator lists the names it reads (`TABLES`). The replay's extractor
 /// (`wowdps-replay-extract`) loads its tables through `load` too, so its
 /// generators' tables are listed here beside this crate's.
-pub const FILE_IDS: [(&str, u32); 75] = [
+pub const FILE_IDS: [(&str, u32); 78] = [
     ("ChrClasses", 1361031),
     ("ChrCustomizationElement", 3512765),
     ("ChrCustomizationGeoset", 3456171),
@@ -545,16 +545,19 @@ pub const FILE_IDS: [(&str, u32); 75] = [
     ("SpellCastTimes", 1134089),
     ("SpellCategories", 1139939),
     ("SpellCategory", 1280619),
+    ("SpellClassOptions", 979663),
     ("SpellCooldowns", 1139924),
     ("SpellDescriptionVariables", 1140004),
     ("SpellDuration", 1137828),
     ("SpellEffect", 1140088),
     ("SpellEmpower", 4507381),
+    ("SpellEquippedItems", 1140011),
     ("SpellMisc", 1003144),
     ("SpellName", 1990283),
     ("SpellPower", 982806),
     ("SpellRadius", 1134584),
     ("SpellRange", 1146820),
+    ("SpellShapeshiftForm", 1280618),
     ("SpellXDescriptionVariables", 1724949),
     ("TextureFileData", 982459),
     ("TraitCond", 4543085),
@@ -845,7 +848,7 @@ mod tests {
     #[test]
     fn every_generators_tables_have_their_file_ids() {
         assert!(FILE_IDS.windows(2).all(|w| w[0].0 < w[1].0));
-        let lists: [&[&str]; 12] = [
+        let lists: [&[&str]; 13] = [
             &crate::absorbgen::TABLES,
             &crate::artgen::TABLES,
             &crate::artgen::ATLAS_TABLES,
@@ -855,6 +858,7 @@ mod tests {
             &crate::placegen::TABLES,
             &crate::procgen::TABLES,
             &crate::rolegen::TABLES,
+            &crate::signalgen::TABLES,
             &crate::spelltipgen::TABLES,
             &crate::talentgen::TABLES,
             &[

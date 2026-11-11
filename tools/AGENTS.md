@@ -36,19 +36,22 @@ what it does and how to run it.
   `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
   names another (Forever's `wowf`). Each committed table and review twin
   is one edition's (`tablegen::committed`): Retail's beside the code,
-  Forever's class, item, keystone and open-world tables under
-  `crates/core/src/forever/`. A table script passes `--checkout "$root"`,
+  Forever's class, item, keystone, open-world and role-signal tables under
+  `crates/core/src/forever/` (the role signals are Forever's alone: a run
+  of another product needs `-o`). A table script passes `--checkout "$root"`,
   so a run with no `-o` writes its own edition's committed table, and one
   whose edition has none of that table needs `-o`. The extractor refuses
   any product's output on another edition's committed file, Retail's
   included, however `-o` spells it (`cli/owners.rs`). The caches in the
   data home are Retail's alone: another product's needs `-o` elsewhere.
   What a non-Retail run writes names the product beside the build.
-- **Curated tables need two proofs.** `role_spells`, `proc_spells` and
-  `placed_spells` are hand lists in `tools/extract/src/` (`rolegen.rs`,
-  `procgen.rs`, `placegen.rs`) that the generator checks against the
-  client's own data, plus a committed real-log census (`tools/*-census.csv`
-  from `census-*.sh`). Rerun the census when curating, and commit counts,
+- **Curated tables need two proofs.** `role_spells`, `proc_spells`,
+  `placed_spells` and Forever's `role_signals` are hand lists in
+  `tools/extract/src/` (`rolegen.rs`, `procgen.rs`, `placegen.rs`,
+  `signalgen.rs`, the last curated by name and expanded to every id the
+  client proves) that the generator checks against the client's own data,
+  plus a committed real-log census (`tools/*-census.csv` from
+  `census-*.sh`). Rerun the census when curating, and commit counts,
   never names. A new `placed` entry changes the replay cut: the stored
   replays take it when they are cut again (a replay format bump sends
   every one through the daemon's rewrite queue).
@@ -97,6 +100,7 @@ tools/gen-role-spells.sh       # role_spells.rs (R18, curated)
 tools/gen-absorb-spells.sh     # absorb_spells.rs (R20)
 tools/gen-proc-spells.sh       # proc_spells.rs (R26, curated)
 tools/gen-placed-spells.sh     # proto's placed_spells.rs (what the replay cut keeps of placed things, curated)
+tools/gen-role-signals.sh      # Forever's forever/role_signals.rs (R30, curated by name; Retail has none)
 tools/gen-icons.sh             # class-icons.bin (upscaled 4x; --no-upscale)
 tools/gen-spell-icons.sh       # spell-icons.bin (~58 MiB)
 tools/gen-talent-trees.sh      # talents.json (R14)

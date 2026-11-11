@@ -19,6 +19,7 @@ pub mod meter;
 pub mod model;
 pub mod parser;
 pub mod replay;
+pub mod roles;
 pub mod tail;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;

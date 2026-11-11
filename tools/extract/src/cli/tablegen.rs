@@ -19,7 +19,7 @@ use wowdps_extract::atomic::write_if_changed;
 use wowdps_extract::game::default_product;
 use wowdps_extract::table::Tables;
 use wowdps_extract::{
-    absorbgen, classgen, itemgen, keystonegen, mapgen, placegen, procgen, rolegen,
+    absorbgen, classgen, itemgen, keystonegen, mapgen, placegen, procgen, rolegen, signalgen,
 };
 
 /// This module's commands, as the usage lists them.
@@ -81,6 +81,13 @@ pub const COMMANDS: &[Cmd] = &[
     )
     .reads(&[PLACED_SPELLS.tables]),
     cmd(
+        "gen-role-signals",
+        "gen-role-signals [wow-dir] --dbd-dir <dir> --census <csv>
+                       [--checkout DIR] [-o role_signals.rs] [--keys tactkeys.txt] [--product wowf]",
+        role_signals,
+    )
+    .reads(&[ROLE_SIGNALS.tables]),
+    cmd(
         "placed-spells-ids",
         "placed-spells-ids   (every spell the placed-spell census counts)",
         placed_spells_ids,
@@ -98,8 +105,10 @@ pub const COMMANDS: &[Cmd] = &[
 /// one, for the error that asks for it).
 struct Table {
     command: &'static str,
-    /// Retail's committed table, by its path in a checkout.
-    out: &'static str,
+    /// Retail's committed table, by its path in a checkout; `None` for a
+    /// table only another edition has (R30's role signals: Retail's role is
+    /// its spec's).
+    out: Option<&'static str>,
     /// Every other edition's committed table, where one is generated.
     editions: &'static [(Edition, &'static str)],
     tables: &'static [&'static str],
@@ -115,7 +124,7 @@ impl Table {
     /// edition's, `None` for an edition with none.
     fn own(&self, product: &str) -> Option<&'static str> {
         if product == default_product() {
-            return Some(self.out);
+            return self.out;
         }
         self.editions
             .iter()
@@ -126,7 +135,7 @@ impl Table {
 
 const CLASS_SPELLS: Table = Table {
     command: "gen-class-spells",
-    out: "crates/core/src/class_spells.rs",
+    out: Some("crates/core/src/class_spells.rs"),
     editions: &[(Edition::Forever, "crates/core/src/forever/class_spells.rs")],
     tables: &classgen::TABLES,
     reads: Some(class_tables),
@@ -140,7 +149,7 @@ fn class_tables(product: &str) -> &'static [&'static str] {
 
 const ITEM_SPELLS: Table = Table {
     command: "gen-item-spells",
-    out: "crates/core/src/item_spells.rs",
+    out: Some("crates/core/src/item_spells.rs"),
     editions: &[(Edition::Forever, "crates/core/src/forever/item_spells.rs")],
     tables: &itemgen::TABLES,
     reads: None,
@@ -149,7 +158,7 @@ const ITEM_SPELLS: Table = Table {
 
 const KEYSTONE_TIMERS: Table = Table {
     command: "gen-keystone-timers",
-    out: "crates/core/src/keystone_timers.rs",
+    out: Some("crates/core/src/keystone_timers.rs"),
     editions: &[(
         Edition::Forever,
         "crates/core/src/forever/keystone_timers.rs",
@@ -161,7 +170,7 @@ const KEYSTONE_TIMERS: Table = Table {
 
 const OPEN_WORLD_MAPS: Table = Table {
     command: "gen-open-world-maps",
-    out: "crates/core/src/open_world_maps.rs",
+    out: Some("crates/core/src/open_world_maps.rs"),
     editions: &[(
         Edition::Forever,
         "crates/core/src/forever/open_world_maps.rs",
@@ -173,7 +182,7 @@ const OPEN_WORLD_MAPS: Table = Table {
 
 const ROLE_SPELLS: Table = Table {
     command: "gen-role-spells",
-    out: "crates/core/src/role_spells.rs",
+    out: Some("crates/core/src/role_spells.rs"),
     editions: &[],
     tables: &rolegen::TABLES,
     reads: None,
@@ -182,7 +191,7 @@ const ROLE_SPELLS: Table = Table {
 
 const ABSORB_SPELLS: Table = Table {
     command: "gen-absorb-spells",
-    out: "crates/core/src/absorb_spells.rs",
+    out: Some("crates/core/src/absorb_spells.rs"),
     editions: &[],
     tables: &absorbgen::TABLES,
     reads: None,
@@ -191,7 +200,7 @@ const ABSORB_SPELLS: Table = Table {
 
 const PROC_SPELLS: Table = Table {
     command: "gen-proc-spells",
-    out: "crates/core/src/proc_spells.rs",
+    out: Some("crates/core/src/proc_spells.rs"),
     editions: &[],
     tables: &procgen::TABLES,
     reads: None,
@@ -200,15 +209,24 @@ const PROC_SPELLS: Table = Table {
 
 const PLACED_SPELLS: Table = Table {
     command: "gen-placed-spells",
-    out: "crates/proto/src/placed/placed_spells.rs",
+    out: Some("crates/proto/src/placed/placed_spells.rs"),
     editions: &[],
     tables: &placegen::TABLES,
     reads: None,
     census: Some("tools/placed-spells-census.csv"),
 };
 
+const ROLE_SIGNALS: Table = Table {
+    command: "gen-role-signals",
+    out: None,
+    editions: &[(Edition::Forever, "crates/core/src/forever/role_signals.rs")],
+    tables: &signalgen::TABLES,
+    reads: None,
+    census: Some("tools/role-signals-census.csv"),
+};
+
 /// Every table generator.
-const TABLES: [&Table; 8] = [
+const TABLES: [&Table; 9] = [
     &CLASS_SPELLS,
     &ITEM_SPELLS,
     &KEYSTONE_TIMERS,
@@ -217,6 +235,7 @@ const TABLES: [&Table; 8] = [
     &ABSORB_SPELLS,
     &PROC_SPELLS,
     &PLACED_SPELLS,
+    &ROLE_SIGNALS,
 ];
 
 /// Every committed table and, where a census backs it, its review twin,
@@ -225,7 +244,8 @@ const TABLES: [&Table; 8] = [
 pub fn committed() -> Vec<(Edition, PathBuf)> {
     let mut paths = Vec::new();
     for t in TABLES {
-        let editions = std::iter::once((Edition::Retail, t.out)).chain(t.editions.iter().copied());
+        let retail = t.out.map(|out| (Edition::Retail, out));
+        let editions = retail.into_iter().chain(t.editions.iter().copied());
         for (edition, out) in editions {
             paths.push((edition, PathBuf::from(out)));
             if t.census.is_some() {
@@ -234,6 +254,15 @@ pub fn committed() -> Vec<(Edition, PathBuf)> {
         }
     }
     paths
+}
+
+/// Whether `command` writes a Retail table: every generator but the role
+/// signals', which only Forever has (R30).
+#[cfg(test)]
+pub fn has_retail_table(command: &str) -> bool {
+    TABLES
+        .iter()
+        .any(|t| t.command == command && t.out.is_some())
 }
 
 /// What a generator made: the table's text, its review twin's where a
@@ -279,7 +308,6 @@ where
         let only = reads(&install.product);
         install.tables.retain(|name| only.contains(name));
     }
-    let place = format!("the committed {}", t.out);
     let own = t.own(&install.product).map(|rel| match &checkout {
         Some(dir) => dir.join(rel),
         None => PathBuf::from(rel),
@@ -291,7 +319,21 @@ where
         .as_deref()
         .filter(|_| t.census.is_some())
         .map(review_twin);
-    owned_only(&install, out.as_deref(), twin.as_deref(), &place)?;
+    match t.out {
+        Some(retail) => {
+            let place = format!("the committed {retail}");
+            owned_only(&install, out.as_deref(), twin.as_deref(), &place)?;
+        }
+        // A table Retail has none of (R30's role signals): a run with no
+        // place is told so, and one with a place is checked as any is.
+        None if out.is_none() => {
+            return Err(format!(
+                "{}: product {} has no committed table of its own; -o names the place",
+                t.command, install.product
+            ));
+        }
+        None => owned_only(&install, out.as_deref(), twin.as_deref(), "")?,
+    }
     // `owned_only` refuses a run with no place: no `-o`, and no committed
     // table of its edition's.
     let out = out.ok_or_else(|| format!("{}: -o names no place", t.command))?;
@@ -327,12 +369,12 @@ where
 fn twin_as_checked(t: &Table, made: &Made) -> Result<(), String> {
     match (t.census.is_some(), made.expected.is_some()) {
         (false, true) => Err(format!(
-            "{}: made a review twin for {}, which no census backs, so its place was never checked",
-            t.command, t.out
+            "{}: made a review twin, which no census backs, so its place was never checked",
+            t.command
         )),
         (true, false) => Err(format!(
-            "{}: made no review twin for {}, which a census backs",
-            t.command, t.out
+            "{}: made no review twin, which a census backs",
+            t.command
         )),
         _ => Ok(()),
     }
@@ -510,6 +552,28 @@ pub fn placed_spells(a: Args) -> Result<(), String> {
     })
 }
 
+/// R30: Forever's role signals; Retail has none (its role is its spec's),
+/// so only a Forever run has a committed place.
+pub fn role_signals(a: Args) -> Result<(), String> {
+    generate(a, ROLE_SIGNALS, |text, _| {
+        // The same `id,name,<log>...` shape as the role census, of casts.
+        let census = rolegen::Census::parse(text)?;
+        Ok(move |tables: &Tables, build: &str| {
+            let g = signalgen::generate(tables, &census, build)?;
+            Ok(Made {
+                summary: format!(
+                    "{} role signals from {} names, census over {} log(s)",
+                    g.spells,
+                    g.entries,
+                    census.logs.len()
+                ),
+                content: g.content,
+                expected: Some(g.expected),
+            })
+        })
+    })
+}
+
 /// Every spell the placed-spell census counts (`placegen::census_ids`).
 pub fn placed_spells_ids(a: Args) -> Result<(), String> {
     a.finish()?;
@@ -540,21 +604,26 @@ mod tests {
     }
 
     /// A run writes its own edition's table by default: Retail's for
-    /// Retail, Forever's for the four generators that have one, none for
-    /// the rest or for a product no edition names.
+    /// Retail, Forever's for the five generators that have one, none for
+    /// the rest or for a product no edition names. Every generator has a
+    /// Retail table but the role signals', which only Forever has.
     #[test]
     fn each_product_writes_its_own_committed_table() {
         for t in TABLES {
-            assert_eq!(t.own("wow"), Some(t.out), "{}", t.command);
             let forever = t.own("wowf");
+            if t.command == "gen-role-signals" {
+                assert_eq!(t.own("wow"), None);
+                assert_eq!(forever, Some("crates/core/src/forever/role_signals.rs"));
+                continue;
+            }
+            assert_eq!(t.own("wow"), t.out, "{}", t.command);
+            let out = t.out.unwrap();
             match t.command {
                 "gen-class-spells"
                 | "gen-item-spells"
                 | "gen-keystone-timers"
                 | "gen-open-world-maps" => {
-                    let rel = t
-                        .out
-                        .replace("crates/core/src/", "crates/core/src/forever/");
+                    let rel = out.replace("crates/core/src/", "crates/core/src/forever/");
                     assert_eq!(forever, Some(rel.as_str()), "{}", t.command);
                 }
                 _ => assert_eq!(forever, None, "{}", t.command),
@@ -574,8 +643,8 @@ mod tests {
             assert_eq!(twins.count(), 0, "{} twice", path.display());
         }
         let of = |e: Edition| committed.iter().filter(|(o, _)| *o == e).count();
-        assert_eq!((of(Edition::Retail), of(Edition::Forever)), (12, 4));
-        assert_eq!(committed.len(), 16);
+        assert_eq!((of(Edition::Retail), of(Edition::Forever)), (12, 6));
+        assert_eq!(committed.len(), 18);
     }
 
     /// Retail's class run reads the tables it always did, in their order;

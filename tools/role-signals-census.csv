@@ -1,0 +1,692 @@
+id,name,WoWCombatLog-110926_175605.txt,WoWCombatLog-111026_163741.txt
+10,"Blizzard",0,2
+71,"Defensive Stance",0,22
+72,"Shield Bash",28,22
+75,"Auto Shot",453,431
+100,"Charge",0,5
+120,"Cone of Cold",1,9
+122,"Frost Nova",0,9
+130,"Slow Fall",0,7
+131,"Water Breathing",0,3
+284,"Heroic Strike",0,2
+285,"Heroic Strike",0,15
+324,"Lightning Shield",0,3
+325,"Lightning Shield",0,3
+331,"Healing Wave",114,0
+332,"Healing Wave",207,0
+355,"Taunt",33,67
+370,"Purge",0,2
+437,"Restore Mana",2,1
+438,"Restore Mana",0,4
+440,"Healing Potion",0,1
+441,"Healing Potion",1,4
+467,"Thorns",0,2
+475,"Remove Lesser Curse",0,2
+526,"Cure Poison",3,17
+527,"Dispel Magic",4,10
+528,"Cure Disease",0,1
+547,"Healing Wave",2,1
+548,"Lightning Bolt",0,11
+556,"Astral Recall",0,2
+588,"Inner Fire",0,2
+597,"Conjure Food",0,2
+600,"Power Word: Shield",1,7
+602,"Inner Fire",0,2
+633,"Lay on Hands",1,7
+642,"Divine Shield",0,3
+643,"Devotion Aura",0,6
+647,"Holy Light",0,1
+673,"Elixir of Minor Defense",0,1
+680,"Holy Strike",0,373
+688,"Summon Imp",0,2
+689,"Drain Life",0,1
+693,"Create Soulstone",0,1
+696,"Demon Skin",0,2
+697,"Summon Voidwalker",0,3
+698,"Ritual of Summoning",1,29
+699,"Drain Life",1,11
+703,"Garrote",0,1
+704,"Curse of Recklessness",0,1
+706,"Demon Armor",1,5
+710,"Banish",0,4
+712,"Summon Succubus",0,1
+713,"Summon Incubus",0,1
+758,"Firestone",0,1
+768,"Cat Form",7,182
+770,"Faerie Fire",0,50
+772,"Rend",0,1
+774,"Rejuvenation",0,2
+778,"Faerie Fire",0,1
+780,"Swipe",0,19
+781,"Disengage",0,2
+782,"Thorns",0,9
+783,"Travel Form",0,70
+845,"Cleave",28,13
+853,"Hammer of Justice",1,0
+865,"Frost Nova",0,18
+871,"Shield Wall",0,2
+879,"Exorcism",16,59
+883,"Call Pet",1,5
+905,"Lightning Shield",8,75
+913,"Healing Wave",0,135
+915,"Lightning Bolt",0,5
+921,"Pick Pocket",0,1
+939,"Healing Wave",22,41
+945,"Lightning Shield",0,2
+970,"Shadow Word: Pain",0,16
+976,"Shadow Protection",0,2
+982,"Revive Pet",0,3
+990,"Conjure Food",0,7
+992,"Shadow Word: Pain",5,73
+1006,"Inner Fire",0,1
+1014,"Bane of Agony",10,55
+1026,"Holy Light",2,12
+1042,"Holy Light",0,3
+1044,"Blessing of Freedom",5,12
+1058,"Rejuvenation",0,6
+1062,"Entangling Roots",0,1
+1066,"Aquatic Form",1,1
+1075,"Thorns",1,6
+1079,"Rip",0,34
+1082,"Claw",19,185
+1086,"Demon Armor",0,3
+1088,"Shadow Bolt",2,3
+1094,"Immolate",4,35
+1106,"Shadow Bolt",0,11
+1120,"Drain Soul",0,1
+1126,"Mark of the Wild",0,1
+1130,"Hunter's Mark",0,6
+1152,"Purify",0,14
+1159,"First Aid",0,4
+1160,"Demoralizing Shout",24,0
+1161,"Challenging Shout",0,3
+1243,"Power Word: Fortitude",0,3
+1244,"Power Word: Fortitude",0,6
+1245,"Power Word: Fortitude",1,8
+1430,"Rejuvenation",0,5
+1449,"Arcane Explosion",0,7
+1455,"Life Tap",0,7
+1456,"Life Tap",0,20
+1460,"Arcane Intellect",0,4
+1461,"Arcane Intellect",0,5
+1463,"Mana Shield",0,1
+1494,"Track Beasts",0,8
+1495,"Mongoose Bite",0,1
+1499,"Freezing Trap",2,6
+1608,"Heroic Strike",3,13
+1706,"Levitate",0,1
+1715,"Hamstring",0,3
+1735,"Demoralizing Roar",0,3
+1758,"Sinister Strike",0,34
+1759,"Sinister Strike",79,725
+1760,"Sinister Strike",0,4
+1766,"Kick",0,1
+1767,"Kick",9,12
+1777,"Gouge",3,13
+1784,"Stealth",0,2
+1785,"Stealth",9,41
+1822,"Rake",13,74
+1833,"Cheap Shot",1,6
+1850,"Dash",1,16
+1856,"Vanish",0,6
+1866,"Holy Strike",142,325
+1943,"Rupture",0,1
+1953,"Blink",2,248
+1966,"Feint",0,2
+1978,"Serpent Sting",1,2
+2023,"Restore Mana",0,1
+2024,"Healing Potion",0,1
+2053,"Lesser Heal",0,9
+2061,"Flash Heal",0,1
+2090,"Rejuvenation",3,43
+2091,"Rejuvenation",0,2
+2137,"Fire Blast",0,4
+2138,"Fire Blast",0,11
+2152,"Light Armor Kit",0,58
+2160,"Embossed Leather Vest",0,1
+2162,"Embossed Leather Cloak",0,6
+2165,"Medium Armor Kit",0,5
+2166,"Toughened Leather Armor",0,19
+2167,"Gray Leather Boots",0,4
+2168,"Dark Leather Cloak",0,26
+2169,"Dark Leather Tunic",0,1
+2329,"Elixir of Minor Strength",0,20
+2331,"Minor Mana Potion",0,8
+2332,"Minor Rejuvenation Potion",0,3
+2334,"Elixir of Minor Fortitude",0,30
+2335,"Swiftness Potion",0,5
+2379,"Speed",0,2
+2385,"Brown Linen Vest",0,18
+2395,"Barbaric Linen Vest",0,1
+2397,"Reinforced Linen Cape",0,14
+2402,"Woolen Cape",0,8
+2406,"Gray Woolen Shirt",0,9
+2457,"Battle Stance",1,22
+2480,"Shoot Bow",0,2
+2484,"Earthbind Totem",0,7
+2538,"Charred Wolf Meat",0,67
+2539,"Spiced Wolf Meat",0,5
+2540,"Roasted Boar Meat",0,29
+2544,"Crab Cake",0,1
+2565,"Shield Block",82,277
+2590,"Backstab",0,5
+2591,"Backstab",5,0
+2641,"Dismiss Pet",0,1
+2643,"Multi-Shot",42,20
+2645,"Ghost Wolf",1,116
+2652,"Touch of Weakness",0,5
+2657,"Smelt Copper",6,956
+2658,"Smelt Silver",0,110
+2659,"Smelt Bronze",0,728
+2660,"Rough Sharpening Stone",0,123
+2661,"Copper Chain Belt",0,10
+2662,"Copper Chain Pants",0,5
+2663,"Copper Bracers",0,2
+2664,"Runed Copper Bracers",0,1
+2665,"Coarse Sharpening Stone",0,8
+2666,"Runed Copper Belt",0,3
+2668,"Rough Bronze Leggings",0,15
+2670,"Rough Bronze Cuirass",0,3
+2672,"Patterned Bronze Bracers",0,44
+2673,"Silvered Bronze Breastplate",0,1
+2674,"Heavy Sharpening Stone",0,16
+2675,"Shining Silver Breastplate",0,1
+2687,"Bloodrage",15,44
+2738,"Copper Axe",0,2
+2739,"Copper Shortsword",0,2
+2742,"Bronze Shortsword",0,1
+2764,"Throw",0,21
+2782,"Remove Curse",2,10
+2791,"Power Word: Fortitude",0,1
+2828,"Sharpen Blade",0,2
+2831,"Armor +8",0,9
+2832,"Armor +16",0,5
+2833,"Heavy Armor Kit",0,22
+2870,"Cure Disease",0,2
+2881,"Light Leather",0,56
+2893,"Abolish Poison",0,2
+2941,"Immolate",0,3
+2944,"Devouring Plague",2,7
+2963,"Bolt of Linen Cloth",0,349
+2964,"Bolt of Woolen Cloth",0,78
+2974,"Wing Clip",3,21
+2983,"Sprint",2,55
+3029,"Claw",0,18
+3045,"Rapid Fire",1,5
+3111,"Mend Pet",0,1
+3112,"Enhance Blunt Weapon",0,2
+3115,"Rough Weightstone",0,17
+3116,"Coarse Weightstone",0,25
+3140,"Fireball",0,2
+3170,"Minor Troll's Blood Elixir",0,17
+3176,"Lesser Troll's Blood Elixir",0,7
+3177,"Elixir of Lesser Defense",0,11
+3222,"Lesser Troll's Blood Elixir",0,1
+3267,"First Aid",0,3
+3268,"First Aid",0,2
+3275,"Linen Bandage",4,132
+3276,"Heavy Linen Bandage",0,215
+3277,"Wool Bandage",0,226
+3278,"Heavy Wool Bandage",0,280
+3304,"Smelt Tin",0,454
+3307,"Smelt Iron",3,187
+3308,"Smelt Gold",0,15
+3319,"Copper Chain Boots",0,1
+3320,"Rough Grinding Stone",0,102
+3323,"Runed Copper Gauntlets",0,2
+3326,"Coarse Grinding Stone",0,88
+3328,"Rough Bronze Shoulders",0,1
+3333,"Silvered Bronze Gauntlets",0,6
+3337,"Heavy Grinding Stone",0,11
+3398,"Hot Lion Chops",0,10
+3408,"Crippling Poison",0,2
+3420,"Crippling Poison",0,8
+3452,"Mana Potion",0,15
+3492,"Hardened Iron Shortsword",0,1
+3502,"Green Iron Helm",0,1
+3563,"Teleport: Undercity",0,2
+3567,"Teleport: Orgrimmar",0,1
+3599,"Searing Totem",42,55
+3627,"Rejuvenation",0,5
+3747,"Power Word: Shield",3,53
+3756,"Embossed Leather Gloves",0,51
+3757,"Woolen Bag",0,2
+3759,"Embossed Leather Pants",0,7
+3760,"Hillman's Cloak",0,3
+3761,"Fine Leather Tunic",0,10
+3763,"Fine Leather Belt",0,35
+3764,"Hillman's Leather Gloves",0,37
+3766,"Dark Leather Belt",0,22
+3768,"Hillman's Shoulders",0,23
+3770,"Toughened Leather Gloves",0,1
+3774,"Green Leather Belt",0,2
+3780,"Heavy Armor Kit",0,61
+3816,"Cured Light Hide",0,56
+3817,"Cured Medium Hide",0,106
+3818,"Cured Heavy Hide",0,135
+3839,"Bolt of Silk Cloth",0,44
+3842,"Handstitched Linen Britches",0,5
+3848,"Double-stitched Woolen Shoulders",0,3
+3852,"Gloves of Meditation",0,6
+3918,"Rough Blasting Powder",0,7
+3929,"Coarse Blasting Powder",0,20
+3934,"Flying Tiger Goggles",0,1
+3936,"Deadly Blunderbuss",0,20
+3938,"Bronze Tube",0,10
+3942,"Whirring Bronze Gizmo",0,6
+3945,"Heavy Blasting Powder",0,14
+3950,"Big Bronze Bomb",0,92
+3962,"Iron Grenade",0,3
+3975,"Standard Scope",0,1
+4064,"Rough Copper Bomb",0,5
+4066,"Small Bronze Bomb",0,1
+4094,"Barbecued Buzzard Wing",0,7
+4097,"Raptor Hide Belt",0,2
+5019,"Shoot",22,563
+5020,"Stormstout",0,1
+5116,"Concussive Shot",5,17
+5118,"Aspect of the Cheetah",8,54
+5171,"Slice and Dice",2,36
+5177,"Wrath",0,7
+5179,"Wrath",0,1
+5185,"Healing Touch",0,1
+5188,"Healing Touch",6,2
+5189,"Healing Touch",0,5
+5211,"Bash",1,1
+5215,"Prowl",3,32
+5221,"Shred",0,3
+5232,"Mark of the Wild",0,10
+5234,"Mark of the Wild",0,2
+5242,"Battle Shout",0,1
+5244,"Kodo Hide Bag",0,1
+5246,"Intimidating Shout",1,2
+5277,"Evasion",2,14
+5394,"Healing Stream Totem",0,25
+5487,"Bear Form",1,55
+5506,"Conjure Water",0,12
+5573,"Divine Protection",3,11
+5588,"Hammer of Justice",25,77
+5599,"Blessing of Protection",0,3
+5614,"Exorcism",0,33
+5675,"Mana Spring Totem",15,0
+5676,"Searing Pain",0,5
+5697,"Unending Breath",0,2
+5740,"Rain of Fire",0,9
+5782,"Fear",3,3
+5784,"Summon Felsteed",0,2
+6065,"Power Word: Shield",0,1
+6074,"Renew",0,3
+6075,"Renew",0,2
+6076,"Renew",1,39
+6077,"Renew",0,2
+6078,"Renew",0,1
+6117,"Mage Armor",0,1
+6127,"Conjure Water",0,14
+6141,"Blizzard",0,3
+6143,"Frost Ward",0,2
+6190,"Demoralizing Shout",0,26
+6192,"Battle Shout",5,28
+6196,"Far Sight",0,4
+6202,"Create Healthstone",0,2
+6217,"Bane of Agony",1,32
+6222,"Corruption",0,4
+6223,"Corruption",9,122
+6263,"Lesser Healthstone",1,1
+6343,"Thunder Clap",0,2
+6346,"Fear Ward",1,0
+6363,"Searing Totem",11,65
+6365,"Searing Totem",0,1
+6391,"Stoneclaw Totem",1,0
+6418,"Crispy Lizard Tail",0,19
+6419,"Lean Venison",0,3
+6499,"Boiled Clams",0,39
+6500,"Goblin Deviled Clams",0,59
+6546,"Rend",0,7
+6547,"Rend",162,123
+6574,"Revenge",108,303
+6617,"Rage Potion",0,8
+6661,"Barbaric Harness",0,5
+6673,"Battle Shout",0,1
+6686,"Red Linen Bag",0,27
+6756,"Mark of the Wild",1,12
+6760,"Eviscerate",0,1
+6761,"Eviscerate",0,4
+6762,"Eviscerate",23,107
+6783,"Prowl",0,1
+6789,"Death Coil",0,1
+6795,"Growl",0,1
+6807,"Maul",0,8
+6809,"Maul",4,6
+6945,"Chest Pains",0,156
+6991,"Feed Pet",0,16
+7126,"Handstitched Leather Vest",0,2
+7128,"Inner Fire",0,7
+7135,"Dark Leather Pants",0,4
+7149,"Barbaric Leggings",0,28
+7151,"Barbaric Shoulders",0,7
+7156,"Guardian Gloves",0,14
+7183,"Elixir of Minor Defense",0,65
+7216,"Iron Shield Spike",0,2
+7269,"Arcane Missiles",7,12
+7270,"Arcane Missiles",0,37
+7301,"Frost Armor",0,5
+7302,"Ice Armor",0,3
+7322,"Frostbolt",0,57
+7384,"Overpower",0,4
+7405,"Sunder Armor",32,244
+7408,"Heavy Copper Maul",0,2
+7418,"Enchant Bracer - Inferior Stamina",0,4
+7420,"Enchant Chest - Inferior Stamina",0,34
+7426,"Enchant Chest - Minor Absorption",0,35
+7457,"Enchant Bracer - Minor Stamina",0,24
+7620,"Fishing",3,468
+7623,"Brown Linen Robe",0,5
+7648,"Corruption",0,3
+7731,"Fishing",0,401
+7732,"Fishing",0,50
+7744,"Will of the Forsaken",1,2
+7745,"Enchant 2H Weapon - Minor Impact",0,2
+7751,"Brilliant Smallfish",0,57
+7753,"Longjaw Mud Snapper",2,356
+7755,"Bristle Whisker Catfish",0,214
+7771,"Enchant Cloak - Minor Protection",0,46
+7779,"Enchant Bracer - Minor Agility",0,2
+7782,"Enchant Bracer - Minor Strength",0,1
+7786,"Enchant Weapon - Minor Beastslayer",0,1
+7795,"Runed Silver Rod",0,1
+7817,"Rough Bronze Boots",0,4
+7818,"Silver Rod",0,1
+7827,"Rainbow Fin Albacore",0,2
+7836,"Blackmouth Oil",0,9
+7837,"Fire Oil",0,15
+7841,"Swim Speed Potion",0,3
+7845,"Elixir of Fire Power",0,8
+7863,"Enchant Boots - Minor Stamina",0,7
+7918,"Shoot Gun",0,1
+7928,"Silk Bandage",0,42
+7929,"Heavy Silk Bandage",0,146
+8004,"Lesser Healing Wave",9,27
+8008,"Lesser Healing Wave",0,2
+8017,"Rockbiter Weapon",0,1
+8019,"Rockbiter Weapon",0,3
+8024,"Flametongue Weapon",0,3
+8027,"Flametongue Weapon",1,3
+8030,"Flametongue Weapon",0,4
+8033,"Frostbrand Weapon",0,1
+8042,"Earth Shock",2,0
+8045,"Earth Shock",0,6
+8046,"Earth Shock",100,268
+8050,"Flame Shock",0,5
+8052,"Flame Shock",71,593
+8053,"Flame Shock",0,5
+8056,"Frost Shock",3,3
+8075,"Strength of Earth Totem",0,1
+8091,"Armor",0,1
+8096,"Intellect",0,1
+8097,"Intellect",0,2
+8100,"Stamina",0,1
+8103,"Mind Blast",1,45
+8113,"Spirit",0,2
+8122,"Psychic Scream",1,3
+8124,"Psychic Scream",0,1
+8129,"Mana Burn",0,2
+8143,"Tremor Totem",0,3
+8154,"Stoneskin Totem",0,1
+8155,"Stoneskin Totem",7,29
+8160,"Strength of Earth Totem",7,0
+8166,"Poison Cleansing Totem",2,0
+8190,"Magma Totem",0,2
+8198,"Thunder Clap",110,153
+8204,"Thunder Clap",0,42
+8232,"Windfury Weapon",0,3
+8238,"Savory Deviate Delight",0,3
+8240,"Elixir of Giant Growth",0,14
+8288,"Drain Soul",0,3
+8400,"Fireball",0,6
+8406,"Frostbolt",0,57
+8422,"Flamestrike",0,1
+8437,"Arcane Explosion",0,12
+8438,"Arcane Explosion",0,12
+8450,"Dampen Magic",0,1
+8492,"Cone of Cold",0,2
+8494,"Mana Shield",0,1
+8512,"Windfury Totem",0,1
+8604,"Herb Baked Egg",0,1
+8613,"Skinning",0,1
+8617,"Skinning",0,7
+8618,"Skinning",5,23
+8631,"Garrote",1,2
+8639,"Rupture",0,3
+8649,"Expose Armor",0,2
+8679,"Instant Poison",2,6
+8681,"Instant Poison",0,20
+8690,"Hearthstone",2,60
+8696,"Sprint",0,7
+8724,"Ambush",2,1
+8776,"Linen Belt",0,13
+8921,"Moonfire",0,1
+8924,"Moonfire",0,5
+8926,"Moonfire",0,2
+8936,"Regrowth",0,1
+8938,"Regrowth",0,1
+8939,"Regrowth",2,21
+8940,"Regrowth",0,2
+9062,"Small Leather Ammo Pouch",0,7
+9065,"Light Leather Bracers",0,2
+9068,"Light Leather Pants",0,10
+9074,"Nimble Leather Gloves",0,1
+9145,"Fletcher's Gloves",0,3
+9194,"Heavy Leather Ammo Pouch",0,1
+9196,"Dusky Leather Armor",0,13
+9198,"Frost Leather Cloak",0,2
+9472,"Flash Heal",1,1
+9492,"Rip",0,5
+9578,"Fade",0,8
+9634,"Dire Bear Form",0,1
+9840,"Rejuvenation",0,2
+9918,"Solid Sharpening Stone",0,10
+9985,"Bronze Warhammer",0,12
+10322,"Redemption",2,2
+10344,"Thick Armor Kit",0,1
+10399,"Rockbiter Weapon",0,2
+10482,"Cured Thick Hide",0,15
+10487,"Thick Armor Kit",0,51
+10840,"Mageweave Bandage",0,4
+11448,"Greater Mana Potion",0,20
+11461,"Arcane Elixir",0,13
+11671,"Corruption",0,2
+11688,"Life Tap",0,1
+11712,"Bane of Agony",0,2
+12046,"Simple Kilt",0,6
+12051,"Evocation",0,2
+12260,"Rough Copper Vest",0,2
+12824,"Polymorph",0,2
+12975,"Last Stand",1,6
+13161,"Aspect of the Beast",0,1
+13163,"Aspect of the Monkey",0,3
+13165,"Aspect of the Hawk",1,3
+13361,"Greater Magic Essence",0,1
+13362,"Lesser Magic Essence",0,14
+13421,"Enchant Cloak - Lesser Protection",0,4
+13498,"Lesser Astral Essence",0,1
+13501,"Enchant Bracer - Lesser Stamina",0,1
+13538,"Enchant Chest - Lesser Absorption",0,2
+13550,"Serpent Sting",1,17
+13551,"Serpent Sting",63,57
+13607,"Enchant Chest - Intellect",0,1
+13628,"Runed Golden Rod",0,1
+13633,"Lesser Mystic Essence",0,1
+13661,"Enchant Bracer - Strength",0,1
+13693,"Enchant Weapon - Striking",0,1
+13695,"Enchant 2H Weapon - Impact",0,1
+13746,"Enchant Cloak - Greater Defense",0,1
+13795,"Immolation Trap",1,0
+13809,"Frost Trap",1,1
+13887,"Enchant Gloves - Strength",0,1
+14183,"Premeditation",1,0
+14251,"Riposte",0,25
+14261,"Raptor Strike",0,3
+14262,"Raptor Strike",2,15
+14281,"Arcane Shot",0,5
+14282,"Arcane Shot",2,48
+14283,"Arcane Shot",39,2
+14293,"Lesser Magic Wand",0,29
+14302,"Immolation Trap",1,11
+14318,"Aspect of the Hawk",5,13
+14319,"Aspect of the Hawk",1,4
+14323,"Hunter's Mark",9,120
+14752,"Divine Spirit",0,1
+14930,"Quickdraw Quiver",0,1
+14932,"Thick Leather Ammo Pouch",0,4
+15407,"Mind Flay",0,4
+16810,"Nature's Grasp",0,2
+16979,"Feral Charge (Bear)",0,1
+17364,"Stormstrike",159,706
+17919,"Searing Pain",1,1
+17920,"Searing Pain",0,8
+18137,"Shadowguard",1,0
+18708,"Fel Domination",0,1
+18867,"Shadowburn",0,14
+18880,"Siphon Life",0,2
+18960,"Teleport: Moonglade",0,7
+19261,"Touch of Weakness",0,3
+19262,"Touch of Weakness",0,1
+19308,"Shadowguard",0,1
+19434,"Aimed Shot",1,43
+19577,"Intimidation",1,0
+19742,"Blessing of Wisdom",0,4
+19750,"Flash of Light",2,1
+19834,"Blessing of Might",0,2
+19835,"Blessing of Might",1,7
+19850,"Blessing of Wisdom",5,2
+19876,"Shadow Resistance Aura",0,1
+19883,"Track Humanoids",0,4
+19885,"Track Hidden",0,1
+19939,"Flash of Light",0,5
+19941,"Flash of Light",0,1
+20163,"Seal of Fury",0,55
+20164,"Seal of Justice",0,3
+20217,"Blessing of Kings",5,34
+20230,"Retaliation",0,3
+20271,"Judgement",175,859
+20287,"Seal of Righteousness",0,3
+20288,"Seal of Righteousness",0,6
+20289,"Seal of Righteousness",0,4
+20305,"Seal of the Crusader",22,56
+20375,"Seal of Command",74,386
+20419,"Seal of Fury",0,2
+20424,"Seal of Command",119,421
+20549,"War Stomp",1,37
+20554,"Berserking",5,2
+20572,"Blood Fury",9,1
+20577,"Cannibalize",1,0
+20580,"Shadowmeld",2,1
+20609,"Ancestral Spirit",1,0
+20648,"Medium Leather",0,158
+20649,"Heavy Leather",0,75
+20707,"Soulstone Resurrection",0,1
+20900,"Aimed Shot",6,2
+20915,"Seal of Command",0,7
+20916,"Mithril Headed Trout",0,73
+25125,"Minor Mana Oil",0,8
+25704,"Smoked Sagefish",0,76
+25780,"Righteous Fury",0,4
+26573,"Consecration",53,198
+36936,"Totemic Recall",11,12
+66842,"Call of the Elements",6,3
+400574,"Arcane Blast",4,1
+400589,"Missile Barrage",1,1
+400640,"Ice Lance",0,21
+402927,"Victory Rush",12,17
+408341,"Fire Nova",0,1
+408342,"Fire Nova",35,65
+408510,"Water Shield",16,1
+412718,"Fish Fillet",0,2
+414924,"Feral Charge (Cat)",0,6
+429961,"Unroll Bag",1,0
+436432,"Trail Snack",0,1
+437009,"Totemic Call",30,4
+440892,"Curse of the Elements",0,51
+1229432,"Camp Tent",0,12
+1229705,"Incense Candle",0,1
+1229737,"Basic Campfire",0,45
+1229745,"Fish Bowl",0,32
+1230117,"First Aid Kit",0,3
+1230161,"Lodestone",0,1
+1230656,"Reagent Bot",0,2
+1238640,"Ghost Wolf",5,79
+1240044,"Ice Lance",0,1
+1240193,"Slam",0,3
+1240287,"Charge",14,1
+1240288,"Charge",0,50
+1244431,"Minor Healing Potion",0,5
+1244432,"Lesser Healing Potion",0,35
+1244433,"Healing Potion",0,20
+1244647,"Greater Discolored Healing Potion",0,12
+1245244,"Minor Arcane Elixir",0,1
+1245246,"Minor Arcane Elixir",0,16
+1245250,"Elixir of Minor Force",0,32
+1245287,"Copper Rod",0,7
+1247426,"Stock Crate",0,5
+1247427,"Stock Crate",0,2
+1247428,"Stock Crate",0,4
+1247429,"Stock Crate",0,2
+1247430,"Stock Crate",0,5
+1247431,"Stock Crate",0,1
+1247432,"Stock Crate",0,3
+1247433,"Stock Crate",0,2
+1247434,"Stock Crate",0,1
+1247436,"Stock Crate",0,2
+1247446,"Stock Crate",0,3
+1247447,"Stock Crate",0,4
+1247448,"Stock Crate",0,2
+1249630,"Cerulean Dye",0,6
+1249631,"Magenta Dye",0,1
+1250156,"Tasty Raptor Bites",0,6
+1252242,"Veteran's Chain Leggings",0,1
+1252269,"Protector's Silvered Chain Shirt",0,1
+1252273,"Guard's Silvered Chain Leggings",0,2
+1252281,"Crusader's Silvered Chain Helm",0,1
+1252305,"Officer's Belt",0,1
+1252307,"Warder's Belt",0,1
+1254750,"Mystic Heavy Armor Kit",0,1
+1255088,"Wisdom's Leather Helm",0,1
+1255091,"Defender's Leather Helm",0,1
+1255102,"Brawler's Leather Tunic",0,1
+1255103,"Hillman's Leather Boots",0,54
+1255109,"Brawler's Leather Hood",0,2
+1255123,"Forceful Medium Armor Kit",0,3
+1259416,"Walk on Air",0,67
+1259686,"Skysight",7,59
+1259799,"Elune's Light",2,0
+1270893,"Charged",0,1
+1277324,"Dark Sacrifice",0,1
+1279399,"Summon Warhorse",0,8
+1293241,"Summon Hawk",0,90
+1293817,"Conflagrate",0,4
+1295233,"Heart of the Primeval",0,1
+1296017,"Comprehend Scroll",0,17
+1299026,"Shatter Curse",0,9
+1299348,"Trueshot Aura",0,1
+1301167,"Transformative Cocoon",1,1
+1301168,"Transformative Cocoon",1,1
+1302113,"Trail Snack",0,1
+1307227,"Basic Campfire",0,1
+1307229,"Camp Chair",0,1
+1307240,"Faction Banner",0,1
+1307254,"Lodestone",0,1
+1309685,"Satchel of Potions",0,10
+1309965,"Comprehend Scroll",0,6
+1309973,"Comprehend Scroll",0,5
+1310029,"Comprehend Scroll",0,5
+1310994,"Swift Judgement",0,1
+1311015,"Templar's Bulwark",0,1
+1311656,"Seal of Fury",0,1
+1312002,"Ice Lance",1,8
+1316591,"Stock Crate",0,5
+1316697,"Wrack",0,2
+1326079,"Arcane Wrath",0,5
+1328348,"Throw Violet Dust",0,1
+1328375,"Violet Flames",4,38
+1328618,"Ferocious Bite",6,32
+1329283,"Shank",20,134
