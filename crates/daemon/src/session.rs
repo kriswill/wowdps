@@ -5,7 +5,7 @@
 use std::sync::mpsc::{SyncSender, TrySendError};
 
 use wowdps_core::model::SegmentId;
-use wowdps_proto::{ClientKind, Cursor, DaemonMsg};
+use wowdps_proto::{ClientKind, Cursor, DaemonMsg, EditionRef};
 
 /// Outgoing queue depth per client. Snapshots are droppable (a newer one is
 /// always coming), so a stalled reader loses staleness, never its connection.
@@ -17,6 +17,10 @@ pub struct Session {
     pub pid: u32,
     pub tx: SyncSender<DaemonMsg>,
     pub cursor: Option<Cursor>,
+    /// v49: the edition the cursor looks in, from the last Watch (following
+    /// before any): what `Live`, the list, the list broadcast and a
+    /// one-shot's `Live` resolve inside.
+    pub edition: EditionRef,
     /// Per-session monotonic sequence stamped on pushed snapshots.
     seq: u64,
     /// Last pushed snapshot/list, seq zeroed, for change detection.
@@ -43,6 +47,7 @@ impl Session {
             pid,
             tx,
             cursor: None,
+            edition: EditionRef::Follow,
             seq: 0,
             last_pushed: None,
             last_load_error: None,
@@ -52,10 +57,11 @@ impl Session {
         }
     }
 
-    /// The client declared a new cursor: nothing pushed for the old one is
-    /// comparable any more.
-    pub fn set_cursor(&mut self, cursor: Cursor) {
+    /// The client declared a new cursor (v49: in an edition): nothing pushed
+    /// for the old one is comparable any more.
+    pub fn set_cursor(&mut self, cursor: Cursor, edition: EditionRef) {
         self.cursor = Some(cursor);
+        self.edition = edition;
         self.last_pushed = None;
         self.last_load_error = None;
     }
@@ -127,6 +133,7 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             source,
             status,
             raid,
+            edition,
         } => DaemonMsg::Snapshot {
             seq,
             segment,
@@ -140,6 +147,7 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             source,
             status,
             raid,
+            edition,
         },
         DaemonMsg::SegmentList {
             seq: _,
@@ -147,12 +155,14 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             source,
             active,
             log_id,
+            edition,
         } => DaemonMsg::SegmentList {
             seq,
             entries,
             source,
             active,
             log_id,
+            edition,
         },
         // R12
         DaemonMsg::CompareSnapshot {
@@ -166,6 +176,7 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             range,
             source,
             status,
+            edition,
         } => DaemonMsg::CompareSnapshot {
             seq,
             segment,
@@ -177,6 +188,7 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             range,
             source,
             status,
+            edition,
         },
         other => other,
     }

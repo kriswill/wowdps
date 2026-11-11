@@ -34,6 +34,7 @@ fn snapshot(seq: u64, view: View, status: &str) -> DaemonMsg {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         rows: vec![],
         total_rows: 0,
@@ -42,6 +43,7 @@ fn snapshot(seq: u64, view: View, status: &str) -> DaemonMsg {
         source: None,
         status: Some(status.to_string()),
         raid: None,
+        edition: None,
     }
 }
 
@@ -52,6 +54,7 @@ fn list(seq: u64) -> DaemonMsg {
         source: None,
         active: false,
         log_id: None,
+        edition: None,
     }
 }
 
@@ -158,6 +161,7 @@ fn compare(seq: u64, status: &str) -> DaemonMsg {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         view: View::Damage,
         a: Box::default(),
@@ -165,6 +169,7 @@ fn compare(seq: u64, status: &str) -> DaemonMsg {
         range: None,
         source: None,
         status: Some(status.to_string()),
+        edition: None,
     }
 }
 
@@ -273,7 +278,7 @@ fn sending_after_the_daemon_hangs_up_marks_the_client_dead() {
     let (mut client, server) = served_client(ClientKind::Tui).expect("served client");
     drop(server);
     wait_dead(&mut client);
-    client.send(&ClientMsg::Watch(Cursor::List));
+    client.send(&ClientMsg::watch(Cursor::List));
     assert!(client.is_dead(), "a failed write is a death sentence");
     assert!(client.poll().is_empty());
 }
@@ -415,7 +420,7 @@ fn spawning_reconnecting_and_squatted_dirs() {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             match seen.recv_timeout(Duration::from_secs(1)) {
-                Ok(ClientMsg::Watch(c)) => return c,
+                Ok(ClientMsg::Watch { cursor: c, .. }) => return c,
                 Ok(_) => {}
                 Err(_) => assert!(Instant::now() < deadline, "{what} never arrived"),
             }

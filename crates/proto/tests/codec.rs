@@ -4,7 +4,7 @@
 
 use wowdps_model::LoadoutAura;
 use wowdps_model::{
-    Class, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
+    Class, Edition, Encounter, EnergizeRow, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind,
     MissKind, Mitigation, RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId,
     SegmentInfo, SegmentKind, ShieldRow, Spec, StackCell, StackingDebuff, TalentPick, Timeline,
     UptimeCell, View,
@@ -14,9 +14,10 @@ use wowdps_proto::history::{
 };
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
-    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
-    HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
-    SegmentRef, StoredFight, StoredPair, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, EditionRef, EditionSource,
+    FightSort, HistoryAnswer, HistoryQuery, HistoryStatus, ListEntry, LoadError, Night,
+    OverlayState, PROTO_VERSION, SegmentRef, StoredFight, StoredPair, StoredUptime, TrendBucket,
+    TrendMeasure, TrendPoint,
 };
 
 /// R12: one comparison side, with every marker kind represented.
@@ -182,6 +183,7 @@ fn info() -> SegmentInfo {
         // v11 (R13): the arm the WIN/LOSS wording hangs off.
         arena: true,
         encounter: None,
+        edition: wowdps_model::Edition::Retail,
     }
 }
 
@@ -197,6 +199,7 @@ fn list_row(live: bool) -> ListRow {
         pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
         arena: false,
         encounter: None,
+        edition: wowdps_model::Edition::Retail,
     }
 }
 
@@ -208,8 +211,25 @@ fn client_msgs() -> Vec<ClientMsg> {
             client: ClientKind::Overlay,
             pid: u32::MAX,
         },
-        ClientMsg::Watch(Cursor::List),
-        ClientMsg::Watch(Cursor::Segment {
+        ClientMsg::watch(Cursor::List),
+        // v49: a Watch pinned to one edition.
+        ClientMsg::Watch {
+            cursor: Cursor::List,
+            edition: EditionRef::Pin(Edition::Forever),
+        },
+        ClientMsg::Watch {
+            cursor: Cursor::Segment {
+                segment: SegmentRef::Live,
+                view: View::Taken,
+                top_n: Some(3),
+                drill: None,
+                death: None,
+                spell: None,
+                range: None,
+            },
+            edition: EditionRef::Pin(Edition::Unknown(250)),
+        },
+        ClientMsg::watch(Cursor::Segment {
             segment: SegmentRef::Live,
             view: View::Damage,
             top_n: None,
@@ -218,7 +238,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             spell: None,
             range: None,
         }),
-        ClientMsg::Watch(Cursor::Segment {
+        ClientMsg::watch(Cursor::Segment {
             segment: SegmentRef::Id(SegmentId(u64::MAX)),
             view: View::Deaths,
             top_n: Some(0),
@@ -227,7 +247,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             spell: Some("Chaos Bolt".to_string()),
             range: None,
         }),
-        ClientMsg::Watch(Cursor::Compare {
+        ClientMsg::watch(Cursor::Compare {
             segment: SegmentRef::Id(SegmentId(0)),
             a: "Player-1301-0AB7C3D2".to_string(),
             b: "Player-1301-0AB7C3D3".to_string(),
@@ -267,6 +287,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 // v22: the subject's role.
                 role: Some(Role::Healer),
                 origin: wowdps_proto::OriginFilter::Local,
+                edition: None,
             },
         },
         ClientMsg::GetHistory {
@@ -282,6 +303,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 after_id: None,
                 role: None,
                 origin: wowdps_proto::OriginFilter::Local,
+                edition: None,
             },
         },
         ClientMsg::GetHistory {
@@ -290,6 +312,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 encounter: 3130,
                 difficulty: 16,
                 local_cutover_hour: Some(6),
+                edition: None,
             },
         },
         ClientMsg::GetHistory {
@@ -305,6 +328,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 since_utc_ms: None,
                 limit: 7,
                 local_cutover_hour: None,
+                edition: None,
             },
         },
         ClientMsg::GetHistory {
@@ -319,6 +343,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 since_utc_ms: Some(i64::MAX),
                 limit: 0,
                 local_cutover_hour: Some(23),
+                edition: None,
             },
         },
         ClientMsg::GetFight {
@@ -347,6 +372,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             encounter: None,
             difficulty: None,
             kind: Some(FightKind::Key),
+            edition: None,
         },
         ClientMsg::Regrade {
             req_id: 9,
@@ -354,6 +380,8 @@ fn client_msgs() -> Vec<ClientMsg> {
             encounter: Some(3429),
             difficulty: Some(14),
             kind: Some(FightKind::Key),
+            // v49: one edition's cards.
+            edition: Some(Edition::Unknown(200)),
         },
         // v45 (R29): one stored fight's replay tier.
         ClientMsg::GetReplay {
@@ -384,6 +412,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 after_id: None,
                 role: None,
                 origin: wowdps_proto::OriginFilter::Any,
+                edition: None,
             },
         },
         // v26: the role roster of one night, with and without a cutover.
@@ -394,6 +423,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 difficulty: 16,
                 night: 1_722_000_000_000,
                 local_cutover_hour: Some(6),
+                edition: None,
             },
         },
         ClientMsg::GetHistory {
@@ -403,6 +433,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 difficulty: 0,
                 night: i64::MIN,
                 local_cutover_hour: None,
+                edition: None,
             },
         },
     ]
@@ -444,6 +475,7 @@ fn imported_card() -> ImportedCard {
                 self_healed: 41,
                 damage_curve: vec![1_000_000_000, 0, 7],
                 heal_curve: vec![2_000_011],
+                role: None,
             },
             ImportedPlayer::default(),
         ],
@@ -451,6 +483,7 @@ fn imported_card() -> ImportedCard {
         source: "import:test-1".to_string(),
         build: (12, 0, 7),
         log_version: 22,
+        edition: wowdps_model::Edition::Unknown(0),
     }
 }
 
@@ -531,6 +564,7 @@ fn card() -> FightCard {
                 // v43 (R17 amendment): armor's share, trailing.
                 reduced: 31_000,
                 heal_absorbed: 0,
+                stored_role: None,
             },
             CardPlayer::default(),
         ],
@@ -568,6 +602,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             range: Some((15_000, 45_000)),
             source: None,
             status: Some("loading…".to_string()),
+            edition: None,
         },
         DaemonMsg::Snapshot {
             seq: u64::MAX,
@@ -634,6 +669,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             status: None,
             // v35 (R25): every arm of the raid timeline.
             raid: Some(raid()),
+            edition: None,
         },
         DaemonMsg::Snapshot {
             seq: 0,
@@ -648,6 +684,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             source: None,
             status: Some("waiting for a combat log…".to_string()),
             raid: None,
+            edition: None,
         },
         DaemonMsg::SegmentList {
             seq: 9,
@@ -664,6 +701,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             source: Some("log.txt".to_string()),
             active: true,
             log_id: None,
+            // v49: the list of the live edition.
+            edition: Some(Edition::Forever),
         },
         DaemonMsg::SegmentList {
             seq: 0,
@@ -671,6 +710,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             source: None,
             active: false,
             log_id: None,
+            edition: None,
         },
         DaemonMsg::SegmentOpened { id: SegmentId(17) },
         DaemonMsg::LoadFailed {
@@ -710,6 +750,17 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 // v46: the imports.
                 kept_imports: 5,
             },
+            // v49: a source per edition — one named, one not yet.
+            editions: vec![
+                EditionSource {
+                    edition: Some(Edition::Classic(19)),
+                    source: Some("dir:/logs".to_string()),
+                    log: Some("WoWCombatLog.txt".to_string()),
+                    live: true,
+                    running: true,
+                },
+                EditionSource::default(),
+            ],
         },
         DaemonMsg::SetVisible(true),
         DaemonMsg::Fatal("protocol mismatch".to_string()),
@@ -1108,6 +1159,7 @@ fn f64_specials_survive_bit_for_bit() {
             source: None,
             status: None,
             raid: None,
+            edition: None,
         };
         let decoded = decode_daemon(&snap.encode()).unwrap();
         let DaemonMsg::Snapshot { rows, .. } = decoded else {
@@ -1226,7 +1278,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 48, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 49, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1235,7 +1287,7 @@ fn golden_bytes_pin_the_encoding() {
     };
     assert_eq!(hex(&hello.encode()), "080000000101000004030201");
 
-    let watch = ClientMsg::Watch(Cursor::Segment {
+    let watch = ClientMsg::watch(Cursor::Segment {
         segment: SegmentRef::Id(SegmentId(2)),
         view: View::Healing,
         top_n: Some(5),
@@ -1250,11 +1302,11 @@ fn golden_bytes_pin_the_encoding() {
         hex(&watch.encode()),
         // v16: Cursor::Segment gained a trailing Option<String> spell; v33 a
         // trailing Option<(u32, u32)> range (one presence byte, `None`).
-        "2800000002010102000000000000000101050000000103000000416e610001080000004669726562616c6c00"
+        "2900000002010102000000000000000101050000000103000000416e610001080000004669726562616c6c0000"
     );
 
     // v8 (R12): Cursor gained the `Compare` arm, code 2.
-    let compare_watch = ClientMsg::Watch(Cursor::Compare {
+    let compare_watch = ClientMsg::watch(Cursor::Compare {
         segment: SegmentRef::Live,
         a: "A".to_string(),
         b: "Bo".to_string(),
@@ -1267,7 +1319,7 @@ fn golden_bytes_pin_the_encoding() {
     });
     assert_eq!(
         hex(&compare_watch.encode()),
-        "11000000020200010000004102000000426f000000"
+        "12000000020200010000004102000000426f00000000"
     );
 
     // v8 (R12): DaemonMsg gained `CompareSnapshot`, tag 0x89. A side is
@@ -1288,6 +1340,7 @@ fn golden_bytes_pin_the_encoding() {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         // v29: the metric, one byte after the info block.
         view: View::Damage,
@@ -1315,6 +1368,7 @@ fn golden_bytes_pin_the_encoding() {
         range: None,
         source: None,
         status: None,
+        edition: None,
     };
     assert_eq!(
         hex(&compare.encode()),
@@ -1337,13 +1391,14 @@ fn golden_bytes_pin_the_encoding() {
         // empty src, 0x0115 to 0x0116 (the run after it is all zeros).
         // v43 (R9): each zeroed Row grew a `00` absorb presence byte —
         // 0x0116 to 0x0118.
-        "280100008901000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000010000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000000000000201000000500700000009000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "2a010000890100000000000000000001000000000000000000000000000000000000000000000000000000000000000000000100010000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa00000000000000020100000050070000000900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 
     // v24 (R18): a role-kind mark with its caster. Placed on side `b` so the
     // frame TAIL is the mark itself followed by five `00` presence bytes
     // (b.spell_timeline, b.mitigation since v29, range, source, status) — the
-    // pin needs no wall of zeroed-Row bytes. Layout: i64 at_ms | u8 kind |
+    // pin needs no wall of zeroed-Row bytes (v49: and the frame's edition,
+    // a sixth `00`). Layout: i64 at_ms | u8 kind |
     // str label | u32 spell_id | i64 dur_ms | str src | bool open (v41).
     let role = DaemonMsg::CompareSnapshot {
         seq: 1,
@@ -1361,6 +1416,7 @@ fn golden_bytes_pin_the_encoding() {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         view: View::Damage,
         a: Box::new(CompareSide::default()),
@@ -1387,6 +1443,7 @@ fn golden_bytes_pin_the_encoding() {
         range: None,
         source: None,
         status: None,
+        edition: None,
     };
     let tail = concat!(
         "b80b000000000000",                 // at_ms 3000
@@ -1396,8 +1453,9 @@ fn golden_bytes_pin_the_encoding() {
         "7017000000000000",                 // dur_ms 6000
         "0b000000506c617965722d312d3041",   // src "Player-1-0A"
         "00",                               // open (v41): it closed
-        "0000000000"                        // spell_timeline / mitigation (v29) /
-                                            // range / source / status: None
+        "000000000000"                      // spell_timeline / mitigation (v29) /
+                                            // range / source / status /
+                                            // edition (v49): None
     );
     let got = hex(&role.encode());
     assert!(got.ends_with(tail), "{got}");
@@ -1447,6 +1505,7 @@ fn golden_bytes_pin_the_encoding() {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         rows: vec![Row {
             key: "K".to_string(),
@@ -1475,6 +1534,8 @@ fn golden_bytes_pin_the_encoding() {
         source: None,
         status: None,
         raid: None,
+        // v49: the edition the cursor resolved in, the frame's last bytes.
+        edition: Some(wowdps_model::Edition::Retail),
     };
     // v19: the loadout pair. GetLoadout is req_id + SegmentRef + guid …
     let get_loadout = ClientMsg::GetLoadout {
@@ -1589,7 +1650,8 @@ fn golden_bytes_pin_the_encoding() {
     );
     // v45: HistoryStatus + trailing u32 replays | u64 replay_bytes | u32
     // kept_kills, kept_keys, kept_progression, kept_pins — the first pin
-    // of a Status frame (0x86), everything else zeroed.
+    // of a Status frame (0x86), everything else zeroed. v49: + the editions'
+    // sources, here one: Forever's, live, its game not running.
     let status = DaemonMsg::Status {
         req_id: 1,
         game_running: false,
@@ -1608,11 +1670,18 @@ fn golden_bytes_pin_the_encoding() {
             kept_imports: 8,
             ..HistoryStatus::default()
         },
+        editions: vec![EditionSource {
+            edition: Some(Edition::Forever),
+            source: Some("d".to_string()),
+            log: Some("l".to_string()),
+            live: true,
+            running: false,
+        }],
     };
     assert_eq!(
         hex(&status.encode()),
         concat!(
-            "4200000086",
+            "5600000086",
             "01000000",
             "00",
             "00",
@@ -1639,11 +1708,21 @@ fn golden_bytes_pin_the_encoding() {
             "07000000",
             // v46: kept_imports
             "08000000",
+            // v49: one edition source — opt edition (PROJECT_ID 18) | opt
+            // source "d" | opt log "l" | live | running.
+            "01000000",
+            "0112",
+            "010100000064",
+            "01010000006c",
+            "01",
+            "00",
         )
     );
     // v46: ImportReplay 0x0E — req_id | the import's card | the replay's
     // u32-length bytes; a card with every option empty and one player.
-    // v48: the player's meter and curves after their spec.
+    // v48: the player's meter and curves after their spec. v49: the role
+    // the source says (a Tank, `01 00`) after the curves, and the card's
+    // edition (Forever, `12`) after its log version.
     let import_replay = ClientMsg::ImportReplay {
         req_id: 2,
         card: Box::new(ImportedCard {
@@ -1674,18 +1753,20 @@ fn golden_bytes_pin_the_encoding() {
                 self_healed: 12,
                 damage_curve: vec![4, 6],
                 heal_curve: vec![20],
+                role: Some(Role::Tank),
             }],
             owner: None,
             source: "s".to_string(),
             build: (12, 0, 7),
             log_version: 22,
+            edition: Edition::Forever,
         }),
         replay: b"WDRP".to_vec(),
     };
     assert_eq!(
         hex(&import_replay.encode()),
         concat!(
-            "be000000",
+            "c1000000",
             "0e",
             "02000000",
             // name "B" | encounter 00 | kind 00 (Encounter) | start_utc 1
@@ -1725,6 +1806,8 @@ fn golden_bytes_pin_the_encoding() {
             "0600000000000000",
             "01000000",
             "1400000000000000",
+            // v49: role 01 00 (Tank)
+            "0100",
             // owner 00 | source "s" | build 12.0.7 | log_version 22
             "00",
             "0100000073",
@@ -1732,6 +1815,8 @@ fn golden_bytes_pin_the_encoding() {
             "0000",
             "0700",
             "16000000",
+            // v49: edition 12 (Forever)
+            "12",
             // the replay: 4 bytes
             "04000000",
             "57445250",
@@ -1781,13 +1866,15 @@ fn golden_bytes_pin_the_encoding() {
             source: "s".to_string(),
             build: (0, 0, 0),
             log_version: 0,
+            // v49: the converter said nothing: `00`, counted with Retail.
+            edition: Edition::Unknown(0),
         }),
         replay: Vec::new(),
     };
     assert_eq!(
         hex(&import_some.encode()),
         concat!(
-            "56000000",
+            "57000000",
             "0e",
             "03000000",
             // name "B" | encounter 01 3130 16 20 | kind 00 | start_utc 1
@@ -1809,13 +1896,14 @@ fn golden_bytes_pin_the_encoding() {
             "01",
             "2500",
             // no players | owner 01 "O" | source "s" | build 0.0.0 |
-            // log_version 0 | an empty replay
+            // log_version 0 | v49: edition 00 | an empty replay
             "00000000",
             "01",
             "010000004f",
             "0100000073",
             "000000000000",
             "00000000",
+            "00",
             "00000000",
         )
     );
@@ -1901,17 +1989,20 @@ fn golden_bytes_pin_the_encoding() {
             since_utc_ms: None,
             limit: 7,
             local_cutover_hour: None,
+            edition: None,
         },
     };
     assert_eq!(
         hex(&trend.encode()),
-        // len 0x16 | 08 | req 4 | code 02 | "T" | spec 00 | enc 00 | diff 00
-        // | measure 03 | bucket 01 | since 00 | limit 7 | cutover 00.
-        "16000000 08 04000000 02 0100000054 00 00 00 03 01 00 07000000 00".replace(' ', "")
+        // len 0x17 | 08 | req 4 | code 02 | "T" | spec 00 | enc 00 | diff 00
+        // | measure 03 | bucket 01 | since 00 | limit 7 | cutover 00 | v49:
+        // edition 00 (every edition).
+        "17000000 08 04000000 02 0100000054 00 00 00 03 01 00 07000000 00 00".replace(' ', "")
     );
     // v22: `Fights` gained a trailing Option<Role> (Tank 0 / Healer 1 /
     // Dps 2) — the `0100` after `after_id`'s presence byte; v46 a trailing
-    // u8 origin filter (0 Local / 1 Imported / 2 Any), here `02`.
+    // u8 origin filter (0 Local / 1 Imported / 2 Any), here `02`; v49 a
+    // trailing Option<Edition> filter (the PROJECT_ID), here Forever `01 12`.
     let fights = ClientMsg::GetHistory {
         req_id: 1,
         query: HistoryQuery::Fights {
@@ -1925,14 +2016,15 @@ fn golden_bytes_pin_the_encoding() {
             after_id: None,
             role: Some(Role::Tank),
             origin: wowdps_proto::OriginFilter::Any,
+            edition: Some(Edition::Forever),
         },
     };
     assert_eq!(
         hex(&fights.encode()),
-        // len 0x14 | 08 | req 1 | code 00 | enc 00 | diff 00 | guid 00 |
+        // len 0x16 | 08 | req 1 | code 00 | enc 00 | diff 00 | guid 00 |
         // since 00 | kind 00 | sort 00 | limit 1 | after 00 | role 01 00 |
-        // origin 02.
-        "14000000 08 01000000 00 00 00 00 00 00 00 01000000 00 0100 02".replace(' ', "")
+        // origin 02 | edition 01 12.
+        "16000000 08 01000000 00 00 00 00 00 00 00 01000000 00 0100 02 0112".replace(' ', "")
     );
     // v22: CardPlayer gained trailing u64 taken, u64 mitigated, u64
     // prevented, f64 dtps — 32 bytes after `deaths`, proven by diffing a
@@ -1986,10 +2078,11 @@ fn golden_bytes_pin_the_encoding() {
     // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
     // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
     // fields are the 32 bytes before the v23 48 before the v25 32 before
-    // the v26 13 before the v31 guild byte, v43's 8-byte `reduced` and
-    // v44's 8-byte `heal_absorbed` before those 50 (v46's origin byte, `00`
-    // on this local card, trails the bosses).
-    let player_end = zero.len() - 4 - 1 - 42 - 4 - 8 - 8 - 1 - 13;
+    // the v26 13 before the v31 guild byte, v43's 8-byte `reduced`, v44's
+    // 8-byte `heal_absorbed` and v49's stored-role presence byte (`00`, no
+    // role stored) before those 50 (v46's origin byte, `00` on this local
+    // card, trails the bosses).
+    let player_end = zero.len() - 4 - 1 - 42 - 4 - 1 - 8 - 8 - 1 - 13;
     let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
     assert_eq!(
         first_diff,
@@ -2132,6 +2225,27 @@ fn golden_bytes_pin_the_encoding() {
     assert_eq!(
         &armored[player_end + 30..],
         &zero[player_end + 30..],
+        "bosses untouched"
+    );
+    // v49: Option<Role> `stored_role` right after `heal_absorbed`, the
+    // card's last field now — `00` with none (every card but one whose log
+    // named no spec), `01` and the role code with one: a frame one longer.
+    assert_eq!(zero[player_end + 30], 0, "no stored role");
+    let healer = one(CardPlayer {
+        absorb_wasted: Some(0),
+        stored_role: Some(Role::Healer),
+        ..CardPlayer::default()
+    });
+    assert_eq!(healer.len(), zero.len() + 1);
+    assert_eq!(&healer[4..player_end + 30], &zero[4..player_end + 30]);
+    assert_eq!(
+        hex(&healer[player_end + 30..player_end + 32]),
+        "0101",
+        "stored_role Some(Healer)"
+    );
+    assert_eq!(
+        &healer[player_end + 32..],
+        &zero[player_end + 31..],
         "bosses untouched"
     );
 
@@ -2326,13 +2440,15 @@ fn golden_bytes_pin_the_encoding() {
             difficulty: 0x1112_1314,
             night: 0x2122_2324_2526_2728,
             local_cutover_hour: Some(6),
+            // v49: one Classic client's (PROJECT_ID 2) pulls.
+            edition: Some(Edition::Classic(2)),
         },
     };
     assert_eq!(
         hex(&role_night.encode()),
-        // len 0x18 | 08 | req 5 | code 03 | enc 04030201 | diff 14131211 |
-        // night 2827262524232221 | cutover 01 06.
-        "18000000 08 05000000 03 04030201 14131211 2827262524232221 0106".replace(' ', "")
+        // len 0x1a | 08 | req 5 | code 03 | enc 04030201 | diff 14131211 |
+        // night 2827262524232221 | cutover 01 06 | v49: edition 01 02.
+        "1a000000 08 05000000 03 04030201 14131211 2827262524232221 0106 0102".replace(' ', "")
     );
     // v26: `HistoryAnswer::RoleNight` is answer tag 6 — a `Night` (the
     // v20 shape `Progression` lists) | Vec<RoleNightRow>: string guid |
@@ -2405,10 +2521,13 @@ fn golden_bytes_pin_the_encoding() {
         // `01 0700000000000000` right after the offset; 0xac to 0xb5.
         // v44 (R2): Row gained a trailing u64 `heal_absorbed` — the
         // `7017000000000000` (6 000) right after the absorb; 0xb5 to 0xbd.
-        "bd0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
-         0100000000 d007000000000000 01000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000000000\
+        // v49: SegmentInfo gained a trailing u8 `edition` (the PROJECT_ID,
+        // Retail's `01`) right after `combat_ms`, and Snapshot a trailing
+        // Option<Edition> `edition`, the final `01 01`; 0xbd to 0xc0.
+        "c00000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
+         0100000000 d007000000000000 01 01000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000000000\
          0049400107400003000000000000000100000000000000010500000000000000060000000000000001f3760000012000\
-         0000 01 01feffffffffffffff 01 0700000000000000 7017000000000000 01000000 00 02000000 00 00 00"
+         0000 01 01feffffffffffffff 01 0700000000000000 7017000000000000 01000000 00 02000000 00 00 00 0101"
             .replace(' ', "")
     );
 
@@ -2466,6 +2585,7 @@ fn golden_bytes_pin_the_encoding() {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         rows: vec![],
         total_rows: 0,
@@ -2474,6 +2594,7 @@ fn golden_bytes_pin_the_encoding() {
         source: None,
         status: None,
         raid: Some(small_raid.clone()),
+        edition: None,
     };
     let tail = concat!(
         "01",                 // raid: Some
@@ -2505,14 +2626,15 @@ fn golden_bytes_pin_the_encoding() {
         "0100000048"          // label "H"
     );
     // Everything before it is the Snapshot as it stood: the same frame with
-    // `raid: None` ends in its `00` presence byte exactly there.
+    // `raid: None` has its `00` presence byte exactly there — v49: followed
+    // by the frame's edition, `00` here, the one byte after the raid.
     let mut bare = raided.clone();
     if let DaemonMsg::Snapshot { raid, .. } = &mut bare {
         *raid = None;
     }
     let (got, bare) = (hex(&raided.encode()[4..]), hex(&bare.encode()[4..]));
-    let head = bare.strip_suffix("00");
-    assert_eq!(head.map(|h| format!("{h}{tail}")), Some(got));
+    let head = bare.strip_suffix("0000");
+    assert_eq!(head.map(|h| format!("{h}{tail}00")), Some(got));
     // v35: a StoredFight carries the same bytes as its last field — after
     // the shields vec, so they close a `Fight` frame.
     let fight = |raid: Option<RaidTimeline>| {
@@ -2574,6 +2696,7 @@ fn golden_bytes_pin_the_encoding() {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         rows: vec![],
         total_rows: 0,
@@ -2602,6 +2725,7 @@ fn golden_bytes_pin_the_encoding() {
         source: None,
         status: None,
         raid: None,
+        edition: None,
     };
     assert_eq!(
         hex(&taken.encode()),
@@ -2618,7 +2742,7 @@ fn golden_bytes_pin_the_encoding() {
         // the two empty series (16 more) | v44 (R27, R28): the empty energize and
         // power vecs (8 more) | segment_count 0, source 00, status 00 | v35
         // (R25): raid 00 — len 0xc5; v40: 0xcd; v43: 0xd5; v44: 0xdd.
-        "dd00000082010000000000000000000601000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a0000000700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "df0000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000000000010000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a000000070000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 }
 
@@ -2677,6 +2801,7 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
             source: None,
             status: None,
             raid: None,
+            edition: None,
         };
     let empty = make(vec![], vec![], 0).encode();
     let full = make(vec![debuff.clone()], vec![cell.clone()], 0x7172_7374).encode();
@@ -2687,8 +2812,9 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
     // v36 (R26): the tree's two empty vec counts and the two empty series
     // follow the range (16 bytes), counted into the tail so the zeros region
     // below keeps its shape. v44 (R27, R28): the empty energize and power
-    // vec counts follow the series (8 more).
-    let tail = 7 + 16 + 8;
+    // vec counts follow the series (8 more). v49: the frame's edition, `00`,
+    // closes it (1 more).
+    let tail = 7 + 16 + 8 + 1;
     // v33 added one more: the `range` presence byte.
     const V27_V28_ZEROS: usize = 26;
     assert_eq!(
@@ -2797,6 +2923,7 @@ fn v43_mitigation_is_96_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
         source: Some("x.txt".to_string()),
         status: None,
         raid: None,
+        edition: None,
     };
     let some = make(Some(mitigation())).encode();
     let none = make(None).encode();
@@ -2805,8 +2932,8 @@ fn v43_mitigation_is_96_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     // (26 zero bytes) and v36's empty tree and series (16 more), then
     // segment_count (u32 5) + source + status: 4 + 1+4+5 + 1, and v35's raid
     // presence byte; v44's empty energize and power vec counts (8) follow
-    // the series.
-    let tail = 26 + 16 + 8 + 4 + 10 + 1 + 1;
+    // the series; v49's frame edition (`00`) closes it.
+    let tail = 26 + 16 + 8 + 4 + 10 + 1 + 1 + 1;
     let (some_head, some_tail) = some.split_at(some.len() - tail);
     let (none_head, none_tail) = none.split_at(none.len() - tail);
     assert_eq!(some_tail, none_tail);
@@ -2902,13 +3029,14 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
         source: None,
         status: None,
         raid: None,
+        edition: None,
     };
     let empty = make(SpellTree::default()).encode();
     let full = make(tree.clone()).encode();
     // Both end with the two empty series (8 bytes, below), v44's empty
-    // energize and power (8 more), segment_count 0, source 00, status 00
-    // and raid 00.
-    let tail = 8 + 8 + 7;
+    // energize and power (8 more), segment_count 0, source 00, status 00,
+    // raid 00 and (v49) the frame's edition 00.
+    let tail = 8 + 8 + 7 + 1;
     let mut want = Vec::new();
     want.extend_from_slice(&1u32.to_le_bytes()); // groups len
     want.extend_from_slice(&1u32.to_le_bytes());
@@ -3001,6 +3129,7 @@ fn v36_the_stack_series_follow_the_tree() {
         source: None,
         status: None,
         raid: None,
+        edition: None,
     };
     let empty = make(vec![], vec![]).encode();
     let full = make(
@@ -3008,8 +3137,9 @@ fn v36_the_stack_series_follow_the_tree() {
         vec![series("tb", &[1, 2])],
     )
     .encode();
-    // v44: the empty energize and power counts follow the series.
-    let tail = 8 + 7;
+    // v44: the empty energize and power counts follow the series; v49: the
+    // frame's edition byte closes it.
+    let tail = 8 + 7 + 1;
     let start = empty.len() - tail - 8;
     assert_eq!(&empty[start..empty.len() - tail], &[0u8; 8]);
     let mut want = Vec::new();

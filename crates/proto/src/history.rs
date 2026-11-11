@@ -230,7 +230,8 @@ impl Origin {
 }
 
 /// v46: one player of an imported fight, as a card keeps them (the role
-/// is the spec's, never stored).
+/// is the spec's; v49: or, where no spec says it, the source's `role`, kept
+/// as the card's stored role).
 ///
 /// v48: and the player's meter, as far as the source can say it under the
 /// meter's rulings — the totals the card keeps ([`CardPlayer`]'s fields of
@@ -282,6 +283,11 @@ pub struct ImportedPlayer {
     /// second past the fight's end ([`ImportedCard::check_curves`]).
     pub damage_curve: Vec<u64>,
     pub heal_curve: Vec<u64>,
+    /// v49: the role the source says they played, for a player whose spec
+    /// does not say it (an edition whose log carries no spec): the card's
+    /// [`CardPlayer::stored_role`]. Ignored beside a spec, whose role is
+    /// the role.
+    pub role: Option<Role>,
 }
 
 /// v46: the facts an import can know of a fight — what `ClientMsg::
@@ -313,6 +319,10 @@ pub struct ImportedCard {
     /// `(0, 0, 0)` and 0 when unknown.
     pub build: (u16, u16, u16),
     pub log_version: u32,
+    /// v49: the game edition the fight is of, as the converter says — the
+    /// card's `project_id`. `Unknown(0)` when it does not say, which counts
+    /// as Retail (what every import before v49 recorded).
+    pub edition: Edition,
 }
 
 impl Default for ImportedCard {
@@ -332,6 +342,7 @@ impl Default for ImportedCard {
             source: String::new(),
             build: (0, 0, 0),
             log_version: 0,
+            edition: Edition::Unknown(0),
         }
     }
 }
@@ -374,6 +385,8 @@ impl ImportedCard {
                 support_received: p.support_received,
                 healed_received: p.healed_received,
                 self_healed: p.self_healed,
+                // v49: a role is stored only where no spec says one.
+                stored_role: p.role.filter(|_| p.spec.is_none()),
                 ..CardPlayer::default()
             })
             .collect();
@@ -396,6 +409,7 @@ impl ImportedCard {
             success: self.success,
             aborted: false,
             build: self.build,
+            project_id: self.edition.project_id(),
             log_version: self.log_version,
             owner: self.owner.clone().filter(|o| !o.is_empty()),
             byte_range: None,
@@ -591,6 +605,14 @@ pub struct CardPlayer {
     /// card written before it. `None` = unknown, `Some("")` = seen without
     /// a guild.
     pub guild: Option<String>,
+    /// v49: a role the card keeps for a player whose log carries no spec
+    /// (an edition without specs): what the fight showed them play.
+    /// [`CardPlayer::role`] is the spec's role where there is a spec — so
+    /// Retail's role stays its spec's — and this one otherwise. `None`
+    /// unless something set it; nothing infers one yet. Written to the
+    /// document as `stored_role` last and only when set, so every card
+    /// without one is byte for byte what it was; an older card reads `None`.
+    pub stored_role: Option<Role>,
 }
 
 /// `fights/<id>.json` — ~400 B plus ~90 B per player, always written. The
@@ -738,6 +760,13 @@ impl FightCard {
     /// v46: a fight imported from outside this machine's logs.
     pub fn is_imported(&self) -> bool {
         self.origin.is_imported()
+    }
+
+    /// v49: whether a history query's edition filter takes this card:
+    /// every card when there is none, else the cards reckoned with that
+    /// edition (`Edition::counts_as`: a card that names none is Retail's).
+    pub fn of_edition(&self, filter: Option<Edition>) -> bool {
+        filter.is_none_or(|e| self.edition().counts_as() == e.counts_as())
     }
 
     pub fn to_json(&self) -> Json {
@@ -895,12 +924,13 @@ pub struct RoleCount {
 }
 
 impl CardPlayer {
-    /// The role the spec plays (roadmap item 1a, step 1). Derived, never
-    /// stored in memory: the spec is the truth. `to_json` writes it as
+    /// The role the spec plays (roadmap item 1a, step 1), else (v49) the
+    /// card's stored role, for a player whose log named no spec. Derived
+    /// where there is a spec: the spec is the truth. `to_json` writes it as
     /// `role` for readers that cannot call `Spec::role` (DuckDB); `from_json`
-    /// ignores the field.
+    /// ignores the field and reads `stored_role`.
     pub fn role(&self) -> Option<Role> {
-        self.spec.map(Spec::role)
+        self.spec.map(Spec::role).or(self.stored_role)
     }
 
     /// R17: `mitigated / (taken + prevented + reduced)` × 100 through the
@@ -987,7 +1017,7 @@ impl CardPlayer {
     pub fn to_json_in(&self, clocks: Option<(i64, i64)>) -> Json {
         let duration_ms = clocks.map(|c| c.0);
         let rate_ms = clocks.map(|c| c.1);
-        obj! {
+        let mut doc = obj! {
             "guid": Json::str(&*self.guid),
             "name": Json::str(&*self.name),
             "class": self.class.map_or(Json::Null, |c| Json::str(class_name(c))),
@@ -1033,7 +1063,13 @@ impl CardPlayer {
             "reduced": Json::u64(self.reduced),
             // v44 (R2): what a heal-absorb ate of the healing, trailing.
             "heal_absorbed": Json::u64(self.heal_absorbed),
+        };
+        // v49: the stored role, last and only when set — every card
+        // without one stays byte for byte what it was.
+        if let (Json::Obj(fields), Some(role)) = (&mut doc, self.stored_role) {
+            fields.push(("stored_role".to_string(), Json::str(role.name())));
         }
+        doc
     }
 
     pub fn from_json(v: &Json) -> Option<Self> {
@@ -1084,6 +1120,8 @@ impl CardPlayer {
             heal_absorbed: u64_of(v, "heal_absorbed").unwrap_or(0),
             // v31: never stored; the store joins it when it answers.
             guild: None,
+            // v49: absent on every card without one, which reads `None`.
+            stored_role: str_of(v, "stored_role").and_then(Role::from_name),
         })
     }
 

@@ -13,14 +13,18 @@
     clippy::indexing_slicing
 )]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use wowdps_core::model::{Edition, Role, Spec};
+use wowdps_core::model::{Edition, Role, Spec, View};
 use wowdps_core::tail::TailEvent;
 use wowdps_daemon::engine::{Engine, EngineEvent};
 use wowdps_daemon::history::{Backend, ClosedFight, LogFacts, MemBackend, Retention, Store};
+use wowdps_daemon::mock::{MockDaemon, pump};
 use wowdps_proto::history::{Affiliation, CardPlayer, FightCard};
-use wowdps_proto::{FightSort, HistoryAnswer, HistoryQuery, OriginFilter};
+use wowdps_proto::{
+    ClientMsg, ClientState, Cursor, DaemonMsg, EditionRef, FightSort, HistoryAnswer, HistoryQuery,
+    OriginFilter, SegmentRef, TrendBucket, TrendMeasure,
+};
 
 struct Temp(PathBuf);
 
@@ -841,6 +845,7 @@ fn each_edition_infers_its_own_owner() {
         after_id: None,
         role: Some(Role::Dps),
         origin: OriginFilter::Local,
+        edition: None,
     });
     let HistoryAnswer::Fights { cards: got, total } = answer else {
         panic!("Fights asked, {answer:?} answered");
@@ -859,6 +864,7 @@ fn each_edition_infers_its_own_owner() {
         after_id: None,
         role: Some(Role::Healer),
         origin: OriginFilter::Local,
+        edition: None,
     });
     let HistoryAnswer::Fights { total, .. } = answer else {
         panic!("Fights asked, {answer:?} answered");
@@ -1011,4 +1017,287 @@ fn the_addons_own_character_names_each_editions_owner() {
         assert_eq!(store.owner_in(newer_e), Some(("G-new".to_string(), true)));
         assert_eq!(store.owners().len(), 2);
     }
+}
+
+// ---- v49: the queries' edition filter --------------------------------------------
+
+/// Every fixed question takes an edition: none answers every edition, each
+/// card naming its own; one answers that edition's cards — a card whose log
+/// named no edition with Retail's — and an edition with no cards answers
+/// empty. The same player (one guid) in two editions' logs.
+#[test]
+fn every_query_takes_an_edition_filter() {
+    let tmp = Temp::new("filter");
+    let mut store = Store::open(MemBackend::new(), Retention::default());
+    let ids = store_logs(
+        &tmp,
+        &mut store,
+        &[
+            Log {
+                day: 21,
+                project_id: RETAIL,
+                guid: "Player-1-A",
+                name: "Ana-Realm",
+                pulls: &[(30, false, 1000), (60, true, 2000)],
+            },
+            Log {
+                day: 23,
+                project_id: FOREVER,
+                guid: "Player-1-A",
+                name: "Ana-Realm",
+                pulls: &[(50, true, 3000)],
+            },
+            Log {
+                day: 25,
+                project_id: None,
+                guid: "Player-1-A",
+                name: "Ana-Realm",
+                pulls: &[(40, false, 4000)],
+            },
+        ],
+    );
+    let forever_kill = ids[1][0].clone();
+    let fights = |edition| -> (Vec<String>, u32) {
+        match store.answer(&HistoryQuery::Fights {
+            encounter: Some(3130),
+            difficulty: Some(15),
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: 0,
+            after_id: None,
+            role: None,
+            origin: OriginFilter::Local,
+            edition,
+        }) {
+            HistoryAnswer::Fights { cards, total } => {
+                let mut ids: Vec<String> = cards.into_iter().map(|c| c.id).collect();
+                ids.sort();
+                (ids, total)
+            }
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(fights(None).1, 4, "every edition");
+    assert_eq!(
+        fights(Some(Edition::Retail)).1,
+        3,
+        "with the unnumbered one"
+    );
+    assert_eq!(fights(Some(Edition::Unknown(0))).1, 3, "reckoned as Retail");
+    assert_eq!(
+        fights(Some(Edition::Forever)),
+        (vec![forever_kill.clone()], 1)
+    );
+    assert_eq!(fights(Some(Edition::Classic(2))).1, 0, "none of its cards");
+
+    let progression = |edition| match store.answer(&HistoryQuery::Progression {
+        encounter: 3130,
+        difficulty: 15,
+        local_cutover_hour: None,
+        edition,
+    }) {
+        HistoryAnswer::Progression {
+            pulls,
+            kills,
+            first_kill,
+            nights,
+            ..
+        } => (pulls, kills, first_kill.map(|c| c.edition()), nights),
+        other => panic!("{other:?}"),
+    };
+    let (pulls, kills, first, _) = progression(None);
+    assert_eq!((pulls, kills, first), (4, 2, Some(Edition::Retail)));
+    let (pulls, kills, first, _) = progression(Some(Edition::Retail));
+    assert_eq!((pulls, kills, first), (3, 1, Some(Edition::Retail)));
+    let (pulls, kills, first, nights) = progression(Some(Edition::Forever));
+    assert_eq!((pulls, kills, first), (1, 1, Some(Edition::Forever)));
+
+    let trend = |edition| match store.answer(&HistoryQuery::Trend {
+        guid: "Player-1-A".to_string(),
+        spec: None,
+        encounter: None,
+        difficulty: None,
+        measure: TrendMeasure::Dps,
+        bucket: TrendBucket::None,
+        since_utc_ms: None,
+        limit: 0,
+        local_cutover_hour: None,
+        edition,
+    }) {
+        HistoryAnswer::Trend(points) => points.into_iter().map(|p| p.fight_id).collect::<Vec<_>>(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(trend(None).len(), 4);
+    assert_eq!(trend(Some(Edition::Forever)), vec![forever_kill]);
+    assert_eq!(trend(Some(Edition::Retail)).len(), 3);
+
+    // The Forever kill's night, asked in each edition.
+    let night = nights[0].day_utc_ms;
+    let role_night = |edition| match store.answer(&HistoryQuery::RoleNight {
+        encounter: 3130,
+        difficulty: 15,
+        night,
+        local_cutover_hour: None,
+        edition,
+    }) {
+        HistoryAnswer::RoleNight { night, rows } => (night.pulls, rows.len()),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(role_night(None), (1, 1));
+    assert_eq!(role_night(Some(Edition::Forever)), (1, 1));
+    assert_eq!(role_night(Some(Edition::Retail)), (0, 0));
+}
+
+// ---- v49: the live side, one source ----------------------------------------------
+
+const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
+const FOREVER_LOG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+
+fn live_cursor() -> Cursor {
+    Cursor::Segment {
+        segment: SegmentRef::Live,
+        view: View::Damage,
+        top_n: None,
+        drill: None,
+        death: None,
+        spell: None,
+        range: None,
+    }
+}
+
+/// The one frame a Watch is answered with.
+fn answer(mock: &mut MockDaemon, cursor: Cursor, edition: EditionRef) -> DaemonMsg {
+    let mut out = mock.handle(ClientMsg::Watch { cursor, edition });
+    assert_eq!(out.len(), 1, "{out:?}");
+    out.pop().unwrap()
+}
+
+/// One source, as the daemon has today: following is answered as before,
+/// every frame and row naming the edition the log names; a pin to that
+/// edition is answered exactly as following; a pin to another is the empty
+/// answer — no list, no live segment — never an error; an id still names
+/// its segment under any pin. For a Retail log and a Forever log alike.
+#[test]
+fn one_source_answers_a_pin_to_its_edition_and_nothing_else() {
+    for (path, edition, other) in [
+        (SAMPLE, Edition::Retail, Edition::Forever),
+        (FOREVER_LOG, Edition::Forever, Edition::Retail),
+    ] {
+        let mut mock = MockDaemon::fixture_at(Path::new(path));
+        let list = |m: DaemonMsg| match m {
+            DaemonMsg::SegmentList {
+                entries,
+                edition,
+                source,
+                ..
+            } => (entries, edition, source),
+            other => panic!("{other:?}"),
+        };
+        let (follow, named, source) = list(answer(&mut mock, Cursor::List, EditionRef::Follow));
+        assert!(!follow.is_empty(), "{path}");
+        assert_eq!(named, Some(edition), "{path}");
+        assert!(source.is_some());
+        assert!(
+            follow.iter().all(|e| e.row.edition == edition),
+            "every row is the log's: {path}"
+        );
+        let (pinned, named, _) = list(answer(&mut mock, Cursor::List, EditionRef::Pin(edition)));
+        assert_eq!(pinned, follow, "{path}");
+        assert_eq!(named, Some(edition));
+
+        let meter = |m: DaemonMsg| match m {
+            DaemonMsg::Snapshot {
+                id,
+                info,
+                rows,
+                edition,
+                ..
+            } => (id, info, rows, edition),
+            other => panic!("{other:?}"),
+        };
+        let (id, info, rows, named) = meter(answer(&mut mock, live_cursor(), EditionRef::Follow));
+        assert!(id.is_some() && !rows.is_empty(), "{path}");
+        let guid = rows[0].key.clone();
+        assert_eq!((info.edition, named), (edition, Some(edition)));
+        let pinned = meter(answer(&mut mock, live_cursor(), EditionRef::Pin(edition)));
+        assert_eq!(pinned, (id, info, rows, named), "{path}");
+
+        // Another edition: nothing of this log.
+        let (entries, named, source) =
+            list(answer(&mut mock, Cursor::List, EditionRef::Pin(other)));
+        assert!(entries.is_empty());
+        assert_eq!((named, source), (Some(other), None), "{path}");
+        let (id, info, rows, named) =
+            meter(answer(&mut mock, live_cursor(), EditionRef::Pin(other)));
+        assert_eq!((id, rows.len(), named), (None, 0, Some(other)), "{path}");
+        assert_eq!(info.edition, other);
+        // A one-shot's `Live` resolves in the session's last Watch's edition.
+        let loadout = mock.handle(ClientMsg::GetLoadout {
+            req_id: 1,
+            segment: SegmentRef::Live,
+            guid,
+        });
+        assert!(
+            matches!(
+                loadout.as_slice(),
+                [DaemonMsg::Loadout { loadout: None, .. }]
+            ),
+            "{loadout:?}"
+        );
+        // A segment id names its segment wherever the cursor looks.
+        let first = follow.first().unwrap().id;
+        let (id, info, _, named) = meter(answer(
+            &mut mock,
+            Cursor::Segment {
+                segment: SegmentRef::Id(first),
+                view: View::Damage,
+                top_n: None,
+                drill: None,
+                death: None,
+                spell: None,
+                range: None,
+            },
+            EditionRef::Pin(other),
+        ));
+        assert_eq!(
+            (id, info.edition, named),
+            (Some(first), edition, Some(other))
+        );
+
+        // Status names the one source's edition.
+        match mock.handle(ClientMsg::GetStatus { req_id: 2 }).as_slice() {
+            [DaemonMsg::Status { editions, .. }] => {
+                assert_eq!(editions.len(), 1);
+                assert_eq!(editions[0].edition, Some(edition), "{path}");
+                assert!(editions[0].live);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// A client state over the mock: pinned to an edition the log is not, it
+/// sees an empty list of that edition; following again, the log's.
+#[test]
+fn a_client_state_pinned_elsewhere_sees_an_empty_list() {
+    let mut mock = MockDaemon::fixture_at(Path::new(SAMPLE));
+    let mut st = ClientState::new();
+    let first = st.initial_request();
+    pump(&mut st, &mut mock, vec![first]);
+    let all = st.entries().len();
+    assert!(all > 0);
+    assert_eq!(st.edition(), Some(Edition::Retail));
+
+    let sent = st.set_edition(EditionRef::Pin(Edition::Forever));
+    pump(&mut st, &mut mock, sent);
+    assert!(st.entries().is_empty());
+    assert_eq!(st.edition(), Some(Edition::Forever));
+    assert_eq!(st.source, None);
+
+    let sent = st.set_edition(EditionRef::Follow);
+    pump(&mut st, &mut mock, sent);
+    assert_eq!(st.entries().len(), all);
+    assert_eq!(st.edition(), Some(Edition::Retail));
 }

@@ -434,6 +434,7 @@ fn regrade(
         encounter,
         difficulty,
         kind,
+        edition: None,
     });
     // The answer comes once every picked card is queued, which costs an
     // index scan per log — so wait while the daemon lives, not a fixed 15 s

@@ -39,7 +39,7 @@ const PYRALIS: &str = "Player-1168-0A1B2C13";
 
 /// The segment ids the mock lists, in list order.
 fn ids(mock: &mut MockDaemon) -> Vec<wowdps_model::SegmentId> {
-    let out = mock.handle(ClientMsg::Watch(Cursor::List));
+    let out = mock.handle(ClientMsg::watch(Cursor::List));
     let list = out
         .iter()
         .find_map(|m| match m {
@@ -58,7 +58,7 @@ fn watch(
     view: View,
     drill: Option<&str>,
 ) -> (wowdps_model::SegmentInfo, Vec<Row>, Option<Breakdown>) {
-    let out = mock.handle(ClientMsg::Watch(Cursor::Segment {
+    let out = mock.handle(ClientMsg::watch(Cursor::Segment {
         segment: SegmentRef::Id(id),
         view,
         top_n: None,
@@ -228,7 +228,7 @@ fn a_taken_comparison_compares_what_hit_them() {
     let mut mock = MockDaemon::fixture_at(Path::new(TAKEN));
     let boss = boss(&mut mock);
     let compare = |mock: &mut MockDaemon, view: View| {
-        let out = mock.handle(ClientMsg::Watch(Cursor::Compare {
+        let out = mock.handle(ClientMsg::watch(Cursor::Compare {
             segment: SegmentRef::Id(boss),
             a: DURGAN.to_string(),
             b: ZENLI.to_string(),
@@ -292,7 +292,7 @@ fn a_windowed_taken_comparison_answers_whole_and_echoes_no_range() {
     let mut mock = MockDaemon::fixture_at(Path::new(TAKEN));
     let boss = boss(&mut mock);
     let ask = |mock: &mut MockDaemon, view: View| {
-        let out = mock.handle(ClientMsg::Watch(Cursor::Compare {
+        let out = mock.handle(ClientMsg::watch(Cursor::Compare {
             segment: SegmentRef::Id(boss),
             a: DURGAN.to_string(),
             b: ZENLI.to_string(),
@@ -328,7 +328,7 @@ fn a_windowed_damage_or_healing_drill_scopes_its_abilities() {
     let mut mock = MockDaemon::fixture_at(Path::new(SAMPLE));
     let seg = ids(&mut mock)[0];
     let windowed = |mock: &mut MockDaemon, view: View, drill: &str, range| {
-        let out = mock.handle(ClientMsg::Watch(Cursor::Segment {
+        let out = mock.handle(ClientMsg::watch(Cursor::Segment {
             segment: SegmentRef::Id(seg),
             view,
             top_n: None,
@@ -374,7 +374,7 @@ fn a_windowed_damage_or_healing_drill_scopes_its_abilities() {
     // A Healing comparison windows now, and says so.
     let (_, rows, _) = watch(&mut mock, seg, View::Healing, None);
     if let [a, b, ..] = rows.as_slice() {
-        let out = mock.handle(ClientMsg::Watch(Cursor::Compare {
+        let out = mock.handle(ClientMsg::watch(Cursor::Compare {
             segment: SegmentRef::Id(seg),
             a: a.key.clone(),
             b: b.key.clone(),
@@ -1250,6 +1250,7 @@ fn trend_of(store: &Store<MemBackend>, guid: &str, measure: TrendMeasure) -> Vec
         since_utc_ms: None,
         limit: 0,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::Trend(points) => points,
         other => panic!("{other:?}"),
@@ -1308,6 +1309,7 @@ fn a_trend_by_dtps_or_mitigated_pct_carries_the_tank_measures() {
         since_utc_ms: None,
         limit: 0,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::Trend(points) => points,
         other => panic!("{other:?}"),
@@ -1332,6 +1334,7 @@ fn fights_with(store: &Store<MemBackend>, guid: Option<&str>, role: Option<Role>
         after_id: None,
         role,
         origin: wowdps_proto::OriginFilter::Local,
+        edition: None,
     }) {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().map(|c| c.id).collect(),
         other => panic!("{other:?}"),

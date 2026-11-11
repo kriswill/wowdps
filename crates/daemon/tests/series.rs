@@ -156,7 +156,7 @@ fn a_pin_earns_a_wipe_its_series_and_letting_go_drops_it() {
 
 /// The kill's segment as the mock lists it, and its stored fight id.
 fn kill(mock: &mut MockDaemon) -> (SegmentId, String) {
-    let out = mock.handle(ClientMsg::Watch(Cursor::List));
+    let out = mock.handle(ClientMsg::watch(Cursor::List));
     let seg = out
         .iter()
         .find_map(|m| match m {
@@ -180,6 +180,7 @@ fn kill(mock: &mut MockDaemon) -> (SegmentId, String) {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     });
     let id = out
@@ -228,7 +229,7 @@ fn a_stored_window_answers_what_the_live_one_did() {
     let mut mock = MockDaemon::fixture_at(Path::new(SAMPLE)).with_history();
     let (seg, fight_id) = kill(&mut mock);
     let live = |mock: &mut MockDaemon, view: View, guid: &str, range| -> Breakdown {
-        mock.handle(ClientMsg::Watch(Cursor::Segment {
+        mock.handle(ClientMsg::watch(Cursor::Segment {
             segment: SegmentRef::Id(seg),
             view,
             top_n: None,
@@ -322,6 +323,7 @@ fn a_stored_window_answers_what_the_live_one_did() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     });
     let wipe_id = short_wipe
@@ -447,7 +449,7 @@ fn live_drill(
     spell: Option<&str>,
     range: Option<(u32, u32)>,
 ) -> Breakdown {
-    mock.handle(ClientMsg::Watch(Cursor::Segment {
+    mock.handle(ClientMsg::watch(Cursor::Segment {
         segment: SegmentRef::Id(seg),
         view,
         top_n: None,
@@ -620,7 +622,7 @@ fn a_stored_kill_compares_as_the_live_one_does() {
             for spell in [None, Some(spell.as_str())] {
                 let what = format!("{view:?} {range:?} {spell:?}");
                 let live = mock
-                    .handle(ClientMsg::Watch(Cursor::Compare {
+                    .handle(ClientMsg::watch(Cursor::Compare {
                         segment: SegmentRef::Id(seg),
                         a: a.clone(),
                         b: b.clone(),

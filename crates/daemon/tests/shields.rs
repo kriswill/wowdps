@@ -178,6 +178,7 @@ fn trend_of<B: Backend>(store: &Store<B>, guid: &str, measure: TrendMeasure) -> 
         since_utc_ms: None,
         limit: 0,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::Trend(points) => points,
         other => panic!("{other:?}"),
@@ -190,6 +191,7 @@ fn the_night<B: Backend>(store: &Store<B>) -> Night {
         encounter: ENCOUNTER,
         difficulty: DIFFICULTY,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::Progression { nights, .. } => {
             assert_eq!(nights.len(), 1, "{nights:?}");
@@ -205,6 +207,7 @@ fn role_night<B: Backend>(store: &Store<B>, night: i64) -> (Night, Vec<RoleNight
         difficulty: DIFFICULTY,
         night,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::RoleNight { night, rows } => (night, rows),
         other => panic!("{other:?}"),
@@ -367,6 +370,7 @@ fn a_trend_by_absorb_efficiency_reads_the_percentage_and_skips_the_unknown() {
         since_utc_ms: None,
         limit: 0,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::Trend(points) => points,
         other => panic!("{other:?}"),
@@ -467,6 +471,7 @@ fn a_role_night_folds_the_night_by_role() {
         difficulty: DIFFICULTY,
         night: night.day_utc_ms,
         local_cutover_hour: None,
+        edition: None,
     }) {
         HistoryAnswer::RoleNight { night: n, rows } => {
             assert_eq!(n.pulls, 0);

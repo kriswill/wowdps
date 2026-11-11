@@ -307,6 +307,8 @@ pub enum HistoryReq {
         encounter: Option<u32>,
         difficulty: Option<u32>,
         kind: Option<FightKind>,
+        /// v49: the cards of one edition only, with the other filters.
+        edition: Option<Edition>,
     },
     /// v46: a session's `ImportReplay` — a fight from outside this
     /// machine's logs, stored as an imported card with its replay
@@ -812,8 +814,10 @@ impl<B: Backend> Worker<B> {
                 encounter,
                 difficulty,
                 kind,
+                edition,
             } => {
-                let queued = self.regrade(fight_id.as_deref(), encounter, difficulty, kind);
+                let queued =
+                    self.regrade(fight_id.as_deref(), encounter, difficulty, kind, edition);
                 self.reply_to(
                     session,
                     DaemonMsg::History {
@@ -1083,13 +1087,16 @@ impl<B: Backend> Worker<B> {
     /// id, or every pull of a boss (+ difficulty). The log is found by its
     /// identity among the source's files, the fight by its start in a fresh
     /// (cached) scan, so seeds and byte ranges are exact. Returns how many
-    /// were queued; a card whose log is gone is skipped.
+    /// were queued; a card whose log is gone is skipped. v49: `edition`
+    /// keeps one edition's cards (`FightCard::of_edition`) — a filter
+    /// beside the others, never one that narrows alone.
     fn regrade(
         &mut self,
         fight_id: Option<&str>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
         kind: Option<FightKind>,
+        edition: Option<Edition>,
     ) -> u32 {
         let picked: Vec<(String, u64, i64, FightKind)> = self
             .store
@@ -1097,6 +1104,7 @@ impl<B: Backend> Worker<B> {
             .iter()
             // v46: an imported fight has no log to be re-read from.
             .filter(|c| !c.is_imported())
+            .filter(|c| c.of_edition(edition))
             .filter(|c| match fight_id {
                 Some(id) => c.id == id,
                 // Without an id, at least one of encounter / kind must narrow.
@@ -3552,6 +3560,7 @@ impl<B: Backend> Store<B> {
                 after_id,
                 role,
                 origin,
+                edition,
             } => {
                 // v22: `role` is the SUBJECT's role — `guid` when one was
                 // given, else the owner of each card's edition. With no
@@ -3568,6 +3577,7 @@ impl<B: Backend> Store<B> {
                     after_id.as_deref(),
                     *role,
                     *origin,
+                    *edition,
                 );
                 HistoryAnswer::Fights { cards, total }
             }
@@ -3575,7 +3585,8 @@ impl<B: Backend> Store<B> {
                 encounter,
                 difficulty,
                 local_cutover_hour,
-            } => self.progression(*encounter, *difficulty, *local_cutover_hour),
+                edition,
+            } => self.progression(*encounter, *difficulty, *local_cutover_hour, *edition),
             HistoryQuery::Trend {
                 guid,
                 spec,
@@ -3586,6 +3597,7 @@ impl<B: Backend> Store<B> {
                 since_utc_ms,
                 limit,
                 local_cutover_hour,
+                edition,
             } => HistoryAnswer::Trend(self.trend(
                 guid,
                 *spec,
@@ -3596,13 +3608,21 @@ impl<B: Backend> Store<B> {
                 *since_utc_ms,
                 *limit,
                 *local_cutover_hour,
+                *edition,
             )),
             HistoryQuery::RoleNight {
                 encounter,
                 difficulty,
                 night,
                 local_cutover_hour,
-            } => self.role_night(*encounter, *difficulty, *night, *local_cutover_hour),
+                edition,
+            } => self.role_night(
+                *encounter,
+                *difficulty,
+                *night,
+                *local_cutover_hour,
+                *edition,
+            ),
         }
     }
 
@@ -3616,6 +3636,8 @@ impl<B: Backend> Store<B> {
     /// uninferred and no `guid` was asked for) there is nobody whose role to
     /// read, so the filter is a no-op on that card and it still answers.
     /// `OwnerPerSec` ranks each card by its own edition's owner too.
+    /// v49: `edition` keeps one edition's cards (`FightCard::of_edition`);
+    /// `None` answers every edition, each card naming its own.
     #[allow(clippy::too_many_arguments)]
     fn fights(
         &self,
@@ -3629,6 +3651,7 @@ impl<B: Backend> Store<B> {
         after_id: Option<&str>,
         role: Option<Role>,
         origin: OriginFilter,
+        edition: Option<Edition>,
     ) -> (Vec<FightCard>, u32) {
         // The owner a card answers for is its own edition's.
         let owners = self.owners();
@@ -3643,6 +3666,7 @@ impl<B: Backend> Store<B> {
             .iter()
             // v46: this machine's own unless the client asks for imports.
             .filter(|c| origin.admits(&c.origin))
+            .filter(|c| c.of_edition(edition))
             .filter(|c| match (role, subject(c)) {
                 (Some(role), Some(subject)) => c
                     .players
@@ -3712,7 +3736,14 @@ impl<B: Backend> Store<B> {
     }
 
     /// v46: this machine's own pulls — an imported fight is no pull of ours.
-    fn progression(&self, encounter: u32, difficulty: u32, cutover: Option<u8>) -> HistoryAnswer {
+    /// v49: of one edition when `edition` names one, else of every edition.
+    fn progression(
+        &self,
+        encounter: u32,
+        difficulty: u32,
+        cutover: Option<u8>,
+        edition: Option<Edition>,
+    ) -> HistoryAnswer {
         let pulls: Vec<&FightCard> = self
             .cards
             .iter()
@@ -3721,6 +3752,7 @@ impl<B: Backend> Store<B> {
                     .is_some_and(|e| e.id == encounter && e.difficulty == difficulty)
                     && !c.aborted
                     && !c.is_imported()
+                    && c.of_edition(edition)
             })
             .collect();
         let kills: Vec<&FightCard> = pulls
@@ -3794,12 +3826,16 @@ impl<B: Backend> Store<B> {
     /// all their pulls.
     /// Rows: tank, healer, dps, no-role last, then `measure` desc, then
     /// guid. An empty night is the `Night` with 0 pulls and no rows.
+    /// v49: the role is the SPEC'S alone — a stored role (a player whose
+    /// log named no spec) joins the roster with the ruling that sets one;
+    /// `edition` keeps one edition's pulls.
     fn role_night(
         &self,
         encounter: u32,
         difficulty: u32,
         night: i64,
         cutover: Option<u8>,
+        edition: Option<Edition>,
     ) -> HistoryAnswer {
         let mut pulls: Vec<&FightCard> = self
             .cards
@@ -3809,6 +3845,7 @@ impl<B: Backend> Store<B> {
                     .is_some_and(|e| e.id == encounter && e.difficulty == difficulty)
                     && !c.aborted
                     && !c.is_imported()
+                    && c.of_edition(edition)
                     && bucket_start(c.start_utc_ms, c.tz_min, cutover, false) == night
             })
             .collect();
@@ -3878,7 +3915,11 @@ impl<B: Backend> Store<B> {
                 let mut wasted = 0u64;
                 let mut known = false;
                 let mut externals_given = 0u32;
-                for (c, p) in s.pulls.iter().filter(|(_, p)| p.role() == role) {
+                for (c, p) in s
+                    .pulls
+                    .iter()
+                    .filter(|(_, p)| p.spec.map(Spec::role) == role)
+                {
                     let m = match role {
                         Some(Role::Dps) => p.effective_dps(c.rate_ms()),
                         Some(Role::Healer) => p.hps,
@@ -3964,12 +4005,15 @@ impl<B: Backend> Store<B> {
         since_utc_ms: Option<i64>,
         limit: u32,
         cutover: Option<u8>,
+        edition: Option<Edition>,
     ) -> Vec<TrendPoint> {
         let mut points: Vec<TrendPoint> = self
             .cards
             .iter()
             // v46: a trend is of this machine's own fights.
             .filter(|c| !c.aborted && !c.is_imported())
+            // v49: of one edition when asked.
+            .filter(|c| c.of_edition(edition))
             .filter(|c| encounter.is_none_or(|e| c.encounter.is_some_and(|x| x.id == e)))
             .filter(|c| difficulty.is_none_or(|d| card_difficulty(c) == Some(d)))
             .filter(|c| since_utc_ms.is_none_or(|s| c.start_utc_ms >= s))

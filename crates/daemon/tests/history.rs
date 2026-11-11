@@ -660,6 +660,7 @@ fn a_flood_of_reads_cannot_drop_a_store() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     };
     // Far more reads than the whole queue could hold, none of them drained.
@@ -1038,6 +1039,7 @@ fn a_fights_answer_is_capped_however_much_the_client_asks_for() {
         after_id: None,
         role: None,
         origin: wowdps_proto::OriginFilter::Local,
+        edition: None,
     });
     let wowdps_proto::HistoryAnswer::Fights { cards: got, total } = answer else {
         panic!("Fights asked, {answer:?} answered");
@@ -1912,6 +1914,7 @@ fn an_import_over_the_socket_lands_in_the_store() {
                 after_id: None,
                 role: None,
                 origin,
+                edition: None,
             },
         });
         let mut cards = None;
@@ -2054,6 +2057,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     });
     let [
@@ -2082,6 +2086,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
                 after_id: after_id.map(str::to_string),
                 role: None,
                 origin: wowdps_proto::OriginFilter::Local,
+                edition: None,
             },
         });
         match out.as_slice() {
@@ -2123,6 +2128,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     });
     let [
@@ -2145,6 +2151,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             encounter: 3130,
             difficulty: 15,
             local_cutover_hour: None,
+            edition: None,
         },
     });
     let [
@@ -2250,6 +2257,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             since_utc_ms: None,
             limit: 0,
             local_cutover_hour: None,
+            edition: None,
         },
     });
     let [
@@ -2276,6 +2284,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             since_utc_ms: None,
             limit: 0,
             local_cutover_hour: None,
+            edition: None,
         },
     });
     let [
@@ -2718,6 +2727,7 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     });
     let deadline = Instant::now() + DEADLINE;
@@ -2754,6 +2764,7 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
         encounter: None,
         difficulty: None,
         kind: None,
+        edition: None,
     });
     let deadline = Instant::now() + DEADLINE;
     let mut queued = None;
@@ -2822,6 +2833,7 @@ fn a_regrade_brings_a_keys_affixes_back_from_its_log() {
         encounter: None,
         difficulty: None,
         kind: Some(FightKind::Key),
+        edition: None,
     });
     let deadline = Instant::now() + DEADLINE;
     let mut queued = None;
@@ -2895,6 +2907,7 @@ fn a_regrade_by_kind_rewrites_every_card_across_logs() {
             encounter: None,
             difficulty: None,
             kind: Some(kind),
+            edition: None,
         });
         let deadline = Instant::now() + DEADLINE;
         let mut queued = None;
@@ -2974,6 +2987,7 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     });
     let deadline = Instant::now() + DEADLINE;
@@ -3077,6 +3091,7 @@ fn a_local_cutover_keeps_an_evening_on_its_own_night() {
                 encounter: 3130,
                 difficulty: 15,
                 local_cutover_hour: cutover,
+                edition: None,
             },
         });
         match out.as_slice() {
@@ -3705,6 +3720,7 @@ fn affiliations_are_merged_newest_first_and_joined_when_a_card_is_answered() {
         after_id: None,
         role: None,
         origin: wowdps_proto::OriginFilter::Local,
+        edition: None,
     }) else {
         panic!("not a Fights answer");
     };
@@ -3970,6 +3986,7 @@ fn a_daemon_updates_a_stale_addon_and_files_the_saved_variables_it_finds() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     });
     let deadline = Instant::now() + DEADLINE;
@@ -4423,6 +4440,7 @@ fn pinning_a_wipe_backfills_its_series_from_the_log() {
                 after_id: None,
                 role: None,
                 origin: wowdps_proto::OriginFilter::Local,
+                edition: None,
             },
         },
         1,

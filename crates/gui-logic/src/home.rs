@@ -122,6 +122,7 @@ impl Home {
                 after_id: self.cursor.clone(),
                 role: None,
                 origin: OriginFilter::Local,
+                edition: None,
             },
         })
     }

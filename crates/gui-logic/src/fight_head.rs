@@ -13,7 +13,8 @@
 
 use wowdps_model::fmt::{commas, duration, key_tier};
 use wowdps_model::{
-    Class, Encounter, RaidTimeline, Role, Row, SegmentId, SegmentKind, Spec, View, difficulty_name,
+    Class, Edition, Encounter, RaidTimeline, Role, Row, SegmentId, SegmentKind, Spec, View,
+    difficulty_name,
 };
 use wowdps_proto::ClientState;
 
@@ -80,6 +81,25 @@ pub fn meta(encounter: Option<Encounter>) -> String {
         (Some(d), None) => d.to_string(),
         (None, Some(s)) => s,
         (None, None) => String::new(),
+    }
+}
+
+/// v49: the meta line of a fight not reckoned with Retail leads with its
+/// edition — "Forever, Normal, 5 players", or the edition alone off a boss
+/// pull — so a fight of another edition says so wherever it is drawn. A
+/// Retail fight (and one whose log named no edition, reckoned with it)
+/// keeps the line it always had, so a Retail player's window is unchanged.
+/// An edition this build does not know reads "Unknown edition".
+pub fn edition_meta(meta: String, edition: Option<Edition>) -> String {
+    let word = match edition.map(Edition::counts_as) {
+        None | Some(Edition::Retail) => return meta,
+        Some(Edition::Unknown(_)) => "Unknown edition",
+        Some(e) => e.label(),
+    };
+    if meta.is_empty() {
+        word.to_string()
+    } else {
+        format!("{word}, {meta}")
     }
 }
 
@@ -583,6 +603,33 @@ mod tests {
         line.into_iter()
             .map(|p| format!("{} {}", p.label, p.value))
             .collect()
+    }
+
+    /// v49: a fight of another edition names it ahead of its difficulty;
+    /// a Retail fight, and one whose log named none, reads as it always
+    /// did.
+    #[test]
+    fn the_meta_line_names_an_edition_other_than_retail() {
+        let heroic = || "Heroic, 5 players".to_string();
+        assert_eq!(edition_meta(heroic(), Some(Edition::Retail)), heroic());
+        assert_eq!(edition_meta(heroic(), Some(Edition::Unknown(0))), heroic());
+        assert_eq!(edition_meta(heroic(), None), heroic());
+        assert_eq!(
+            edition_meta(heroic(), Some(Edition::Forever)),
+            "Forever, Heroic, 5 players"
+        );
+        assert_eq!(
+            edition_meta(String::new(), Some(Edition::Forever)),
+            "Forever"
+        );
+        assert_eq!(
+            edition_meta(String::new(), Some(Edition::Classic(2))),
+            "Classic"
+        );
+        assert_eq!(
+            edition_meta(heroic(), Some(Edition::Unknown(7))),
+            "Unknown edition, Heroic, 5 players"
+        );
     }
 
     /// v40: a keystone run's Σ says both rates — the raid rate over combat

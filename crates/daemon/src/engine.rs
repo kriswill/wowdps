@@ -12,9 +12,10 @@ use wowdps_core::index::SegmentMeta;
 use wowdps_core::meter::Visit;
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
 use wowdps_core::tail::TailEvent;
-use wowdps_model::{Loadout, View};
+use wowdps_model::{Edition, Loadout, View};
 use wowdps_proto::{
-    Breakdown, ClientKind, CompareSide, DaemonMsg, DeathWindow, ListEntry, LoadError, SegmentRef,
+    Breakdown, ClientKind, CompareSide, Cursor, DaemonMsg, DeathWindow, EditionRef, EditionSource,
+    ListEntry, LoadError, SegmentRef,
 };
 
 use crate::history::{ClosedFight, LogRef};
@@ -464,6 +465,7 @@ impl Engine {
         // no player death) get no row — but a live segment always shows, so
         // the meter still tracks world healing while it happens.
         let discarded = &self.discarded;
+        let edition = self.log_edition();
         let indexed = self
             .index
             .iter()
@@ -483,6 +485,8 @@ impl Engine {
                         pars_ms: m.pars_ms,
                         arena: m.arena,
                         encounter: m.encounter,
+                        // v49: an indexed row wears its log's edition.
+                        edition,
                     },
                 )
             });
@@ -510,6 +514,8 @@ impl Engine {
                         pars_ms: None,
                         arena: s.arena,
                         encounter: s.encounter,
+                        // v49: a live segment its own (its version line's).
+                        edition: Edition::from_project_id(s.project_id),
                     },
                 )
             });
@@ -535,6 +541,7 @@ impl Engine {
                         pars_ms: m.pars_ms,
                         arena: false,
                         encounter: None,
+                        edition,
                     },
                 )
             })
@@ -559,6 +566,7 @@ impl Engine {
                     pars_ms: v.pars_ms,
                     arena: false,
                     encounter: None,
+                    edition,
                 },
             ));
         }
@@ -652,7 +660,132 @@ impl Engine {
             source: self.source_name.clone(),
             active: self.live_now(game_running),
             log_id: self.log_facts().map(|f| f.id),
+            edition: self.edition(),
         }
+    }
+
+    /// v49: the edition this engine's source names — the PROJECT_ID of the
+    /// latest COMBAT_LOG_VERSION line its meter has read, seeds included;
+    /// `None` without a source, before a version line, and for a log whose
+    /// line names none (0). What a following session is answered in.
+    pub fn edition(&self) -> Option<Edition> {
+        self.source_path.as_ref()?;
+        let id = self.meter.project_id();
+        (id != 0).then(|| Edition::from_project_id(id))
+    }
+
+    /// The edition a segment of this log wears where no segment of its own
+    /// is in hand (an indexed row, a loading placeholder): the log's, or
+    /// `Unknown(0)` where it named none, which counts as Retail.
+    fn log_edition(&self) -> Edition {
+        self.edition().unwrap_or(Edition::Unknown(0))
+    }
+
+    /// v49: whether this engine answers a session looking in `scope`: a
+    /// following one always, a pinned one when this log is of its edition.
+    pub fn serves(&self, scope: EditionRef) -> bool {
+        scope.serves(self.edition())
+    }
+
+    /// v49: this engine's source as `Status` lists it. One source is the
+    /// live edition's by definition: there is no other.
+    pub fn edition_source(&self, spec: Option<String>, game_running: bool) -> EditionSource {
+        EditionSource {
+            edition: self.edition(),
+            source: spec,
+            log: self.source_name.clone(),
+            live: true,
+            running: game_running,
+        }
+    }
+
+    /// v49: `msg` (a list or a snapshot this engine built) as a session
+    /// looking in `scope` is sent it — stamped with the edition it is
+    /// answered in — or `None` when this engine does not answer that
+    /// session (a pin to an edition its log is not).
+    pub fn scoped(&self, scope: EditionRef, mut msg: DaemonMsg) -> Option<DaemonMsg> {
+        if !self.serves(scope) {
+            return None;
+        }
+        stamp_edition(&mut msg, scope.named(self.edition()));
+        Some(msg)
+    }
+
+    /// v49: what a session of `kind` watching `cursor` in `scope` is sent —
+    /// the hub's and the mock's one entry, so the two cannot drift. A scope
+    /// this engine serves is answered as before, the frame naming the
+    /// edition; a pin to an edition no source carries gets the empty
+    /// answer: an empty list, and on `Live` a snapshot of nothing — no
+    /// error, no wait. A segment id names one segment wherever it lives,
+    /// so it resolves whatever the scope.
+    pub fn build_cursor(
+        &mut self,
+        kind: ClientKind,
+        cursor: &Cursor,
+        scope: EditionRef,
+        game_running: bool,
+    ) -> Built {
+        let named = scope.named(self.edition());
+        if !self.serves(scope) {
+            match cursor {
+                Cursor::List => return Built::Ready(Box::new(absent_list(named))),
+                Cursor::Segment {
+                    segment: SegmentRef::Live,
+                    view,
+                    ..
+                }
+                | Cursor::Compare {
+                    segment: SegmentRef::Live,
+                    view,
+                    ..
+                } => return Built::Ready(Box::new(absent_segment(*view, named))),
+                _ => {}
+            }
+        }
+        let mut built = match cursor {
+            Cursor::List => Built::Ready(Box::new(self.build_list(game_running))),
+            Cursor::Compare {
+                segment,
+                a,
+                b,
+                view,
+                range,
+                spell,
+            } => self.build_compare(*segment, a, b, *view, *range, spell.as_deref()),
+            Cursor::Segment {
+                segment,
+                view,
+                top_n,
+                drill,
+                death,
+                spell,
+                range,
+            } => self.build_segment_for(
+                kind,
+                *segment,
+                *view,
+                *top_n,
+                drill.as_deref(),
+                *death,
+                spell.as_deref(),
+                *range,
+            ),
+        };
+        match &mut built {
+            Built::Ready(msg) | Built::Loading(msg, ..) => stamp_edition(msg, named),
+            Built::Failed(..) => {}
+        }
+        built
+    }
+
+    /// v49: a one-shot's loadout for a session looking in `scope`: `Live`
+    /// in an edition this engine does not serve is nobody's — `None`, as
+    /// every unloadable case answers.
+    pub fn loadout_in(&mut self, scope: EditionRef, sref: SegmentRef, guid: &str) -> LoadoutBuilt {
+        if sref == SegmentRef::Live && !self.serves(scope) {
+            return LoadoutBuilt::Ready(None);
+        }
+        self.loadout(sref, guid)
     }
 
     pub fn install_loaded(&mut self, id: SegmentId, meter: Meter) {
@@ -900,6 +1033,7 @@ impl Engine {
                     pars_ms: None,
                     arena: seg.arena,
                     encounter: seg.encounter,
+                    edition: Edition::from_project_id(seg.project_id),
                 };
                 let msg = self.render(sref, Some(id), info, want, Some(seg), None);
                 Built::Ready(Box::new(msg))
@@ -924,6 +1058,7 @@ impl Engine {
                     pars_ms: meta.pars_ms,
                     arena: meta.arena,
                     encounter: meta.encounter,
+                    edition: self.log_edition(),
                 };
                 if self.touch_loaded(id) {
                     let seg = self
@@ -959,6 +1094,7 @@ impl Engine {
                     pars_ms: meta.pars_ms,
                     arena: false,
                     encounter: None,
+                    edition: self.log_edition(),
                 };
                 if self.touch_loaded(id) {
                     let merged = self
@@ -1016,19 +1152,7 @@ impl Engine {
             sref,
             None,
             view,
-            SegmentInfo {
-                kind: SegmentKind::Trash,
-                name: String::new(),
-                start_ms: 0,
-                duration_ms: 0,
-                combat_ms: 0,
-                success: None,
-                live: false,
-                instance: None,
-                pars_ms: None,
-                arena: false,
-                encounter: None,
-            },
+            empty_info(self.log_edition()),
             Vec::new(),
             top_n,
             None,
@@ -1064,6 +1188,7 @@ impl Engine {
             pars_ms: v.and_then(|v| v.pars_ms),
             arena: false,
             encounter: None,
+            edition: self.log_edition(),
         }
     }
 
@@ -1300,6 +1425,7 @@ impl Engine {
                 range: compare_windows(*view).then_some(*range).flatten(),
                 source: self.source_name.clone(),
                 status: status.or_else(|| self.status.clone()),
+                edition: self.edition(),
             },
         }
     }
@@ -1345,7 +1471,69 @@ impl Engine {
             // v35 (R25): the meter path's, when a segment is in hand and the
             // client uses it; `None` on a placeholder and the empty snapshot.
             raid,
+            edition: self.edition(),
         }
+    }
+}
+
+/// The header of no segment: nothing to name, in `edition`.
+fn empty_info(edition: Edition) -> SegmentInfo {
+    SegmentInfo {
+        kind: SegmentKind::Trash,
+        name: String::new(),
+        start_ms: 0,
+        duration_ms: 0,
+        combat_ms: 0,
+        success: None,
+        live: false,
+        instance: None,
+        pars_ms: None,
+        arena: false,
+        encounter: None,
+        edition,
+    }
+}
+
+/// v49: name the edition a pushed frame answers in.
+fn stamp_edition(msg: &mut DaemonMsg, named: Option<Edition>) {
+    match msg {
+        DaemonMsg::Snapshot { edition, .. }
+        | DaemonMsg::SegmentList { edition, .. }
+        | DaemonMsg::CompareSnapshot { edition, .. } => *edition = named,
+        _ => {}
+    }
+}
+
+/// v49: the list of an edition no source carries — empty, nothing followed,
+/// nothing happening, naming the edition asked for.
+pub fn absent_list(edition: Option<Edition>) -> DaemonMsg {
+    DaemonMsg::SegmentList {
+        seq: 0,
+        entries: Vec::new(),
+        source: None,
+        active: false,
+        log_id: None,
+        edition,
+    }
+}
+
+/// v49: `Live` in an edition no source carries — the snapshot of nothing a
+/// daemon without a log answers, its header naming the edition asked for.
+pub fn absent_segment(view: View, edition: Option<Edition>) -> DaemonMsg {
+    DaemonMsg::Snapshot {
+        seq: 0,
+        segment: SegmentRef::Live,
+        id: None,
+        view,
+        info: empty_info(edition.unwrap_or(Edition::Unknown(0))),
+        rows: Vec::new(),
+        total_rows: 0,
+        breakdown: None,
+        segment_count: 0,
+        source: None,
+        status: None,
+        raid: None,
+        edition,
     }
 }
 

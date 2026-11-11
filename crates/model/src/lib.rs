@@ -315,6 +315,16 @@ impl Role {
             Role::Dps => "dps",
         }
     }
+
+    /// The inverse of [`Role::name`]; anything else is `None`.
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s {
+            "tank" => Role::Tank,
+            "healer" => Role::Healer,
+            "dps" => Role::Dps,
+            _ => return None,
+        })
+    }
 }
 
 /// R17: why a hit did not land, as the combat log's `missType` spells it.
@@ -2140,6 +2150,9 @@ pub struct ListRow {
     /// v20: ENCOUNTER_START identity (id, difficulty, group size); `None`
     /// off raid-boss Encounter rows.
     pub encounter: Option<Encounter>,
+    /// v49: the game edition the segment's log was written by (its
+    /// COMBAT_LOG_VERSION `PROJECT_ID`); `Unknown(0)` where it named none.
+    pub edition: Edition,
 }
 
 /// Stable identity of one segment for the daemon's lifetime: assigned at scan
@@ -2175,6 +2188,9 @@ pub struct SegmentInfo {
     pub arena: bool,
     /// v20: ENCOUNTER_START identity (see [`ListRow::encounter`]).
     pub encounter: Option<Encounter>,
+    /// v49: the game edition the segment's log was written by (see
+    /// [`ListRow::edition`]).
+    pub edition: Edition,
 }
 
 #[cfg(test)]

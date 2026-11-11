@@ -7,10 +7,11 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use wowdps_model::Edition;
 use wowdps_model::SegmentId;
 use wowdps_proto::{
-    ClientKind, ClientMsg, CompareSide, Cursor, DaemonClient, DaemonMsg, HistoryAnswer,
-    HistoryQuery, HistoryStatus, ListEntry, OverlayState, SegmentRef, StoredFight,
+    ClientKind, ClientMsg, CompareSide, Cursor, DaemonClient, DaemonMsg, EditionSource,
+    HistoryAnswer, HistoryQuery, HistoryStatus, ListEntry, OverlayState, SegmentRef, StoredFight,
 };
 
 /// Historical segments go through the loader pool; a cold 300 MB log segment
@@ -37,6 +38,8 @@ pub struct Segments {
     /// The tailed log's identity once its header is complete: with a
     /// closed row's `start_ms` it names the history-store fight id.
     pub log_id: Option<u64>,
+    /// v49: the edition the list is of — the live one, as the tools follow.
+    pub edition: Option<Edition>,
 }
 
 /// One `DaemonMsg::Snapshot`, unpacked for the tools.
@@ -57,6 +60,8 @@ pub struct Status {
     pub linger: bool,
     pub overlay: OverlayState,
     pub history: HistoryStatus,
+    /// v49: every edition's source, the live one marked.
+    pub editions: Vec<EditionSource>,
 }
 
 impl Bridge {
@@ -119,6 +124,7 @@ impl Bridge {
                 linger,
                 overlay,
                 history,
+                editions,
             } if got == req_id => Some(Status {
                 game_running,
                 source,
@@ -126,6 +132,7 @@ impl Bridge {
                 linger,
                 overlay,
                 history,
+                editions,
             }),
             _ => None,
         })
@@ -141,12 +148,14 @@ impl Bridge {
                 active,
                 source,
                 log_id,
+                edition,
                 ..
             } => Some(Segments {
                 entries,
                 active,
                 source,
                 log_id,
+                edition,
             }),
             _ => None,
         })
@@ -340,6 +349,7 @@ impl Bridge {
         encounter: Option<u32>,
         difficulty: Option<u32>,
         kind: Option<wowdps_proto::history::FightKind>,
+        edition: Option<Edition>,
     ) -> Result<u32, String> {
         let req_id = self.next_req;
         self.next_req += 1;
@@ -350,6 +360,7 @@ impl Bridge {
             encounter,
             difficulty,
             kind,
+            edition,
         });
         wait(client, |msg| match msg {
             DaemonMsg::History {

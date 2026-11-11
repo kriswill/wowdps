@@ -5,11 +5,11 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use wowdps_model::{Class, Role, RoleNightRow, Row, SegmentInfo, SegmentKind, Spec, View};
+use wowdps_model::{Class, Edition, Role, RoleNightRow, Row, SegmentInfo, SegmentKind, Spec, View};
 use wowdps_proto::wire;
 use wowdps_proto::{
-    ClientKind, ClientMsg, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, HistoryStatus,
-    LoadError, Night, OverlayState, SegmentRef, TrendBucket, TrendMeasure,
+    ClientKind, ClientMsg, DaemonMsg, EditionRef, FightSort, HistoryAnswer, HistoryQuery,
+    HistoryStatus, LoadError, Night, OverlayState, SegmentRef, TrendBucket, TrendMeasure,
 };
 
 fn roundtrip_daemon(msg: &DaemonMsg) -> DaemonMsg {
@@ -42,6 +42,7 @@ fn snapshot(view: View, rows: Vec<Row>) -> DaemonMsg {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         rows,
         total_rows: 0,
@@ -50,6 +51,7 @@ fn snapshot(view: View, rows: Vec<Row>) -> DaemonMsg {
         source: None,
         status: None,
         raid: None,
+        edition: None,
     }
 }
 
@@ -147,6 +149,70 @@ fn every_client_kind_roundtrips() {
     }
 }
 
+/// v49: every edition rides the wire as the PROJECT_ID it was read from —
+/// on a segment's header, a frame, a Watch's pin, a query's filter — and
+/// reads back as the edition that number names, an unknown one kept: no
+/// byte is a bad edition. An `EditionRef` past `Pin` (1) is a `BadTag`,
+/// and a stored role rides a card's player in every role and none.
+#[test]
+fn every_edition_rides_the_wire_as_its_project_id() {
+    for id in 0..=u8::MAX {
+        let edition = Edition::from_project_id(id);
+        let mut msg = snapshot(View::Damage, Vec::new());
+        if let DaemonMsg::Snapshot {
+            info, edition: e, ..
+        } = &mut msg
+        {
+            info.edition = edition;
+            *e = Some(edition);
+        }
+        assert_eq!(roundtrip_daemon(&msg), msg, "{id}");
+        let watch = ClientMsg::Watch {
+            cursor: wowdps_proto::Cursor::List,
+            edition: EditionRef::Pin(edition),
+        };
+        assert_eq!(roundtrip_client(&watch), watch, "{id}");
+        let progression = ClientMsg::GetHistory {
+            req_id: 1,
+            query: HistoryQuery::Progression {
+                encounter: 1,
+                difficulty: 2,
+                local_cutover_hour: None,
+                edition: Some(edition),
+            },
+        };
+        assert_eq!(roundtrip_client(&progression), progression, "{id}");
+    }
+    // Follow is `00`, a pin `01` and the edition; `02` is no ref.
+    let follow = ClientMsg::watch(wowdps_proto::Cursor::List);
+    let mut frame = follow.encode();
+    assert_eq!(frame.last(), Some(&0), "Follow");
+    let last = frame.len() - 1;
+    frame[last] = 2;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert!(matches!(
+        ClientMsg::decode(tag, &body),
+        Err(wire::DecodeError::BadTag(2))
+    ));
+    for role in [None, Some(Role::Tank), Some(Role::Healer), Some(Role::Dps)] {
+        let msg = DaemonMsg::History {
+            req_id: 1,
+            answer: HistoryAnswer::Fights {
+                cards: vec![wowdps_proto::history::FightCard {
+                    players: vec![wowdps_proto::history::CardPlayer {
+                        guid: "G".to_string(),
+                        stored_role: role,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                total: 1,
+            },
+        };
+        assert_eq!(roundtrip_daemon(&msg), msg, "{role:?}");
+    }
+}
+
 /// v22: every `TrendMeasure` rides `Trend`, every `Role` (and `None`)
 /// rides `Fights`; the names round-trip too, and a code past the last
 /// variant is a `BadTag`.
@@ -177,6 +243,7 @@ fn every_trend_measure_and_role_roundtrips() {
                 since_utc_ms: None,
                 limit: 0,
                 local_cutover_hour: None,
+                edition: None,
             },
         };
         assert_eq!(roundtrip_client(&msg), msg, "{measure:?}");
@@ -198,6 +265,7 @@ fn every_trend_measure_and_role_roundtrips() {
                 after_id: None,
                 role,
                 origin: wowdps_proto::OriginFilter::Local,
+                edition: None,
             },
         };
         assert_eq!(roundtrip_client(&msg), msg, "{role:?}");
@@ -216,11 +284,13 @@ fn every_trend_measure_and_role_roundtrips() {
             after_id: None,
             role: Some(Role::Dps),
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     }
     .encode();
-    // …| role 01 02 | origin 00 (v46): the role's code is 2 from the end.
-    let at = frame.len() - 2;
+    // …| role 01 02 | origin 00 (v46) | edition 00 (v49): the role's code
+    // is 3 from the end.
+    let at = frame.len() - 3;
     assert_eq!(frame[at], 2);
     frame[at] = 3;
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
@@ -251,11 +321,13 @@ fn every_trend_measure_and_role_roundtrips() {
                 after_id: None,
                 role: None,
                 origin,
+                edition: None,
             },
         };
         assert_eq!(roundtrip_client(&msg), msg, "{origin:?}");
         let mut frame = msg.encode();
-        let last = frame.len() - 1;
+        // v49: the edition filter's presence byte follows the origin.
+        let last = frame.len() - 2;
         frame[last] = 3;
         let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
         assert!(
@@ -278,13 +350,15 @@ fn every_trend_measure_and_role_roundtrips() {
             since_utc_ms: None,
             limit: 0,
             local_cutover_hour: None,
+            edition: None,
         },
     }
     .encode();
     // …| guid 00000000 | spec 00 | enc 00 | diff 00 | MEASURE | bucket 00 |
-    // since 00 | limit 00000000 | cutover 00: the measure byte is 8 from the
-    // end. v26: AbsorbEfficiency is code 6, so 7 is the first bad code.
-    let at = frame.len() - 8;
+    // since 00 | limit 00000000 | cutover 00 | edition 00 (v49): the measure
+    // byte is 9 from the end. v26: AbsorbEfficiency is code 6, so 7 is the
+    // first bad code.
+    let at = frame.len() - 9;
     assert_eq!(frame[at], 6);
     frame[at] = 7;
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
@@ -312,6 +386,7 @@ fn role_night_is_the_last_query_tag_and_refused_the_last_answer() {
                 difficulty: 16,
                 night: 1_722_000_000_000,
                 local_cutover_hour: hour,
+                edition: None,
             },
         };
         assert_eq!(roundtrip_client(&msg), msg, "{hour:?}");
@@ -324,6 +399,7 @@ fn role_night_is_the_last_query_tag_and_refused_the_last_answer() {
             difficulty: 0,
             night: 0,
             local_cutover_hour: None,
+            edition: None,
         },
     }
     .encode();
@@ -432,6 +508,7 @@ fn every_load_error_and_overlay_state_roundtrips() {
             linger: true,
             overlay,
             history: HistoryStatus::default(),
+            editions: Vec::new(),
         };
         assert_eq!(roundtrip_daemon(&msg), msg);
     }
@@ -462,6 +539,7 @@ fn every_mark_kind_roundtrips_with_its_caster() {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         },
         view: View::Damage,
         a: Box::new(CompareSide::default()),
@@ -485,6 +563,7 @@ fn every_mark_kind_roundtrips_with_its_caster() {
         range: None,
         source: None,
         status: None,
+        edition: None,
     };
     let kinds = [
         MarkKind::TrinketUse,

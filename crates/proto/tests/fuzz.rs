@@ -90,6 +90,7 @@ fn info() -> SegmentInfo {
         pars_ms: Some((1_680_000, 1_344_000, 1_008_000)),
         arena: true,
         encounter: None,
+        edition: wowdps_model::Edition::Retail,
     }
 }
 
@@ -181,8 +182,13 @@ fn client_msgs() -> Vec<ClientMsg> {
             client: ClientKind::Overlay,
             pid: u32::MAX,
         },
-        ClientMsg::Watch(Cursor::List),
-        ClientMsg::Watch(Cursor::Segment {
+        ClientMsg::watch(Cursor::List),
+        // v49: pinned to an edition.
+        ClientMsg::Watch {
+            cursor: Cursor::List,
+            edition: wowdps_proto::EditionRef::Pin(wowdps_model::Edition::Forever),
+        },
+        ClientMsg::watch(Cursor::Segment {
             segment: SegmentRef::Id(SegmentId(u64::MAX)),
             view: View::Deaths,
             top_n: Some(0),
@@ -191,7 +197,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             spell: Some("Chaos Bolt".to_string()),
             range: None,
         }),
-        ClientMsg::Watch(Cursor::Compare {
+        ClientMsg::watch(Cursor::Compare {
             segment: SegmentRef::Live,
             a: "Player-1301-0AB7C3D2".to_string(),
             b: "Player-1301-0AB7C3D3".to_string(),
@@ -218,6 +224,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 after_id: Some("x-1".to_string()),
                 role: Some(Role::Tank),
                 origin: wowdps_proto::OriginFilter::Local,
+                edition: None,
             },
         },
         ClientMsg::GetHistory {
@@ -234,6 +241,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 since_utc_ms: None,
                 limit: 9,
                 local_cutover_hour: Some(6),
+                edition: None,
             },
         },
         // v26: the last query tag, so the decoder's edge is under mutation.
@@ -244,6 +252,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 difficulty: u32::MAX,
                 night: i64::MIN,
                 local_cutover_hour: Some(23),
+                edition: None,
             },
         },
         // v46: an import — its card's options, its players' class and spec
@@ -271,10 +280,13 @@ fn client_msgs() -> Vec<ClientMsg> {
                     deaths: u32::MAX,
                     damage_curve: vec![u64::MAX, 0],
                     heal_curve: vec![1],
+                    // v49: a role, and the card's edition.
+                    role: Some(wowdps_model::Role::Healer),
                     ..wowdps_proto::history::ImportedPlayer::default()
                 }],
                 owner: Some("Player-1-A".to_string()),
                 source: "import:test-1".to_string(),
+                edition: wowdps_model::Edition::Forever,
                 ..wowdps_proto::history::ImportedCard::default()
             }),
             replay: b"WDRP\x05\x01\0\0\0\x00".to_vec(),
@@ -357,6 +369,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     label: "Heroism".to_string(),
                 }],
             }),
+            edition: None,
         },
         DaemonMsg::CompareSnapshot {
             seq: 1,
@@ -369,6 +382,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             range: Some((15_000, 45_000)),
             source: None,
             status: Some("loading…".to_string()),
+            edition: None,
         },
         DaemonMsg::SegmentList {
             seq: 9,
@@ -385,11 +399,13 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
                     arena: false,
                     encounter: None,
+                    edition: wowdps_model::Edition::Retail,
                 },
             }],
             source: Some("log.txt".to_string()),
             active: true,
             log_id: None,
+            edition: None,
         },
         DaemonMsg::SegmentOpened { id: SegmentId(17) },
         DaemonMsg::LoadFailed {
@@ -404,6 +420,14 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             linger: true,
             overlay: OverlayState::Failed("no WAYLAND_DISPLAY".to_string()),
             history: HistoryStatus::default(),
+            // v49: each edition's source.
+            editions: vec![wowdps_proto::EditionSource {
+                edition: Some(wowdps_model::Edition::Forever),
+                source: Some("dir:/logs".to_string()),
+                log: Some("WoWCombatLog.txt".to_string()),
+                live: true,
+                running: false,
+            }],
         },
         DaemonMsg::SetVisible(true),
         DaemonMsg::Fatal("protocol mismatch".to_string()),

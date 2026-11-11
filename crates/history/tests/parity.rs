@@ -467,6 +467,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     ) else {
         panic!("fights");
@@ -498,6 +499,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             after_id: None,
             role: None,
             origin: wowdps_proto::OriginFilter::Local,
+            edition: None,
         },
     ) else {
         panic!("best");
@@ -519,6 +521,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             encounter: 3130,
             difficulty: 15,
             local_cutover_hour: None,
+            edition: None,
         },
     )
     else {
@@ -555,6 +558,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             since_utc_ms: None,
             limit: 0,
             local_cutover_hour: None,
+            edition: None,
         },
     ) else {
         panic!("trend");
@@ -1118,6 +1122,99 @@ fn a_card_with_no_specs_at_all_still_answers_role_queries() {
     }
 }
 
+/// v49: a STORED role — a player whose log named no spec — rides `players`
+/// as `stored_role`, and `role` is the spec's role, else that one, as
+/// `CardPlayer::role` reads it: such a player ranks among their role as the
+/// grader ranks them. A lake whose cards carry none (every lake so far)
+/// still has the column, NULL throughout, and its `role` is the spec's.
+#[test]
+fn a_stored_role_rides_the_players_view_and_ranks_as_the_grader_does() {
+    let mut specless = card(
+        "s",
+        vec![
+            player("p1", Spec::Arms, 800.0, 0.0),
+            player("p2", Spec::Fire, 700.0, 0.0),
+            player("p3", Spec::Discipline, 100.0, 900.0),
+            player("p4", Spec::Fire, 50.0, 0.0),
+        ],
+    );
+    let stored = [Some(Role::Dps), Some(Role::Dps), Some(Role::Healer), None];
+    for (p, role) in specless.players.iter_mut().zip(stored) {
+        p.spec = None;
+        p.class = None;
+        p.stored_role = role;
+    }
+    let text = specless.to_json().to_line();
+    assert!(text.contains(r#""stored_role":"healer""#), "{text}");
+    let normal = card(
+        "z",
+        vec![
+            player("d1", Spec::Arms, 1000.0, 0.0),
+            player("h1", Spec::Discipline, 100.0, 900.0),
+        ],
+    );
+    let normal_text = normal.to_json().to_line();
+    assert!(!normal_text.contains("stored_role"));
+    let roles = |lake: &Lake, fight: &str| -> Vec<(String, String, String)> {
+        let t = lake
+            .sql(&format!(
+                "SELECT guid, role, stored_role FROM players WHERE fight_id = '{fight}' \
+                 ORDER BY guid"
+            ))
+            .unwrap();
+        t.rows
+            .iter()
+            .map(|r| (cell_str(&r[0]), cell_str(&r[1]), cell_str(&r[2])))
+            .collect()
+    };
+    let both = [specless.clone(), normal.clone()];
+    for (tag, files, cards) in [
+        ("stored-alone", vec![("s", text.clone())], &both[..1]),
+        (
+            "stored-beside-normal",
+            vec![("s", text.clone()), ("z", normal_text.clone())],
+            &both[..],
+        ),
+    ] {
+        let (_keep, lake) = lake_of(tag, &files);
+        let got = roles(&lake, "s");
+        let want: Vec<(String, String, String)> = [
+            ("p1", "dps", "dps"),
+            ("p2", "dps", "dps"),
+            ("p3", "healer", "healer"),
+            ("p4", "null", "null"),
+        ]
+        .iter()
+        .map(|(g, r, s)| (g.to_string(), r.to_string(), s.to_string()))
+        .collect();
+        assert_eq!(got, want, "{tag}");
+        assert_ranks_match_grader(&lake, cards);
+        for c in cards {
+            for p in &c.players {
+                assert_eq!(
+                    p.role(),
+                    stored_or_spec(p),
+                    "{tag}: the codec reads it the same way"
+                );
+            }
+        }
+    }
+    // A lake with no stored role anywhere: the column, NULL, and `role`
+    // the spec's.
+    let (_keep, lake) = lake_of("stored-none", &[("z", normal_text)]);
+    assert_eq!(
+        roles(&lake, "z"),
+        vec![
+            ("d1".to_string(), "dps".to_string(), "null".to_string()),
+            ("h1".to_string(), "healer".to_string(), "null".to_string()),
+        ]
+    );
+}
+
+fn stored_or_spec(p: &CardPlayer) -> Option<Role> {
+    p.spec.map(Spec::role).or(p.stored_role)
+}
+
 // ---- R17 (step 2b): the Taken views ------------------------------------------------
 
 /// One player's R17 numbers, in the order the mitigation view's columns
@@ -1412,6 +1509,7 @@ fn the_taken_views_answer_the_r17_fixture() {
                     since_utc_ms: None,
                     limit: 0,
                     local_cutover_hour: None,
+                    edition: None,
                 },
             ) else {
                 panic!("trend");
@@ -2426,6 +2524,7 @@ fn the_support_views_answer_the_r19_fixture() {
                 since_utc_ms: None,
                 limit: 0,
                 local_cutover_hour: None,
+                edition: None,
             },
         ) else {
             panic!("trend");
@@ -3134,6 +3233,7 @@ fn the_span_views_answer_the_r18_fixture() {
                 since_utc_ms: None,
                 limit: 0,
                 local_cutover_hour: None,
+                edition: None,
             },
         ) else {
             panic!("trend");
@@ -4521,6 +4621,7 @@ fn the_shield_views_answer_the_r20_fixture() {
                 since_utc_ms: None,
                 limit: 0,
                 local_cutover_hour: None,
+                edition: None,
             },
         ) else {
             panic!("trend");
@@ -4685,6 +4786,7 @@ fn the_shield_views_answer_the_r20_fixture() {
             encounter: encounter.id,
             difficulty: encounter.difficulty,
             local_cutover_hour: None,
+            edition: None,
         },
     ) else {
         panic!("progression");
@@ -4747,6 +4849,7 @@ fn the_shield_views_answer_the_r20_fixture() {
             difficulty: encounter.difficulty,
             night,
             local_cutover_hour: None,
+            edition: None,
         },
     ) else {
         panic!("role night");
@@ -5371,6 +5474,7 @@ fn role_night_folds_by_the_mode_role_in_both_readers() {
                 difficulty: 16,
                 night,
                 local_cutover_hour: None,
+                edition: None,
             },
         ) else {
             panic!("role night");
@@ -5816,6 +5920,7 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
                 after_id: None,
                 role: None,
                 origin,
+                edition: None,
             },
         ) {
             HistoryAnswer::Fights { cards, .. } => cards,
@@ -5840,6 +5945,7 @@ fn an_imported_fight_is_a_column_and_out_of_the_fixed_questions() {
             encounter: encounter.id,
             difficulty: encounter.difficulty,
             local_cutover_hour: None,
+            edition: None,
         },
     ) else {
         panic!("progression");

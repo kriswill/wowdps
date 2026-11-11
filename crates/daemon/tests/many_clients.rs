@@ -137,7 +137,7 @@ impl Client {
     }
 
     fn watch(&mut self, cursor: Cursor) {
-        self.send(&ClientMsg::Watch(cursor));
+        self.send(&ClientMsg::watch(cursor));
     }
 
     /// Read until `pred` accepts a message; earlier messages go to `seen`.

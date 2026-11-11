@@ -107,10 +107,16 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
             None => "no segments".to_string(),
         },
     };
-    let mid = app
+    let source = app
         .source
         .clone()
         .unwrap_or_else(|| "waiting for log file".to_string());
+    // v49: the game edition the daemon answers in, ahead of its log — the
+    // live one, or the one pinned — once a log has named one.
+    let mid = match app.edition() {
+        Some(e) => format!("{} · {source}", e.label()),
+        None => source,
+    };
     let right = match app.screen {
         Screen::List => "Segments",
         Screen::Meter | Screen::Compare => view_name(app.view),
@@ -1159,6 +1165,7 @@ mod tests {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         };
         let text = |row: &ListRow| list_row_text(1, row, 60, false);
         assert!(text(&base).contains("  -   "), "{}", text(&base));
@@ -1202,6 +1209,7 @@ mod tests {
             source: Some("x.txt".to_string()),
             active: true,
             log_id: None,
+            edition: None,
         });
         assert_eq!(state.screen, Screen::Meter);
         let _ = state.on_msg(DaemonMsg::Snapshot {
@@ -1217,6 +1225,7 @@ mod tests {
             source: Some("x.txt".to_string()),
             status: None,
             raid: None,
+            edition: None,
         });
         state
     }
@@ -1237,6 +1246,7 @@ mod tests {
             pars_ms,
             arena,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         };
         let header = |st: &ClientState| render(st, 100, 5)[0].clone();
         let pars = Some((100_000, 80_000, 60_000));
@@ -1262,6 +1272,30 @@ mod tests {
         assert!(header(&bare).contains("no segments"), "{}", header(&bare));
     }
 
+    /// v49: the header names the edition the daemon answers in ahead of
+    /// its log, once a frame names one; before that, the log alone.
+    #[test]
+    fn the_header_names_the_edition_ahead_of_the_log() {
+        let list = |edition| DaemonMsg::SegmentList {
+            seq: 1,
+            entries: Vec::new(),
+            source: Some("fresh.txt".to_string()),
+            active: false,
+            log_id: None,
+            edition,
+        };
+        let mut state = ClientState::new();
+        let _ = state.on_msg(list(None));
+        let header = render(&state, 100, 5)[0].clone();
+        assert!(
+            header.contains("fresh.txt") && !header.contains('·'),
+            "{header}"
+        );
+        let _ = state.on_msg(list(Some(wowdps_model::Edition::Forever)));
+        let header = render(&state, 100, 5)[0].clone();
+        assert!(header.contains("Forever · fresh.txt"), "{header}");
+    }
+
     #[test]
     fn a_log_with_no_segments_yet_is_told_apart_from_no_log() {
         let mut state = ClientState::new();
@@ -1271,6 +1305,7 @@ mod tests {
             source: Some("fresh.txt".to_string()),
             active: false,
             log_id: None,
+            edition: None,
         });
         let all = flat(&render(&state, 80, 10));
         assert!(all.contains("No segments in this log yet."), "{all}");
@@ -1315,6 +1350,7 @@ mod tests {
             source: Some("x.txt".to_string()),
             active: true,
             log_id: None,
+            edition: None,
         });
         assert_eq!(state.screen, Screen::Meter);
         state.drill = Some(Drill {
@@ -1348,6 +1384,7 @@ mod tests {
                 pars_ms: None,
                 arena: false,
                 encounter: None,
+                edition: wowdps_model::Edition::Retail,
             },
             rows: vec![plain("P")],
             total_rows: 1,
@@ -1376,6 +1413,7 @@ mod tests {
             source: Some("x.txt".to_string()),
             status: None,
             raid: None,
+            edition: None,
         });
         let all = flat(&render(&state, 120, 12));
         assert!(
@@ -1404,6 +1442,7 @@ mod tests {
             source: Some("x.txt".to_string()),
             active: true,
             log_id: None,
+            edition: None,
         });
         state.view = View::Taken;
         state.drill = Some(Drill {
@@ -1446,6 +1485,7 @@ mod tests {
                 pars_ms: None,
                 arena: false,
                 encounter: None,
+                edition: wowdps_model::Edition::Retail,
             },
             rows: vec![plain("T", 84_000)],
             total_rows: 1,
@@ -1474,6 +1514,7 @@ mod tests {
             source: Some("x.txt".to_string()),
             status: None,
             raid: None,
+            edition: None,
         };
         let _ = state.on_msg(snapshot(View::Taken, Some(m)));
         let all = flat(&render(&state, 120, 12));

@@ -144,7 +144,7 @@ impl Client {
     }
 
     fn watch_live(&mut self, view: View, drill: Option<&str>) {
-        self.send(&ClientMsg::Watch(Cursor::Segment {
+        self.send(&ClientMsg::watch(Cursor::Segment {
             segment: SegmentRef::Live,
             view,
             top_n: None,
@@ -156,7 +156,7 @@ impl Client {
     }
 
     fn watch_id(&mut self, id: SegmentId, view: View) {
-        self.send(&ClientMsg::Watch(Cursor::Segment {
+        self.send(&ClientMsg::watch(Cursor::Segment {
             segment: SegmentRef::Id(id),
             view,
             top_n: None,
@@ -168,7 +168,7 @@ impl Client {
     }
 
     fn watch_list(&mut self) {
-        self.send(&ClientMsg::Watch(Cursor::List));
+        self.send(&ClientMsg::watch(Cursor::List));
     }
 
     /// Read until `pred` accepts a message; earlier messages go to `seen`.

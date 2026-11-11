@@ -27,7 +27,7 @@ const SMASH: u32 = 1305230;
 const CLAWS: u32 = 1305240;
 
 fn ids(mock: &mut MockDaemon) -> Vec<wowdps_model::SegmentId> {
-    let out = mock.handle(ClientMsg::Watch(Cursor::List));
+    let out = mock.handle(ClientMsg::watch(Cursor::List));
     out.iter()
         .find_map(|m| match m {
             DaemonMsg::SegmentList { entries, .. } => Some(entries.iter().map(|e| e.id).collect()),
@@ -42,7 +42,7 @@ fn watch(
     view: View,
     drill: Option<&str>,
 ) -> (wowdps_model::SegmentInfo, Vec<Row>, Option<Breakdown>) {
-    let out = mock.handle(ClientMsg::Watch(Cursor::Segment {
+    let out = mock.handle(ClientMsg::watch(Cursor::Segment {
         segment: SegmentRef::Id(id),
         view,
         top_n: None,

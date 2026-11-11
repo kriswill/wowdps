@@ -211,10 +211,14 @@ fn do_status() -> i32 {
             linger,
             overlay,
             history,
+            editions,
             ..
         }) => {
             println!("wowdps daemon: running");
             println!("  source:  {}", source.as_deref().unwrap_or("(none)"));
+            for line in edition_lines(&editions) {
+                println!("{line}");
+            }
             println!("  clients: {clients}");
             println!(
                 "  game:    {}",
@@ -262,6 +266,22 @@ fn do_status() -> i32 {
             1
         }
     }
+}
+
+/// v49: `wowdps status`'s line per edition's source — its edition, the log
+/// it follows and whether it is the live one: `  edition: Retail (live),
+/// WoWCombatLog-….txt`. An edition its log has not named yet reads
+/// "not named yet"; no log reads "no log yet".
+fn edition_lines(editions: &[wowdps_proto::EditionSource]) -> Vec<String> {
+    editions
+        .iter()
+        .map(|e| {
+            let name = e.edition.map_or("not named yet", |e| e.label());
+            let live = if e.live { " (live)" } else { "" };
+            let log = e.log.as_deref().unwrap_or("no log yet");
+            format!("  edition: {name}{live}, {log}")
+        })
+        .collect()
 }
 
 /// `YYYY-MM-DD` of a UTC epoch in milliseconds, hand-rolled (no chrono).
@@ -539,4 +559,34 @@ fn run(mut client: DaemonClient) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edition_lines;
+    use wowdps_model::Edition;
+    use wowdps_proto::EditionSource;
+
+    /// v49: `wowdps status` names each edition's source, its log and which
+    /// is live, and says so when the log has named no edition yet.
+    #[test]
+    fn status_lists_each_editions_source() {
+        let lines = edition_lines(&[
+            EditionSource {
+                edition: Some(Edition::Forever),
+                source: Some("dir:/logs".to_string()),
+                log: Some("WoWCombatLog-110126_200000.txt".to_string()),
+                live: true,
+                running: true,
+            },
+            EditionSource::default(),
+        ]);
+        assert_eq!(
+            lines,
+            [
+                "  edition: Forever (live), WoWCombatLog-110126_200000.txt",
+                "  edition: not named yet, no log yet",
+            ]
+        );
+    }
 }

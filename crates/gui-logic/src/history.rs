@@ -27,7 +27,9 @@
 
 use std::time::{Duration, Instant};
 
-use wowdps_model::{Drill, ListRow, Loadout, Screen, SegmentId, SegmentInfo, SegmentKind, View};
+use wowdps_model::{
+    Drill, Edition, ListRow, Loadout, Screen, SegmentId, SegmentInfo, SegmentKind, View,
+};
 use wowdps_proto::history::{FightCard, FightKind};
 use wowdps_proto::{
     ClientMsg, ClientState, Cursor, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, ListEntry,
@@ -179,6 +181,8 @@ impl Earlier {
                 after_id,
                 role: None,
                 origin: OriginFilter::Local,
+                // Every edition's: each card names its own.
+                edition: None,
             },
         })
     }
@@ -376,6 +380,9 @@ impl Stored {
             source: Some(source_of(&fight_id)),
             active: false,
             log_id: None,
+            // A stored pull follows nothing: its edition is its card's, on
+            // its segment's header (`info_of`).
+            edition: None,
         });
         // The player carries over, their list with them; a spell of theirs
         // does not — another pull's ability need not be this one's.
@@ -427,14 +434,18 @@ impl Stored {
     /// when that one answers.
     pub fn route(&mut self, sent: Vec<ClientMsg>, next_id: &mut u32) -> Vec<ClientMsg> {
         let Some(want) = sent.into_iter().rev().find_map(|m| match m {
-            ClientMsg::Watch(Cursor::Segment {
-                view,
-                drill,
-                death,
-                range,
-                spell,
+            ClientMsg::Watch {
+                cursor:
+                    Cursor::Segment {
+                        view,
+                        drill,
+                        death,
+                        range,
+                        spell,
+                        ..
+                    },
                 ..
-            }) => Some(Want {
+            } => Some(Want {
                 view,
                 drill,
                 death,
@@ -443,14 +454,18 @@ impl Stored {
                 pair: None,
             }),
             // v42: the pair, its first player the drill.
-            ClientMsg::Watch(Cursor::Compare {
-                a,
-                b,
-                view,
-                range,
-                spell,
+            ClientMsg::Watch {
+                cursor:
+                    Cursor::Compare {
+                        a,
+                        b,
+                        view,
+                        range,
+                        spell,
+                        ..
+                    },
                 ..
-            }) => Some(Want {
+            } => Some(Want {
                 view,
                 drill: Some(a),
                 death: None,
@@ -584,6 +599,7 @@ impl Stored {
                     range: p.range,
                     source: Some(source_of(&self.fight_id)),
                     status: None,
+                    edition: None,
                 })),
                 // The ability first, then the pair: two steps at most.
                 None => {
@@ -611,6 +627,7 @@ impl Stored {
             // v35 (R25): the store's rebuild of the pull's raid timeline —
             // the ribbon, the Deaths table and the stat line's deaths.
             raid: fight.raid,
+            edition: None,
         }));
         self.route(sent, next_id)
     }
@@ -691,6 +708,8 @@ pub fn info_of(card: &FightCard) -> SegmentInfo {
         pars_ms: card.pars_ms,
         arena: card.kind == FightKind::Arena,
         encounter: card.encounter,
+        // v49: the edition the card's log was written by.
+        edition: card.edition(),
     }
 }
 
@@ -708,6 +727,7 @@ fn pending_info() -> SegmentInfo {
         pars_ms: None,
         arena: false,
         encounter: None,
+        edition: Edition::Unknown(0),
     }
 }
 
@@ -723,6 +743,7 @@ fn list_row(info: &SegmentInfo) -> ListRow {
         pars_ms: info.pars_ms,
         arena: info.arena,
         encounter: info.encounter,
+        edition: info.edition,
     }
 }
 
@@ -1068,7 +1089,7 @@ mod tests {
         // v42: a comparison is the store's to answer — the pair rides the
         // GetFight, its first player the drill.
         let pair = s.route(
-            vec![ClientMsg::Watch(Cursor::Compare {
+            vec![ClientMsg::watch(Cursor::Compare {
                 segment: SegmentRef::Live,
                 a: "a".into(),
                 b: "b".into(),

@@ -10,13 +10,14 @@
 
 use wowdps_model::AbilitySeries;
 use wowdps_model::{
-    Action, Drill, Encounter, GraphMode, ListRow, Mitigation, Pane, RaidTimeline, Row, Screen,
-    SegmentInfo, SegmentKind, SpellTree, StackBase, StackCell, StackingDebuff, Timeline, View,
+    Action, Drill, Edition, Encounter, GraphMode, ListRow, Mitigation, Pane, RaidTimeline, Row,
+    Screen, SegmentInfo, SegmentKind, SpellTree, StackBase, StackCell, StackingDebuff, Timeline,
+    View,
 };
 
 use crate::msg::{
-    Breakdown, ClientMsg, CompareSide, Cursor, DaemonMsg, DeathWindow, ListEntry, LoadError,
-    SegmentRef,
+    Breakdown, ClientMsg, CompareSide, Cursor, DaemonMsg, DeathWindow, EditionRef, ListEntry,
+    LoadError, SegmentRef,
 };
 
 /// The cached content of the last snapshot matching the current cursor.
@@ -112,6 +113,14 @@ pub struct ClientState {
     /// with a row's `start_ms` it is that row's history-store fight id.
     /// Additive: nothing here reads it.
     log_id: Option<u64>,
+    /// v49: the edition every Watch looks in — following the live one
+    /// unless a frontend opts in to a pin (`set_edition`). Outlives a reset.
+    scope: EditionRef,
+    /// v49: the edition the daemon last answered in (a frame's `edition`):
+    /// the pin, or the live edition while following. Kept through a frame
+    /// that names none, so a move is seen across one; a change to another
+    /// is a move, reset like a rotated log.
+    edition: Option<Edition>,
 }
 
 impl Default for ClientState {
@@ -150,6 +159,8 @@ impl ClientState {
             inspecting: false,
             snapshot_gen: 0,
             log_id: None,
+            scope: EditionRef::Follow,
+            edition: None,
         }
     }
 
@@ -171,11 +182,20 @@ impl ClientState {
         self.cursor
     }
 
-    /// The Watch declaring what this state is currently rendering.
+    /// The Watch declaring what this state is currently rendering, in the
+    /// edition it looks in (v49).
     fn watch_msg(&self) -> ClientMsg {
+        ClientMsg::Watch {
+            cursor: self.declared(),
+            edition: self.scope,
+        }
+    }
+
+    /// The cursor this state is currently rendering.
+    fn declared(&self) -> Cursor {
         match self.screen {
-            Screen::List => ClientMsg::Watch(Cursor::List),
-            Screen::Meter => ClientMsg::Watch(Cursor::Segment {
+            Screen::List => Cursor::List,
+            Screen::Meter => Cursor::Segment {
                 segment: self.cursor,
                 view: self.view,
                 top_n: self.top_n,
@@ -189,11 +209,11 @@ impl ClientState {
                 // v38: Damage's and Healing's too. Elsewhere the zoom is the
                 // client's own.
                 range: self.drill_windowed().then_some(self.drill_range).flatten(),
-            }),
+            },
             // R12. `Screen::Compare` is only ever entered with both picks in
             // hand, so the pair is always there to name.
             Screen::Compare => match (self.compare.first(), self.compare.get(1)) {
-                (Some((a, _)), Some((b, _))) => ClientMsg::Watch(Cursor::Compare {
+                (Some((a, _)), Some((b, _))) => Cursor::Compare {
                     segment: self.cursor,
                     a: a.clone(),
                     b: b.clone(),
@@ -203,8 +223,8 @@ impl ClientState {
                     view: self.view,
                     range: self.compare_range,
                     spell: self.compare_spell.as_ref().map(|(k, _)| k.clone()),
-                }),
-                _ => ClientMsg::Watch(Cursor::Segment {
+                },
+                _ => Cursor::Segment {
                     segment: self.cursor,
                     view: self.view,
                     top_n: self.top_n,
@@ -212,9 +232,40 @@ impl ClientState {
                     death: None,
                     spell: None,
                     range: None,
-                }),
+                },
             },
         }
+    }
+
+    // ---- v49: editions --------------------------------------------------------
+
+    /// The edition this state's Watches look in.
+    pub fn edition_ref(&self) -> EditionRef {
+        self.scope
+    }
+
+    /// The edition the daemon last answered in: the pin, or the live
+    /// edition while following; `None` before any answer named one.
+    pub fn edition(&self) -> Option<Edition> {
+        self.edition
+    }
+
+    /// The watched segment's own edition, from its snapshot (a stored
+    /// pull's from its card).
+    pub fn segment_edition(&self) -> Option<Edition> {
+        self.snapshot.as_ref().map(|s| s.info.edition)
+    }
+
+    /// Opt-in (no frontend calls it yet): look in one edition, or follow
+    /// the live one again. Another edition is another set of logs, so the
+    /// state starts over on that edition's list, as on a rotated log, and
+    /// keeps what a reset keeps. A no-op when already there.
+    pub fn set_edition(&mut self, edition: EditionRef) -> Vec<ClientMsg> {
+        if edition == self.scope {
+            return Vec::new();
+        }
+        self.scope = edition;
+        self.reset_for_new_source(None, edition.named(None))
     }
 
     // ---- R12: comparison ----------------------------------------------------
@@ -1110,12 +1161,17 @@ impl ClientState {
                 source,
                 status,
                 raid,
+                edition,
                 ..
             } => {
-                if self.rotated(&source) {
-                    return self.reset_for_new_source(source);
+                if self.stale_scope(edition) {
+                    return Vec::new();
+                }
+                if self.moved(&source, edition) {
+                    return self.reset_for_new_source(source, edition);
                 }
                 self.source = source;
+                self.edition = edition.or(self.edition);
                 self.status = status;
                 // Only the current cursor's snapshots count; a push that was
                 // in flight when the cursor changed is simply stale.
@@ -1158,12 +1214,17 @@ impl ClientState {
                 source,
                 active,
                 log_id,
+                edition,
                 ..
             } => {
-                if self.rotated(&source) {
-                    return self.reset_for_new_source(source);
+                if self.stale_scope(edition) {
+                    return Vec::new();
+                }
+                if self.moved(&source, edition) {
+                    return self.reset_for_new_source(source, edition);
                 }
                 self.source = source;
+                self.edition = edition.or(self.edition);
                 self.log_id = log_id;
                 let first = !self.started;
                 self.started = true;
@@ -1195,12 +1256,17 @@ impl ClientState {
                 range,
                 source,
                 status,
+                edition,
                 ..
             } => {
-                if self.rotated(&source) {
-                    return self.reset_for_new_source(source);
+                if self.stale_scope(edition) {
+                    return Vec::new();
+                }
+                if self.moved(&source, edition) {
+                    return self.reset_for_new_source(source, edition);
                 }
                 self.source = source;
+                self.edition = edition.or(self.edition);
                 self.status = status;
                 if self.screen != Screen::Compare || segment != self.cursor {
                     return Vec::new();
@@ -1246,6 +1312,9 @@ impl ClientState {
                             arena: false,
                             encounter: None,
                             pars_ms: None,
+                            // A placeholder until the list names it: the
+                            // edition this state is answered in.
+                            edition: self.edition.unwrap_or(Edition::Unknown(0)),
                         },
                     });
                 }
@@ -1293,10 +1362,33 @@ impl ClientState {
         matches!((&self.source, source), (Some(old), Some(new)) if old != new)
     }
 
-    /// A different log file is a different session: start over on its list.
-    fn reset_for_new_source(&mut self, source: Option<String>) -> Vec<ClientMsg> {
+    /// v49: whether a frame is a MOVE — another log file (rotation, as
+    /// before), or another edition than the one last answered in: the live
+    /// edition changed under a following state. A frame that names no
+    /// edition is no move; one that names the first is none either.
+    fn moved(&self, source: &Option<String>, edition: Option<Edition>) -> bool {
+        self.rotated(source)
+            || matches!((self.edition, edition), (Some(old), Some(new)) if old != new)
+    }
+
+    /// v49: a pinned state's frame that names another edition was answered
+    /// before the pin, to a Watch it no longer makes: dropped, never a move.
+    fn stale_scope(&self, edition: Option<Edition>) -> bool {
+        matches!(self.scope, EditionRef::Pin(e) if edition != Some(e))
+    }
+
+    /// A different log file — or (v49) a different edition's logs — is a
+    /// different session: start over on its list. What the state looks in
+    /// (`scope`) outlives it, as an opt-in does.
+    fn reset_for_new_source(
+        &mut self,
+        source: Option<String>,
+        edition: Option<Edition>,
+    ) -> Vec<ClientMsg> {
         *self = Self {
             source,
+            edition,
+            scope: self.scope,
             top_n: self.top_n,
             quit: self.quit,
             // An opt-in outlives the session it was made in.
@@ -1767,6 +1859,7 @@ fn list_row_of(info: &SegmentInfo) -> ListRow {
         pars_ms: info.pars_ms,
         arena: info.arena,
         encounter: info.encounter,
+        edition: info.edition,
     }
 }
 
@@ -1791,6 +1884,7 @@ mod tests {
             pars_ms: None,
             arena: false,
             encounter: None,
+            edition: wowdps_model::Edition::Retail,
         }
     }
 
@@ -1819,6 +1913,7 @@ mod tests {
             source: None,
             active: false,
             log_id: None,
+            edition: None,
         });
         st.screen = Screen::Meter;
         st.on_msg(DaemonMsg::Snapshot {
@@ -1838,6 +1933,7 @@ mod tests {
                 pars_ms: None,
                 arena: false,
                 encounter: None,
+                edition: wowdps_model::Edition::Retail,
             },
             rows: Vec::new(),
             total_rows: 0,
@@ -1846,6 +1942,7 @@ mod tests {
             source: None,
             status: None,
             raid: None,
+            edition: None,
         });
         assert_eq!(st.encounter_spans(), vec![(10_000, 70_000)]);
     }
@@ -1888,7 +1985,10 @@ mod tests {
         let sent = st.select_death(Some(1));
         assert!(matches!(
             sent.as_slice(),
-            [ClientMsg::Watch(Cursor::Segment { death: Some(1), .. })]
+            [ClientMsg::Watch {
+                cursor: Cursor::Segment { death: Some(1), .. },
+                ..
+            }]
         ));
         assert!(st.select_death(Some(1)).is_empty(), "already asked");
         assert_eq!(st.death_request(), Some(1));
@@ -1934,6 +2034,7 @@ mod tests {
                 pars_ms: None,
                 arena: false,
                 encounter: None,
+                edition: wowdps_model::Edition::Retail,
             },
             rows: vec![plain_row("Player-1")],
             total_rows: 1,
@@ -1942,6 +2043,7 @@ mod tests {
             source: None,
             status: None,
             raid: None,
+            edition: None,
         }
     }
 
@@ -1998,7 +2100,7 @@ mod tests {
         assert!(
             matches!(
                 &msgs[..],
-                [ClientMsg::Watch(Cursor::Segment { spell: Some(s), .. })] if s == "Fireball"
+                [ClientMsg::Watch { cursor: Cursor::Segment { spell: Some(s), .. }, .. }] if s == "Fireball"
             ),
             "the Watch names the drilled spell"
         );
@@ -2023,7 +2125,7 @@ mod tests {
         assert!(
             matches!(
                 &msgs[..],
-                [ClientMsg::Watch(Cursor::Compare { spell: Some(s), .. })] if s == "Fireball"
+                [ClientMsg::Watch { cursor: Cursor::Compare { spell: Some(s), .. }, .. }] if s == "Fireball"
             ),
             "the Watch names the drilled spell"
         );
@@ -2057,6 +2159,7 @@ mod tests {
                 pars_ms: None,
                 arena: false,
                 encounter: None,
+                edition: wowdps_model::Edition::Retail,
             },
             rows: keys.iter().map(|k| plain_row(k)).collect(),
             total_rows: keys.len() as u32,
@@ -2065,6 +2168,7 @@ mod tests {
             source: None,
             status: None,
             raid: None,
+            edition: None,
         }
     }
 
@@ -2078,10 +2182,18 @@ mod tests {
     /// The single Watch in `sent`: a meter's drill, or a comparison's pair.
     fn watched(sent: &[ClientMsg]) -> (Option<String>, Option<(String, String)>) {
         match sent {
-            [ClientMsg::Watch(Cursor::Segment { drill, .. })] => (drill.clone(), None),
-            [ClientMsg::Watch(Cursor::Compare { a, b, .. })] => {
-                (None, Some((a.clone(), b.clone())))
-            }
+            [
+                ClientMsg::Watch {
+                    cursor: Cursor::Segment { drill, .. },
+                    ..
+                },
+            ] => (drill.clone(), None),
+            [
+                ClientMsg::Watch {
+                    cursor: Cursor::Compare { a, b, .. },
+                    ..
+                },
+            ] => (None, Some((a.clone(), b.clone()))),
             other => panic!("expected one Watch, got {other:?}"),
         }
     }
@@ -2238,7 +2350,7 @@ mod tests {
         assert_eq!(st.row_sel, 0, "the meter's selection stays put");
         let sent = st.apply(Action::Open);
         assert!(
-            matches!(&sent[..], [ClientMsg::Watch(Cursor::Segment { spell: Some(s), .. })] if s == "Scorch")
+            matches!(&sent[..], [ClientMsg::Watch { cursor: Cursor::Segment { spell: Some(s), .. }, .. }] if s == "Scorch")
         );
         st.apply(Action::Back);
         assert!(
@@ -2250,7 +2362,13 @@ mod tests {
         assert_eq!(watched(&st.apply(Action::Down)).0.as_deref(), Some("B"));
         // And from the meter itself, Back leaves for the list.
         let sent = st.apply(Action::Back);
-        assert!(matches!(&sent[..], [ClientMsg::Watch(Cursor::List)]));
+        assert!(matches!(
+            &sent[..],
+            [ClientMsg::Watch {
+                cursor: Cursor::List,
+                ..
+            }]
+        ));
         assert!(st.drill.is_none() && st.screen == Screen::List);
     }
 
@@ -2346,12 +2464,14 @@ mod tests {
                         pars_ms: None,
                         arena: false,
                         encounter: None,
+                        edition: wowdps_model::Edition::Retail,
                     },
                 })
                 .collect(),
             source: None,
             active: false,
             log_id: None,
+            edition: None,
         });
         st.apply(Action::Down);
         let sent = st.apply(Action::OlderSegment);
@@ -2375,6 +2495,7 @@ mod tests {
             source: Some("b.txt".into()),
             active: false,
             log_id: None,
+            edition: None,
         });
         assert!(st.follows_selection());
         assert_eq!(st.screen, Screen::List);
@@ -2393,6 +2514,7 @@ mod tests {
             source: Some("a.txt".into()),
             active: false,
             log_id,
+            edition: None,
         };
         assert!(st.on_msg(list(Some(0xfeed))).is_empty());
         assert_eq!(st.log_id(), Some(0xfeed));
