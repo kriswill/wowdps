@@ -182,7 +182,7 @@ fn pool(card: &FightCard, me: &CardPlayer, measure: Measure) -> Grade {
         count: kept.len(),
         median: median_of(&kept),
         excluded: all.len() - kept.len(),
-        share: (!me.enemy && total > 0.0).then(|| mine / total * 100.0),
+        share: (!me.enemy && total > 0.0).then_some(mine / total * 100.0),
     }
 }
 

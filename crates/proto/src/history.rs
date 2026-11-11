@@ -1137,7 +1137,7 @@ impl CardPlayer {
     pub fn absorb_efficiency(&self) -> Option<f64> {
         let wasted = self.absorb_wasted?;
         let total = self.absorbed.checked_add(wasted)?;
-        (total > 0).then(|| self.absorbed as f64 / total as f64)
+        (total > 0).then_some(self.absorbed as f64 / total as f64)
     }
 }
 
