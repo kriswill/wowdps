@@ -6593,9 +6593,13 @@ fight          {"view":2}                                               view mus
         compare        {"a":"A"}                                                "b" is required
         compare        {"a":"A","b":"B","segment_id":1.5}                       segment_id must be
         compare        {"a":"A","b":"B","edition":"pandaria"}                   unknown edition
+        compare        {"a":"A","b":"B","fight_id":"nope"}                      not a history fight id
+        compare        {"a":"A","b":"B","fight_id":7}                           not a history fight id
         loadout        {}                                                       "player" is required
         loadout        {"fight_id":"$ID"}                                       "player" is required
         loadout        {"player":"A","fight_id":"x-1"}                          not a history fight id
+        loadout        {"player":"A","segment_id":"3"}                          segment_id must be
+        loadout        {"player":"A","segment_id":2.5}                          segment_id must be
         loadout        {"player":"A","edition":"pandaria"}                      unknown edition
         # The history tools: every filter, before a player's name is looked up
         # or a boss's editions counted.
@@ -6634,6 +6638,12 @@ fight          {"view":2}                                               view mus
         trend          {"player":"Somebody","bucket":"month"}                   unknown bucket
         trend          {"player":"Somebody","spec":"Fire"}                      spec must be
         trend          {"player":"Somebody","difficulty":"Hard"}                unknown difficulty
+        trend          {"player":"Somebody","encounter":"3130"}                 encounter must be
+        trend          {"player":"Somebody","since_utc_ms":"x"}                 since_utc_ms must be
+        trend          {"player":"Somebody","limit":-1}                         limit must be
+        trend          {"player":"Somebody","cutover_hour":24}                  cutover_hour must be
+        trend          {"player":"Somebody","bucket":"local","cutover_hour":"6"} cutover_hour must be
+        trend          {"player":"Somebody","local":"yes"}                      local must be true or false
         stored_fight   {}                                                       requires fight_id
         stored_fight   {"fight_id":"nope"}                                      not a history fight id
         stored_fight   {"fight_id":"$ID","view":"enemy_taken"}                  never stored
@@ -6647,6 +6657,8 @@ fight          {"view":2}                                               view mus
         regrade_fights {}                                                       requires fight_id, encounter or kind
         regrade_fights {"fight_id":"x"}                                         not a history fight id
         regrade_fights {"kind":"bogus"}                                         unknown kind
+        regrade_fights {"encounter":"3130"}                                     encounter must be
+        regrade_fights {"encounter":-1}                                         encounter must be
         regrade_fights {"encounter":1,"difficulty":"Hard"}                      unknown difficulty
         regrade_fights {"encounter":1,"edition":"pandaria"}                     unknown edition
         pin_fight      {}                                                       requires fight_id
@@ -6672,6 +6684,27 @@ fight          {"view":2}                                               view mus
         stored_fight   {"fight_id":"$ID","player":"A","from_secs":0,"to_secs":5}
         regrade_fights {"kind":"key"}
         pin_fight      {"fight_id":"$ID","pinned":false}
+        # Null is "not given" for every optional argument, and a whole
+        # number may come as a float with no fraction (3130.0).
+        list_fights    {"edition":null}
+        fight          {"segment_id":3.0,"fight_id":null,"view":null,"top":null,"edition":null}
+        fight          {"fight_id":"$ID","top":5.0,"edition":1.0}
+        breakdown      {"player":"A","segment_id":null,"fight_id":null,"view":null,"death":null,"conditioned_on":null,"edition":null}
+        breakdown      {"player":"A","segment_id":3.0,"view":"deaths","death":0.0}
+        compare        {"a":"A","b":"B","segment_id":3.0,"fight_id":null,"edition":null}
+        loadout        {"player":"A","segment_id":2.0,"fight_id":null,"edition":null}
+        history        {"player":"Somebody","players":null,"role":null,"kind":null,"sort":null,"encounter":null,"difficulty":null,"since_utc_ms":null,"limit":null,"after_id":null,"edition":null}
+        history        {"player":"Somebody","encounter":3130.0,"difficulty":15.0,"since_utc_ms":1722014400000.0,"limit":5.0}
+        progression    {"encounter":3130.0,"difficulty":15.0,"cutover_hour":null,"local":null,"bucket":null,"edition":null}
+        progression    {$BOSS,"cutover_hour":4.0}
+        role_night     {$BOSS,"night":null,"date":"2026-07-28","cutover_hour":null,"edition":null}
+        role_night     {"encounter":3130.0,"difficulty":15.0,"night":1785196800000.0}
+        trend          {"player":"Somebody","encounter":null,"spec":null,"since_utc_ms":null,"limit":null,"cutover_hour":null,"local":null,"bucket":null,"measure":null,"view":null,"difficulty":null,"edition":null}
+        trend          {"player":"Somebody","encounter":3130.0,"spec":71.0,"since_utc_ms":1722014400000.0,"limit":20.0,"difficulty":15.0,"cutover_hour":6.0}
+        stored_fight   {"fight_id":"$ID","view":null,"boss":null,"player":null,"death":null,"from_secs":null,"to_secs":null,"conditioned_on":null}
+        stored_fight   {"fight_id":"$ID","player":"A","from_secs":0.0,"to_secs":5.0}
+        regrade_fights {"encounter":3130.0,"difficulty":15.0,"kind":null,"fight_id":null,"edition":null}
+        pin_fight      {"fight_id":"$ID","pinned":null}
         "#;
         let mut bridge = Bridge::offline();
         let mut run = |line: &str| -> Option<(String, String, String)> {
