@@ -61,6 +61,7 @@ fn start_daemon_with(tmp: &Temp, log: &str, tweak: impl FnOnce(&mut DaemonOption
         socket: socket.clone(),
         lockfile: tmp.0.join("test.lock"),
         source: SourceSpec::File(PathBuf::from(log)),
+        editions: Default::default(),
         linger: true,
         idle_grace: Duration::from_secs(30),
         tick: Duration::from_millis(20),

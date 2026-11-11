@@ -660,8 +660,9 @@ the edition its number names (`EditionRef::canonical`: a hand-made
 `Snapshot`, `SegmentList` and `CompareSnapshot` names the edition it answers in
 (`edition`: the pin, or following the edition the daemon names the live source
 by — its log's header's, else, before the header is read, the edition it knows
-the source by from where it came from (`Engine::set_source_edition`, which
-nothing sets with one source), and `None` only while it knows neither), and a
+the source by from where it came from (`Engine::set_source_edition`: its
+install product folder's, given while the daemon follows more than one source),
+and `None` only while it knows neither), and a
 client resets on a change of it as on a changed `source` (Client state below).
 The list is broadcast to every session whenever its ids change OR the edition
 its source names does — each session sent it as its edition answers it: this
@@ -688,11 +689,23 @@ the EMPTY answer — a `SegmentList` with no entries and no source, and on `Live
 the snapshot of nothing (no id, no rows) — naming the edition asked for; never
 an error or a wait, and such a session hears no `SegmentOpened` of another
 edition's log and, when the list is broadcast, is sent its own edition's empty
-list in place of that log's. One source today: following is what every
-client had before, a pin serves when the source's edition is reckoned with it
-(`Edition::counts_as`; a source the daemon can name no edition for is reckoned
-Retail's, as a fight that names none is), and anything else is the empty
-answer. The daemon pushes snapshots for exactly what is
+list in place of that log's. The daemon follows a source per edition (the
+Daemon section's editions paragraph), and each session is answered by ONE of
+them: a segment id by the source holding it (an id no source holds is
+`Rotated` when it was issued, `NotFound` when never — ids come from one
+counter, so one never names two segments); following, by the live edition's
+source; pinned, by the source whose log is of the pin's edition (reckoned with
+it, `Edition::counts_as`; a source the daemon can name no edition for is
+reckoned Retail's, as a fight that names none is) — the live one first when two
+are, then the one written last — else the empty answer. The list broadcast,
+`SegmentOpened` and a one-shot's `Live` are each source's to the sessions it
+answers; when a session comes to be answered by another source than the one
+whose list it holds (the live edition moved under a follower, a pin's edition
+is another source's now) it is sent that source's list as it answers it, the
+frame that moves it. With one source — `--file`, `--logs`, a folder outside an
+install, and every install while discovery follows Retail alone — every
+session is answered by it, and following is exactly what every client had
+before. The daemon pushes snapshots for exactly what is
 watched, breakdown included when drilled. `Compare` is answered with
 `CompareSnapshot` (the answered `View`, then two `CompareSide { guid,
 total: Row, spells: Vec<Row>, timeline, spell_timeline, mitigation }`s — every
@@ -908,8 +921,10 @@ move and the state starts over once more. A stored pull's state (the window's,
 frames name it, as a daemon's name their source's — one edition for the pull's
 life (the rail card's, else the first answer's), so its own frames never move
 it, whatever number a later answer's card carries; its header reads the
-answered card's own. The multi-source daemon
-only has to send another edition for a following client to be moved.
+answered card's own. The daemon following several editions moves a following
+client by sending it the new live edition's frames (another edition, or
+another log), nothing more: the overlay, a following client, re-pins to the
+live edition's live segment on the reset as it does on a rotation.
 
 Ability tree (v36, R26): `ClientState::drill_tree()` is the drilled snapshot's
 tree, empty with no drill and until the drilled snapshot arrives. The state
@@ -948,17 +963,24 @@ pub fn tells(edition: Edition, spell: u32) -> bool;
 
 ## Daemon (owner: daemon)
 
-One process owns bytes → rows: tail thread, engine (live meter + index + stable
-ids + LRU of ≤16 lazily parsed segments), loader worker pool (historical parses
+One process owns bytes → rows: a tail thread and an engine (live meter + index +
+stable ids + LRU of ≤16 lazily parsed segments) per followed source (v49: one per
+edition, the editions paragraph below), loader worker pool (historical parses
 never run on the hub thread), hub (session table, 10 Hz changed-only pushes),
 game watcher (3s sweep for a case-insensitive `game_process` substring — /proc
-comm+cmdline everywhere but macOS, `pgrep -fil` on macOS),
+comm+cmdline everywhere but macOS, `pgrep -fil` on macOS — v49: reporting which
+editions run, each matched process named by the product folder among its
+command line's path components (`_retail_`, `_forever_`), or unnamed; a change
+from one edition to another is reported though no sweep saw none running),
 overlay supervisor (spawns/hides/terminates `<gui_binary> --overlay`, by default
 `wowdps-gui`, on game transitions; a manual hide sticks until the next transition; spawn failures
-surface in `Status`). Single instance via a lockfile taken *before* the stale
+surface in `Status`; the overlay is shown while any game runs, as before
+editions were named). Single instance via a lockfile taken *before* the stale
 socket is unlinked. Idle-exit when the last watching session (or overlay child /
 exit grace) is gone, unless `--linger`. Config `~/.config/wowdps/config.toml`,
-read at startup with a section-aware toml-subset reader: `logs_dir`,
+read at startup with a section-aware toml-subset reader: `logs_dir` (v49: one
+inside an install, `<install>/<product>/Logs`, names the install — the editions
+paragraph below),
 `game_process`, `auto_overlay`, `overlay_exit_grace_secs`, `gui_binary` (the
 GUI the supervisor spawns: a bare name is the daemon binary's sibling when one
 exists, else looked up on `$PATH`; a value containing `/` is a path; empty
@@ -1048,11 +1070,40 @@ and cards with no number keeps exactly the grouping it had. (v49) Every fixed qu
 optional edition, as `Fights` takes an origin: `Fights`, `Progression`, `Trend` and `RoleNight`
 (and `Regrade`) answer one edition's cards when it names one (by `counts_as`, so a card that names
 none answers for Retail), and every edition an id names without, `Fights` reading each card's own
-edition's owner for its role subject and `OwnerPerSec`. The live side names editions too: the
-daemon's one source names its log's edition (`Engine::edition`: the latest version line's
-`PROJECT_ID`, `None` before one or when it is 0), its live and indexed segments and rows wear it
+edition's owner for its role subject and `OwnerPerSec`. The live side names editions too: each
+source names its log's edition (`Engine::edition`: the latest version line's
+`PROJECT_ID`, else the index's; before one, or when it is 0, the edition its folder names while
+the daemon follows several sources, else `None`), its live and indexed segments and rows wear it
 (a live segment its own version line's), and a session follows the live edition or pins one (the
-wire section's `EditionRef`). A role the log's spec does not say is a STORED role
+wire section's `EditionRef`). (v49) **One source and one engine per edition:** the source `--file`,
+`--logs` or the config names is followed, and a folder the config or install discovery names
+inside an install, `<install>/<product>/Logs` of a followed product (`cli::FOLLOWED`), names the
+install: each other followed product's `Logs` folder there is followed beside it
+(`cli::sibling_logs`), no new key; a folder of a product not on the list (a test realm, a beta) is
+not followed beside it, and one outside an install is followed alone. Discovery follows Retail
+alone for now (`FOLLOWED` is `[Retail]`), so every install is one source as before; following
+Forever is adding it there. Each source has its own tailer and engine, started when its folder
+first holds a log (listed in `Status` from then, the first source always): its index, live meter
+and loaded segments are its own, so one edition's new log never wipes another's, and its
+switches retire its own logs to the history. The header decides a log's edition, not the folder:
+a log in one product's folder whose header names another edition makes that folder's source that
+edition's while it follows that log (its rows and frames name the header's edition, a pin to it
+is answered from it, the history files its fights by it); the folder names a source only until
+its header is read, and only while the daemon follows more than one. The LIVE edition (what a
+following session is answered from, `Status`'s `live`): with one followed edition's game running
+(`Running`: by name), that one; with both, the one with a pull open (`Engine::pull_open`: a boss
+fight begun and not ended, or any open segment with lines within the trash gap, lines having
+arrived since the backlog), kept while it has one, and while neither has, until the other OPENS
+one — two games writing in turn never move a follower on every line; with none running, the
+one whose log was written last (its modified time when opened, then each batch of fresh lines),
+kept too while it has a pull open. A source not yet holding a log is never live.
+Only the live source's trailing segment is a follower's: another edition's open pull, stale or
+not, draws no follower and announces no `SegmentOpened` to one. A source's game runs
+(`Engine::game_running`, its liveness) when its edition's client is named running, or a game runs
+the watcher cannot name or of an edition no source is of (counted for every source, as any game
+was with one), or its edition is not known and any game runs. The history takes the set of
+sources: it sweeps each on start, each source's tailed log is live, and a stored fight's log is
+looked for in every source's folder. A role the log's spec does not say is a STORED role
 (`CardPlayer::stored_role`, v49): `role()` is the spec's role, else it; nothing infers one yet
 (an edition whose log carries no spec gets one from the ruling that does), the role night reads
 the spec's role alone until then, and an import may name one for a specless player. The lake's `fights` and `players` views

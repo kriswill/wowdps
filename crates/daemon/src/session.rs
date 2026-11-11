@@ -21,6 +21,11 @@ pub struct Session {
     /// before any): what `Live`, the list, the list broadcast and a
     /// one-shot's `Live` resolve inside.
     pub edition: EditionRef,
+    /// v49: the followed source whose list the session was last sent (by a
+    /// broadcast, or answering its list or `Live`), `None` before any:
+    /// when another source answers its edition now, the hub sends it that
+    /// one's list (`hub::resync`), which moves the client.
+    pub answered_by: Option<usize>,
     /// Per-session monotonic sequence stamped on pushed snapshots.
     seq: u64,
     /// Last pushed snapshot/list, seq zeroed, for change detection.
@@ -48,6 +53,7 @@ impl Session {
             tx,
             cursor: None,
             edition: EditionRef::Follow,
+            answered_by: None,
             seq: 0,
             last_pushed: None,
             last_load_error: None,

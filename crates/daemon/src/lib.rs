@@ -19,6 +19,7 @@ pub mod overlay;
 pub mod replay;
 pub mod server;
 pub mod session;
+pub mod sources;
 
 use std::io::{self, Seek, SeekFrom};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -31,13 +32,46 @@ use std::time::Duration;
 
 use wowdps_core::index;
 use wowdps_core::tail::{POLL_INTERVAL, ScanFn, SourceSpec, TailEvent, Tailer};
+use wowdps_model::Edition;
 
 use crate::hub::{HubMsg, HubOptions};
+use crate::sources::SourceSetup;
+
+/// v49: the editions a daemon follows beside its `source`, one source and
+/// one engine each (`sources::Sources`). The default is `source` alone, as
+/// `--file`, `--logs` and a folder outside an install are followed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Followed {
+    /// The edition `source`'s own folder names: its install product
+    /// folder's (`wowdps_core::cli::product_edition`), when it sits in an
+    /// install.
+    pub source: Option<Edition>,
+    /// Each further edition's logs folder in the same install, tailed into
+    /// its own engine from when it first holds a log
+    /// (`wowdps_core::cli::sibling_logs` over `cli::FOLLOWED`).
+    pub more: Vec<(Edition, PathBuf)>,
+}
+
+impl Followed {
+    /// What a logs folder the config or install discovery names follows:
+    /// its own product's edition and, inside an install, the followed
+    /// editions' folders beside it.
+    pub fn of_logs_dir(dir: &std::path::Path) -> Self {
+        Self {
+            source: wowdps_core::cli::product_edition(dir),
+            more: wowdps_core::cli::sibling_logs(dir, wowdps_core::cli::FOLLOWED),
+        }
+    }
+}
 
 pub struct DaemonOptions {
     pub socket: PathBuf,
     pub lockfile: PathBuf,
+    /// What `--file`, `--logs` or the config names: the first source, the
+    /// one `Status::source` reports.
     pub source: SourceSpec,
+    /// v49: the editions followed beside `source` ([`Followed`]).
+    pub editions: Followed,
     /// Never idle-exit (what the systemd unit uses).
     pub linger: bool,
     /// How long the daemon outlives its last watching session.
@@ -73,12 +107,16 @@ impl DaemonOptions {
         let dir = wowdps_proto::client::prepare_socket_dir()?;
         let socket = wowdps_proto::client::socket_path();
         let lockfile = dir.join(format!("wowdps-v{}.lock", wowdps_proto::PROTO_VERSION));
-        let source = match source {
-            Some(s) => s,
+        let (source, editions) = match source {
+            // `--file` and `--logs`: one source, as they always were.
+            Some(s) => (s, Followed::default()),
             // Config first, then install discovery; a daemon with no idea
-            // what to tail says so instead of following a made-up path.
-            None => SourceSpec::Dir(
-                cfg.logs_dir
+            // what to tail says so instead of following a made-up path. A
+            // folder inside an install names the install: the followed
+            // editions' folders beside it are followed too.
+            None => {
+                let dir = cfg
+                    .logs_dir
                     .clone()
                     .or_else(wowdps_core::cli::default_logs_dir)
                     .ok_or_else(|| {
@@ -88,13 +126,16 @@ impl DaemonOptions {
                              logs_dir in ~/.config/wowdps/config.toml, set \
                              WOWDPS_WOW_DIR, or pass --logs",
                         )
-                    })?,
-            ),
+                    })?;
+                let editions = Followed::of_logs_dir(&dir);
+                (SourceSpec::Dir(dir), editions)
+            }
         };
         Ok(Self {
             socket,
             lockfile,
             source: source.clone(),
+            editions,
             linger,
             idle_grace: Duration::from_secs(10),
             tick: Duration::from_millis(100),
@@ -137,6 +178,27 @@ impl DaemonOptions {
     }
 }
 
+impl DaemonOptions {
+    /// v49: every source followed, in order, with the edition its folder
+    /// names: `source` first, then each of `editions.more` — a folder
+    /// already followed once is not followed twice.
+    pub fn followed(&self) -> Vec<(Option<Edition>, SourceSpec)> {
+        let mut out = vec![(self.editions.source, self.source.clone())];
+        for (edition, dir) in &self.editions.more {
+            let spec = SourceSpec::Dir(dir.clone());
+            if !out.iter().any(|(_, s)| same_spec(s, &spec)) {
+                out.push((Some(*edition), spec));
+            }
+        }
+        out
+    }
+}
+
+/// Two specs naming the same file or folder, however spelled.
+fn same_spec(a: &SourceSpec, b: &SourceSpec) -> bool {
+    a == b || spec_display(a) == spec_display(b)
+}
+
 /// Run the daemon to completion (`Shutdown`, idle-exit, or bind failure).
 /// Holds the lockfile for its whole life; the lock is taken *before* the
 /// stale socket is unlinked, which closes the two-racing-daemons TOCTOU.
@@ -162,15 +224,22 @@ pub fn run(opts: DaemonOptions) -> io::Result<()> {
 
     let (hub_tx, hub_rx) = mpsc::channel::<HubMsg>();
 
-    spawn_tail(opts.source.clone(), opts.cache_dir.clone(), hub_tx.clone());
+    // v49: one tailer per followed source, in order: the first is `source`.
+    let specs = opts.followed();
+    let setups: Vec<SourceSetup> = specs
+        .iter()
+        .map(|(edition, spec)| SourceSetup {
+            spec: Some(spec_display(spec)),
+            edition: *edition,
+        })
+        .collect();
+    for (i, (_, spec)) in specs.iter().enumerate() {
+        spawn_tail(i, spec.clone(), opts.cache_dir.clone(), hub_tx.clone());
+    }
     let loader_tx = loader::spawn(hub_tx.clone(), opts.loader_workers);
+    let sweeps: Vec<SourceSpec> = specs.iter().map(|(_, spec)| spec.clone()).collect();
     let history_link = match &opts.history {
-        Some(h) => history::spawn(
-            h.clone(),
-            loader_tx.clone(),
-            hub_tx.clone(),
-            Some(&opts.source),
-        ),
+        Some(h) => history::spawn(h.clone(), loader_tx.clone(), hub_tx.clone(), &sweeps),
         None => history::HistoryLink::disabled(
             "history disabled (history_enabled = false, or no data dir)",
         ),
@@ -199,7 +268,7 @@ pub fn run(opts: DaemonOptions) -> io::Result<()> {
             idle_grace: opts.idle_grace,
             tick: opts.tick,
             version: opts.version,
-            source_spec: Some(spec_display(&opts.source)),
+            sources: setups,
         },
         history_link,
     );
@@ -224,8 +293,14 @@ pub fn spec_display(spec: &SourceSpec) -> String {
     }
 }
 
-/// The only thing in the whole system that opens the log.
-fn spawn_tail(source: SourceSpec, cache_dir: Option<PathBuf>, tx: mpsc::Sender<HubMsg>) {
+/// The only thing in the whole system that opens the log: one per followed
+/// source, its events tagged with the source's place (`HubMsg::Tail`).
+fn spawn_tail(
+    index: usize,
+    source: SourceSpec,
+    cache_dir: Option<PathBuf>,
+    tx: mpsc::Sender<HubMsg>,
+) {
     thread::spawn(move || {
         let scan: ScanFn = match cache_dir.map(cache::IndexCache::new) {
             Some(cache) => Box::new(move |path, file| cache.scan_file(path, file)),
@@ -241,7 +316,7 @@ fn spawn_tail(source: SourceSpec, cache_dir: Option<PathBuf>, tx: mpsc::Sender<H
                 .iter()
                 .any(|e| matches!(e, TailEvent::Lines(l) if !l.is_empty()));
             for ev in events {
-                if tx.send(HubMsg::Tail(ev)).is_err() {
+                if tx.send(HubMsg::Tail(index, ev)).is_err() {
                     return; // hub gone: daemon is shutting down
                 }
             }

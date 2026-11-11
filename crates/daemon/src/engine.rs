@@ -6,7 +6,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime};
 
 use wowdps_core::index::SegmentMeta;
 use wowdps_core::meter::Visit;
@@ -25,6 +26,39 @@ use crate::mine::Mine;
 /// one fight's per-actor hashmaps; the LRU bound is what keeps N clients
 /// browsing N different segments from growing the daemon without limit.
 pub const LOADED_CAP: usize = 16;
+
+/// v49: the daemon's one segment-id counter. Every engine of a daemon
+/// draws from the same one (`Engine::with_ids`), so an id names one
+/// segment across every edition's source and is never reused, not even
+/// across rotation: a client's id never names two things. Shared by
+/// reference; a clone draws from the same count.
+#[derive(Debug, Clone, Default)]
+pub struct Ids(Arc<AtomicU64>);
+
+impl Ids {
+    fn next(&self) -> SegmentId {
+        SegmentId(self.0.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// How many ids have been issued: every id below this was issued.
+    pub fn issued(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Why an id no source holds fails: issued and gone with its log
+    /// (`Rotated`), or never issued (`NotFound`).
+    pub fn lost(&self, id: SegmentId) -> LoadError {
+        if id.0 < self.issued() {
+            LoadError::Rotated
+        } else {
+            LoadError::NotFound
+        }
+    }
+}
+
+/// How long a trash pull stays open, for the live edition's choice, with no
+/// line arriving: the meter's own trash gap (60 s), on the wall clock.
+const PULL_QUIET: Duration = Duration::from_secs(60);
 
 /// Something the hub should tell every session about.
 pub enum EngineEvent {
@@ -118,10 +152,16 @@ pub struct Engine {
     visit_ids: std::collections::HashMap<u32, SegmentId>,
     /// Ids for the live meter's own segments, parallel to `meter.segments()`.
     live_ids: Vec<SegmentId>,
-    /// Daemon-lifetime monotonic; never reused, not even across rotation.
-    next_id: u64,
+    /// Daemon-lifetime monotonic, shared by every engine of the daemon
+    /// ([`Ids`]); never reused, not even across rotation.
+    ids: Ids,
     /// First id assigned for the current file: anything below it is Rotated.
     first_id_of_file: u64,
+    /// When this source's log was last written, as far as the daemon saw:
+    /// the file's modified time when it was opened, then the moment each
+    /// batch of fresh lines arrived. `None` before a log. What the live
+    /// edition is chosen by when no followed game runs.
+    written: Option<SystemTime>,
     /// Lazily parsed historical segments, LRU by touch, capped at LOADED_CAP.
     loaded: Vec<(SegmentId, Meter)>,
     /// Loads already handed to the loader pool.
@@ -161,10 +201,10 @@ pub struct Engine {
     pub mine: Arc<Mine>,
     /// v49: the edition the daemon knows this source by from where it came
     /// from (an install's product folder), which [`Engine::edition`] names
-    /// until the log's header says one. `None` — nothing sets it yet: one
-    /// source, found as a file or a folder — until the daemon follows one
-    /// source per edition. It outlives a change of log file: it names the
-    /// source, not the file.
+    /// until the log's header says one. Set only while the daemon follows
+    /// more than one source (`sources::Sources`); a daemon of one source
+    /// names its log by its header alone, as it always did. It outlives a
+    /// change of log file: it names the source, not the file.
     source_edition: Option<Edition>,
     /// v49: the PROJECT_ID the index's scan read (its checkpoint's, the
     /// latest version line before the tail), 0 before an index or when the
@@ -201,6 +241,12 @@ impl Default for Engine {
 
 impl Engine {
     pub fn new() -> Self {
+        Self::with_ids(Ids::default())
+    }
+
+    /// v49: an engine drawing its segment ids from `ids`, the counter every
+    /// engine of one daemon shares.
+    pub fn with_ids(ids: Ids) -> Self {
         Self {
             meter: Meter::new(),
             now_ms: 0,
@@ -211,8 +257,9 @@ impl Engine {
             open_visit: None,
             visit_ids: std::collections::HashMap::new(),
             live_ids: Vec::new(),
-            next_id: 0,
+            ids,
             first_id_of_file: 0,
+            written: None,
             loaded: Vec::new(),
             loading: HashSet::new(),
             history_pending: HashSet::new(),
@@ -235,13 +282,39 @@ impl Engine {
     }
 
     fn fresh_id(&mut self) -> SegmentId {
-        let id = SegmentId(self.next_id);
-        self.next_id += 1;
-        id
+        self.ids.next()
     }
 
     pub fn segment_count(&self) -> usize {
         self.index.len() + self.meter.segments().len()
+    }
+
+    /// v49: whether a segment of this source's log answers to `id` now — the
+    /// hub routes an id to the source that holds it.
+    pub fn holds(&self, id: SegmentId) -> bool {
+        self.resolve(SegmentRef::Id(id)).is_ok()
+    }
+
+    /// v49: when this source's log was last written (see `written`).
+    pub fn written(&self) -> Option<SystemTime> {
+        self.written
+    }
+
+    /// v49: this source's log has a pull open now — a boss fight begun and
+    /// not ended, or any other open segment whose lines arrived within the
+    /// meter's trash gap — and lines of it have arrived since the backlog,
+    /// so a stale log's forever-open last segment (a fight the game never
+    /// closed) is none. What keeps the live edition where it is while two
+    /// games write in turn.
+    pub fn pull_open(&self) -> bool {
+        let Some(last) = self.meter.segments().iter().rev().find(|s| !s.noise) else {
+            return false;
+        };
+        let Some(fresh) = self.last_fresh.filter(|_| self.caught_up) else {
+            return false;
+        };
+        last.end_ms.is_none()
+            && (last.kind == SegmentKind::Encounter || fresh.elapsed() < PULL_QUIET)
     }
 
     /// Combat is happening *now*: an open segment, and either lines arrived
@@ -292,6 +365,7 @@ impl Engine {
                 self.awaiting_index = false;
                 if self.caught_up && !lines.is_empty() {
                     self.last_fresh = Some(Instant::now());
+                    self.written = Some(SystemTime::now());
                 }
                 for line in &lines {
                     if let Some(parsed) = parse_line(line) {
@@ -375,11 +449,17 @@ impl Engine {
                 self.visits_closed.clear();
                 self.seen_segments = 0;
                 self.last_fresh = None;
-                self.first_id_of_file = self.next_id;
+                self.first_id_of_file = self.ids.issued();
+                self.written = None;
                 self.index_project_id = 0;
                 self.awaiting_index = true;
             }
-            TailEvent::Index { index, .. } => {
+            TailEvent::Index { index, file_age_ms } => {
+                // v49: when the log was last written, from its age at the
+                // scan — what the live edition is chosen by when no game
+                // the daemon follows runs.
+                self.written = file_age_ms
+                    .and_then(|age| SystemTime::now().checked_sub(Duration::from_millis(age)));
                 // v49: the scan read the header; the log's edition is
                 // known now, not only once the seed lines replay it.
                 self.index_project_id = index.checkpoint.project_id;
@@ -734,8 +814,9 @@ impl Engine {
     /// v49: name the edition this source is of from where it came from —
     /// the daemon's to give for a source found in an edition's product
     /// folder — so it is named, and pins are matched against it, before
-    /// its log's header is read. Nothing calls it yet; a log's header still
-    /// decides once read.
+    /// its log's header is read. A log's header still decides once read:
+    /// a log in one product's folder whose header names another edition is
+    /// that edition's, and so is this source while it follows that log.
     pub fn set_source_edition(&mut self, edition: Option<Edition>) {
         // A zero is no edition named: `None`, as a header naming none is —
         // never `Unknown(0)`, which would differ from the Retail a header
@@ -774,15 +855,16 @@ impl Engine {
         self.awaiting_index
     }
 
-    /// v49: this engine's source as `Status` lists it. One source is the
-    /// live edition's by definition: there is no other.
-    pub fn edition_source(&self, spec: Option<String>, game_running: bool) -> EditionSource {
+    /// v49: this engine's source as `Status` lists it: `live` when it is the
+    /// live edition's (one source always is), `running` when its game runs
+    /// as far as the watcher tells.
+    pub fn edition_source(&self, spec: Option<String>, live: bool, running: bool) -> EditionSource {
         EditionSource {
             edition: self.edition(),
             source: spec,
             log: self.source_name.clone(),
-            live: true,
-            running: game_running,
+            live,
+            running,
         }
     }
 
@@ -1096,7 +1178,7 @@ impl Engine {
                     .find_map(|(o, x)| (*x == id).then_some(*o))
                 {
                     Pos::LiveOverall(ord)
-                } else if id.0 < self.first_id_of_file && id.0 < self.next_id {
+                } else if id.0 < self.first_id_of_file && id.0 < self.ids.issued() {
                     return Err((id, LoadError::Rotated));
                 } else {
                     return Err((id, LoadError::NotFound));

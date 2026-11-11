@@ -13,13 +13,24 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
 - **`wowdps stop` is the shutdown.** The daemon takes no signals; the unit's
   `ExecStop` runs it.
 - **Liveness is observation plus the game process** (`game.rs`), never the
-  log's mtime: the game flushes in multi-minute bursts.
+  log's mtime: the game flushes in multi-minute bursts. The watcher names
+  each running edition by the product folder in its command line; the
+  overlay is shown while any runs.
 - **Nothing closes on the game-process signal.** Closing is file-derived: a
   tailer that switches logs sends `HistoryReq::Retire` for the one it left.
 - **The hub never parses history.** Historical parses run on the loader
   pool. The hub pushes changed-only at 10 Hz and answers a `Watch` at once;
-  `SegmentId`s are monotonic for the daemon's life; at most 16 parsed
-  segments stay in the LRU.
+  `SegmentId`s are monotonic for the daemon's life, from one counter
+  (`engine::Ids`) every engine shares; at most 16 parsed segments stay in
+  each engine's LRU.
+- **One source and one engine per edition** (`sources.rs`, CONTRACT.md's
+  editions paragraph). Every answer goes through `Sources`: an id to the
+  engine holding it, `Live` and the list to the session's edition's, the
+  live edition by its rule there. A daemon of one source answers exactly as
+  it did before editions were followed; the hub's
+  `a_second_source_that_never_holds_a_log_changes_no_frame` holds it.
+  Discovery follows `wowdps_core::cli::FOLLOWED` (Retail alone today);
+  tests name other editions' folders through `DaemonOptions::editions`.
 - **Build per-client extras only for the kinds that read them:** the raid
   timeline for `Window` and `Mcp` (`engine::wants_raid`), stacked series for
   `Window` (`engine::wants_series`).

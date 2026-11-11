@@ -54,6 +54,7 @@ fn options(tmp: &Temp, source: SourceSpec) -> DaemonOptions {
         socket: tmp.join("test.sock"),
         lockfile: tmp.join("test.lock"),
         source,
+        editions: Default::default(),
         linger: true,
         idle_grace: Duration::from_secs(30),
         tick: Duration::from_millis(20),
@@ -727,4 +728,130 @@ fn real_log_first_snapshot_is_fast_cold_and_faster_warm() {
 
     first_snapshot("cold", 1_000);
     first_snapshot("warm", 100);
+}
+
+/// v49 end to end: a daemon following two editions' folders, one source
+/// and one engine each. `Status` lists both, the live one marked; a session
+/// pinned to Retail is answered Retail's log whichever is live; a
+/// following one is answered the live edition's — with no game running,
+/// the log written last — and is moved, its frames naming the other
+/// edition, when the other log is written later while the live one has no
+/// pull open.
+#[test]
+fn a_daemon_follows_one_source_per_edition_and_moves_its_followers() {
+    use wowdps_model::Edition;
+    use wowdps_proto::EditionRef;
+    let tmp = Temp::new("editions");
+    let retail = tmp.join("retail");
+    let forever = tmp.join("forever");
+    assert!(std::fs::create_dir_all(&retail).is_ok());
+    assert!(std::fs::create_dir_all(&forever).is_ok());
+    let retail_log = retail.join("WoWCombatLog-072726_200000.txt");
+    assert!(std::fs::copy(FIXTURE, &retail_log).is_ok());
+    let forever_fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+    assert!(
+        std::fs::copy(
+            forever_fixture,
+            forever.join("WoWCombatLog-110126_200000.txt")
+        )
+        .is_ok()
+    );
+    // Retail's log was written an hour ago; Forever's just now.
+    let hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+    let set = std::fs::File::options()
+        .write(true)
+        .open(&retail_log)
+        .and_then(|f| f.set_modified(hour_ago));
+    assert!(set.is_ok(), "{set:?}");
+
+    let mut opts = options(&tmp, SourceSpec::Dir(retail.clone()));
+    opts.editions = wowdps_daemon::Followed {
+        source: Some(Edition::Retail),
+        more: vec![(Edition::Forever, forever)],
+    };
+    let d = start(opts);
+    let edition_of = |m: &DaemonMsg| match m {
+        DaemonMsg::SegmentList {
+            entries,
+            edition,
+            source,
+            ..
+        } if !entries.is_empty() => Some((*edition, source.clone())),
+        _ => None,
+    };
+
+    let mut follower = Client::hello(&d.socket);
+    follower.watch_list();
+    let mut seen = Vec::new();
+    follower.recv_until(&mut seen, |m| {
+        edition_of(m).is_some_and(|(e, _)| e == Some(Edition::Forever))
+    });
+
+    let mut pinned = Client::hello(&d.socket);
+    pinned.send(&ClientMsg::Watch {
+        cursor: Cursor::List,
+        edition: EditionRef::Pin(Edition::Retail),
+    });
+    let list = pinned.recv_until(&mut Vec::new(), |m| edition_of(m).is_some());
+    assert_eq!(
+        edition_of(&list),
+        Some((
+            Some(Edition::Retail),
+            Some("WoWCombatLog-072726_200000.txt".to_string())
+        ))
+    );
+
+    let mut status = Client::hello(&d.socket);
+    status.send(&ClientMsg::GetStatus { req_id: 1 });
+    match status.recv_until(&mut Vec::new(), |m| matches!(m, DaemonMsg::Status { .. })) {
+        DaemonMsg::Status { editions, .. } => {
+            let got: Vec<_> = editions.iter().map(|e| (e.edition, e.live)).collect();
+            assert_eq!(
+                got,
+                [
+                    (Some(Edition::Retail), false),
+                    (Some(Edition::Forever), true)
+                ]
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // Retail's log is written now: once its lines land after the backlog,
+    // its log is the one written last and the follower is moved.
+    let mut seen = Vec::new();
+    let deadline = Instant::now() + DEADLINE;
+    let mut sec = 0;
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "the follower was never moved: {seen:#?}"
+        );
+        append(
+            &retail_log,
+            &format!(
+                "7/27/2026 20:30:{sec:02}.000-4  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n"
+            ),
+        );
+        sec += 1;
+        thread::sleep(Duration::from_millis(50));
+        follower.send(&ClientMsg::GetStatus { req_id: 2 });
+        let status = follower.recv_until(&mut seen, |m| matches!(m, DaemonMsg::Status { .. }));
+        if let DaemonMsg::Status { editions, .. } = status
+            && editions.first().is_some_and(|e| e.live)
+        {
+            break;
+        }
+    }
+    // The move: a list naming Retail's log, sent to the follower.
+    let named_retail = |m: &DaemonMsg| {
+        edition_of(m).is_some_and(|(e, s)| {
+            e == Some(Edition::Retail) && s.as_deref() == Some("WoWCombatLog-072726_200000.txt")
+        })
+    };
+    if !seen.iter().any(named_retail) {
+        follower.recv_until(&mut seen, named_retail);
+    }
+    follower.send(&ClientMsg::Shutdown);
+    let _ = d.done.recv_timeout(DEADLINE);
 }

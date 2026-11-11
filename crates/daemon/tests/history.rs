@@ -1344,6 +1344,7 @@ fn options(tmp: &Temp, source: SourceSpec, history_dir: PathBuf) -> DaemonOption
         socket: tmp.join("test.sock"),
         lockfile: tmp.join("test.lock"),
         source,
+        editions: Default::default(),
         linger: true,
         idle_grace: Duration::from_secs(30),
         tick: Duration::from_millis(20),
@@ -2947,6 +2948,101 @@ fn a_regrade_by_kind_rewrites_every_card_across_logs() {
     };
     assert_eq!(logs_of(FightKind::Encounter), 2, "pulls from both logs");
     assert_eq!(logs_of(FightKind::Overall), 1, "Σ cards sharing one log");
+    stop(d);
+}
+
+/// v49: a daemon following two editions' folders takes a set of sources:
+/// it sweeps both into the store, each card filed by its log's edition,
+/// and a stored fight's log is found again in either folder — a regrade of
+/// the Forever card finds its log in Forever's.
+#[test]
+fn a_daemon_following_two_editions_stores_and_regrades_from_both_folders() {
+    use wowdps_model::Edition;
+    use wowdps_proto::HistoryAnswer;
+    let tmp = Temp::new("two-editions");
+    let retail = tmp.join("retail");
+    let forever = tmp.join("forever");
+    std::fs::create_dir_all(&retail).unwrap();
+    std::fs::create_dir_all(&forever).unwrap();
+    std::fs::write(
+        retail.join("WoWCombatLog-072726.txt"),
+        std::fs::read_to_string(SAMPLE).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        forever.join("WoWCombatLog-110126.txt"),
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../core/fixtures/forever.txt"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let hist = tmp.join("history");
+    let mut opts = options(&tmp, SourceSpec::Dir(retail), hist.clone());
+    opts.editions = wowdps_daemon::Followed {
+        source: Some(Edition::Retail),
+        more: vec![(Edition::Forever, forever)],
+    };
+    let d = start(opts);
+    // Sample: its two bosses; Forever's log: its one. Each log is tailed,
+    // so neither's open visit is stored.
+    wait_for_fights(&d.socket, 3);
+    let cards = Store::open(
+        wowdps_daemon::history::DirBackend::new(hist.clone()),
+        Retention::default(),
+    )
+    .cards()
+    .to_vec();
+    let mut editions: Vec<Edition> = cards.iter().map(|c| c.edition()).collect();
+    editions.sort();
+    assert_eq!(
+        editions,
+        [Edition::Retail, Edition::Retail, Edition::Forever]
+    );
+    let geilhast = cards
+        .iter()
+        .find(|c| c.edition() == Edition::Forever)
+        .unwrap();
+    std::fs::remove_file(hist.join("rows").join(format!("{}.json", geilhast.id))).unwrap();
+
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    client.send(&ClientMsg::Regrade {
+        req_id: 1,
+        fight_id: Some(geilhast.id.clone()),
+        encounter: None,
+        difficulty: None,
+        kind: None,
+        edition: None,
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let mut queued = None;
+    while queued.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                req_id: 1,
+                answer: HistoryAnswer::Regraded { queued: n },
+            } = msg
+            {
+                queued = Some(n);
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(queued, Some(1), "its log is found in Forever's folder");
+    let deadline = Instant::now() + DEADLINE;
+    while !hist
+        .join("rows")
+        .join(format!("{}.json", geilhast.id))
+        .exists()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the Forever card was not rewritten"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
     stop(d);
 }
 

@@ -494,12 +494,14 @@ impl HistoryLink {
 }
 
 /// Start the history thread over a directory. `sweep` names what to import
-/// on start (the daemon's own source: its file, or every log in its dir).
+/// on start: the daemon's own sources (v49: every edition's — a file, or
+/// every log in a folder), which are also where a stored fight's log is
+/// looked for again.
 pub fn spawn(
     opts: HistoryOptions,
     loader: Sender<LoadReq>,
     hub: Sender<HubMsg>,
-    sweep: Option<&SourceSpec>,
+    sweep: &[SourceSpec],
 ) -> HistoryLink {
     let (tx, rx) = sync_channel::<HistoryReq>(QUEUE);
     let status = Arc::new(Mutex::new(HistoryStatus {
@@ -513,10 +515,13 @@ pub fn spawn(
         refused_reads: Arc::new(AtomicUsize::new(0)),
         mine: Arc::default(),
     };
-    let sweep_root = sweep.map(|s| match s {
-        SourceSpec::File(p) | SourceSpec::Dir(p) => p.clone(),
-    });
-    let source = sweep.cloned();
+    let sweep_roots: Vec<PathBuf> = sweep
+        .iter()
+        .map(|s| match s {
+            SourceSpec::File(p) | SourceSpec::Dir(p) => p.clone(),
+        })
+        .collect();
+    let sources = sweep.to_vec();
     let reply = link.clone();
     thread::spawn(move || {
         let cache = opts.cache_dir.clone().map(IndexCache::new);
@@ -531,7 +536,7 @@ pub fn spawn(
             queued: HashSet::new(),
             inflight: false,
             logs: HashMap::new(),
-            source,
+            sources,
             scans: VecDeque::new(),
             backfill: VecDeque::new(),
             product: opts.addon_dir.clone(),
@@ -551,8 +556,10 @@ pub fn spawn(
         // v45 (R29): and every fight whose replay is wanted and missing (a
         // store older than the tier, a progression wipe): cut alone.
         worker.backfill.extend(worker.store.recuts());
-        if let Some(root) = sweep_root {
-            worker.sweep(&root);
+        for root in &sweep_roots {
+            worker.sweep(root);
+        }
+        if !sweep_roots.is_empty() {
             worker.publish(&status);
         }
         run(rx, worker, status);
@@ -622,9 +629,11 @@ struct Worker<B: Backend> {
     inflight: bool,
     /// Per-log identity, resolved once.
     logs: HashMap<PathBuf, LogFacts>,
-    /// The daemon's own source: whichever log it tails is live, and only
-    /// that log's open tail and open visit are left to the engine.
-    source: Option<SourceSpec>,
+    /// The daemon's own sources (v49: one per edition it follows): the log
+    /// each tails is live, and only those logs' open tails and open visits
+    /// are left to the engines; every one's folder is searched when a
+    /// stored fight's log is wanted again.
+    sources: Vec<SourceSpec>,
     /// Files a sweep listed and `run` has yet to index-scan, with whether
     /// each is the tailed (live) log.
     scans: VecDeque<(PathBuf, bool)>,
@@ -1292,22 +1301,24 @@ impl<B: Backend> Worker<B> {
         Some((path, idx))
     }
 
-    /// The file whose header hashes to `log`: the daemon's own source (a
-    /// file, or every log in its directory), plus any path already seen.
+    /// The file whose header hashes to `log`: the daemon's own sources (v49:
+    /// every edition's — a file, or every log in its directory), plus any
+    /// path already seen.
     fn path_of_log(&mut self, log: u64) -> Option<PathBuf> {
         let mut candidates: Vec<PathBuf> = self.logs.keys().cloned().collect();
-        match &self.source {
-            Some(SourceSpec::File(p)) => candidates.push(p.clone()),
-            Some(SourceSpec::Dir(d)) => {
-                if let Ok(rd) = std::fs::read_dir(d) {
-                    candidates.extend(rd.flatten().map(|e| e.path()).filter(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.starts_with("WoWCombatLog") && n.ends_with(".txt"))
-                    }));
+        for source in &self.sources {
+            match source {
+                SourceSpec::File(p) => candidates.push(p.clone()),
+                SourceSpec::Dir(d) => {
+                    if let Ok(rd) = std::fs::read_dir(d) {
+                        candidates.extend(rd.flatten().map(|e| e.path()).filter(|p| {
+                            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                                n.starts_with("WoWCombatLog") && n.ends_with(".txt")
+                            })
+                        }));
+                    }
                 }
             }
-            None => {}
         }
         candidates.into_iter().find(|p| self.facts(p).id == log)
     }
@@ -1334,20 +1345,30 @@ impl<B: Backend> Worker<B> {
         } else {
             vec![root.to_path_buf()]
         };
-        // The tailed log — the daemon's file, or the newest of its directory
-        // — is the one whose open tail and open visit are live. A file
-        // handed to `wowdps history import` is an older session unless it
-        // IS that log, so its open visit (the night's last key) is imported.
-        // "Is" means the same file, not the same spelling: the import path
-        // is canonicalized by the CLI, the config's `logs_dir` is not.
-        let newest = match &self.source {
-            Some(SourceSpec::File(p)) => Some(p.clone()),
-            Some(SourceSpec::Dir(d)) => newest_log(d),
-            None if root.is_dir() => newest_log(root),
-            None => Some(root.to_path_buf()),
+        // The tailed logs — each source's file, or the newest of its
+        // directory (v49: one per edition followed) — are the ones whose
+        // open tails and open visits are live. A file handed to `wowdps
+        // history import` is an older session unless it IS one of them, so
+        // its open visit (the night's last key) is imported. "Is" means the
+        // same file, not the same spelling: the import path is canonicalized
+        // by the CLI, the config's `logs_dir` is not.
+        let tailed: Vec<PathBuf> = if self.sources.is_empty() {
+            if root.is_dir() {
+                newest_log(root).into_iter().collect()
+            } else {
+                vec![root.to_path_buf()]
+            }
+        } else {
+            self.sources
+                .iter()
+                .filter_map(|s| match s {
+                    SourceSpec::File(p) => Some(p.clone()),
+                    SourceSpec::Dir(d) => newest_log(d),
+                })
+                .collect()
         };
         for path in files {
-            let live = newest.as_deref().is_some_and(|n| same_file(n, &path));
+            let live = tailed.iter().any(|n| same_file(n, &path));
             // Listed only: `run` scans one file at a time between messages.
             if !self.scans.iter().any(|(p, _)| p == &path) {
                 self.scans.push_back((path, live));
