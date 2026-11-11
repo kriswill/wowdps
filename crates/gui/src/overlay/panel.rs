@@ -1652,6 +1652,6 @@ mod autos;
 mod compare;
 mod surface;
 pub use autos::start_view;
-pub use surface::Reanchor;
+pub use surface::{Reanchor, Rehome};
 #[cfg(test)]
 pub(crate) mod tests;

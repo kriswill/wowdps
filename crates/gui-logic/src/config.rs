@@ -49,7 +49,9 @@ pub struct Config {
     /// output that is active when the overlay starts.
     pub monitor: Option<String>,
     /// Hyprland only: hide the overlay whenever the game's workspace is not
-    /// on any screen. No effect under other compositors.
+    /// on any screen, and open it on the game's monitor. With two games'
+    /// windows open, the game's is the live edition's, told by its
+    /// process (`hypr::game_window`). No effect under other compositors.
     pub follow_game: bool,
     /// Case-insensitive substring identifying the game window, matched
     /// against its Hyprland class and title — or several separated by `|`

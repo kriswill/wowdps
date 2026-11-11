@@ -314,32 +314,7 @@ impl crate::session::Link for MovingLink {
 #[gpui_kit::test]
 fn the_overlay_re_pins_when_the_live_edition_moves(cx: &mut TestAppContext) {
     use wowdps_model::Edition;
-    own_config();
-    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/fixtures");
-    let moved = std::rc::Rc::new(Cell::new(false));
-    let link = MovingLink {
-        retail: wowdps_daemon::mock::MockDaemon::fixture_at(&fixtures.join("sample.txt")),
-        forever: wowdps_daemon::mock::MockDaemon::fixture_at(&fixtures.join("forever.txt")),
-        moved: std::rc::Rc::clone(&moved),
-        sent_move: false,
-        inbox: Vec::new(),
-    };
-    let link = std::cell::RefCell::new(Some(link));
-    let (window, overlay) = testkit::open(cx, size(px(PANEL.0), px(SCREEN_H)), |_, cx| {
-        let session = cx.new(|_| Session::new(link.borrow_mut().take().expect("one link")));
-        let split: super::AuxMaker = std::rc::Rc::new(|_| Err("no split".to_string()));
-        cx.new(|cx| {
-            let mut overlay = Overlay::new(session, config(), split, cx);
-            overlay.expanded = true;
-            overlay
-        })
-    });
-    let session = overlay.read_with(cx, |o, _| o.session().clone());
-    let rig = Rig {
-        window,
-        overlay,
-        session,
-    };
+    let (rig, moved) = moving_rig(cx);
     to_the_kill(cx, &rig);
     rig.session.read_with(cx, |s, _| {
         assert_eq!(s.state().edition(), Some(Edition::Retail));
@@ -367,6 +342,110 @@ fn the_overlay_re_pins_when_the_live_edition_moves(cx: &mut TestAppContext) {
             "nothing of Retail's list kept"
         );
     });
+}
+
+/// Under Hyprland with both games' windows open — alike in class and title,
+/// Forever's listed first — the overlay tells its game tracker the edition
+/// its session hears is live and follows that edition's window: Retail's
+/// workspace off screen hides it and Retail's monitor is where it belongs
+/// (`Rehome`); once the live edition moves to Forever's, whose workspace is
+/// up, it shows again and belongs on Forever's monitor. The tracker runs on
+/// a fake Hyprland and a fake `/proc`, in real threads.
+#[gpui_kit::test]
+fn the_overlay_follows_the_live_editions_window(cx: &mut TestAppContext) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use wowdps_gui_logic::hypr::{Tracker, fake};
+    use wowdps_model::Edition;
+
+    // Never `fake::test_env()` here: it sets the process's environment,
+    // which the other tests' threads read.
+    let root = fake::scratch_root().join("overlay-live");
+    let hypr = fake::FakeHypr::at(root.join("h"));
+    hypr.set_workspaces(fake::WORKSPACES_TWO_GAMES);
+    hypr.set_clients(&format!("{}{}", fake::forever_on_9(), fake::retail_on_8()));
+    // A terminal up on DP-1 (Retail's 8 off screen), Forever's 9 on DP-2.
+    hypr.set_monitors(&fake::monitors(1, 9));
+    let proc = fake::both_games(&root.join("proc"));
+    let tracker = Tracker::start_at(hypr.dir.clone(), "World of Warcraft", proc).unwrap();
+    let events = hypr.accept_events();
+
+    let (rig, moved) = moving_rig(cx);
+    let rehomes = Rc::new(RefCell::new(Vec::<String>::new()));
+    let heard = Rc::clone(&rehomes);
+    cx.update(|cx| {
+        cx.subscribe(&rig.overlay, move |_, r: &super::Rehome, _| {
+            heard.borrow_mut().push(r.0.clone());
+        })
+        .detach();
+    });
+    let mut told = None;
+    // Poll as the overlay's timer does until `want` holds; the tracker
+    // answers from its own threads, in real time.
+    let mut poll_until = |cx: &mut TestAppContext, want: &dyn Fn(bool, &[String]) -> bool| {
+        for _ in 0..250 {
+            rig.overlay
+                .update(cx, |o, cx| o.game_tick(&tracker, &mut told, cx));
+            cx.run_until_parked();
+            let visible = rig.overlay.read_with(cx, |o, _| o.game_visible);
+            if want(visible, &rehomes.borrow()) {
+                return told;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("the tracker never answered");
+    };
+
+    settle(cx, &rig.session);
+    let live = poll_until(cx, &|visible: bool, homes: &[String]| {
+        !visible && homes == ["DP-1"]
+    });
+    assert_eq!(live, Some(Edition::Retail), "the tracker is told Retail");
+
+    moved.set(true);
+    settle(cx, &rig.session);
+    let live = poll_until(cx, &|visible: bool, homes: &[String]| {
+        visible && homes == ["DP-1", "DP-2"]
+    });
+    assert_eq!(live, Some(Edition::Forever), "then Forever");
+
+    drop(tracker);
+    drop(events);
+    drop(hypr);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The overlay over a link that serves `sample.txt`'s Retail log until
+/// the returned flag is set, then moves the live edition to
+/// `forever.txt`'s Forever log, as the daemon does.
+fn moving_rig(cx: &mut TestAppContext) -> (Rig, std::rc::Rc<Cell<bool>>) {
+    own_config();
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/fixtures");
+    let moved = std::rc::Rc::new(Cell::new(false));
+    let link = MovingLink {
+        retail: wowdps_daemon::mock::MockDaemon::fixture_at(&fixtures.join("sample.txt")),
+        forever: wowdps_daemon::mock::MockDaemon::fixture_at(&fixtures.join("forever.txt")),
+        moved: std::rc::Rc::clone(&moved),
+        sent_move: false,
+        inbox: Vec::new(),
+    };
+    let link = std::cell::RefCell::new(Some(link));
+    let (window, overlay) = testkit::open(cx, size(px(PANEL.0), px(SCREEN_H)), |_, cx| {
+        let session = cx.new(|_| Session::new(link.borrow_mut().take().expect("one link")));
+        let split: super::AuxMaker = std::rc::Rc::new(|_| Err("no split".to_string()));
+        cx.new(|cx| {
+            let mut overlay = Overlay::new(session, config(), split, cx);
+            overlay.expanded = true;
+            overlay
+        })
+    });
+    let session = overlay.read_with(cx, |o, _| o.session().clone());
+    let rig = Rig {
+        window,
+        overlay,
+        session,
+    };
+    (rig, moved)
 }
 
 #[gpui_kit::test]

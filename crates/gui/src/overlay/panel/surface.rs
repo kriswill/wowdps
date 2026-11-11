@@ -22,7 +22,7 @@ use gpui_kit::{
 use wowdps_gui_logic::config::{Config, Edge};
 use wowdps_gui_logic::hypr;
 use wowdps_gui_logic::surface::{nearest_edge, surface_size, tab_size};
-use wowdps_model::Screen;
+use wowdps_model::{Edition, Screen};
 
 use super::super::strip::{Rect, Strip};
 use super::Overlay;
@@ -48,6 +48,14 @@ pub struct Grip {
 pub struct Reanchor(pub Edge);
 
 impl EventEmitter<Reanchor> for Overlay {}
+
+/// The live edition changed and its game window is on this monitor (a
+/// Hyprland name, `DP-1`): the surface is recreated there, unless the
+/// output is pinned or the surface is on it already (`overlay::surface`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rehome(pub String);
+
+impl EventEmitter<Rehome> for Overlay {}
 
 /// What the surface holds this frame: the strip, and the content's size
 /// and place on it.
@@ -262,35 +270,65 @@ impl Overlay {
     }
 
     /// Under Hyprland with `follow_game`, follow the game's workspace: the
-    /// tracking thread says whether it is on screen, and this polls it.
+    /// tracking thread says whether it is on screen, and this polls it. The
+    /// game's window is the live edition's when two games' are open, so the
+    /// tracker is told the edition the session last heard is live, and the
+    /// monitor it tells on a change is where the surface goes ([`Rehome`]).
     pub(super) fn follow_game(&mut self, cx: &mut Context<Self>) {
-        let Some(rx) = (self.cfg.follow_game && self.hypr.is_some())
+        let Some(tracker) = (self.cfg.follow_game && self.hypr.is_some())
             .then(|| hypr::spawn(self.cfg.game_match.clone()))
             .flatten()
         else {
             return;
         };
         self._game = Some(cx.spawn(async move |this, cx| {
+            // The live edition last told the tracker: none, to begin with.
+            let mut told = None;
             loop {
                 cx.background_executor().timer(GAME_POLL).await;
-                let mut latest = None;
-                while let Ok(v) = rx.try_recv() {
-                    latest = Some(v);
-                }
-                let alive = this.update(cx, |o, cx| {
-                    if let Some(v) = latest
-                        && o.game_visible != v
-                    {
-                        o.game_visible = v;
-                        super::autos::trace(o.started, format_args!("game workspace visible={v}"));
-                        cx.notify();
-                    }
-                });
+                let alive = this.update(cx, |o, cx| o.game_tick(&tracker, &mut told, cx));
                 if alive.is_err() {
                     break;
                 }
             }
         }));
+    }
+
+    /// One poll of the game tracker: tell it the live edition when the
+    /// session's has changed since `told`, then take what it saw.
+    pub(crate) fn game_tick(
+        &mut self,
+        tracker: &hypr::Tracker,
+        told: &mut Option<Edition>,
+        cx: &mut Context<Self>,
+    ) {
+        let live = self.state(cx).edition();
+        if live != *told {
+            *told = live;
+            super::autos::trace(self.started, format_args!("live edition {live:?}"));
+            tracker.set_live(live);
+        }
+        for seen in tracker.drain() {
+            self.take_seen(seen, cx);
+        }
+    }
+
+    /// What the game tracker saw: the game's workspace shown or hidden, or
+    /// the live game's monitor.
+    fn take_seen(&mut self, seen: hypr::Seen, cx: &mut Context<Self>) {
+        match seen {
+            hypr::Seen::Visible(v) => {
+                if self.game_visible != v {
+                    self.game_visible = v;
+                    super::autos::trace(self.started, format_args!("game workspace visible={v}"));
+                    cx.notify();
+                }
+            }
+            hypr::Seen::Monitor(name) => {
+                super::autos::trace(self.started, format_args!("live game on {name}"));
+                cx.emit(Rehome(name));
+            }
+        }
     }
 }
 

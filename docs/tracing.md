@@ -38,7 +38,7 @@ wowdps                                                     # `wowdps --file …`
 
 | Variable | Effect |
 |---|---|
-| `WOWDPS_OVERLAY_DEBUG=1` | Trace input on stderr: grip presses and releases (moved or not, and the offset), expand/collapse toggles, the daemon's `SetVisible`, and Hyprland workspace show/hide flips (`game workspace visible=…`) — all stamped `[    ms]` since process start. |
+| `WOWDPS_OVERLAY_DEBUG=1` | Trace input on stderr: grip presses and releases (moved or not, and the offset), expand/collapse toggles, the daemon's `SetVisible`, Hyprland workspace show/hide flips (`game workspace visible=…`), the live edition handed to the workspace tracker (`live edition Some(Retail)`) and the monitor its game window is on after a change (`live game on DP-1`) — all stamped `[    ms]` since process start. |
 | `WOWDPS_OVERLAY_OUTPUT=<name>` | Open on that output, ahead of config `monitor` and the game's monitor. Use it to put the overlay on a headless output for a screenshot. |
 | `WOWDPS_OVERLAY_START_EXPANDED=1` | Start with the panel open instead of the tab. For screenshots and layout work on outputs nothing can click. |
 | `WOWDPS_OVERLAY_AUTOTOGGLE=1` | Fire one expand/collapse toggle ~2 s after launch. Verifies the resize path end-to-end without any pointer. |
@@ -104,7 +104,14 @@ workspace is not displayed on any monitor. `game_match` is a case-insensitive
 substring of the window's class or title, or several separated by `|` with no
 spaces around it (one per edition's window): a window matching any is the
 game's, a `|` always separates, and an empty value or piece matches no
-window. Both transitions can be driven
+window. With two games' windows open at once (Retail's and Forever's, alike
+in class and title), the game's is the one whose process's command line
+(`/proc/<pid>/cmdline`, from the window's `pid:`) names the live edition by
+its product folder, `_retail_` or `_forever_`; with no live edition known, or
+no window's process naming it, the best match listed first is, as with one.
+When the live edition changes, the overlay shows and hides by its window's
+workspace at once and, unless `monitor` or `WOWDPS_OVERLAY_OUTPUT` pins the
+output, opens again on that window's monitor. Both transitions can be driven
 without WoW: point `game_match` at a fake title in a scratch config, then
 spawn and close such a window on a workspace nothing displays:
 
