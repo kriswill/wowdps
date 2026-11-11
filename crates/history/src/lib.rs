@@ -1268,10 +1268,12 @@ impl Lake {
     /// pulls of the UTC day starting at `day_utc_ms`, folded per friendly
     /// player. `spec` is the night's most-played (specless pulls ignored —
     /// NULL only when every pull is; a tie → the smallest id), `role` that
-    /// spec's, picked FIRST: `pulls` and every fold then count ONLY the
-    /// pulls played in that role (`n.role IS NOT DISTINCT FROM s.role` over
-    /// a LEFT JOIN, so a fully specless player is still rostered with all
-    /// their pulls), one denominator per column — every mean is written
+    /// spec's, else (no spec on any pull) the role the pulls stored most
+    /// often (a tie → tank, healer, dps), picked FIRST: `pulls` and every
+    /// fold then count ONLY the pulls whose `players.role` is that role
+    /// (`n.role IS NOT DISTINCT FROM s.role` over a LEFT JOIN, so a player
+    /// with no role at all is still rostered with all their pulls), one
+    /// denominator per column — every mean is written
     /// `sum(x) / count(*)` to state that. `measure` is the MEAN of the
     /// per-pull role measure — `effective_dps_sql` for a DPS, `hps` for a
     /// healer, `mitigated_pct_sql` for a tank, 0.0 with no role, like the
@@ -1314,14 +1316,16 @@ impl Lake {
         // `wowdps_model::mitigated_pct` operation for operation, and the
         // overheal share `overheal as f64 * 100.0 / (healing + overheal)
         // as f64` likewise — so the two readers agree bit for bit.
-        // v49: the night's roles are the SPEC'S alone, as the daemon's — a
-        // stored role joins the roster with the ruling that sets one.
+        // v49: a pull's role is `players.role` (the spec's, else the stored
+        // one, as `CardPlayer::role`); the night's is the mode spec's, else
+        // the mode stored role, as the daemon picks them.
         let spec_role = role_case();
         let t = self.sql_with(
             &format!(
                 "WITH n AS (\
-                   SELECT p.guid, p.name, p.spec, {spec_role} AS role, p.start_utc_ms, \
-                          CASE {spec_role} WHEN 'healer' THEN p.hps \
+                   SELECT p.guid, p.name, p.spec, {spec_role} AS spec_role, p.role, \
+                          p.start_utc_ms, \
+                          CASE p.role WHEN 'healer' THEN p.hps \
                                       WHEN 'tank' THEN \
                                         CASE WHEN {taken} + {prevented} + {reduced} = 0 THEN 0.0 \
                                              ELSE CAST({mitigated} AS DOUBLE) * 100.0 \
@@ -1339,13 +1343,28 @@ impl Lake {
                    WHERE p.encounter_id = ? AND p.difficulty = ? AND NOT p.aborted \
                      AND NOT p.imported \
                      AND NOT p.enemy AND (p.start_utc_ms // 86400000) * 86400000 = ?\
-                 ), s AS (\
+                 ), by_spec AS (\
                    SELECT guid, spec, role FROM (\
-                     SELECT guid, spec, role, \
+                     SELECT guid, spec, spec_role AS role, \
                             row_number() OVER (PARTITION BY guid \
                                                ORDER BY count(*) DESC, spec ASC) AS rn \
-                     FROM n WHERE spec IS NOT NULL GROUP BY guid, spec, role\
+                     FROM n WHERE spec IS NOT NULL GROUP BY guid, spec, spec_role\
                    ) WHERE rn = 1\
+                 ), by_role AS (\
+                   SELECT guid, role FROM (\
+                     SELECT guid, role, \
+                            row_number() OVER (PARTITION BY guid \
+                                               ORDER BY count(*) DESC, \
+                                                        CASE role WHEN 'tank' THEN 0 \
+                                                                  WHEN 'healer' THEN 1 \
+                                                                  ELSE 2 END) AS rn \
+                     FROM n WHERE role IS NOT NULL GROUP BY guid, role\
+                   ) WHERE rn = 1\
+                 ), s AS (\
+                   SELECT g.guid, b.spec, coalesce(b.role, o.role) AS role \
+                   FROM (SELECT DISTINCT guid FROM n) g \
+                   LEFT JOIN by_spec b ON b.guid = g.guid \
+                   LEFT JOIN by_role o ON o.guid = g.guid\
                  ), r AS (\
                    SELECT n.*, s.spec AS mode_spec, s.role AS mode_role \
                    FROM n LEFT JOIN s ON s.guid = n.guid \
