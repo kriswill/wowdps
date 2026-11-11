@@ -32,7 +32,8 @@
 # so a run writes its own edition's committed table where it has one
 # (Retail's beside the code, Forever's under crates/core/src/forever/),
 # and the extractor refuses any product's output on another edition's,
-# however -o spells it. The caches in the data home are Retail's alone.
+# however -o spells it. The caches in the data home are Retail's alone,
+# but for the games' emblems (gen-emblems), every game's and no product's.
 # What goes elsewhere names its product beside its build.
 
 : "${root:?tools/lib.sh: set root to the checkout before sourcing it}"
