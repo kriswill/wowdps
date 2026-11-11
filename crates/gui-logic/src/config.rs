@@ -50,7 +50,9 @@ pub struct Config {
     /// on any screen. No effect under other compositors.
     pub follow_game: bool,
     /// Case-insensitive substring identifying the game window, matched
-    /// against its Hyprland class and title.
+    /// against its Hyprland class and title — or several separated by `|`,
+    /// one per edition's window, any of which is the game's
+    /// (`hypr::needles`).
     pub game_match: String,
     /// Overlay: also show the instance's Σ overall under the current fight's
     /// rows (the footer Σ toggle; remembered across launches).
