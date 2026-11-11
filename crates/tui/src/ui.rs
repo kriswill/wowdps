@@ -1296,6 +1296,47 @@ mod tests {
         assert!(header.contains("Forever · fresh.txt"), "{header}");
     }
 
+    /// v49: a session pinned to an edition (`wowdps --edition`) is shown
+    /// that edition's logs alone, named in the header: pinned to the
+    /// fixture's own edition it lists the fixture as a following session
+    /// does; pinned to another, no source carries it, and the list is empty
+    /// under that edition's name.
+    #[test]
+    fn a_pinned_session_shows_its_edition_alone_and_names_it() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        let pinned = |edition| {
+            let mut mock = MockDaemon::fixture();
+            let mut state = ClientState::new();
+            let _ = state.set_edition(EditionRef::Pin(edition));
+            let first = state.initial_request();
+            pump(&mut state, &mut mock, vec![first]);
+            state
+        };
+        let (following, _) = indexed_state();
+
+        let retail = pinned(Edition::Retail);
+        assert_eq!(retail.edition(), Some(Edition::Retail));
+        assert_eq!(render(&retail, 100, 10), render(&following, 100, 10));
+        let header = render(&retail, 100, 10)[0].clone();
+        assert!(header.contains("Retail · "), "{header}");
+
+        let forever = pinned(Edition::Forever);
+        assert_eq!(forever.edition(), Some(Edition::Forever));
+        assert_eq!(forever.segment_count(), 0);
+        let lines = render(&forever, 100, 10);
+        assert!(
+            lines[0].contains("Forever · waiting for log file"),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            flat(&lines).contains("Waiting for a combat log."),
+            "{}",
+            flat(&lines)
+        );
+    }
+
     #[test]
     fn a_log_with_no_segments_yet_is_told_apart_from_no_log() {
         let mut state = ClientState::new();

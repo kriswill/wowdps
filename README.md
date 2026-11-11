@@ -74,7 +74,11 @@ libGL at runtime. On NixOS use the dev shell (`nix develop` or devenv), or
 ```sh
 wowdps                       # follow the configured or discovered logs dir
 wowdps --file some-log.txt   # follow a specific log
-wowdps status                # daemon state
+wowdps --edition forever     # one edition's logs (retail or forever) when
+                             # the daemon follows them, else an empty list
+                             # under its name; without it, the live edition's
+wowdps status                # daemon state: each edition's source, its log
+                             # and which is live
 wowdps stop                  # stop the daemon
 wowdps addon install         # put the wowdps addon in the game's AddOns
                              # folder: it records your raid's guilds, which

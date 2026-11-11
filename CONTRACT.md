@@ -895,7 +895,8 @@ its callers.
 
 Editions (v49): every Watch the state sends names `ClientState::edition_ref()`
 — `Follow` unless a frontend opts in to a pin with `set_edition(EditionRef)`,
-which no frontend calls yet; it starts the state over on that edition's list,
+which the TUI calls once, before its first Watch, for `--edition`; it starts the
+state over on that edition's list,
 as a rotated log does. `edition()` is the edition the daemon last answered in
 (kept through a frame that names none) and `segment_edition()` the watched
 segment's own (a stored pull's from its card). A frame naming ANOTHER edition
@@ -1218,11 +1219,17 @@ rewrites a file it cannot read whole.
 
 ## CLI (owner: tui)
 
-Git-style subcommands: `wowdps [--file|--logs]` (TUI client; source conflict with
-a running daemon is a hard error naming both; v49: its header names the edition the
-daemon answers in ahead of the log), `wowdps gui [--file|--logs]`,
-`wowdps daemon [--linger] [--file|--logs]`, `wowdps status` (v49: a line per edition's
-source — its edition, `(live)`, the log it follows), `wowdps stop`,
+Git-style subcommands: `wowdps [--file|--logs] [--edition <name>]` (TUI client; source
+conflict with a running daemon is a hard error naming both; v49: its header names the
+edition the daemon answers in ahead of the log; it follows the live edition, and
+`--edition` pins it to one, `retail` or `forever` in any case (`cli::PRODUCTS`' keys):
+that edition's logs when the daemon follows them, else an empty list under its name;
+any other name is refused with the names it takes, exit 2), `wowdps gui [--file|--logs]`,
+`wowdps daemon [--linger] [--file|--logs]`, `wowdps status` (v49: a pair of lines per
+edition's source, the first source's first — `source:` what is followed, then
+`edition:` its edition, `(live)` on the live one, the log it follows now — so a daemon
+of one source prints the one pair it always did; with several, the `game:` line names
+the editions whose game runs), `wowdps stop`,
 `wowdps addon [status | install]` (v31: the wowdps addon in the game's AddOns folder —
 `status` needs no daemon and reports install / interface / state / each account's
 SavedVariables, its players and creatures counted; `install` writes it),
