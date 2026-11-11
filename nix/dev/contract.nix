@@ -53,8 +53,8 @@ pkgs.writeShellScriptBin "wowdps-dev-contract" (
     # The twins hand cargo the same inputs (env.nix), or every switch
     # between the shells is a full rebuild: the pinned PKG_CONFIG_PATH (a
     # Linux pin: it lists the GUI's Linux libraries), and what devenv's
-    # languages.rust adds, which the flake shell mirrors — its linker, and
-    # the clang that sets CC and CXX. In devenv the linker check compares
+    # languages.rust adds, which the flake shell mirrors — its linker, the
+    # linker's response file, and the clang that sets CC and CXX. In devenv the linker check compares
     # the mirror's path against devenv's own.
     [ "''${PKG_CONFIG_PATH:-}" = ${lib.escapeShellArg pinned.PKG_CONFIG_PATH} ] || {
       echo "dev shell contract: PKG_CONFIG_PATH is not the pinned list (nix/dev/env.nix)" >&2
@@ -62,6 +62,10 @@ pkgs.writeShellScriptBin "wowdps-dev-contract" (
     }
     [ "''${${rustLinkerVar}:-}" = ${lib.escapeShellArg "${rustLinker}"} ] || {
       echo "dev shell contract: ${rustLinkerVar} is ''${${rustLinkerVar}:-unset}, not ${rustLinker}" >&2
+      exit 1
+    }
+    [ "''${NIX_LD_USE_RESPONSE_FILE:-}" = 1 ] || {
+      echo "dev shell contract: NIX_LD_USE_RESPONSE_FILE is ''${NIX_LD_USE_RESPONSE_FILE:-unset}, not 1" >&2
       exit 1
     }
     [ "''${CC:-}" = clang ] && [ "''${CXX:-}" = clang++ ] || {

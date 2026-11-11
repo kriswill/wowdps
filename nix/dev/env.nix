@@ -69,15 +69,17 @@ rec {
   # its default: it sidesteps GCC collect2's "Argument list too long" in
   # large Nix environments), and the clang it puts on PATH sets CC=clang and
   # CXX=clang++ (the compilers the cc-built crates use, DuckDB's bundled
-  # C++ among them). On x86_64-unknown-linux-gnu, where rustc links with LLD out
-  # of the box and stops adding its LLD flags once a driver is named, it
-  # names its `devenv-rust-linker-clang` script, which forces ld.lld (rustc
-  # reads the driver from the name's ending, so it adds no `-fuse-ld=lld` of
-  # its own after it); on any other target, clang itself. The flake shell mirrors all of it: it adds the
-  # same clang (flake.nix) and exports the same linker, the script written
-  # out again with the same name and text so it builds to the same store
-  # path. If devenv ever changes its choice, the paths part and the contract
-  # says so.
+  # C++ among them). On x86_64-unknown-linux-gnu, where rustc links with LLD
+  # out of the box and adds its own `-fuse-ld=lld` unless the linker's name
+  # marks a C driver without LLD (a `-clang` or `-gcc` ending), it names its
+  # `devenv-rust-linker-clang` script, which forces ld.lld; on any other
+  # target, clang itself. With Clang linking it also sets
+  # NIX_LD_USE_RESPONSE_FILE=1, so the wrapped linker takes its arguments
+  # from a file and a long link line cannot overrun the limit. The flake
+  # shell mirrors all of it: it adds the same clang (flake.nix), exports the
+  # same linker, the script written out again with the same name and text so
+  # it builds to the same store path, and sets the same variable. If devenv
+  # ever changes its choice, the paths part and the contract says so.
   rustLinker =
     if pkgs.stdenv.hostPlatform.rust.rustcTarget == "x86_64-unknown-linux-gnu" then
       pkgs.writeShellScript "devenv-rust-linker-clang" ''
@@ -99,6 +101,7 @@ rec {
     shellHook
     + lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
       export ${rustLinkerVar}=${rustLinker}
+      export NIX_LD_USE_RESPONSE_FILE=1
     '';
   flakePackages = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.clang ];
 
