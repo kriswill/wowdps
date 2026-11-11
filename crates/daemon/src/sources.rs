@@ -15,10 +15,12 @@
 //! runs; with both running, the one with an open pull — kept while it has
 //! one, and while neither has, until the other opens one; with none running,
 //! the one whose log was written last — kept, too, while it has a pull
-//! open, so two logs written in turn with no game seen do not move a
-//! following client on every line. Only the live engine's trailing segment
-//! is what a follower is shown: a stale open pull in another edition's log
-//! draws no one.
+//! open or its log is still being written, so two logs written in turn
+//! with no game seen do not move a following client on every line. It is
+//! chosen again on every tail event, game report and tick, so a pull or a
+//! log going quiet takes effect within a tick. Only the live engine's
+//! trailing segment is what a follower is shown: a stale open pull in
+//! another edition's log draws no one.
 //!
 //! A source is the folder's, not the log's: the header decides a log's
 //! edition, so a log in one product's folder whose header names another
@@ -161,24 +163,31 @@ impl Sources {
         self.engine(i).source_path.is_some()
     }
 
-    /// The source answering a session looking in `scope`: following, the
-    /// live one; pinned, the started source whose log is of the pin's
-    /// edition — the live one first, then the one written last — else the
-    /// live one, which answers such a pin the empty answer.
-    pub fn for_scope(&self, scope: EditionRef) -> usize {
+    /// The source serving a session looking in `scope`: following, the live
+    /// one; pinned, the started source whose log is of the pin's edition —
+    /// the live one first, then the one written last — and `None` when no
+    /// source is: such a session is answered the empty answer and acts on
+    /// nothing (`DiscardTrash`, a one-shot's `Live`).
+    pub fn serving(&self, scope: EditionRef) -> Option<usize> {
         match scope {
-            EditionRef::Follow => self.live,
+            EditionRef::Follow => Some(self.live),
             EditionRef::Pin(_) => {
-                let serving = |i: &usize| self.started(*i) && self.engine(*i).serves(scope);
-                if serving(&self.live) {
-                    return self.live;
+                let serves = |i: &usize| self.started(*i) && self.engine(*i).serves(scope);
+                if serves(&self.live) {
+                    return Some(self.live);
                 }
                 (0..self.len())
-                    .filter(serving)
+                    .filter(serves)
                     .max_by_key(|i| self.engine(*i).written())
-                    .unwrap_or(self.live)
             }
         }
+    }
+
+    /// The source answering a session looking in `scope`: the one serving
+    /// it ([`Sources::serving`]), else the live one, whose `Engine::serves`
+    /// answers such a pin the empty answer.
+    pub fn for_scope(&self, scope: EditionRef) -> usize {
+        self.serving(scope).unwrap_or(self.live)
     }
 
     /// The source holding segment `id` now, if any does.
@@ -205,12 +214,12 @@ impl Sources {
     }
 
     /// The source whose loader request `id` was (it asked for the load, or
-    /// holds the id); the first otherwise, as one source always took it.
-    pub fn for_load(&self, id: SegmentId) -> usize {
+    /// holds the id); `None` when none does — its log rotated away while
+    /// the slice was parsed, and no source can ever resolve the meter.
+    pub fn for_load(&self, id: SegmentId) -> Option<usize> {
         (0..self.len())
             .find(|i| self.engine(*i).loading.contains(&id))
             .or_else(|| self.owner_of(id))
-            .unwrap_or(0)
     }
 
     /// Feed source `i` one tail event.
@@ -282,7 +291,8 @@ impl Sources {
         let new = match running.as_slice() {
             // One followed game runs: its edition is live.
             [one] => *one,
-            // None does: the log written last, its pull kept.
+            // None does: the log written last, kept while its pull is open
+            // or it is still being written.
             [] => self.keep_or_move(old, &started, opened, Move::WrittenLast),
             // Both do: the one with a pull open, kept while it has one; with
             // neither open, kept until the other opens one.
@@ -295,9 +305,11 @@ impl Sources {
     /// Among `candidates`: the live one stays while it is one of them and
     /// has a pull open. Otherwise the candidate with a pull open is live —
     /// the one that just opened it (`opened`) first — and with none open
-    /// the live one stays ([`Move::OnPull`]) or gives way to the one whose
-    /// log was written last ([`Move::WrittenLast`], and whenever the live
-    /// one is no candidate).
+    /// the live one stays: while both games run ([`Move::OnPull`]), or with
+    /// none running while its log is still being written
+    /// (`Engine::being_written`); once it has gone quiet it gives way to the
+    /// one whose log was written last ([`Move::WrittenLast`], and whenever
+    /// the live one is no candidate).
     fn keep_or_move(
         &self,
         old: usize,
@@ -319,7 +331,7 @@ impl Sources {
         {
             return p;
         }
-        if is_candidate && mode == Move::OnPull {
+        if is_candidate && (mode == Move::OnPull || self.engine(old).being_written()) {
             return old;
         }
         candidates

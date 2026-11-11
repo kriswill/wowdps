@@ -1,0 +1,81 @@
+# The one-source hub scenario's frames (crates/daemon/src/hub.rs,
+# one_source_scenario), as the daemon at 0b5714f sent them: step, session,
+# message kind, FNV-1a of "step sN: {msg:?}". Held by
+# one_source_frames_are_the_daemon_s_before_editions.
+watch s1 Snapshot 64a8fef1e8b1f179
+watch s2 SegmentList 72b0643269aab6c4
+watch s3 Snapshot e3ea41b1e72b6989
+watch s4 SegmentList f645938dc5ad8bb6
+watch s5 Snapshot c27531adad7b1f1d
+game s5 SetVisible 81c0cb5ec8f35832
+deliver s1 SegmentList f38ee20dbd25e94e
+deliver s1 SegmentList 309f9be027974e64
+deliver s2 SegmentList 95e21625cb60b2a9
+deliver s2 SegmentList ec5fe2abc9932f11
+deliver s3 SegmentList 33b463cf7596e30e
+deliver s3 SegmentList 958514509b6ca941
+deliver s4 SegmentList 92dd2aff85094c17
+deliver s4 SegmentList 817f4c2fe7630ef3
+deliver s5 SegmentList 61e0e972a370e852
+deliver s5 SegmentList 91d3cd37234bd758
+caught up s1 Snapshot fded595f27a40936
+caught up s2 SegmentList d74e8eb0fb310f68
+caught up s4 SegmentList 487a2fc377bdc6ee
+caught up s5 Snapshot 333fa49ff57917b2
+loaded s1 Snapshot b0e75c2bcf168742
+pull s1 SegmentOpened 8a360f5ad2d681f9
+pull s1 SegmentList dfca33d5b65cdb8e
+pull s1 Snapshot a4a2bbfb22045237
+pull s2 SegmentOpened 4b87f1fb93b1f5d8
+pull s2 SegmentList 485794b9b97c52ea
+pull s2 SegmentList 7b254bcb0d987c75
+pull s3 SegmentList 83058da4bc43bec4
+pull s4 SegmentOpened e256f466c4e9d6a6
+pull s4 SegmentList 07af6bc853d2dbb4
+pull s4 SegmentList c45cdc10c1d98653
+pull s5 SegmentOpened f5176dab5e8add9d
+pull s5 SegmentList bbc3cf2fb1278db5
+pull s5 Snapshot 05da3b3236f60ffa
+trash s1 SegmentOpened bcb0262ed7c32047
+trash s1 SegmentList 5c5c7096137d3fdc
+trash s1 Snapshot f17024c251be9ff5
+trash s2 SegmentOpened ade564e50256c4fe
+trash s2 SegmentList 5147a7e66751671c
+trash s2 SegmentList 99368ed9ddfddbc9
+trash s3 SegmentList 6fce597c789f2e5a
+trash s4 SegmentOpened 79868d610e475564
+trash s4 SegmentList 064facfbb18e7806
+trash s4 SegmentList 3c1a9514a7d79347
+trash s5 SegmentOpened 385466a634887093
+trash s5 SegmentList cdc3106a7fa2c5ad
+trash s5 Snapshot 496d65649716c028
+one-shots s1 Loadout 07fef8f352bb41a2
+one-shots s3 Loadout d29dddd8622262f4
+one-shots s4 Status 7d6bef612ae2ade2
+ids s1 CompareSnapshot 1993f76439700148
+ids s4 Snapshot db7b6cb9a0e90c0e
+ids s5 LoadFailed c7e525b5bf4771ed
+no game s5 SetVisible 486c9a354e5db60a
+rotate s1 SegmentList b95a166cb28e4eb4
+rotate s1 SegmentList 275cfdfcb607cf32
+rotate s1 SegmentList ad05a744c6f5b79d
+rotate s2 SegmentList ac10dd4af46b75e2
+rotate s2 SegmentList e9292f2991dc379c
+rotate s2 SegmentList d9aa18895105b325
+rotate s3 SegmentList 4445badb3f8af4de
+rotate s3 SegmentList d76c1866ac7a7a24
+rotate s3 SegmentList ad429cd8fa15e371
+rotate s4 SegmentList 45f616786455bf1e
+rotate s4 SegmentList 88e788d3b2049f0e
+rotate s4 SegmentList 078a67636145c29f
+rotate s5 SegmentList f1ced9118087b4bb
+rotate s5 SegmentList b8715341f3864dd0
+rotate s5 SegmentList e322debc7e7dad4f
+end s1 CompareSnapshot 30a3f301236b1be1
+end s2 SegmentList 9a6afb48092db70a
+end s2 Snapshot 1eeee8f72b158913
+end s3 Snapshot 7c02ad94f2cf1e5e
+end s3 SegmentList 033ee677552c47c6
+end s4 LoadFailed 17360e84da7a928d
+end s4 LoadFailed fe55fdb6e3df7460
+end s4 Status 9d266e685fc79c6e

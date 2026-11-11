@@ -57,8 +57,15 @@ impl Ids {
 }
 
 /// How long a trash pull stays open, for the live edition's choice, with no
-/// line arriving: the meter's own trash gap (60 s), on the wall clock.
+/// line arriving: the meter's own trash gap (60 s), on the wall clock. Also
+/// how long after its last line a log still counts as being written.
 const PULL_QUIET: Duration = Duration::from_secs(60);
+
+/// How long a boss fight with no END stays open, for the live edition's
+/// choice, with no line arriving and its game not running: past this the
+/// game crashed or stopped logging. While the game runs it stays open —
+/// the game flushes in multi-minute bursts, and a quiet phase is no end.
+pub const ENCOUNTER_QUIET: Duration = Duration::from_secs(5 * 60);
 
 /// Something the hub should tell every session about.
 pub enum EngineEvent {
@@ -300,12 +307,32 @@ impl Engine {
         self.written
     }
 
-    /// v49: this source's log has a pull open now — a boss fight begun and
-    /// not ended, or any other open segment whose lines arrived within the
-    /// meter's trash gap — and lines of it have arrived since the backlog,
-    /// so a stale log's forever-open last segment (a fight the game never
-    /// closed) is none. What keeps the live edition where it is while two
-    /// games write in turn.
+    /// Test hook: as if this source's last lines (and its last write) came
+    /// `by` earlier — what the live edition's clocks read without a wait.
+    #[cfg(test)]
+    pub(crate) fn age_for_test(&mut self, by: Duration) {
+        self.last_fresh = self.last_fresh.and_then(|t| t.checked_sub(by));
+        self.written = self.written.and_then(|t| t.checked_sub(by));
+    }
+
+    /// v49: whether this source's log is being written: lines of it landed
+    /// within the meter's trash gap (or, before any did, the file was
+    /// modified within it). What keeps the live edition where it is, no
+    /// pull open on either side, while two logs are written in turn.
+    pub fn being_written(&self) -> bool {
+        self.written
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_some_and(|age| age < PULL_QUIET)
+    }
+
+    /// v49: this source's log has a pull open now, lines of it having
+    /// arrived since the backlog (a stale log's forever-open last segment
+    /// is none): a boss fight begun and not ended — while its game runs,
+    /// however long a quiet phase lasts, and otherwise until no line has
+    /// come for [`ENCOUNTER_QUIET`] (the game crashed, logging stopped) — or
+    /// any other open segment whose lines arrived within the meter's trash
+    /// gap. What keeps the live edition where it is while two games write
+    /// in turn.
     pub fn pull_open(&self) -> bool {
         let Some(last) = self.meter.segments().iter().rev().find(|s| !s.noise) else {
             return false;
@@ -313,8 +340,12 @@ impl Engine {
         let Some(fresh) = self.last_fresh.filter(|_| self.caught_up) else {
             return false;
         };
+        let quiet = fresh.elapsed();
         last.end_ms.is_none()
-            && (last.kind == SegmentKind::Encounter || fresh.elapsed() < PULL_QUIET)
+            && match last.kind {
+                SegmentKind::Encounter => self.game_running || quiet < ENCOUNTER_QUIET,
+                _ => quiet < PULL_QUIET,
+            }
     }
 
     /// Combat is happening *now*: an open segment, and either lines arrived
@@ -1999,6 +2030,37 @@ mod tests {
         let rows = e.list_rows();
         assert_eq!(rows.len(), 1, "only the live segment survives the can");
         assert!(rows[0].live, "and it is the live one");
+    }
+
+    /// v49: a boss fight begun on fresh lines and never ended holds a pull
+    /// open while its game runs, however long a quiet phase lasts; with the
+    /// game gone (it crashed, logging stopped) it is open no longer once no
+    /// line has come for `ENCOUNTER_QUIET`. A trash pull is open for the
+    /// trash gap after its last line, and one in the backlog never is.
+    #[test]
+    fn an_unended_boss_fight_holds_a_pull_open_only_while_its_game_runs_or_lines_come() {
+        let start = "7/27/2026 21:00:00.000-7  ENCOUNTER_START,3130,\"Boss\",15,3,2769".to_string();
+        let mut e = Engine::new();
+        feed(&mut e, vec![start.clone(), hit(0, 1)]);
+        assert!(!e.pull_open(), "backlog: nothing arrived since");
+        e.on_tail(TailEvent::CaughtUp, &mut Vec::new());
+        assert!(!e.pull_open(), "still nothing arrived since");
+        feed(&mut e, vec![hit(0, 2)]);
+        assert!(e.pull_open());
+        e.age_for_test(Duration::from_secs(4 * 60));
+        assert!(e.pull_open(), "a quiet phase, under the bound");
+        e.age_for_test(Duration::from_secs(2 * 60));
+        assert!(!e.pull_open(), "six minutes, no game: over");
+        e.game_running = true;
+        assert!(e.pull_open(), "its game runs: a quiet phase is no end");
+
+        let mut e = Engine::new();
+        e.on_tail(TailEvent::CaughtUp, &mut Vec::new());
+        feed(&mut e, vec![hit(0, 0)]);
+        assert!(e.pull_open(), "trash, fresh");
+        e.game_running = true;
+        e.age_for_test(PULL_QUIET);
+        assert!(!e.pull_open(), "trash past the gap, game or not");
     }
 
     /// An empty engine still answers a Live cursor: an empty snapshot, not

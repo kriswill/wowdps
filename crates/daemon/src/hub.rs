@@ -119,9 +119,7 @@ pub fn run(
 
         if last_tick.elapsed() >= opts.tick {
             last_tick = Instant::now();
-            for s in sessions.iter_mut() {
-                push_cursor(s, &mut sources, &loader);
-            }
+            tick(&mut sources, &mut sessions, &loader);
             let cmds = supervisor.on_tick();
             deliver(&mut sessions, cmds);
         }
@@ -436,11 +434,15 @@ fn handle(
                         supervisor.on_visibility_changed(visible);
                     }
                 }
-                // R11: the trash can, in the source the session looks at.
+                // R11: the trash can, in the source serving the session.
                 // The id table shrinks: broadcast the new list to every
-                // session it answers, exactly like a tail change.
+                // session it answers, exactly like a tail change. v49: a
+                // session pinned to an edition no source serves holds an
+                // empty list, and its trash can tombstones nothing.
                 ClientMsg::DiscardTrash => {
-                    let i = sources.for_scope(s.edition);
+                    let Some(i) = sources.serving(s.edition) else {
+                        return;
+                    };
                     sources.engine_mut(i).discard_trash();
                     let key = sources.engine(i).list_key();
                     if let Some(src) = sources.source_mut(i)
@@ -462,7 +464,7 @@ fn handle(
                 } => {
                     let i = match segment {
                         SegmentRef::Id(seg) => sources.owner_of(seg),
-                        SegmentRef::Live => Some(sources.for_scope(s.edition)),
+                        SegmentRef::Live => sources.serving(s.edition),
                     };
                     let built = match i {
                         Some(i) => sources.engine_mut(i).loadout_in(s.edition, segment, &guid),
@@ -620,19 +622,25 @@ fn handle(
             sessions.retain(|s| s.id != id);
         }
         HubMsg::Loaded { id, result } => {
-            // v49: to the source that asked for it.
-            let i = sources.for_load(id);
-            let engine = sources.engine_mut(i);
-            engine.loading.remove(&id);
+            // v49: to the source that asked for it. A slice whose log
+            // rotated away while it was parsed is no source's: its meter is
+            // dropped, never installed where no id resolves to it (one
+            // source installed it all the same, an LRU slot spent on a meter
+            // nothing could read) — its waiters are answered as before.
+            let claimed = sources.for_load(id);
             let loaded_ok = result.is_ok();
             match result {
                 Ok(meter) => {
-                    engine.install_loaded(id, *meter);
-                    if engine.history_pending.remove(&id)
-                        && history.enabled()
-                        && let Some(fight) = engine.take_closed(id)
-                    {
-                        let _ = history.send(HistoryReq::Store(Box::new(fight)));
+                    if let Some(i) = claimed {
+                        let engine = sources.engine_mut(i);
+                        engine.loading.remove(&id);
+                        engine.install_loaded(id, *meter);
+                        if engine.history_pending.remove(&id)
+                            && history.enabled()
+                            && let Some(fight) = engine.take_closed(id)
+                        {
+                            let _ = history.send(HistoryReq::Store(Box::new(fight)));
+                        }
                     }
                     // Whoever is waiting on this segment gets it now, not at
                     // the next tick.
@@ -644,7 +652,11 @@ fn handle(
                 }
                 Err(e) => {
                     // The sweep after the next start stores it from the file.
-                    engine.history_pending.remove(&id);
+                    if let Some(i) = claimed {
+                        let engine = sources.engine_mut(i);
+                        engine.loading.remove(&id);
+                        engine.history_pending.remove(&id);
+                    }
                     for s in sessions.iter_mut() {
                         if cursor_wants(s.cursor.as_ref(), id) && s.last_load_error != Some(id) {
                             s.last_load_error = Some(id);
@@ -664,9 +676,10 @@ fn handle(
                     .partition(|(_, sid, _)| *sid == id);
                 s.pending_loadouts = rest;
                 for (req_id, sid, guid) in matching {
-                    let answer = sources.engine_mut(i).loadout(SegmentRef::Id(sid), &guid);
+                    let answer =
+                        claimed.map(|i| sources.engine_mut(i).loadout(SegmentRef::Id(sid), &guid));
                     let loadout = match (loaded_ok, answer) {
-                        (true, LoadoutBuilt::Ready(l)) => l,
+                        (true, Some(LoadoutBuilt::Ready(l))) => l,
                         _ => None,
                     };
                     s.push_control(DaemonMsg::Loadout {
@@ -701,6 +714,19 @@ fn handle(
                 });
             }
         }
+    }
+}
+
+/// The tick: v49 the live edition chosen again — a pull or a log going
+/// quiet moves it within a tick, not at the next event (one source is
+/// always live, and moves nothing) — then every session's cursor rebuilt
+/// and pushed when changed.
+fn tick(sources: &mut Sources, sessions: &mut [Session], loader: &Sender<LoadReq>) {
+    if sources.choose_live(None) {
+        resync(sources, sessions);
+    }
+    for s in sessions.iter_mut() {
+        push_cursor(s, sources, loader);
     }
 }
 
@@ -1145,9 +1171,7 @@ mod tests {
 
         /// A tick: every session's cursor rebuilt and pushed when changed.
         fn tick(&mut self) {
-            for s in self.sessions.iter_mut() {
-                push_cursor(s, &mut self.sources, &self.loader);
-            }
+            tick(&mut self.sources, &mut self.sessions, &self.loader);
         }
 
         fn connect(&mut self, id: u64, kind: ClientKind) -> Receiver<DaemonMsg> {
@@ -2046,12 +2070,39 @@ mod tests {
             .collect()
     }
 
+    /// A frame a scenario recorded: the step, the session and the message.
+    struct Frame {
+        step: &'static str,
+        session: u64,
+        msg: DaemonMsg,
+    }
+
+    impl Frame {
+        /// The text the golden hashes: `step sN: Debug`.
+        fn line(&self) -> String {
+            format!("{} s{}: {:?}", self.step, self.session, self.msg)
+        }
+
+        /// The golden's line: step, session, message kind, FNV-1a of
+        /// [`Frame::line`].
+        fn golden(&self) -> String {
+            let text = format!("{:?}", self.msg);
+            let kind: String = text.chars().take_while(|c| c.is_alphanumeric()).collect();
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in self.line().bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            format!("{} s{} {kind} {h:016x}", self.step, self.session)
+        }
+    }
+
     /// Every frame of a scenario that exercises everything a session can
     /// be answered — following and pinned, the list, `Live`, an id cold and
     /// loaded, one-shots, the trash can, a comparison, rotated and unknown
-    /// ids, the game, and a rotation to another edition's log — with
-    /// `Debug` text per step and session.
-    fn one_source_scenario(mut hub: Hub) -> Vec<String> {
+    /// ids, the game, and a rotation to another edition's log — per step
+    /// and session, in order.
+    fn one_source_scenario(mut hub: Hub) -> Vec<Frame> {
         let mut dump = Vec::new();
         let kinds = [
             (
@@ -2084,10 +2135,14 @@ mod tests {
             .iter()
             .map(|(id, kind, _, _)| (*id, hub.connect(*id, *kind)))
             .collect();
-        let record = |step: &str, dump: &mut Vec<String>| {
+        let record = |step: &'static str, dump: &mut Vec<Frame>| {
             for (id, rx) in &rxs {
-                for m in drain(rx) {
-                    dump.push(format!("{step} s{id}: {m:?}"));
+                for msg in drain(rx) {
+                    dump.push(Frame {
+                        step,
+                        session: *id,
+                        msg,
+                    });
                 }
             }
         };
@@ -2199,22 +2254,89 @@ mod tests {
         dump
     }
 
-    /// The Retail guard: a daemon following a second edition's folder that
-    /// never holds a log answers every session exactly as a daemon of one
-    /// source does — the same frames, byte for byte, through follows, pins,
-    /// ids, one-shots, the game and a rotation. (The one-source frames were
-    /// checked equal to those of the daemon before it followed editions.)
+    /// How a daemon of one source words its first source in `Status`.
+    const RETAIL_SPEC: &str = "logs:/wow/_retail_/Logs";
+
+    /// The one-source scenario's frames as the daemon sent them before it
+    /// followed more than one source: produced by `0b5714f`'s hub over the
+    /// same scenario (`one_source_scenario`, ported to that hub's API), a
+    /// line per frame (step, session, kind, FNV-1a of its `Debug` text).
+    const ONE_SOURCE_GOLDEN: &str = include_str!("../tests/golden/one_source_frames.txt");
+
+    /// The Retail guard: a daemon of one source — as production follows an
+    /// install while discovery follows Retail alone — sends every session
+    /// the frames the daemon sent before it followed editions, byte for
+    /// byte (`ONE_SOURCE_GOLDEN`). `WOWDPS_BLESS=1` rewrites the golden;
+    /// that is a change to what every Retail client sees, so the commit
+    /// says why.
     #[test]
-    fn a_second_source_that_never_holds_a_log_changes_no_frame() {
-        let one = one_source_scenario(Hub::new());
-        let two = one_source_scenario(Hub::with_sources(vec![
-            SourceSetup::default(),
-            SourceSetup {
-                spec: Some("logs:/wow/_forever_/Logs".to_string()),
-                edition: Some(Edition::Forever),
-            },
-        ]));
+    fn one_source_frames_are_the_daemon_s_before_editions() {
+        let frames = one_source_scenario(Hub::with_sources(vec![SourceSetup {
+            spec: Some(RETAIL_SPEC.to_string()),
+            edition: Some(Edition::Retail),
+        }]));
+        let got: Vec<String> = frames.iter().map(Frame::golden).collect();
+        if std::env::var_os("WOWDPS_BLESS").is_some() {
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/golden/one_source_frames.txt"
+            );
+            let head: String = ONE_SOURCE_GOLDEN
+                .lines()
+                .take_while(|l| l.starts_with('#'))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            std::fs::write(path, head + &got.join("\n") + "\n").unwrap();
+            return;
+        }
+        let want: Vec<&str> = ONE_SOURCE_GOLDEN
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+            .collect();
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!(g, w, "frame {i} moved: {}", frames[i].line());
+        }
+        assert_eq!(got.len(), want.len(), "the frame count moved");
+    }
+
+    /// The scenario's steps in which a log is switched to.
+    const SWITCHES: [&str; 2] = ["deliver", "rotate"];
+
+    /// A frame as two daemons are compared: its `seq` zeroed (each session
+    /// numbers its own frames), and `None` for a list with no entries sent
+    /// in a step that switches to a log ([`SWITCHES`]).
+    fn compared(frame: &Frame) -> Option<(&'static str, u64, DaemonMsg)> {
+        let empty_list =
+            matches!(&frame.msg, DaemonMsg::SegmentList { entries, .. } if entries.is_empty());
+        (!(empty_list && SWITCHES.contains(&frame.step))).then(|| {
+            (
+                frame.step,
+                frame.session,
+                crate::session::stamp(frame.msg.clone(), 0),
+            )
+        })
+    }
+
+    /// The same guard with a second source, configured as a real daemon
+    /// following two editions configures it — each source named by its
+    /// folder — whose folder never holds a log: every session is sent the
+    /// one-source daemon's frames, sequence numbers aside, but the empty
+    /// lists sent while a log switched to awaits its index — there the
+    /// first source is named by its folder (Retail) rather than by nothing,
+    /// so its list is broadcast and its Retail pin served that log's empty
+    /// list, until the index names the log's own edition.
+    #[test]
+    fn a_second_source_that_never_holds_a_log_changes_no_frame_but_an_unread_logs_lists() {
+        let one = one_source_scenario(Hub::with_sources(vec![SourceSetup {
+            spec: Some(RETAIL_SPEC.to_string()),
+            edition: Some(Edition::Retail),
+        }]));
+        let two = one_source_scenario(two_editions());
         assert!(one.len() > 60, "the scenario says something: {}", one.len());
+        let set_aside = two.iter().filter(|f| compared(f).is_none()).count();
+        assert!(set_aside > 0, "the folder's name shows somewhere");
+        let one: Vec<_> = one.iter().filter_map(compared).collect();
+        let two: Vec<_> = two.iter().filter_map(compared).collect();
         for (i, (a, b)) in one.iter().zip(&two).enumerate() {
             assert_eq!(a, b, "frame {i}");
         }
@@ -2472,6 +2594,139 @@ mod tests {
         assert_eq!(
             last_list(&drain(&follower)).map(|l| l.1),
             Some(Some(Edition::Forever))
+        );
+    }
+
+    /// A buff landing out of combat on Retail's clock: written, and no
+    /// segment opened or extended.
+    fn retail_passive(sec: u32) -> Vec<String> {
+        vec![format!(
+            "7/27/2026 20:50:{sec:02}.000-4  SPELL_AURA_APPLIED,Player-1168-0A1B2C02,\"Mirelle-Realm\",0x514,0x80000000,Player-1168-0A1B2C01,\"Ana-Realm\",0x511,0x80000000,17,\"Power Word: Shield\",0x2,BUFF,15600"
+        )]
+    }
+
+    /// v49: a session pinned to an edition no source serves holds an empty
+    /// list, and its trash can tombstones nothing — not the live log's
+    /// trash. A following session's does, as it always did.
+    #[test]
+    fn a_pin_no_source_serves_discards_no_trash() {
+        let mut hub = Hub::new();
+        let follower = hub.connect(1, ClientKind::Tui);
+        let forever = hub.connect(2, ClientKind::Tui);
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition: EditionRef::Pin(Edition::Forever),
+            },
+        );
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Lines(vec![hit(0, 0), hit(10, 0)]),
+        ));
+        assert_eq!(hub.engine().list_rows().len(), 2, "closed trash + live");
+        drain(&follower);
+        drain(&forever);
+        hub.client(2, ClientMsg::DiscardTrash);
+        assert_eq!(
+            hub.engine().list_rows().len(),
+            2,
+            "the Retail log's trash kept"
+        );
+        assert!(drain(&follower).is_empty() && drain(&forever).is_empty());
+        hub.client(1, ClientMsg::DiscardTrash);
+        assert_eq!(hub.engine().list_rows().len(), 1);
+        drain(&forever);
+        // A one-shot's `Live` in that edition is nobody's.
+        hub.client(
+            2,
+            ClientMsg::GetLoadout {
+                req_id: 3,
+                segment: SegmentRef::Live,
+                guid: "Player-1-A".to_string(),
+            },
+        );
+        assert!(matches!(
+            drain(&forever).as_slice(),
+            [DaemonMsg::Loadout {
+                req_id: 3,
+                loadout: None,
+                ..
+            }]
+        ));
+    }
+
+    /// v49: a slice whose log rotated away while it was parsed is no
+    /// source's: dropped, never installed where nothing resolves it (one
+    /// source installed it all the same, spending an LRU slot); the waiter
+    /// is told its segment rotated away, as before.
+    #[test]
+    fn a_slice_of_a_rotated_log_is_dropped() {
+        let mut hub = Hub::new();
+        let rx = hub.connect(1, ClientKind::Window);
+        let ids = hub.index_fixture();
+        let boss = ids
+            .iter()
+            .copied()
+            .zip(hub.engine().list_rows())
+            .find(|(_, r)| r.kind == wowdps_model::SegmentKind::Encounter)
+            .map(|(id, _)| id)
+            .unwrap();
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Id(boss))));
+        let req = hub.loader_rx.try_recv().expect("a load");
+        deliver_log(&mut hub, FOREVER);
+        drain(&rx);
+        let text = wowdps_core::index::load_segment_text(&req.path, &req.meta).unwrap();
+        hub.handle(HubMsg::Loaded {
+            id: req.id,
+            result: Ok(Box::new(text.meter())),
+        });
+        assert_eq!(hub.engine().resident(), 0, "no meter nothing resolves");
+        assert!(
+            drain(&rx).iter().any(|m| matches!(
+                m,
+                DaemonMsg::LoadFailed { segment, error: LoadError::Rotated } if *segment == boss
+            )),
+            "the waiter hears its segment rotated away"
+        );
+    }
+
+    /// v49: with no game named, the live edition stays where it is while
+    /// its log is still being written, though the other is written later —
+    /// two clients the watcher cannot name, out of combat, writing in turn
+    /// move no follower — and gives way once its log has gone quiet, on the
+    /// next tick, no event needed.
+    #[test]
+    fn with_no_game_the_live_edition_stays_while_its_log_is_written() {
+        let mut hub = two_editions();
+        let follower = hub.connect(1, ClientKind::Tui);
+        hub.client(1, ClientMsg::watch(Cursor::List));
+        deliver_both(&mut hub);
+        assert_eq!(hub.sources.live(), 1, "Forever's log was written last");
+        assert!(hub.sources.engine(1).being_written());
+        drain(&follower);
+        for sec in 0..3 {
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_passive(sec))));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 1, "Forever's log is still written");
+        }
+        let got = drain(&follower);
+        assert!(
+            got.iter().all(|m| !matches!(
+                m,
+                DaemonMsg::SegmentList { edition, .. } if *edition != Some(Edition::Forever)
+            )),
+            "the follower was not moved: {got:?}"
+        );
+        // Forever's log goes quiet: the next tick moves it to Retail's.
+        hub.sources
+            .engine_mut(1)
+            .age_for_test(Duration::from_secs(120));
+        hub.tick();
+        assert_eq!(hub.sources.live(), 0);
+        assert_eq!(
+            last_list(&drain(&follower)).map(|l| l.1),
+            Some(Some(Edition::Retail))
         );
     }
 

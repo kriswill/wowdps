@@ -697,7 +697,9 @@ counter, so one never names two segments); following, by the live edition's
 source; pinned, by the source whose log is of the pin's edition (reckoned with
 it, `Edition::counts_as`; a source the daemon can name no edition for is
 reckoned Retail's, as a fight that names none is) — the live one first when two
-are, then the one written last — else the empty answer. The list broadcast,
+are, then the one written last — else the empty answer, and such a session
+acts on nothing: its `DiscardTrash` tombstones no source's trash and its
+one-shot `Live` is `None`. The list broadcast,
 `SegmentOpened` and a one-shot's `Live` are each source's to the sessions it
 answers; when a session comes to be answered by another source than the one
 whose list it holds (the live edition moved under a follower, a pin's edition
@@ -1094,12 +1096,18 @@ edition's while it follows that log (its rows and frames name the header's editi
 is answered from it, the history files its fights by it); the folder names a source only until
 its header is read, and only while the daemon follows more than one. The LIVE edition (what a
 following session is answered from, `Status`'s `live`): with one followed edition's game running
-(`Running`: by name), that one; with both, the one with a pull open (`Engine::pull_open`: a boss
-fight begun and not ended, or any open segment with lines within the trash gap, lines having
-arrived since the backlog), kept while it has one, and while neither has, until the other OPENS
-one — two games writing in turn never move a follower on every line; with none running, the
-one whose log was written last (its modified time when opened, then each batch of fresh lines),
-kept too while it has a pull open. A source not yet holding a log is never live.
+(`Running`: by name), that one; with both, the one with a pull open (`Engine::pull_open`, lines
+having arrived since the backlog: a boss fight begun and not ended — while its game runs,
+however quiet, else until no line has come for five minutes (`ENCOUNTER_QUIET`: the game crashed
+or stopped logging) — or any other open segment with lines within the trash gap), kept while it
+has one, and while neither has, until the other OPENS one — two games writing in turn never move
+a follower on every line; with none running, the one whose log was written last (its modified
+time when opened, then each batch of fresh lines), kept too while it has a pull open or is still
+being written (`Engine::being_written`: written within the trash gap) — so with no pull open on
+either side it moves only on a pull opening in the other, or once it has gone quiet and the other
+is written. It is chosen again on every tail event, every game report and every tick, so a pull
+or a log going quiet moves it within a tick; with one source it never moves. A source not yet
+holding a log is never live.
 Only the live source's trailing segment is a follower's: another edition's open pull, stale or
 not, draws no follower and announces no `SegmentOpened` to one. A source's game runs
 (`Engine::game_running`, its liveness) when its edition's client is named running, or a game runs
