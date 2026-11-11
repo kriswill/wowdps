@@ -1211,6 +1211,51 @@ fn a_stored_role_rides_the_players_view_and_ranks_as_the_grader_does() {
     );
 }
 
+/// v49: a `stored_role` that names no role — a later build's word, a hand
+/// edit — is no role in SQL as in the codec: `stored_role` and `role` read
+/// NULL where `CardPlayer::from_json` reads `None`, and the lake ranks the
+/// player exactly as the grader does over the parsed card.
+#[test]
+fn a_stored_role_that_names_no_role_reads_null_as_the_codec_reads_none() {
+    let mut odd = card(
+        "o",
+        vec![
+            player("p1", Spec::Arms, 800.0, 0.0),
+            player("p2", Spec::Fire, 700.0, 0.0),
+        ],
+    );
+    for p in &mut odd.players {
+        p.spec = None;
+        p.class = None;
+        p.stored_role = Some(Role::Dps);
+    }
+    let text =
+        odd.to_json()
+            .to_line()
+            .replacen(r#""stored_role":"dps""#, r#""stored_role":"bard""#, 1);
+    assert!(text.contains(r#""stored_role":"bard""#), "{text}");
+    let parsed = FightCard::from_json(&wowdps_proto::json::parse(&text).unwrap()).unwrap();
+    assert_eq!(parsed.players[0].stored_role, None, "the codec's word");
+    assert_eq!(parsed.players[1].stored_role, Some(Role::Dps));
+    let (_keep, lake) = lake_of("stored-odd", &[("o", text)]);
+    let t = lake
+        .sql("SELECT guid, role, stored_role FROM players ORDER BY guid")
+        .unwrap();
+    let got: Vec<(String, String, String)> = t
+        .rows
+        .iter()
+        .map(|r| (cell_str(&r[0]), cell_str(&r[1]), cell_str(&r[2])))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("p1".to_string(), "null".to_string(), "null".to_string()),
+            ("p2".to_string(), "dps".to_string(), "dps".to_string()),
+        ]
+    );
+    assert_ranks_match_grader(&lake, &[parsed]);
+}
+
 fn stored_or_spec(p: &CardPlayer) -> Option<Role> {
     p.spec.map(Spec::role).or(p.stored_role)
 }

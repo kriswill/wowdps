@@ -55,6 +55,18 @@ fn role_case() -> String {
     sql
 }
 
+/// v49: `CASE <col> WHEN 'tank' THEN 'tank' … END` over every role's name
+/// (`Role::name`), so a stored role the codec reads (`Role::from_name`) is
+/// the one SQL reads, and any other word is NULL, as it is `None` there.
+fn stored_role_case(col: &str) -> String {
+    let mut sql = format!("CASE {col}");
+    for role in [Role::Tank, Role::Healer, Role::Dps] {
+        sql.push_str(&format!(" WHEN '{0}' THEN '{0}'", role.name()));
+    }
+    sql.push_str(" END");
+    sql
+}
+
 /// `CASE p.spec WHEN 1473 THEN true ELSE false END` — R19's support flag,
 /// derived from the spec the way `role` is (`Spec::support`: Augmentation
 /// only). No card stores it; a specless player reads false.
@@ -644,8 +656,10 @@ impl Lake {
             // log named none (an edition without specs). Written last and
             // only when set, so most lakes have no such field: a VARCHAR is
             // read, anything else (absent, or typed JSON by an all-null lake,
-            // `role`'s trap) is synthesized NULL. `role` is the spec's role,
-            // else this one, exactly as `CardPlayer::role` reads it.
+            // `role`'s trap) is synthesized NULL. A word that is no role's
+            // name reads NULL, as `CardPlayer::from_json` reads it `None`
+            // (`stored_role_case`). `role` is the spec's role, else this one,
+            // exactly as `CardPlayer::role` reads it.
             let stored_role_typed = self
                 .sql(
                     "DESCRIBE SELECT stored_role FROM \
@@ -661,9 +675,9 @@ impl Lake {
                 .unwrap_or(false);
             let stored_role = if stored_role_typed {
                 excluded.push("stored_role");
-                "p.stored_role"
+                stored_role_case("p.stored_role")
             } else {
-                "CAST(NULL AS VARCHAR)"
+                "CAST(NULL AS VARCHAR)".to_string()
             };
             let exclude = if excluded.is_empty() {
                 String::new()

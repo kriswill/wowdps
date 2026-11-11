@@ -13,7 +13,7 @@ use wowdps_proto::{
     PROTO_VERSION, SegmentRef,
 };
 
-use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
+use crate::engine::{Built, Engine, EngineEvent, ListKey, LoadoutBuilt};
 use crate::history::{Ask, HistoryLink, HistoryReq, LogRef};
 use crate::loader::{LoadReply, LoadReq};
 use crate::overlay::{Cmd, Supervisor};
@@ -73,7 +73,7 @@ pub fn run(
 ) {
     let mut engine = Engine::new();
     let mut sessions: Vec<Session> = Vec::new();
-    let mut last_ids: Vec<SegmentId> = Vec::new();
+    let mut last_list = ListKey::default();
     let mut game_running = false;
     let mut shutdown = false;
     let mut idle_since: Option<Instant> = Some(Instant::now());
@@ -92,7 +92,7 @@ pub fn run(
                 &loader,
                 &mut supervisor,
                 &opts,
-                &mut last_ids,
+                &mut last_list,
                 &mut game_running,
                 &mut shutdown,
                 &history,
@@ -260,7 +260,7 @@ fn handle(
     loader: &Sender<LoadReq>,
     supervisor: &mut Supervisor,
     opts: &HubOptions,
-    last_ids: &mut Vec<SegmentId>,
+    last_list: &mut ListKey,
     game_running: &mut bool,
     shutdown: &mut bool,
     history: &HistoryLink,
@@ -323,10 +323,13 @@ fn handle(
             // session, not just List watchers. Off-list navigation resolves
             // neighbors by id, and a segment that opened *and closed* inside
             // one flush burst never gets a `SegmentOpened` of its own
-            // (`Opened` only covers a batch's still-open tail).
-            let ids = engine.list_ids();
-            if ids != *last_ids {
-                *last_ids = ids;
+            // (`Opened` only covers a batch's still-open tail). v49: so did
+            // the source's edition — a new log's seed lines name it after
+            // its index has landed — and the list names it, its rows wear
+            // it, and a session pinned to it is sent it only now.
+            let key = engine.list_key();
+            if key != *last_list {
+                *last_list = key;
                 broadcast_list(engine, sessions, *game_running);
             }
         }
@@ -388,9 +391,9 @@ fn handle(
                 // new list to every session, exactly like a tail change.
                 ClientMsg::DiscardTrash => {
                     engine.discard_trash();
-                    let ids = engine.list_ids();
-                    if ids != *last_ids {
-                        *last_ids = ids;
+                    let key = engine.list_key();
+                    if key != *last_list {
+                        *last_list = key;
                         broadcast_list(engine, sessions, *game_running);
                     }
                 }
@@ -817,7 +820,7 @@ mod tests {
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut last_list = ListKey::default();
         let mut game = false;
         let mut shutdown = false;
 
@@ -827,7 +830,7 @@ mod tests {
         let watch = |sessions: &mut Vec<Session>,
                      engine: &mut Engine,
                      supervisor: &mut Supervisor,
-                     last_ids: &mut Vec<SegmentId>,
+                     last_list: &mut ListKey,
                      game: &mut bool,
                      shutdown: &mut bool| {
             handle(
@@ -840,7 +843,7 @@ mod tests {
                 &loader,
                 supervisor,
                 &opts,
-                last_ids,
+                last_list,
                 game,
                 shutdown,
                 &HistoryLink::disabled("test"),
@@ -851,7 +854,7 @@ mod tests {
             &mut sessions,
             &mut engine,
             &mut supervisor,
-            &mut last_ids,
+            &mut last_list,
             &mut game,
             &mut shutdown,
         );
@@ -866,7 +869,7 @@ mod tests {
             &mut sessions,
             &mut engine,
             &mut supervisor,
-            &mut last_ids,
+            &mut last_list,
             &mut game,
             &mut shutdown,
         );
@@ -886,7 +889,7 @@ mod tests {
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut last_list = ListKey::default();
         let mut game = false;
         let mut shutdown = false;
 
@@ -902,7 +905,7 @@ mod tests {
 
         let mut tail = |sessions: &mut Vec<Session>,
                         engine: &mut Engine,
-                        last_ids: &mut Vec<SegmentId>,
+                        last_list: &mut ListKey,
                         line: String| {
             handle(
                 HubMsg::Tail(TailEvent::Lines(vec![line])),
@@ -911,7 +914,7 @@ mod tests {
                 &loader,
                 &mut supervisor,
                 &opts,
-                last_ids,
+                last_list,
                 &mut game,
                 &mut shutdown,
                 &HistoryLink::disabled("test"),
@@ -919,7 +922,7 @@ mod tests {
         };
 
         // First line: a segment appears, the table changes shape.
-        tail(&mut sessions, &mut engine, &mut last_ids, hit(0, 0));
+        tail(&mut sessions, &mut engine, &mut last_list, hit(0, 0));
         for (name, rx) in [
             ("lister", &list_rx),
             ("watcher", &watch_rx),
@@ -932,7 +935,7 @@ mod tests {
         }
 
         // Second line inside the same segment: same ids, no broadcast.
-        tail(&mut sessions, &mut engine, &mut last_ids, hit(0, 1));
+        tail(&mut sessions, &mut engine, &mut last_list, hit(0, 1));
         for (name, rx) in [
             ("lister", &list_rx),
             ("watcher", &watch_rx),
@@ -953,7 +956,7 @@ mod tests {
         let (loader, _loader_rx) = fake_loader();
         let mut supervisor = Supervisor::disabled();
         let opts = hub_opts();
-        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut last_list = ListKey::default();
         let mut game = false;
         let mut shutdown = false;
 
@@ -981,7 +984,7 @@ mod tests {
                 &loader,
                 &mut supervisor,
                 &opts,
-                &mut last_ids,
+                &mut last_list,
                 &mut game,
                 &mut shutdown,
                 &HistoryLink::disabled("test"),
@@ -1019,7 +1022,7 @@ mod tests {
         loader_rx: Receiver<LoadReq>,
         supervisor: Supervisor,
         opts: HubOptions,
-        last_ids: Vec<SegmentId>,
+        last_list: ListKey,
         game: bool,
         shutdown: bool,
         history: HistoryLink,
@@ -1035,7 +1038,7 @@ mod tests {
                 loader_rx,
                 supervisor: Supervisor::new(false, Duration::ZERO, None),
                 opts: hub_opts(),
-                last_ids: Vec::new(),
+                last_list: ListKey::default(),
                 game: false,
                 shutdown: false,
                 history: HistoryLink::disabled("test"),
@@ -1065,7 +1068,7 @@ mod tests {
                 &self.loader,
                 &mut self.supervisor,
                 &self.opts,
-                &mut self.last_ids,
+                &mut self.last_list,
                 &mut self.game,
                 &mut self.shutdown,
                 &self.history,
@@ -1097,6 +1100,88 @@ mod tests {
             out.push(m);
         }
         out
+    }
+
+    /// v49: a log arrives as the tail delivers it — `Switched`, `Index`,
+    /// then the seed lines, the version line among them — so its edition is
+    /// known only after its ids are, and the seed lines need not change the
+    /// ids (a log with no visit open). The list is broadcast again when the
+    /// edition lands: a session pinned to the edition the log turns out to
+    /// be (watching `Live`, so the broadcast is its only id table) is sent
+    /// the list then, and a follower's list stops naming no edition, its
+    /// rows Forever's rather than unknown.
+    #[test]
+    fn the_list_is_broadcast_again_once_the_seed_lines_name_the_edition() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        let dir = std::env::temp_dir().join(format!("wowdps-hub-seeds-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("WoWCombatLog-072726_200000.txt");
+        let text = [
+            "7/27/2026 20:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18",
+            "7/27/2026 20:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,2769",
+            "7/27/2026 20:00:11.000-4  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil",
+            "7/27/2026 20:00:40.000-4  ENCOUNTER_END,3130,\"Boss\",1,5,1,30000",
+            "",
+        ]
+        .join("\n");
+        std::fs::write(&path, &text).unwrap();
+
+        let mut hub = Hub::new();
+        let follower = hub.connect(1, ClientKind::Tui);
+        let pinned = hub.connect(2, ClientKind::Tui);
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Live)));
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Forever),
+            },
+        );
+        drain(&follower);
+        drain(&pinned);
+
+        let bytes = text.as_bytes();
+        let idx = wowdps_core::index::scan(&mut &bytes[..]);
+        assert!(idx.open.is_none() && idx.open_visit.is_none());
+        let seeds: Vec<String> = idx
+            .checkpoint
+            .seeds
+            .iter()
+            .map(|&(a, b)| {
+                String::from_utf8_lossy(&bytes[a as usize..b as usize])
+                    .trim_end()
+                    .to_string()
+            })
+            .collect();
+        assert!(seeds.iter().any(|l| l.contains("COMBAT_LOG_VERSION")));
+        hub.handle(HubMsg::Tail(TailEvent::Switched(path.clone())));
+        hub.handle(HubMsg::Tail(TailEvent::Index {
+            index: Box::new(idx),
+            file_age_ms: Some(0),
+        }));
+        assert_eq!(hub.engine.edition(), None, "the index names no edition");
+        let ids = hub.engine.list_ids();
+        assert!(!ids.is_empty());
+        hub.handle(HubMsg::Tail(TailEvent::Seeds(seeds)));
+        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
+        assert_eq!(hub.engine.list_ids(), ids, "the seed lines moved no id");
+
+        let last_list = |msgs: Vec<DaemonMsg>| {
+            msgs.into_iter().rev().find_map(|m| match m {
+                DaemonMsg::SegmentList {
+                    entries, edition, ..
+                } => Some((entries, edition)),
+                _ => None,
+            })
+        };
+        let (entries, edition) = last_list(drain(&pinned)).expect("the pinned session's list");
+        assert_eq!(entries.len(), ids.len());
+        assert_eq!(edition, Some(Edition::Forever));
+        let (entries, edition) = last_list(drain(&follower)).expect("the follower's list");
+        assert_eq!(edition, Some(Edition::Forever));
+        assert!(entries.iter().all(|e| e.row.edition == Edition::Forever));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// v49: one source, three sessions — following, pinned to the edition

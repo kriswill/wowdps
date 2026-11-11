@@ -380,9 +380,11 @@ impl Stored {
             source: Some(source_of(&fight_id)),
             active: false,
             log_id: None,
-            // A stored pull follows nothing: its edition is its card's, on
-            // its segment's header (`info_of`).
-            edition: None,
+            // v49: a stored pull's frames name its card's edition, as a
+            // daemon's frames name their source's: the state is answered in
+            // that edition (and a state pinned to it takes them). Unknown
+            // until the card is: nothing named yet.
+            edition: card.as_ref().map(FightCard::edition),
         });
         // The player carries over, their list with them; a spell of theirs
         // does not — another pull's ability need not be this one's.
@@ -578,6 +580,8 @@ impl Stored {
         self.bare = pair.is_none() && drill.is_some() && fight.breakdown.is_none();
         self.loadout = drill.zip(fight.loadout);
         let info = info_of(&fight.card);
+        // v49: the card's edition, as the list named it.
+        let edition = Some(info.edition);
         self.card = Some(fight.card);
         // v39: a fight that keeps the series tier answers a zoom window as
         // the live drill does; any other's zoom stays the graph's alone.
@@ -599,7 +603,7 @@ impl Stored {
                     range: p.range,
                     source: Some(source_of(&self.fight_id)),
                     status: None,
-                    edition: None,
+                    edition,
                 })),
                 // The ability first, then the pair: two steps at most.
                 None => {
@@ -627,7 +631,7 @@ impl Stored {
             // v35 (R25): the store's rebuild of the pull's raid timeline —
             // the ribbon, the Deaths table and the stat line's deaths.
             raid: fight.raid,
-            edition: None,
+            edition,
         }));
         self.route(sent, next_id)
     }
@@ -984,6 +988,53 @@ mod tests {
     /// A stored pull opens on the stage's view, asks the store for it, and
     /// takes the answer as its own snapshot — then follows the selection
     /// as a live pull does, each move its own `GetFight`.
+    /// v49: a stored pull's frames name its card's edition, as a daemon's
+    /// name their source's: the pull's state is answered in that edition —
+    /// the list from the open, the snapshot from the store's answer — and
+    /// a state pinned to it would take them.
+    #[test]
+    fn a_stored_pull_is_answered_in_its_cards_edition() {
+        let forever = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+        let mut mock = MockDaemon::fixture_at(std::path::Path::new(forever)).with_history();
+        let card = mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.kind == FightKind::Encounter)
+            .cloned()
+            .expect("a stored Forever pull");
+        assert_eq!(card.edition(), Edition::Forever);
+        let mut next = 10;
+        let (mut s, mut asked) = Stored::open(
+            card.id.clone(),
+            Some(card.clone()),
+            View::Damage,
+            None,
+            None,
+            &mut next,
+        );
+        assert_eq!(s.state.edition(), Some(Edition::Forever), "the list's");
+        for _ in 0..4 {
+            let mut replies = Vec::new();
+            for m in std::mem::take(&mut asked) {
+                for reply in mock.handle(m) {
+                    if let DaemonMsg::Fight { req_id, fight } = reply {
+                        replies.push((req_id, fight));
+                    }
+                }
+            }
+            for (req_id, fight) in replies {
+                asked.extend(s.absorb(req_id, fight, &mut next));
+            }
+            if asked.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(s.state.segment_name().as_deref(), Some(card.name.as_str()));
+        assert_eq!(s.state.segment_edition(), Some(Edition::Forever));
+        assert_eq!(s.state.edition(), Some(Edition::Forever), "the snapshot's");
+    }
+
     #[test]
     fn a_stored_pull_asks_the_store_what_its_state_watches() {
         let mut mock = MockDaemon::fixture().with_history();

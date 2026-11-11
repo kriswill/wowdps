@@ -9,7 +9,7 @@ use wowdps_core::index::{self, load_segment_text};
 use wowdps_core::tail::TailEvent;
 use wowdps_proto::{ClientKind, ClientMsg, Cursor, DaemonMsg, EditionRef};
 
-use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
+use crate::engine::{Built, Engine, EngineEvent, ListKey, LoadoutBuilt};
 use crate::history::{Ask, LogFacts, MemBackend, Retention, Store};
 use crate::session::stamp;
 
@@ -26,8 +26,9 @@ pub struct MockDaemon {
     game_running: bool,
     /// Pushes produced by feeds that the next `handle`/`drain` returns.
     pending: Vec<DaemonMsg>,
-    /// Mirrors the hub's id-change detector for the list broadcast.
-    last_ids: Vec<wowdps_core::model::SegmentId>,
+    /// Mirrors the hub's change detector for the list broadcast: the id
+    /// table and (v49) the source's edition.
+    last_list: ListKey,
     /// The history store over an in-memory backend, fed every `Closed`
     /// exactly as the hub feeds the real thread — synchronously.
     history: Store<MemBackend>,
@@ -114,7 +115,7 @@ impl MockDaemon {
             .collect();
         engine.on_tail(TailEvent::Lines(tail), &mut events);
         engine.on_tail(TailEvent::CaughtUp, &mut events);
-        let last_ids = engine.list_ids();
+        let last_list = engine.list_key();
         let mut mock = Self {
             engine,
             path: path.to_path_buf(),
@@ -123,7 +124,7 @@ impl MockDaemon {
             seq: 0,
             game_running: false,
             pending: Vec::new(),
-            last_ids,
+            last_list,
             history: Store::open(MemBackend::new(), Retention::default()),
             log_facts: LogFacts::read(path),
             characters: Vec::new(),
@@ -233,9 +234,9 @@ impl MockDaemon {
             // list goes out, then the cursor's push.
             ClientMsg::DiscardTrash => {
                 self.engine.discard_trash();
-                let ids = self.engine.list_ids();
-                if ids != self.last_ids {
-                    self.last_ids = ids;
+                let key = self.engine.list_key();
+                if key != self.last_list {
+                    self.last_list = key;
                     self.push_list(&mut out);
                     self.push_cursor(&mut out);
                 }
@@ -301,9 +302,9 @@ impl MockDaemon {
         self.record_closed(&events);
         // Mirror the hub: an id-table change broadcasts the list to every
         // session regardless of cursor.
-        let ids = self.engine.list_ids();
-        if ids != self.last_ids {
-            self.last_ids = ids;
+        let key = self.engine.list_key();
+        if key != self.last_list {
+            self.last_list = key;
             self.push_list(&mut out);
         }
         self.push_cursor(&mut out);

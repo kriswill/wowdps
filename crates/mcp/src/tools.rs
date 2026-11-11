@@ -78,8 +78,9 @@ pub fn catalog() -> Vec<Tool> {
             "description": Json::str(
                 "Only fights of this game edition: retail or forever, or the PROJECT_ID \
                  its log names (a Classic client by its number). A card stored before \
-                 its log carried the number (project_id 0) counts with retail. Absent: \
-                 every edition, each fight naming its own.",
+                 its log carried the number (project_id 0) counts with retail, so \
+                 edition 0 answers exactly as retail does: retail's cards and those. \
+                 Absent: every edition, each fight naming its own.",
             ),
         }
     };

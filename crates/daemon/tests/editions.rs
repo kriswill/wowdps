@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use wowdps_core::model::{Edition, Role, Spec, View};
+use wowdps_core::model::{Edition, Role, SegmentId, Spec, View};
 use wowdps_core::tail::TailEvent;
 use wowdps_daemon::engine::{Engine, EngineEvent};
 use wowdps_daemon::history::{Backend, ClosedFight, LogFacts, MemBackend, Retention, Store};
@@ -1246,7 +1246,8 @@ fn one_source_answers_a_pin_to_its_edition_and_nothing_else() {
             ),
             "{loadout:?}"
         );
-        // A segment id names its segment wherever the cursor looks.
+        // A segment id names its segment wherever the cursor looks, and
+        // its frame names where it lives: this source's edition.
         let first = follow.first().unwrap().id;
         let (id, info, _, named) = meter(answer(
             &mut mock,
@@ -1263,7 +1264,7 @@ fn one_source_answers_a_pin_to_its_edition_and_nothing_else() {
         ));
         assert_eq!(
             (id, info.edition, named),
-            (Some(first), edition, Some(other))
+            (Some(first), edition, Some(edition))
         );
 
         // Status names the one source's edition.
@@ -1300,4 +1301,134 @@ fn a_client_state_pinned_elsewhere_sees_an_empty_list() {
     pump(&mut st, &mut mock, sent);
     assert_eq!(st.entries().len(), all);
     assert_eq!(st.edition(), Some(Edition::Retail));
+}
+
+/// A pin made of a value no number decodes to is the pin its number names,
+/// in process as over the wire: `Unknown(18)` is a pin to Forever, served
+/// by a Forever log and naming Forever.
+#[test]
+fn a_hand_made_pin_is_served_as_its_number_names() {
+    let mut mock = MockDaemon::fixture_at(Path::new(FOREVER_LOG));
+    for made in [Edition::Unknown(18), Edition::Classic(18)] {
+        match answer(&mut mock, Cursor::List, EditionRef::Pin(made)) {
+            DaemonMsg::SegmentList {
+                entries, edition, ..
+            } => {
+                assert!(!entries.is_empty(), "{made:?}");
+                assert_eq!(edition, Some(Edition::Forever), "{made:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+fn id_cursor(id: SegmentId) -> Cursor {
+    Cursor::Segment {
+        segment: SegmentRef::Id(id),
+        view: View::Damage,
+        top_n: None,
+        drill: None,
+        death: None,
+        spell: None,
+        range: None,
+    }
+}
+
+/// A segment id's frame names where the segment lives — this source and
+/// its edition — whatever edition the session looks in; `Live` and the
+/// list keep naming the session's edition.
+#[test]
+fn a_segment_ids_frame_names_the_source_it_lives_in() {
+    let mut mock = MockDaemon::fixture_at(Path::new(SAMPLE));
+    let first = match answer(&mut mock, Cursor::List, EditionRef::Follow) {
+        DaemonMsg::SegmentList { entries, .. } => entries[0].id,
+        other => panic!("{other:?}"),
+    };
+    match answer(
+        &mut mock,
+        id_cursor(first),
+        EditionRef::Pin(Edition::Forever),
+    ) {
+        DaemonMsg::Snapshot {
+            id,
+            source,
+            edition,
+            info,
+            ..
+        } => {
+            assert_eq!(id, Some(first));
+            assert!(source.as_deref().is_some_and(|s| s.contains("sample.txt")));
+            assert_eq!(edition, Some(Edition::Retail), "the source's");
+            assert_eq!(info.edition, Edition::Retail);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Two editions' sources, one client: a state pinned to Forever, its list
+/// Forever's, opens a segment by id that resolves in the Retail source —
+/// as an id from one counter shared by every source can. That frame names
+/// the Retail source and is taken: the state is not reset, its edition
+/// and list stay Forever's, and Forever's next list lands as before.
+#[test]
+fn an_id_resolving_in_another_editions_source_moves_nothing() {
+    let mut retail = MockDaemon::fixture_at(Path::new(SAMPLE));
+    let mut forever = MockDaemon::fixture_at(Path::new(FOREVER_LOG));
+    let mut st = ClientState::new();
+    let sent = st.set_edition(EditionRef::Pin(Edition::Forever));
+    pump(&mut st, &mut forever, sent);
+    let rows = st.entries().len();
+    assert!(rows > 1);
+    // The state opens its list's first row by id …
+    let sent = st.goto_list_pos(0);
+    let Some(ClientMsg::Watch { cursor, edition }) = sent.first().cloned() else {
+        panic!("{sent:?}");
+    };
+    // … and the source that holds that id is the other edition's.
+    for frame in retail.handle(ClientMsg::Watch { cursor, edition }) {
+        assert!(st.on_msg(frame).is_empty(), "no reset, no Watch");
+    }
+    assert_eq!(st.segment_edition(), Some(Edition::Retail));
+    assert_eq!(st.edition(), Some(Edition::Forever));
+    assert_eq!(st.edition_ref(), EditionRef::Pin(Edition::Forever));
+    assert_eq!(st.entries().len(), rows);
+    let source = st.source.clone();
+    assert!(source.as_deref().is_some_and(|s| s.contains("forever.txt")));
+    // Forever's list goes on landing without a reset.
+    for frame in forever.handle(ClientMsg::Watch {
+        cursor: Cursor::List,
+        edition: EditionRef::Pin(Edition::Forever),
+    }) {
+        assert!(st.on_msg(frame).is_empty());
+    }
+    assert_eq!(st.source, source);
+}
+
+/// The daemon may name a source's edition from where it came from, before
+/// its log's header is read: an engine named Forever serves Forever pins
+/// and names Forever, not Retail, while its log says nothing — and the
+/// header decides once read.
+#[test]
+fn a_source_named_before_its_header_is_that_edition() {
+    let mut engine = Engine::new();
+    let mut events = Vec::new();
+    engine.set_source_edition(Some(Edition::Forever));
+    engine.on_tail(
+        TailEvent::Switched(PathBuf::from("/logs/WoWCombatLog-new.txt")),
+        &mut events,
+    );
+    assert_eq!(engine.edition(), Some(Edition::Forever));
+    assert!(engine.serves(EditionRef::Pin(Edition::Forever)));
+    assert!(!engine.serves(EditionRef::Pin(Edition::Retail)));
+    engine.on_tail(
+        TailEvent::Lines(vec![
+            "7/27/2026 21:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1".to_string(),
+        ]),
+        &mut events,
+    );
+    assert_eq!(
+        engine.edition(),
+        Some(Edition::Retail),
+        "the header decides"
+    );
 }

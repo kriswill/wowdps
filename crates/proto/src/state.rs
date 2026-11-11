@@ -259,8 +259,20 @@ impl ClientState {
     /// Opt-in (no frontend calls it yet): look in one edition, or follow
     /// the live one again. Another edition is another set of logs, so the
     /// state starts over on that edition's list, as on a rotated log, and
-    /// keeps what a reset keeps. A no-op when already there.
+    /// keeps what a reset keeps. A no-op when already there. The pin is
+    /// kept as it reads once it has travelled (`EditionRef::canonical`:
+    /// `Pin(Unknown(1))` is a pin to Retail), so the daemon's frames, which
+    /// name it by its number, are its own.
+    ///
+    /// Leaving a pin to follow, one frame the daemon sent for the pin
+    /// before it read the new Watch may still land, and is taken: no frame
+    /// says which Watch it answers, and a following state cannot tell the
+    /// pinned edition's frame from the live edition's when the two are the
+    /// same edition — which is then the right answer anyway. When they are
+    /// not, the first frame of the live edition is a move and the state
+    /// starts over once more, on the live edition's list.
     pub fn set_edition(&mut self, edition: EditionRef) -> Vec<ClientMsg> {
+        let edition = edition.canonical();
         if edition == self.scope {
             return Vec::new();
         }
@@ -1164,14 +1176,9 @@ impl ClientState {
                 edition,
                 ..
             } => {
-                if self.stale_scope(edition) {
-                    return Vec::new();
+                if let Some(sent) = self.scope_frame(Some(segment), source, edition) {
+                    return sent;
                 }
-                if self.moved(&source, edition) {
-                    return self.reset_for_new_source(source, edition);
-                }
-                self.source = source;
-                self.edition = edition.or(self.edition);
                 self.status = status;
                 // Only the current cursor's snapshots count; a push that was
                 // in flight when the cursor changed is simply stale.
@@ -1217,14 +1224,9 @@ impl ClientState {
                 edition,
                 ..
             } => {
-                if self.stale_scope(edition) {
-                    return Vec::new();
+                if let Some(sent) = self.scope_frame(None, source, edition) {
+                    return sent;
                 }
-                if self.moved(&source, edition) {
-                    return self.reset_for_new_source(source, edition);
-                }
-                self.source = source;
-                self.edition = edition.or(self.edition);
                 self.log_id = log_id;
                 let first = !self.started;
                 self.started = true;
@@ -1259,14 +1261,9 @@ impl ClientState {
                 edition,
                 ..
             } => {
-                if self.stale_scope(edition) {
-                    return Vec::new();
+                if let Some(sent) = self.scope_frame(Some(segment), source, edition) {
+                    return sent;
                 }
-                if self.moved(&source, edition) {
-                    return self.reset_for_new_source(source, edition);
-                }
-                self.source = source;
-                self.edition = edition.or(self.edition);
                 self.status = status;
                 if self.screen != Screen::Compare || segment != self.cursor {
                     return Vec::new();
@@ -1362,19 +1359,63 @@ impl ClientState {
         matches!((&self.source, source), (Some(old), Some(new)) if old != new)
     }
 
+    /// v49: what a frame's `source` and `edition` do to the state, before
+    /// anything else of it is read. `None`: go on — the frame is taken.
+    /// `Some(sent)`: stop there, sending `sent` (nothing for a dropped
+    /// frame, the new Watch after a reset).
+    ///
+    /// A frame answering a SEGMENT ID (`segment` is `SegmentRef::Id`) names
+    /// the source that segment is in and that source's edition, which need
+    /// not be what `Live` and the list resolve in — an id names its segment
+    /// in whichever edition's log it lives — so it is taken whatever it
+    /// names, and it moves nothing: no rotation, no move, never stale for
+    /// a pin, and `source` and `edition()` stay the list's. A rotation
+    /// reaches such a cursor by the list the daemon broadcasts and the
+    /// id's `LoadFailed(Rotated)`.
+    ///
+    /// Any other frame — the list, `Live` — that a pinned state did not ask
+    /// for (another edition than its pin) is dropped; one naming another
+    /// log or another edition than the last is a move, and the state starts
+    /// over; else its source and edition are the state's.
+    fn scope_frame(
+        &mut self,
+        segment: Option<SegmentRef>,
+        source: Option<String>,
+        edition: Option<Edition>,
+    ) -> Option<Vec<ClientMsg>> {
+        if matches!(segment, Some(SegmentRef::Id(_))) {
+            return None;
+        }
+        if self.stale_scope(edition) {
+            return Some(Vec::new());
+        }
+        if self.moved(&source, edition) {
+            return Some(self.reset_for_new_source(source, edition));
+        }
+        self.source = source;
+        self.edition = edition.or(self.edition);
+        None
+    }
+
     /// v49: whether a frame is a MOVE — another log file (rotation, as
     /// before), or another edition than the one last answered in: the live
     /// edition changed under a following state. A frame that names no
-    /// edition is no move; one that names the first is none either.
+    /// edition is no move by its edition (the daemon names every source's
+    /// edition it knows, its header's or where it came from; `None` is one
+    /// it knows neither of), though its log may be; one that names the first
+    /// is none either.
     fn moved(&self, source: &Option<String>, edition: Option<Edition>) -> bool {
         self.rotated(source)
-            || matches!((self.edition, edition), (Some(old), Some(new)) if old != new)
+            || matches!((self.edition, edition),
+                (Some(old), Some(new)) if old.canonical() != new.canonical())
     }
 
     /// v49: a pinned state's frame that names another edition was answered
     /// before the pin, to a Watch it no longer makes: dropped, never a move.
+    /// Compared as editions read once they have travelled (`canonical`).
     fn stale_scope(&self, edition: Option<Edition>) -> bool {
-        matches!(self.scope, EditionRef::Pin(e) if edition != Some(e))
+        matches!(self.scope, EditionRef::Pin(e)
+            if edition.map(Edition::canonical) != Some(e.canonical()))
     }
 
     /// A different log file — or (v49) a different edition's logs — is a

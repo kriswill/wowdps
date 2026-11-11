@@ -915,7 +915,8 @@ fn origin_from(v: Option<&Json>) -> Origin {
     }
 }
 
-/// Friendly players per role on a card, from `CardPlayer::role`.
+/// Friendly players per role on a card, from `CardPlayer::role` (the
+/// spec's role, else a stored one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RoleCount {
     pub tanks: u32,
@@ -986,8 +987,9 @@ impl CardPlayer {
 }
 
 impl FightCard {
-    /// Role head-count over the friendly side; players whose spec is
-    /// unknown (R8 inference failed) count nowhere.
+    /// Role head-count over the friendly side, by [`CardPlayer::role`]: the
+    /// spec's role, else (v49) the stored one; a player with neither (no
+    /// spec, R8's inference failed, and no stored role) counts nowhere.
     pub fn roles(&self) -> RoleCount {
         let mut out = RoleCount::default();
         for p in self.players.iter().filter(|p| !p.enemy) {

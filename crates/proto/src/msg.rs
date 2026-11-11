@@ -57,13 +57,26 @@ pub enum EditionRef {
 }
 
 impl EditionRef {
-    /// Whether a source whose log names `source` (`None`: no number read
-    /// yet, or none written) answers this ref. Following takes any; a pin
-    /// takes the source its edition is reckoned with
-    /// ([`Edition::counts_as`]), a log that names no edition reckoned as
-    /// Retail, as the history reckons such a fight.
-    pub fn serves(self, source: Option<Edition>) -> bool {
+    /// The ref as it reads once it has travelled: a pin to the edition its
+    /// number names ([`Edition::canonical`]), so `Pin(Unknown(1))` is a pin
+    /// to Retail wherever it is compared, in process or over the wire.
+    pub fn canonical(self) -> Self {
         match self {
+            EditionRef::Follow => EditionRef::Follow,
+            EditionRef::Pin(e) => EditionRef::Pin(e.canonical()),
+        }
+    }
+
+    /// Whether a source the daemon names `source` answers this ref.
+    /// Following takes any; a pin takes the source its edition is reckoned
+    /// with ([`Edition::counts_as`]). `source` is the daemon's to name: the
+    /// edition its log's header says, or — before the header is read, or
+    /// for a log whose header says none — the edition it knows the source
+    /// by from where it came from, or `None` when it knows neither. Only
+    /// that last, `None`, is reckoned as Retail here, as the history
+    /// reckons a fight that names no edition.
+    pub fn serves(self, source: Option<Edition>) -> bool {
+        match self.canonical() {
             EditionRef::Follow => true,
             EditionRef::Pin(e) => {
                 source.unwrap_or(Edition::Unknown(0)).counts_as() == e.counts_as()
@@ -72,9 +85,10 @@ impl EditionRef {
     }
 
     /// The edition a frame answering this ref names: the pin, or —
-    /// following — the edition of the source that answers.
+    /// following — the edition the daemon names the answering source by
+    /// (`serves`'s `source`).
     pub fn named(self, source: Option<Edition>) -> Option<Edition> {
-        match self {
+        match self.canonical() {
             EditionRef::Follow => source,
             EditionRef::Pin(e) => Some(e),
         }
@@ -844,10 +858,18 @@ pub enum DaemonMsg {
         /// when there is nothing to describe.
         raid: Option<RaidTimeline>,
         /// v49: the edition the cursor resolved in — the session's pin, or
-        /// (following) the live edition; `None` while following a source
-        /// whose log has named none. Like `source`, a change means the
-        /// client moved: it resets and re-watches. The segment's own
-        /// edition is `info.edition`.
+        /// (following) the edition the daemon names the live source by: its
+        /// log's header's, else (before the header is read) where the
+        /// source came from; `None` while it knows neither. Like `source`,
+        /// a change means the client moved: it resets and re-watches. The
+        /// segment's own edition is `info.edition`.
+        ///
+        /// A frame answering a SEGMENT ID (`segment` is `SegmentRef::Id`)
+        /// instead names where that segment lives — `source` its source's
+        /// log, `edition` that source's edition — whatever the session looks
+        /// in: an id names its segment in whichever edition's source holds
+        /// it. A client takes such a frame as it is, and it moves nothing
+        /// (`ClientState`).
         edition: Option<Edition>,
     },
     /// Pushed to `Cursor::List` watchers: the full list, oldest first,
@@ -870,6 +892,8 @@ pub enum DaemonMsg {
         log_id: Option<u64>,
         /// v49: the edition this is the list of (`Snapshot::edition`'s
         /// meaning): a pin's list of an edition no source carries is empty.
+        /// The list is broadcast again whenever it would name another
+        /// edition, as when its ids change.
         edition: Option<Edition>,
     },
     /// R12: answers a `Cursor::Compare`. Coalesced by `seq` exactly like

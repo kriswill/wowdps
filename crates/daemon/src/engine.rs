@@ -159,6 +159,26 @@ pub struct Engine {
     /// them (`HistoryLink::mine`), set by the hub each tick — what every
     /// answer's rows are marked `mine` from.
     pub mine: Arc<Mine>,
+    /// v49: the edition the daemon knows this source by from where it came
+    /// from (an install's product folder), which [`Engine::edition`] names
+    /// until the log's header says one. `None` — nothing sets it yet: one
+    /// source, found as a file or a folder — until the daemon follows one
+    /// source per edition. It outlives a change of log file: it names the
+    /// source, not the file.
+    source_edition: Option<Edition>,
+}
+
+/// v49: what the hub (and the mock) compare to know the segment list
+/// changed and must be broadcast: the id table and the edition the source
+/// names. The edition is part of it because it arrives apart from the ids
+/// — a new log's index lands before the seed lines that name its edition
+/// — and every session's list (whose edition it names, whose rows wear it,
+/// and which a session pinned to that edition is only sent once the source
+/// is known to be of it) must hear of it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ListKey {
+    ids: Vec<SegmentId>,
+    edition: Option<Edition>,
 }
 
 /// How recently lines must have arrived for an open segment to count as a
@@ -200,6 +220,7 @@ impl Engine {
             last_fresh: None,
             game_running: false,
             mine: Arc::default(),
+            source_edition: None,
         }
     }
 
@@ -621,6 +642,15 @@ impl Engine {
             .collect()
     }
 
+    /// v49: the list's change key ([`ListKey`]): the id table and the
+    /// source's edition.
+    pub fn list_key(&self) -> ListKey {
+        ListKey {
+            ids: self.list_ids(),
+            edition: self.edition(),
+        }
+    }
+
     /// Ids for the combined list, position-aligned with `list_rows`.
     pub fn list_ids(&self) -> Vec<SegmentId> {
         self.list_entries_full()
@@ -666,12 +696,27 @@ impl Engine {
 
     /// v49: the edition this engine's source names — the PROJECT_ID of the
     /// latest COMBAT_LOG_VERSION line its meter has read, seeds included;
-    /// `None` without a source, before a version line, and for a log whose
-    /// line names none (0). What a following session is answered in.
+    /// before a version line, or for a log whose line names none (0), the
+    /// edition the daemon knows the source by from where it came from
+    /// ([`Engine::set_source_edition`]); `None` without a source and when
+    /// it knows neither. The header decides. What a following session is
+    /// answered in, and what a pin is matched against
+    /// (`EditionRef::serves`).
     pub fn edition(&self) -> Option<Edition> {
         self.source_path.as_ref()?;
         let id = self.meter.project_id();
-        (id != 0).then(|| Edition::from_project_id(id))
+        (id != 0)
+            .then(|| Edition::from_project_id(id))
+            .or(self.source_edition)
+    }
+
+    /// v49: name the edition this source is of from where it came from —
+    /// the daemon's to give for a source found in an edition's product
+    /// folder — so it is named, and pins are matched against it, before
+    /// its log's header is read. Nothing calls it yet; a log's header still
+    /// decides once read.
+    pub fn set_source_edition(&mut self, edition: Option<Edition>) {
+        self.source_edition = edition.map(Edition::canonical);
     }
 
     /// The edition a segment of this log wears where no segment of its own
@@ -717,7 +762,9 @@ impl Engine {
     /// edition; a pin to an edition no source carries gets the empty
     /// answer: an empty list, and on `Live` a snapshot of nothing — no
     /// error, no wait. A segment id names one segment wherever it lives,
-    /// so it resolves whatever the scope.
+    /// so it resolves whatever the scope, and its frame names where it
+    /// lives: this source and its edition, which the client takes as they
+    /// are (`ClientState`'s id-frame rule).
     pub fn build_cursor(
         &mut self,
         kind: ClientKind,
@@ -726,6 +773,16 @@ impl Engine {
         game_running: bool,
     ) -> Built {
         let named = scope.named(self.edition());
+        let by_id = matches!(
+            cursor,
+            Cursor::Segment {
+                segment: SegmentRef::Id(_),
+                ..
+            } | Cursor::Compare {
+                segment: SegmentRef::Id(_),
+                ..
+            }
+        );
         if !self.serves(scope) {
             match cursor {
                 Cursor::List => return Built::Ready(Box::new(absent_list(named))),
@@ -772,7 +829,10 @@ impl Engine {
             ),
         };
         match &mut built {
-            Built::Ready(msg) | Built::Loading(msg, ..) => stamp_edition(msg, named),
+            // An id's frame names its segment's source: this one.
+            Built::Ready(msg) | Built::Loading(msg, ..) => {
+                stamp_edition(msg, if by_id { self.edition() } else { named });
+            }
             Built::Failed(..) => {}
         }
         built

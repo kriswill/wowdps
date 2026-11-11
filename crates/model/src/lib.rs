@@ -229,6 +229,16 @@ impl Edition {
         }
     }
 
+    /// The edition [`Edition::from_project_id`] makes of this one's number:
+    /// itself for every value that function returns, and the edition the
+    /// number names for one it never returns (`Unknown(1)` is Retail,
+    /// `Classic(18)` Forever) — what such a value reads as once it has
+    /// travelled as its number. Compare editions that may be hand-made
+    /// through it.
+    pub fn canonical(self) -> Self {
+        Self::from_project_id(self.project_id())
+    }
+
     /// The `PROJECT_ID` this edition was read from.
     pub fn project_id(self) -> u8 {
         match self {

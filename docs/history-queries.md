@@ -266,8 +266,9 @@ without one; `best-kill`, `progression`, `trend` and `role-night` here do
 not narrow by edition yet.
 
 A player whose log named no spec (an edition whose log carries none) may
-carry a stored role, `players.stored_role`; `players.role` is the spec's
-role, else that one, as the daemon reads it. No card carries one yet, so
+carry a stored role, `players.stored_role` (NULL for a word that names
+no role, as the daemon reads it); `players.role` is the spec's role, else
+that one, as the daemon reads it. No card carries one yet, so
 the column is NULL on every lake so far; `role-night` reads the spec's
 role alone.
 
