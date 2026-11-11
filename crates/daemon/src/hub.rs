@@ -309,7 +309,7 @@ fn handle(
             }
             let awaiting = engine.awaiting_index();
             let mut events = Vec::new();
-            sources.on_tail(i, ev, &mut events);
+            let named = sources.on_tail(i, ev, &mut events);
             // v49: the live edition may move — a source's first log, a pull
             // opening while the live one has none, a log written last.
             let opened = events
@@ -372,6 +372,20 @@ fn handle(
                 broadcast_list(sources, sessions, i, false);
             } else if awaiting && !sources.engine(i).awaiting_index() {
                 broadcast_list(sources, sessions, i, true);
+            }
+            // v49: the sources were just named by their folders (a second
+            // one's first log): another source's edition moves where its
+            // log named none yet, and its list goes out as its own would.
+            if named {
+                for j in (0..sources.len()).filter(|j| *j != i) {
+                    let key = sources.engine(j).list_key();
+                    if let Some(src) = sources.source_mut(j)
+                        && src.last_list != key
+                    {
+                        src.last_list = key;
+                        broadcast_list(sources, sessions, j, false);
+                    }
+                }
             }
             // v49: every session now answered by another source than the
             // one whose list it holds — the followers of a live edition that
@@ -2355,20 +2369,23 @@ mod tests {
     /// line per frame — step, session, kind, and FNV-1a of its wire bytes.
     const ONE_SOURCE_GOLDEN: &str = include_str!("../tests/golden/one_source_frames.txt");
 
-    /// The Retail guard: a daemon of one source — as production follows an
-    /// install while discovery follows Retail alone — queues every session
-    /// of the scenario the same frames, in the same order, byte for byte on
-    /// the wire, as `0b5714f`'s daemon did (`ONE_SOURCE_GOLDEN`). It proves
-    /// that scenario's frames and nothing wider. `WOWDPS_BLESS=1` rewrites
-    /// the golden and then fails, so no run passes by blessing; a re-bless
-    /// changes what every Retail client is sent, and its commit says why.
+    /// The Retail guard: a daemon of one source — `--file`, `--logs`, a
+    /// folder outside an install — queues every session of the scenario the
+    /// same frames, in the same order, byte for byte on the wire, as
+    /// `0b5714f`'s daemon did (`ONE_SOURCE_GOLDEN`). So does a daemon over
+    /// a Retail-only install, which follows Forever's folder beside Retail's
+    /// though that folder never holds a log: a source named by its folder
+    /// only once a second one holds a log. It proves that scenario's frames
+    /// and nothing wider. `WOWDPS_BLESS=1` rewrites the golden and then
+    /// fails, so no run passes by blessing; a re-bless changes what every
+    /// Retail client is sent, and its commit says why.
     #[test]
     fn one_source_frames_are_the_daemon_s_before_editions() {
-        let frames = one_source_scenario(Hub::with_sources(vec![SourceSetup {
+        let one = one_source_scenario(Hub::with_sources(vec![SourceSetup {
             spec: Some(RETAIL_SPEC.to_string()),
             edition: Some(Edition::Retail),
         }]));
-        let got: Vec<String> = frames.iter().map(Frame::golden).collect();
+        let got: Vec<String> = one.iter().map(Frame::golden).collect();
         if std::env::var_os("WOWDPS_BLESS").is_some() {
             let path = concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -2386,117 +2403,94 @@ mod tests {
             .lines()
             .filter(|l| !l.starts_with('#') && !l.is_empty())
             .collect();
-        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
-            assert_eq!(g, w, "frame {i} moved: {}", frames[i].line());
+        assert!(
+            want.len() > 60,
+            "the scenario says something: {}",
+            want.len()
+        );
+        // One source, then a Retail-only install: Retail's folder and
+        // Forever's, configured as production configures them, Forever's
+        // never holding a log.
+        for (what, frames) in [
+            ("one source", one),
+            ("an install", one_source_scenario(two_editions())),
+        ] {
+            let got: Vec<String> = frames.iter().map(Frame::golden).collect();
+            for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                assert_eq!(g, w, "{what}: frame {i} moved: {}", frames[i].line());
+            }
+            assert_eq!(got.len(), want.len(), "{what}: the frame count moved");
         }
-        assert_eq!(got.len(), want.len(), "the frame count moved");
     }
 
-    /// The steps of the scenario between a log's switch and its index.
-    const SWITCHED: [&str; 2] = ["deliver switched", "rotate switched"];
-
-    /// The frames of every other step, seq zeroed (each session numbers its
-    /// own frames).
-    fn outside_switches(frames: &[Frame]) -> Vec<(&'static str, u64, DaemonMsg)> {
-        frames
-            .iter()
-            .filter(|f| !SWITCHED.contains(&f.step))
-            .map(|f| (f.step, f.session, crate::session::stamp(f.msg.clone(), 0)))
-            .collect()
-    }
-
-    /// The frames of one step as lists: session, entries, log named,
-    /// edition named, `active`, and whether a log id is named; anything but
-    /// a list fails.
-    #[allow(clippy::type_complexity)]
-    fn lists_in(
-        frames: &[Frame],
-        step: &str,
-    ) -> Vec<(u64, usize, Option<String>, Option<Edition>, bool, bool)> {
-        frames
-            .iter()
-            .filter(|f| f.step == step)
-            .map(|f| match &f.msg {
-                DaemonMsg::SegmentList {
-                    entries,
-                    source,
-                    edition,
-                    active,
-                    log_id,
-                    ..
-                } => (
-                    f.session,
-                    entries.len(),
-                    source.clone(),
-                    *edition,
-                    *active,
-                    log_id.is_some(),
-                ),
-                _ => panic!("not a list: {}", f.line()),
-            })
-            .collect()
-    }
-
-    /// The same guard with a second source, configured as a real daemon
-    /// following two editions configures it — each source named by its
-    /// folder — whose folder never holds a log. Every frame of every step
-    /// is the one-source daemon's, sequence numbers aside, but those sent
-    /// while a log switched to awaits its index: there the first source is
-    /// named Retail by its folder where one source names nothing, so (v49's
-    /// rule for a named source) its list is broadcast at the first switch,
-    /// followers' lists name Retail, and its Retail pin is served the
-    /// unread log's empty list. Those frames are asserted one by one.
+    /// The scenario's Retail log, then Forever's first log landing in the
+    /// second source while Retail's is read: from then the sources are
+    /// named by their folders, and Retail's log — whose header names no
+    /// edition — is Retail's by its folder. Its followers and its Retail
+    /// pin are sent its list naming Retail at once, not on its next
+    /// change.
     #[test]
-    fn a_second_source_changes_no_frame_but_those_of_an_unread_log() {
-        let one = one_source_scenario(Hub::with_sources(vec![SourceSetup {
-            spec: Some(RETAIL_SPEC.to_string()),
-            edition: Some(Edition::Retail),
-        }]));
-        let two = one_source_scenario(two_editions());
-        assert!(one.len() > 60, "the scenario says something: {}", one.len());
-        let (a, b) = (outside_switches(&one), outside_switches(&two));
-        for (i, (x, y)) in a.iter().zip(&b).enumerate() {
-            assert_eq!(x, y, "frame {i}");
-        }
-        assert_eq!(a.len(), b.len());
+    fn a_second_log_names_every_source_by_its_folder() {
+        let mut hub = two_editions();
+        let follower = hub.connect(1, ClientKind::Tui);
+        hub.client(1, ClientMsg::watch(Cursor::List));
+        let pinned = hub.connect(2, ClientKind::Tui);
+        hub.client(
+            2,
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        // A Retail log whose header names no edition: before a second
+        // source holds a log, it is named by nothing, as one source names
+        // it.
+        let header = "7/27/2026 20:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.5,PROJECT_ID,0";
+        let pull = retail_pull(20);
+        let mut text: Vec<String> = vec![header.to_string()];
+        text.extend(pull);
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/wow/_retail_/Logs/WoWCombatLog-old.txt")),
+        ));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(text)));
+        hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+        hub.tick();
+        assert_eq!(hub.sources.engine(0).edition(), None, "named by nothing");
+        assert_eq!(last_list(&drain(&follower)).map(|l| l.1), Some(None));
+        drain(&pinned);
 
-        let (r, f) = (Some(Edition::Retail), Some(Edition::Forever));
-        let log = |name: &str| Some(name.to_string());
+        // Forever's first log: both sources are named by their folders,
+        // and Retail's list goes out naming Retail.
+        deliver_log_to(&mut hub, 1, FOREVER, 0);
+        assert_eq!(hub.sources.engine(0).edition(), Some(Edition::Retail));
+        assert_eq!(hub.sources.engine(1).edition(), Some(Edition::Forever));
+        let named = |rx: &Receiver<DaemonMsg>| {
+            drain(rx).iter().any(|m| {
+                matches!(
+                    m,
+                    DaemonMsg::SegmentList { entries, edition: Some(Edition::Retail), .. }
+                        if !entries.is_empty()
+                )
+            })
+        };
+        assert!(named(&pinned), "the Retail pin is sent Retail's list");
+        hub.handle(HubMsg::Tail(1, TailEvent::CaughtUp));
+        hub.tick();
         assert_eq!(
-            lists_in(&one, "deliver switched"),
-            [],
-            "no list moved for one"
+            hub.sources.live(),
+            1,
+            "Forever's log, written last, is live: the follower moves"
         );
-        assert_eq!(
-            lists_in(&two, "deliver switched"),
-            [
-                (1, 0, log("sample.txt"), r, false, true),
-                (2, 0, log("sample.txt"), r, false, true),
-                (3, 0, None, f, false, false),
-                (4, 0, log("sample.txt"), r, false, true),
-                (5, 0, log("sample.txt"), r, false, true),
-            ]
-        );
-        assert_eq!(
-            lists_in(&one, "rotate switched"),
-            [
-                (1, 0, log("forever.txt"), None, false, true),
-                (2, 0, None, r, false, false),
-                (3, 0, None, f, false, false),
-                (4, 0, log("forever.txt"), None, false, true),
-                (5, 0, log("forever.txt"), None, false, true),
-            ]
-        );
-        assert_eq!(
-            lists_in(&two, "rotate switched"),
-            [
-                (1, 0, log("forever.txt"), r, false, true),
-                (2, 0, log("forever.txt"), r, false, true),
-                (3, 0, None, f, false, false),
-                (4, 0, log("forever.txt"), r, false, true),
-                (5, 0, log("forever.txt"), r, false, true),
-            ]
-        );
+
+        // Named for good: Retail's next log is Retail's by its folder from
+        // its switch, before its index lands.
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/wow/_retail_/Logs/WoWCombatLog-new.txt")),
+        ));
+        assert!(hub.sources.engine(0).awaiting_index());
+        assert_eq!(hub.sources.engine(0).edition(), Some(Edition::Retail));
     }
 
     /// v49: an empty list is held only since the session's last Watch: one
@@ -2955,8 +2949,8 @@ mod tests {
 
     /// A game the watcher cannot name, or of an edition no source follows,
     /// counts for every source, as any game did with one source: a daemon
-    /// following Retail alone reads a Forever client as its game running,
-    /// as it always has. With both followed, each source's game is its own.
+    /// of one Retail source reads a Forever client as its game running, as
+    /// it always has. With both followed, each source's game is its own.
     #[test]
     fn a_game_no_source_is_of_counts_for_every_source() {
         let mut hub = Hub::new();
@@ -2967,6 +2961,14 @@ mod tests {
         assert!(hub.engine().game_running);
         hub.handle(HubMsg::Game(Running::default()));
         assert!(!hub.engine().game_running);
+
+        // An install whose Forever folder holds no log reads it the same
+        // way: no source is Forever's yet.
+        let mut hub = two_editions();
+        deliver_log(&mut hub, FIXTURE);
+        hub.handle(HubMsg::Game(Running::of(&[Edition::Forever])));
+        assert!(hub.sources.engine(0).game_running);
+        assert_eq!(hub.sources.live(), 0);
 
         let mut hub = two_editions();
         deliver_both(&mut hub);
