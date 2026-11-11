@@ -166,6 +166,11 @@ pub struct Engine {
     /// source per edition. It outlives a change of log file: it names the
     /// source, not the file.
     source_edition: Option<Edition>,
+    /// v49: the PROJECT_ID the index's scan read (its checkpoint's, the
+    /// latest version line before the tail), 0 before an index or when the
+    /// log named none: what names the log's edition from the moment its
+    /// index lands, before the seed lines bring the same line to the meter.
+    index_project_id: u8,
 }
 
 /// v49: what the hub (and the mock) compare to know the segment list
@@ -221,6 +226,7 @@ impl Engine {
             game_running: false,
             mine: Arc::default(),
             source_edition: None,
+            index_project_id: 0,
         }
     }
 
@@ -364,8 +370,12 @@ impl Engine {
                 self.seen_segments = 0;
                 self.last_fresh = None;
                 self.first_id_of_file = self.next_id;
+                self.index_project_id = 0;
             }
             TailEvent::Index { index, .. } => {
+                // v49: the scan read the header; the log's edition is
+                // known now, not only once the seed lines replay it.
+                self.index_project_id = index.checkpoint.project_id;
                 self.index = index.segments;
                 self.index_ids = (0..self.index.len()).map(|_| self.fresh_id()).collect();
                 self.index_overalls = index.overalls;
@@ -695,18 +705,21 @@ impl Engine {
     }
 
     /// v49: the edition this engine's source names — the PROJECT_ID of the
-    /// latest COMBAT_LOG_VERSION line its meter has read, seeds included;
-    /// before a version line, or for a log whose line names none (0), the
-    /// edition the daemon knows the source by from where it came from
-    /// ([`Engine::set_source_edition`]); `None` without a source and when
-    /// it knows neither. The header decides. What a following session is
-    /// answered in, and what a pin is matched against
+    /// latest COMBAT_LOG_VERSION line its meter has read, seeds included,
+    /// else the one its index's scan read (so a log is named from the
+    /// moment its index lands, not only once the seed lines replay its
+    /// header); before a version line, or for a log whose line names none
+    /// (0), the edition the daemon knows the source by from where it came
+    /// from ([`Engine::set_source_edition`]); `None` without a source and
+    /// when it knows neither. The header decides. What a following session
+    /// is answered in, and what a pin is matched against
     /// (`EditionRef::serves`).
     pub fn edition(&self) -> Option<Edition> {
         self.source_path.as_ref()?;
-        let id = self.meter.project_id();
-        (id != 0)
-            .then(|| Edition::from_project_id(id))
+        [self.meter.project_id(), self.index_project_id]
+            .into_iter()
+            .find(|id| *id != 0)
+            .map(Edition::from_project_id)
             .or(self.source_edition)
     }
 
@@ -716,7 +729,12 @@ impl Engine {
     /// its log's header is read. Nothing calls it yet; a log's header still
     /// decides once read.
     pub fn set_source_edition(&mut self, edition: Option<Edition>) {
-        self.source_edition = edition.map(Edition::canonical);
+        // A zero is no edition named: `None`, as a header naming none is —
+        // never `Unknown(0)`, which would differ from the Retail a header
+        // later names and move every follower for nothing.
+        self.source_edition = edition
+            .map(Edition::canonical)
+            .filter(|e| e.project_id() != 0);
     }
 
     /// The edition a segment of this log wears where no segment of its own
@@ -744,16 +762,21 @@ impl Engine {
         }
     }
 
-    /// v49: `msg` (a list or a snapshot this engine built) as a session
-    /// looking in `scope` is sent it — stamped with the edition it is
-    /// answered in — or `None` when this engine does not answer that
-    /// session (a pin to an edition its log is not).
-    pub fn scoped(&self, scope: EditionRef, mut msg: DaemonMsg) -> Option<DaemonMsg> {
+    /// v49: the list this engine built (`build_list`) as a session looking
+    /// in `scope` is sent it: stamped with the edition it is answered in,
+    /// or — when this engine does not answer that session (a pin to an
+    /// edition its log is not) — that edition's empty list
+    /// ([`absent_list`]), so a session that stops being served (its
+    /// source's edition named only now, or changed) is emptied at once
+    /// rather than left holding another edition's ids.
+    pub fn list_for(&self, scope: EditionRef, list: &DaemonMsg) -> DaemonMsg {
+        let named = scope.named(self.edition());
         if !self.serves(scope) {
-            return None;
+            return absent_list(named);
         }
-        stamp_edition(&mut msg, scope.named(self.edition()));
-        Some(msg)
+        let mut msg = list.clone();
+        stamp_edition(&mut msg, named);
+        msg
     }
 
     /// v49: what a session of `kind` watching `cursor` in `scope` is sent —

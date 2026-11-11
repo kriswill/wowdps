@@ -345,6 +345,12 @@ pub struct Stored {
     /// v42: what the last answer could serve beyond the rows; `None` until
     /// the store has answered.
     kept: Option<Kept>,
+    /// v49: the edition every frame of this pull names — the rail card's,
+    /// else the first answer's card's — one for the pull's life, so its
+    /// own frames can never move its state: a card answered with another
+    /// number than the rail's (a regrade between them) still opens. The
+    /// header reads the answered card's own (`info_of`).
+    edition: Option<Edition>,
 }
 
 impl Stored {
@@ -371,6 +377,7 @@ impl Stored {
         // The row is a placeholder until the card is known: the header reads
         // the answer's own, and the list holds only the pull's id.
         let row = list_row(&card.as_ref().map_or_else(pending_info, info_of));
+        let edition = card.as_ref().map(FightCard::edition);
         let _ = state.on_msg(DaemonMsg::SegmentList {
             seq: 0,
             entries: vec![ListEntry {
@@ -384,7 +391,7 @@ impl Stored {
             // daemon's frames name their source's: the state is answered in
             // that edition (and a state pinned to it takes them). Unknown
             // until the card is: nothing named yet.
-            edition: card.as_ref().map(FightCard::edition),
+            edition,
         });
         // The player carries over, their list with them; a spell of theirs
         // does not — another pull's ability need not be this one's.
@@ -407,6 +414,7 @@ impl Stored {
             bare: false,
             loadout: None,
             kept: None,
+            edition,
         };
         let asked = stored.route(sent, next_id);
         (stored, asked)
@@ -580,8 +588,9 @@ impl Stored {
         self.bare = pair.is_none() && drill.is_some() && fight.breakdown.is_none();
         self.loadout = drill.zip(fight.loadout);
         let info = info_of(&fight.card);
-        // v49: the card's edition, as the list named it.
-        let edition = Some(info.edition);
+        // v49: the edition this pull's frames name: the first card's, kept.
+        let edition = *self.edition.get_or_insert(info.edition);
+        let edition = Some(edition);
         self.card = Some(fight.card);
         // v39: a fight that keeps the series tier answers a zoom window as
         // the live drill does; any other's zoom stays the graph's alone.
@@ -1033,6 +1042,93 @@ mod tests {
         assert_eq!(s.state.segment_name().as_deref(), Some(card.name.as_str()));
         assert_eq!(s.state.segment_edition(), Some(Edition::Forever));
         assert_eq!(s.state.edition(), Some(Edition::Forever), "the snapshot's");
+    }
+
+    /// Answer a stored pull's asks from the mock until it settles.
+    fn settle(s: &mut Stored, mock: &mut MockDaemon, mut asked: Vec<ClientMsg>, next: &mut u32) {
+        for _ in 0..4 {
+            let mut replies = Vec::new();
+            for m in std::mem::take(&mut asked) {
+                for reply in mock.handle(m) {
+                    if let DaemonMsg::Fight { req_id, fight } = reply {
+                        replies.push((req_id, fight));
+                    }
+                }
+            }
+            for (req_id, fight) in replies {
+                asked.extend(s.absorb(req_id, fight, next));
+            }
+            if asked.is_empty() {
+                return;
+            }
+        }
+    }
+
+    /// v49: a pull opened by id alone (no card yet) is answered in the
+    /// edition of the card the store answers with: its list named none,
+    /// and the answer's frames name the card's.
+    #[test]
+    fn a_pull_opened_by_id_is_answered_in_the_answered_cards_edition() {
+        let forever = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+        let mut mock = MockDaemon::fixture_at(std::path::Path::new(forever)).with_history();
+        let card = mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.kind == FightKind::Encounter)
+            .cloned()
+            .expect("a stored Forever pull");
+        let mut next = 10;
+        let (mut s, asked) =
+            Stored::open(card.id.clone(), None, View::Damage, None, None, &mut next);
+        assert_eq!(s.state.edition(), None, "nothing named yet");
+        settle(&mut s, &mut mock, asked, &mut next);
+        assert_eq!(s.state.segment_name().as_deref(), Some(card.name.as_str()));
+        assert_eq!(s.state.edition(), Some(Edition::Forever));
+    }
+
+    /// v49: the rail's card and the store's answer can name different
+    /// editions (a card stored with no number, regraded since; a rail older
+    /// than the store): the pull still opens — its own frames never move
+    /// its state — its frames naming the rail card's edition, its header
+    /// the answered card's.
+    #[test]
+    fn a_pull_opens_whatever_edition_its_answer_names() {
+        for rail in [0u8, 18] {
+            let mut mock = MockDaemon::fixture().with_history();
+            let card = mock
+                .history()
+                .cards()
+                .iter()
+                .find(|c| c.kind == FightKind::Encounter && c.success == Some(true))
+                .cloned()
+                .expect("a stored kill");
+            assert_eq!(card.edition(), Edition::Retail);
+            let mut next = 10;
+            let (mut s, asked) = Stored::open(
+                card.id.clone(),
+                Some(FightCard {
+                    project_id: rail,
+                    ..card.clone()
+                }),
+                View::Damage,
+                None,
+                None,
+                &mut next,
+            );
+            settle(&mut s, &mut mock, asked, &mut next);
+            assert_eq!(
+                s.state.segment_name().as_deref(),
+                Some(card.name.as_str()),
+                "rail {rail}: opened, not blank"
+            );
+            assert_eq!(s.state.segment_edition(), Some(Edition::Retail));
+            assert_eq!(
+                s.state.edition(),
+                Some(Edition::from_project_id(rail)),
+                "rail {rail}"
+            );
+        }
     }
 
     #[test]

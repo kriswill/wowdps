@@ -425,14 +425,14 @@ impl MockDaemon {
         &self.history
     }
 
-    /// The hub's list broadcast: to a session this source answers, stamped
-    /// with the edition it is answered in (v49).
+    /// The hub's list broadcast, as the hub sends it (`Engine::list_for`):
+    /// this source's list, or (v49) the session's edition's empty one when
+    /// this source does not answer it.
     fn push_list(&mut self, out: &mut Vec<DaemonMsg>) {
         let list = self.engine.build_list(self.game_running);
-        if let Some(list) = self.engine.scoped(self.edition, list) {
-            self.seq += 1;
-            out.push(stamp(list, self.seq));
-        }
+        let list = self.engine.list_for(self.edition, &list);
+        self.seq += 1;
+        out.push(stamp(list, self.seq));
     }
 
     fn push_cursor(&mut self, out: &mut Vec<DaemonMsg>) {

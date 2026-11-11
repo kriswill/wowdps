@@ -121,6 +121,11 @@ pub struct ClientState {
     /// that names none, so a move is seen across one; a change to another
     /// is a move, reset like a rotated log.
     edition: Option<Edition>,
+    /// v49: the log the daemon last named (a frame's `source`), kept through
+    /// a frame that names none — an edition no source carries, a daemon
+    /// waiting for a log — so the next log is still seen as a rotation.
+    /// `source` is what the last frame said, for the header.
+    known_source: Option<String>,
 }
 
 impl Default for ClientState {
@@ -161,6 +166,7 @@ impl ClientState {
             log_id: None,
             scope: EditionRef::Follow,
             edition: None,
+            known_source: None,
         }
     }
 
@@ -1355,8 +1361,10 @@ impl ClientState {
         }
     }
 
+    /// Another log than the one last named, a frame that names none
+    /// erasing nothing (`known_source`).
     fn rotated(&self, source: &Option<String>) -> bool {
-        matches!((&self.source, source), (Some(old), Some(new)) if old != new)
+        matches!((&self.known_source, source), (Some(old), Some(new)) if old != new)
     }
 
     /// v49: what a frame's `source` and `edition` do to the state, before
@@ -1371,7 +1379,10 @@ impl ClientState {
     /// names, and it moves nothing: no rotation, no move, never stale for
     /// a pin, and `source` and `edition()` stay the list's. A rotation
     /// reaches such a cursor by the list the daemon broadcasts and the
-    /// id's `LoadFailed(Rotated)`.
+    /// id's `LoadFailed(Rotated)`. So a state whose first frame answered an
+    /// id (no client starts so: each starts on the list or `Live`) knows no
+    /// log until a list lands, and takes that one as its first, not as a
+    /// rotation.
     ///
     /// Any other frame — the list, `Live` — that a pinned state did not ask
     /// for (another edition than its pin) is dropped; one naming another
@@ -1392,6 +1403,9 @@ impl ClientState {
         if self.moved(&source, edition) {
             return Some(self.reset_for_new_source(source, edition));
         }
+        if source.is_some() {
+            self.known_source.clone_from(&source);
+        }
         self.source = source;
         self.edition = edition.or(self.edition);
         None
@@ -1404,18 +1418,22 @@ impl ClientState {
     /// edition it knows, its header's or where it came from; `None` is one
     /// it knows neither of), though its log may be; one that names the first
     /// is none either.
+    /// Editions compare as they are reckoned (`reckoned`): a log naming no
+    /// edition (0) and Retail's are one edition, so naming the one after the
+    /// other is no move.
     fn moved(&self, source: &Option<String>, edition: Option<Edition>) -> bool {
         self.rotated(source)
             || matches!((self.edition, edition),
-                (Some(old), Some(new)) if old.canonical() != new.canonical())
+                (Some(old), Some(new)) if reckoned(old) != reckoned(new))
     }
 
     /// v49: a pinned state's frame that names another edition was answered
     /// before the pin, to a Watch it no longer makes: dropped, never a move.
-    /// Compared as editions read once they have travelled (`canonical`).
+    /// Compared as editions are reckoned (`reckoned`), as the daemon
+    /// matches a pin (`EditionRef::serves`).
     fn stale_scope(&self, edition: Option<Edition>) -> bool {
         matches!(self.scope, EditionRef::Pin(e)
-            if edition.map(Edition::canonical) != Some(e.canonical()))
+            if edition.map(reckoned) != Some(reckoned(e)))
     }
 
     /// A different log file — or (v49) a different edition's logs — is a
@@ -1427,6 +1445,7 @@ impl ClientState {
         edition: Option<Edition>,
     ) -> Vec<ClientMsg> {
         *self = Self {
+            known_source: source.clone(),
             source,
             edition,
             scope: self.scope,
@@ -1886,6 +1905,13 @@ impl ClientState {
             drill.target_sel = clamp_to(drill.target_sel, by_target.len());
         }
     }
+}
+
+/// v49: an edition as frames are compared by it — read as its number names
+/// it (`Edition::canonical`), then as it is reckoned (`Edition::counts_as`):
+/// a log naming none (0) is Retail's, every other edition itself.
+fn reckoned(e: Edition) -> Edition {
+    e.canonical().counts_as()
 }
 
 fn list_row_of(info: &SegmentInfo) -> ListRow {
@@ -2530,6 +2556,7 @@ mod tests {
     fn the_opt_in_outlives_a_rotated_log() {
         let mut st = following();
         st.source = Some("a.txt".into());
+        st.known_source = Some("a.txt".into());
         st.on_msg(DaemonMsg::SegmentList {
             seq: 9,
             entries: Vec::new(),

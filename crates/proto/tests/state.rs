@@ -1712,3 +1712,67 @@ fn a_segment_ids_frame_is_taken_whatever_source_it_names() {
         (Cursor::List, EditionRef::Pin(Edition::Retail))
     );
 }
+
+/// A frame naming NO source — the empty answer of an edition no source
+/// carries, a daemon waiting for a log — erases nothing: the next log is
+/// still a rotation, judged against the log last named, though the header
+/// says what the last frame did.
+#[test]
+fn a_frame_naming_no_source_does_not_hide_the_next_rotation() {
+    let mut st = ClientState::new();
+    let _ = st.set_edition(EditionRef::Pin(Edition::Retail));
+    let _ = st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3));
+    let _ = st.goto_list_pos(2);
+    assert_eq!(st.screen, Screen::Meter);
+    // The source stops serving Retail: `Live` there is the snapshot of
+    // nothing, naming no source.
+    let nothing = DaemonMsg::Snapshot {
+        seq: 5,
+        segment: SegmentRef::Live,
+        id: None,
+        view: View::Damage,
+        info: SegmentInfo {
+            edition: Edition::Retail,
+            ..info(SegmentKind::Trash)
+        },
+        rows: Vec::new(),
+        total_rows: 0,
+        breakdown: None,
+        segment_count: 0,
+        source: None,
+        status: None,
+        raid: None,
+        edition: Some(Edition::Retail),
+    };
+    assert!(st.on_msg(nothing).is_empty());
+    assert_eq!(st.source, None, "the header's");
+    // The next Retail log is a rotation: the state starts over.
+    let sent = st.on_msg(list_in(Some(Edition::Retail), Some("b.txt"), 1));
+    assert_eq!(
+        sent_watch(&sent),
+        (Cursor::List, EditionRef::Pin(Edition::Retail))
+    );
+    assert_eq!(st.screen, Screen::List);
+}
+
+/// Editions are compared as they are reckoned: a frame naming `Unknown(0)`
+/// (a log or a card that named none) and one naming Retail are one edition
+/// — no move for a following state, never stale for a Retail pin.
+#[test]
+fn naming_no_edition_then_retail_is_no_move() {
+    let mut st = ClientState::new();
+    let _ = st.on_msg(list_in(Some(Edition::Unknown(0)), Some("a.txt"), 2));
+    assert!(
+        st.on_msg(list_in(Some(Edition::Retail), Some("a.txt"), 3))
+            .is_empty()
+    );
+    assert_eq!(st.entries().len(), 3, "taken, not a reset");
+    let mut pinned = ClientState::new();
+    let _ = pinned.set_edition(EditionRef::Pin(Edition::Retail));
+    assert!(
+        pinned
+            .on_msg(list_in(Some(Edition::Unknown(0)), Some("a.txt"), 2))
+            .is_empty()
+    );
+    assert_eq!(pinned.entries().len(), 2, "not stale");
+}

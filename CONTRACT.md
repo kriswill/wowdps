@@ -663,16 +663,27 @@ by — its log's header's, else, before the header is read, the edition it knows
 the source by from where it came from (`Engine::set_source_edition`, which
 nothing sets with one source), and `None` only while it knows neither), and a
 client resets on a change of it as on a changed `source` (Client state below).
-The list is broadcast to every session it answers whenever its ids change OR the
-edition it names does (a new log's seed lines name it after its index has
-landed). A frame answering a SEGMENT ID (`segment: Id`) is the exception: it
+The list is broadcast to every session whenever its ids change OR the edition
+its source names does — each session sent it as its edition answers it: this
+source's list, or, to a session pinned to an edition this source is not, that
+edition's EMPTY list, so a session that stops being served is emptied at once
+and never keeps another edition's ids. The daemon names a log's edition from
+the moment its index lands (the scan read the header: `Engine::edition` takes
+the checkpoint's `PROJECT_ID` before the seed lines replay it), so a log whose
+header names an edition is never listed under another. The choice for a source
+whose edition is still unknown — a log that names none, a file whose header is
+not yet written — is to reckon it Retail's and let it serve Retail pins, as a
+fight that names none is Retail's in the history, rather than withhold its
+list: such a source holds no other edition's fights, and a pin to Retail is
+then answered at once. A frame answering a SEGMENT ID (`segment: Id`) is the exception: it
 names where its segment lives — `source` that source's log and `edition` that
 source's edition — whatever the session looks in, and a client takes it as it
 is and lets it move nothing. A pin to an edition no source carries is
 the EMPTY answer — a `SegmentList` with no entries and no source, and on `Live`
 the snapshot of nothing (no id, no rows) — naming the edition asked for; never
-an error or a wait, and such a session hears no `SegmentOpened` and no list
-broadcast of another edition's log. One source today: following is what every
+an error or a wait, and such a session hears no `SegmentOpened` of another
+edition's log and, when the list is broadcast, is sent its own edition's empty
+list in place of that log's. One source today: following is what every
 client had before, a pin serves when the source's edition is reckoned with it
 (`Edition::counts_as`; a source the daemon can name no edition for is reckoned
 Retail's, as a fight that names none is), and anything else is the empty
@@ -873,16 +884,26 @@ and resets it exactly as a changed `source` does, its `EditionRef`, `top_n`
 and opt-ins kept; a pinned state drops a frame naming another edition than its
 pin as stale (answered before the pin), never a move, editions compared as
 their numbers name them (`Edition::canonical`; `set_edition` keeps the pin so).
-A frame answering a segment id is taken whatever source and edition it names —
-it names its segment's — and moves nothing: no rotation, no move, never stale,
-`source` and `edition()` staying the list's. Leaving a pin to follow, one
+Editions are compared as they are reckoned (`counts_as` of the number's
+edition): a frame naming `Unknown(0)` and one naming Retail are one edition,
+neither a move nor stale. A rotation is judged against the log the daemon last
+NAMED: a frame naming no source (an edition no source carries, a daemon waiting
+for a log) sets `source` for the header but erases nothing, so the next log is
+still a rotation. A frame answering a segment id is taken whatever source and
+edition it names — it names its segment's — and moves nothing: no rotation, no
+move, never stale, `source` and `edition()` staying the list's; a state whose
+first frame answered an id (no client starts so) knows no log until a list
+lands, and takes that one as its first. Leaving a pin to follow, one
 frame the daemon sent for the pin before it read the new Watch may still land
 and is taken — no frame says which Watch it answers, and a following state
 cannot tell it from the live edition's when they are the same edition, when it
 is the right answer — and when they are not, the live edition's first frame is a
 move and the state starts over once more. A stored pull's state (the window's,
 `gui_logic::history::Stored`) is answered in its card's edition: its synthetic
-frames name it, as a daemon's name their source's. The multi-source daemon
+frames name it, as a daemon's name their source's — one edition for the pull's
+life (the rail card's, else the first answer's), so its own frames never move
+it, whatever number a later answer's card carries; its header reads the
+answered card's own. The multi-source daemon
 only has to send another edition for a following client to be moved.
 
 Ability tree (v36, R26): `ClientState::drill_tree()` is the drilled snapshot's

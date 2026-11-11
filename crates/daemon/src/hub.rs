@@ -630,16 +630,16 @@ fn handle(
     }
 }
 
-/// The id table changed shape: the list to every session this source
-/// answers, not just List watchers, each stamped with the edition it is
-/// answered in (v49). A session pinned to another edition keeps the list
-/// it was answered — its edition's, which did not change.
+/// The list changed (its ids, or v49 the edition its source names): the
+/// list to every session, not just List watchers, each as its edition
+/// answers it (`Engine::list_for`) — this source's list stamped with the
+/// edition it is answered in, or, to a session pinned to an edition this
+/// source is not, that edition's empty list: one that stops being served
+/// is emptied then, never left holding another edition's ids.
 fn broadcast_list(engine: &Engine, sessions: &mut [Session], game_running: bool) {
     let list = engine.build_list(game_running);
     for s in sessions.iter_mut() {
-        if let Some(list) = engine.scoped(s.edition, list.clone()) {
-            s.push_list(list);
-        }
+        s.push_list(engine.list_for(s.edition, &list));
     }
 }
 
@@ -1102,31 +1102,15 @@ mod tests {
         out
     }
 
-    /// v49: a log arrives as the tail delivers it — `Switched`, `Index`,
-    /// then the seed lines, the version line among them — so its edition is
-    /// known only after its ids are, and the seed lines need not change the
-    /// ids (a log with no visit open). The list is broadcast again when the
-    /// edition lands: a session pinned to the edition the log turns out to
-    /// be (watching `Live`, so the broadcast is its only id table) is sent
-    /// the list then, and a follower's list stops naming no edition, its
-    /// rows Forever's rather than unknown.
+    /// v49: the list's change is its ids OR its edition: a log whose first
+    /// pull closed before any version line, then a line naming Forever —
+    /// no id moves, the source's edition does. The list is broadcast again:
+    /// a session pinned to Forever (watching `Live`, so the broadcast is
+    /// its only id table) is sent it now, and a follower's names Forever.
     #[test]
-    fn the_list_is_broadcast_again_once_the_seed_lines_name_the_edition() {
+    fn the_list_is_broadcast_again_when_only_its_edition_changes() {
         use wowdps_model::Edition;
         use wowdps_proto::EditionRef;
-        let dir = std::env::temp_dir().join(format!("wowdps-hub-seeds-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("WoWCombatLog-072726_200000.txt");
-        let text = [
-            "7/27/2026 20:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18",
-            "7/27/2026 20:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,2769",
-            "7/27/2026 20:00:11.000-4  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil",
-            "7/27/2026 20:00:40.000-4  ENCOUNTER_END,3130,\"Boss\",1,5,1,30000",
-            "",
-        ]
-        .join("\n");
-        std::fs::write(&path, &text).unwrap();
-
         let mut hub = Hub::new();
         let follower = hub.connect(1, ClientKind::Tui);
         let pinned = hub.connect(2, ClientKind::Tui);
@@ -1138,15 +1122,73 @@ mod tests {
                 edition: EditionRef::Pin(Edition::Forever),
             },
         );
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/a.txt",
+        ))));
+        hub.handle(HubMsg::Tail(TailEvent::CaughtUp));
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+            "7/27/2026 21:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,2769".to_string(),
+            hit(0, 11),
+            "7/27/2026 21:00:40.000-4  ENCOUNTER_END,3130,\"Boss\",1,5,1,30000".to_string(),
+        ])));
+        let ids = hub.engine.list_ids();
+        assert!(!ids.is_empty());
+        assert_eq!(hub.engine.edition(), None);
         drain(&follower);
         drain(&pinned);
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+            "7/27/2026 21:05:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18".to_string(),
+        ])));
+        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
+        assert_eq!(hub.engine.list_ids(), ids, "no id moved");
 
-        let bytes = text.as_bytes();
+        let last_list = |msgs: Vec<DaemonMsg>| {
+            msgs.into_iter().rev().find_map(|m| match m {
+                DaemonMsg::SegmentList {
+                    entries, edition, ..
+                } => Some((entries.len(), edition)),
+                _ => None,
+            })
+        };
+        assert_eq!(
+            last_list(drain(&pinned)),
+            Some((ids.len(), Some(Edition::Forever))),
+            "the pinned session's list"
+        );
+        assert_eq!(
+            last_list(drain(&follower)),
+            Some((ids.len(), Some(Edition::Forever))),
+            "the follower's list names the edition"
+        );
+    }
+
+    /// v49: a session pinned to Retail, watching `Live`, while a Forever
+    /// log arrives as the tail delivers it (`Switched`, `Index`, `Seeds`):
+    /// it is never sent that log's list — the log is named Forever the
+    /// moment its index lands, before the seed lines replay its header —
+    /// only Retail's empty one.
+    #[test]
+    fn a_pin_is_never_listed_another_editions_log_while_its_seeds_are_on_the_way() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        const FOREVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+        let mut hub = Hub::new();
+        let retail = hub.connect(1, ClientKind::Tui);
+        hub.client(
+            1,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        drain(&retail);
+        let bytes = std::fs::read(FOREVER).unwrap();
         let idx = wowdps_core::index::scan(&mut &bytes[..]);
-        assert!(idx.open.is_none() && idx.open_visit.is_none());
-        let seeds: Vec<String> = idx
-            .checkpoint
-            .seeds
+        let seed_ranges = match idx.open.as_ref() {
+            Some(open) => open.seeds.clone(),
+            None => idx.checkpoint.seeds.clone(),
+        };
+        let seeds: Vec<String> = seed_ranges
             .iter()
             .map(|&(a, b)| {
                 String::from_utf8_lossy(&bytes[a as usize..b as usize])
@@ -1154,41 +1196,87 @@ mod tests {
                     .to_string()
             })
             .collect();
-        assert!(seeds.iter().any(|l| l.contains("COMBAT_LOG_VERSION")));
-        hub.handle(HubMsg::Tail(TailEvent::Switched(path.clone())));
+        hub.handle(HubMsg::Tail(TailEvent::Switched(FOREVER.into())));
         hub.handle(HubMsg::Tail(TailEvent::Index {
             index: Box::new(idx),
             file_age_ms: Some(0),
         }));
-        assert_eq!(hub.engine.edition(), None, "the index names no edition");
-        let ids = hub.engine.list_ids();
-        assert!(!ids.is_empty());
+        assert_eq!(
+            hub.engine.edition(),
+            Some(Edition::Forever),
+            "named by its index"
+        );
         hub.handle(HubMsg::Tail(TailEvent::Seeds(seeds)));
-        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
-        assert_eq!(hub.engine.list_ids(), ids, "the seed lines moved no id");
+        let lists: Vec<(usize, Option<Edition>)> = drain(&retail)
+            .into_iter()
+            .filter_map(|m| match m {
+                DaemonMsg::SegmentList {
+                    entries, edition, ..
+                } => Some((entries.len(), edition)),
+                _ => None,
+            })
+            .collect();
+        assert!(!lists.is_empty());
+        assert!(
+            lists.iter().all(|l| *l == (0, Some(Edition::Retail))),
+            "only Retail's empty list: {lists:?}"
+        );
+    }
 
-        let last_list = |msgs: Vec<DaemonMsg>| {
+    /// v49: a session that STOPS being served — a log whose first fight came
+    /// before any version line (reckoned Retail's), then a line naming
+    /// Forever — is sent its pinned edition's empty list at once, never left
+    /// holding the other edition's ids.
+    #[test]
+    fn a_session_that_stops_being_served_is_sent_its_empty_list() {
+        use wowdps_model::Edition;
+        use wowdps_proto::EditionRef;
+        let mut hub = Hub::new();
+        let retail = hub.connect(1, ClientKind::Tui);
+        hub.client(
+            1,
+            ClientMsg::Watch {
+                cursor: seg_cursor(SegmentRef::Live),
+                edition: EditionRef::Pin(Edition::Retail),
+            },
+        );
+        drain(&retail);
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/a.txt",
+        ))));
+        hub.handle(HubMsg::Tail(TailEvent::CaughtUp));
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 1)])));
+        assert_eq!(hub.engine.edition(), None);
+        let list = |msgs: Vec<DaemonMsg>| {
             msgs.into_iter().rev().find_map(|m| match m {
                 DaemonMsg::SegmentList {
                     entries, edition, ..
-                } => Some((entries, edition)),
+                } => Some((entries.len(), edition)),
                 _ => None,
             })
         };
-        let (entries, edition) = last_list(drain(&pinned)).expect("the pinned session's list");
-        assert_eq!(entries.len(), ids.len());
-        assert_eq!(edition, Some(Edition::Forever));
-        let (entries, edition) = last_list(drain(&follower)).expect("the follower's list");
-        assert_eq!(edition, Some(Edition::Forever));
-        assert!(entries.iter().all(|e| e.row.edition == Edition::Forever));
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            list(drain(&retail)),
+            Some((1, Some(Edition::Retail))),
+            "a log naming none serves a Retail pin"
+        );
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![
+            "7/27/2026 21:05:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18".to_string(),
+        ])));
+        assert_eq!(hub.engine.edition(), Some(Edition::Forever));
+        assert_eq!(
+            list(drain(&retail)),
+            Some((0, Some(Edition::Retail))),
+            "emptied when it stops being served"
+        );
     }
 
     /// v49: one source, three sessions — following, pinned to the edition
     /// the log names, pinned to another. The first two are answered alike,
     /// every frame naming the log's edition; the third is answered the
     /// empty list of its own edition and hears nothing of this log: no
-    /// fight opening, no list broadcast, no `Live` loadout.
+    /// fight opening, never its list (a broadcast sends it its own empty
+    /// one), no `Live` loadout.
     #[test]
     fn a_session_pinned_to_another_edition_hears_nothing_of_this_log() {
         use wowdps_model::Edition;
@@ -1253,7 +1341,18 @@ mod tests {
             );
             assert_eq!(list_edition(&got), [(1, Some(Edition::Retail))]);
         }
-        assert!(drain(&forever).is_empty(), "another edition's fight");
+        let got = drain(&forever);
+        assert!(
+            !got.iter()
+                .any(|m| matches!(m, DaemonMsg::SegmentOpened { .. })),
+            "another edition's fight: {got:?}"
+        );
+        assert!(
+            list_edition(&got)
+                .iter()
+                .all(|l| *l == (0, Some(Edition::Forever))),
+            "only its own empty list: {got:?}"
+        );
 
         // Its Watch is answered at once, and `Live` there is nobody's.
         hub.client(

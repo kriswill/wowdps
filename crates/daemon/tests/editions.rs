@@ -1432,3 +1432,58 @@ fn a_source_named_before_its_header_is_that_edition() {
         "the header decides"
     );
 }
+
+/// A client state pinned to Retail over a log whose first pull came before
+/// any version line (reckoned Retail's, so it is served that pull), then a
+/// line naming Forever: the state stops being served and is emptied at
+/// once — the mock answers as the hub does — never left holding the
+/// Forever log's ids under a Retail pin.
+#[test]
+fn a_state_that_stops_being_served_is_emptied() {
+    let tmp = Temp::new("unserved");
+    let path = tmp.0.join("WoWCombatLog-072726_210000.txt");
+    std::fs::write(
+        &path,
+        "7/27/2026 21:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,2769\n\
+         7/27/2026 21:00:11.000-4  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n\
+         7/27/2026 21:00:40.000-4  ENCOUNTER_END,3130,\"Boss\",1,5,1,30000\n",
+    )
+    .unwrap();
+    let mut mock = MockDaemon::fixture_at(&path);
+    let mut st = ClientState::new();
+    let sent = st.set_edition(EditionRef::Pin(Edition::Retail));
+    pump(&mut st, &mut mock, sent);
+    assert_eq!(st.entries().len(), 1, "a log naming none serves Retail");
+    let sent = st.goto_list_pos(0);
+    pump(&mut st, &mut mock, sent);
+    let replies = mock.feed(vec![
+        "7/27/2026 21:05:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18".to_string(),
+    ]);
+    let mut sent = Vec::new();
+    for reply in replies {
+        sent.extend(st.on_msg(reply));
+    }
+    pump(&mut st, &mut mock, sent);
+    assert!(st.entries().is_empty(), "no Forever id under a Retail pin");
+    assert_eq!(st.edition(), Some(Edition::Retail));
+}
+
+/// A zero named as a source's edition is no edition named: `None`, never
+/// `Unknown(0)`, which would differ from the Retail its header then names.
+#[test]
+fn a_source_named_zero_is_named_nothing() {
+    let mut engine = Engine::new();
+    let mut events = Vec::new();
+    engine.on_tail(
+        TailEvent::Switched(PathBuf::from("/logs/WoWCombatLog-new.txt")),
+        &mut events,
+    );
+    engine.set_source_edition(Some(Edition::Unknown(0)));
+    assert_eq!(engine.edition(), None);
+    engine.set_source_edition(Some(Edition::Classic(18)));
+    assert_eq!(
+        engine.edition(),
+        Some(Edition::Forever),
+        "as its number names it"
+    );
+}
