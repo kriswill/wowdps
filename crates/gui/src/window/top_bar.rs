@@ -1,16 +1,23 @@
 //! The top bar every window screen wears (the prototype's `.top`, the iced
 //! window's `top_bar.rs`): the wordmark, the two places — Home and Fights —
-//! the jump box, the live pill, the character picker, the gear and the help
-//! button, on the panel's surface over a hairline the active place's
-//! underline covers. At 820 px and under the wordmark goes, the jump box
-//! shrinks to its glyph, the pill keeps its dot and clock, and the picker
-//! its icon.
+//! and, while the window knows more than one edition of the game, the
+//! edition switch beside them; the jump box, the live pill, the character
+//! picker, the gear and the help button, on the panel's surface over a
+//! hairline the active place's underline covers. At 820 px and under the
+//! wordmark goes, the jump box shrinks to its glyph, the pill keeps its dot
+//! and clock, the switch its shorter name and the picker its icon.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::base::{IterationCount, Keyframe, Keyframes, Timing, animate_keyframes};
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Div, MouseButton, TestSupportExt as _, Window, div, img, px, relative};
+use gpui_kit::{
+    Bounds, Context, Div, MouseButton, Pixels, TestSupportExt as _, Window, canvas, div, img, px,
+    relative,
+};
+use wowdps_gui_logic::editions::Face;
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_model::fmt::duration;
 use wowdps_model::{Class, Screen, SegmentKind, Spec};
@@ -19,7 +26,7 @@ use wowdps_proto::ClientState;
 use super::Gui;
 use super::chrome::{icon_button, kbd, place, tip};
 use super::paint::{dot, glyph, glyph_ink, ring};
-use super::w::{REGULAR, SEMIBOLD, W};
+use super::w::{MEDIUM, REGULAR, SEMIBOLD, W};
 use crate::images;
 use crate::theme::hsla;
 
@@ -50,6 +57,12 @@ const PILL_NAME_W: f32 = 200.0;
 /// margin-left:4px}`), and the widest its name grows.
 const WHO_H: f32 = 30.0;
 const PICKER_NAME_W: f32 = 160.0;
+/// The edition switch: as tall as the picker, a hair from the places, and
+/// the widest its name grows (an expansion's name can run long), less at
+/// 820 px and under.
+const SWITCH_GAP: f32 = 6.0;
+const SWITCH_NAME_W: f32 = 150.0;
+const SWITCH_NAME_NARROW: f32 = 76.0;
 /// The live dot's pulse (`.pulse` in the prototype): a ring that swells
 /// off the dot and fades, once every 1.6 s — a few times when a pull goes
 /// live, then the dot at rest. Every frame of it redraws the whole window,
@@ -157,6 +170,20 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
                 cx.listener(|this, _, window, cx| this.goto_fights(window, cx)),
             )),
     );
+    // The edition switch, only while more than one edition is known: a
+    // window of one edition is today's.
+    if gui.edition_entries(cx).is_some() {
+        let face = gui.edition_face(cx);
+        line = line
+            .child(div().w(w.z(SWITCH_GAP)).flex_none())
+            .child(edition_switch(
+                w,
+                face,
+                narrow,
+                Rc::clone(&gui.edition_at),
+                cx,
+            ));
+    }
     // The jump box stands centred in the room between the places and what
     // follows (`.jump{margin-inline:auto}`), keeping clear of both; narrow,
     // it is a glyph at the end of that room.
@@ -232,6 +259,65 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
                 .bg(w.c(|t| t.line)),
         )
         .child(div().absolute().inset_0().child(line))
+}
+
+/// The edition switch: the edition the window shows, by its name —
+/// following, the running game's — with its emblem once one is cached and
+/// the caret; the build in its tooltip, which says too when the window
+/// follows the game. A press opens the edition menu. Its bounds are kept
+/// for the menu to hang from.
+fn edition_switch(
+    w: &W,
+    face: Face,
+    narrow: bool,
+    at: Rc<Cell<Bounds<Pixels>>>,
+    cx: &mut Context<Gui>,
+) -> impl IntoElement {
+    let side = w.z(w.size.place);
+    let emblem = images::edition_emblem(face.edition, w.device(side));
+    let seat = canvas(move |b, _, _| at.set(b), |_, (), _, _| {})
+        .absolute()
+        .inset_0();
+    let name_w = if narrow {
+        SWITCH_NAME_NARROW
+    } else {
+        SWITCH_NAME_W
+    };
+    let switch = div()
+        .id("top-edition")
+        .test_support()
+        .relative()
+        .h(w.z(WHO_H))
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(w.z(6.))
+        .pl(w.z(8.))
+        .pr(w.z(6.))
+        .rounded(w.r(6.))
+        .cursor_pointer()
+        .text_color(w.c(|t| t.ink_2))
+        .hover(|s| s.bg(w.c(|t| t.hover)).text_color(w.c(|t| t.ink)))
+        .child(seat)
+        .children(emblem.map(|tile| img(tile).size(side).flex_none()))
+        .child(
+            div()
+                .max_w(w.z(name_w))
+                .min_w_0()
+                .font_family(w.ui.clone())
+                .font_weight(MEDIUM)
+                .text_size(w.z(w.size.place))
+                .truncate()
+                .line_height(relative(1.3))
+                .child(face.name),
+        )
+        .child(glyph_ink(Glyph::ChevronDown, w.z(w.size.place * 0.8)));
+    tip(switch, face.tip).on_mouse_down(
+        MouseButton::Left,
+        cx.listener(|this, _, window, cx| {
+            this.toggle_menu(super::cards::Menu::Edition, window, cx)
+        }),
+    )
 }
 
 /// The wordmark (`.mark`): "wowdps" in Marcellus and the game's gold,

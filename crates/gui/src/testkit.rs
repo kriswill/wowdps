@@ -66,6 +66,124 @@ impl Link for MockLink {
     }
 }
 
+/// v49: a daemon of two editions, as one following a source per edition
+/// is: Retail's `sample.txt` is followed, the store holds both its fights
+/// and Forever's `forever.txt`'s, and — `with_forever_source` — Forever's
+/// log is followed too. A Watch is answered by the edition's source (a pin
+/// to an edition no source carries by the empty answer, as the daemon
+/// gives it); following, by the live edition's. Every history question
+/// goes to the one store. What the window sent is kept for a test to read.
+pub struct EditionsLink {
+    retail: MockDaemon,
+    forever: Option<MockDaemon>,
+    /// The live edition: what a following session is answered by.
+    pub live: wowdps_model::Edition,
+    edition: wowdps_proto::EditionRef,
+    inbox: Vec<DaemonMsg>,
+    pub sent: std::rc::Rc<std::cell::RefCell<Vec<ClientMsg>>>,
+}
+
+impl EditionsLink {
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../core/fixtures")
+            .join(name)
+    }
+
+    /// Retail followed, both editions' fights stored.
+    pub fn new() -> Self {
+        Self::owned(&[])
+    }
+
+    /// As `new`, the store naming `characters` the account's (the config's
+    /// `history_characters`), so its cards have owners in both editions.
+    pub fn owned(characters: &[&str]) -> Self {
+        let names: Vec<String> = characters.iter().map(|c| c.to_string()).collect();
+        let retail = MockDaemon::fixture()
+            .with_characters(&names)
+            .with_history()
+            .with_history_of(&Self::fixture("forever.txt"));
+        Self {
+            retail,
+            forever: None,
+            live: wowdps_model::Edition::Retail,
+            edition: wowdps_proto::EditionRef::Follow,
+            inbox: Vec::new(),
+            sent: std::rc::Rc::default(),
+        }
+    }
+
+    /// Forever's log followed as well.
+    pub fn with_forever_source(mut self) -> Self {
+        self.forever = Some(MockDaemon::fixture_at(&Self::fixture("forever.txt")));
+        self
+    }
+
+    /// The mock that answers the session's edition.
+    fn source(&mut self) -> &mut MockDaemon {
+        use wowdps_model::Edition;
+        let edition = match self.edition {
+            wowdps_proto::EditionRef::Follow => self.live,
+            wowdps_proto::EditionRef::Pin(e) => e.counts_as(),
+        };
+        match (&mut self.forever, edition) {
+            (Some(f), Edition::Forever) => f,
+            _ => &mut self.retail,
+        }
+    }
+}
+
+impl Default for EditionsLink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Link for EditionsLink {
+    fn send(&mut self, msg: &ClientMsg) {
+        self.sent.borrow_mut().push(msg.clone());
+        let replies = match msg {
+            ClientMsg::Watch { edition, .. } => {
+                self.edition = *edition;
+                self.source().handle(msg.clone())
+            }
+            ClientMsg::GetLoadout { .. } => self.source().handle(msg.clone()),
+            ClientMsg::GetStatus { .. } => {
+                let live = self.live;
+                let forever = self.forever.is_some();
+                let mut replies = self.retail.handle(msg.clone());
+                for r in &mut replies {
+                    if let DaemonMsg::Status { editions, .. } = r {
+                        for e in editions.iter_mut() {
+                            e.live = live == wowdps_model::Edition::Retail;
+                        }
+                        if forever {
+                            editions.push(wowdps_proto::EditionSource {
+                                edition: Some(wowdps_model::Edition::Forever),
+                                source: Some("forever.txt".to_string()),
+                                log: Some("forever.txt".to_string()),
+                                live: live == wowdps_model::Edition::Forever,
+                                running: false,
+                            });
+                        }
+                    }
+                }
+                replies
+            }
+            _ => self.retail.handle(msg.clone()),
+        };
+        self.inbox.extend(replies);
+    }
+
+    fn poll(&mut self) -> Vec<DaemonMsg> {
+        std::mem::take(&mut self.inbox)
+    }
+
+    fn reconnect(&mut self) -> Reconnect {
+        Reconnect::Connected
+    }
+}
+
 /// A link that answers nothing: a state built by hand
 /// (`wowdps_gui_logic::raid`) stays exactly as it was built.
 pub struct NullLink;

@@ -518,6 +518,95 @@ fn window_shots() {
     }
 }
 
+/// v49: the window over a daemon of two editions (`testkit::EditionsLink`:
+/// the fixture's Retail log and Forever's, both followed, both stored), at
+/// the three frames: the edition switch beside the places (`editions`),
+/// its menu open (`editions-menu`), and Forever pinned — its own pull on
+/// the stage, its rail (`editions-forever`). Over the committed fixtures
+/// only, in the shots' theme.
+#[test]
+#[ignore = "needs a wgpu adapter"]
+fn edition_shots() {
+    let dir = std::env::var_os("WOWDPS_SHOTS_DIR").map(PathBuf::from);
+    if let Some(dir) = &dir {
+        std::fs::create_dir_all(dir).expect("the shots' directory");
+    }
+    type EditionPose = fn(&mut HeadlessAppContext, &Shot);
+    let poses: [(&str, EditionPose); 3] = [
+        ("editions", |_, _| {}),
+        ("editions-menu", |cx, s| menu(cx, s, Menu::Edition)),
+        ("editions-forever", |cx, s| {
+            cx.update_entity(&s.gui, |g, cx| {
+                g.pick_edition(
+                    wowdps_proto::EditionRef::Pin(wowdps_model::Edition::Forever),
+                    cx,
+                )
+            });
+            s.settle(cx);
+        }),
+    ];
+    for (name, pose) in poses {
+        for (frame, w, h) in SIZES {
+            let mut cx = app();
+            let path = super::tests::own_config();
+            std::fs::write(
+                &path,
+                format!(
+                    "zoom = 1.0\nhome_on_start = false\ntheme = \"{}\"\n",
+                    testkit::shots_theme().name
+                ),
+            )
+            .expect("the shots' config is written");
+            let cfg = Config::load();
+            let link = testkit::EditionsLink::owned(&["Thraxx-Nebula-US", "Velkris-Nebula-US"])
+                .with_forever_source();
+            let mut held = None;
+            let (window, gui) =
+                testkit::open_headless(&mut cx, size(px(w), px(h)), |window, cx| {
+                    let session = cx.new(|_| {
+                        Session::with_state(Box::new(link), wowdps_proto::ClientState::new())
+                    });
+                    held = Some(session.clone());
+                    let gui = cx.new(|cx| Gui::new(session, cfg, window, cx));
+                    let focus = gui.read(cx).focus().clone();
+                    window.focus(&focus, cx);
+                    gui
+                });
+            let shot = Shot {
+                window,
+                gui,
+                session: held.expect("the session was built"),
+            };
+            shot.settle(&mut cx);
+            let tonight = cx.update(|cx| {
+                shot.session
+                    .read(cx)
+                    .state()
+                    .entries()
+                    .iter()
+                    .map(|e| e.row.start_ms)
+                    .max()
+                    .map(wowdps_gui_logic::rail::night_of)
+            });
+            cx.update_entity(&shot.gui, |g, _| g.hist.tonight_pin = tonight);
+            shot.settle(&mut cx);
+            let _ = cx.update_window(shot.window, |_, window, cx| window.render_frame(cx));
+            pose(&mut cx, &shot);
+            shot.settle(&mut cx);
+            cx.run_until_parked();
+            let _ = cx.update_window(shot.window, |_, window, cx| window.render_frame(cx));
+            let image = cx
+                .capture_screenshot(shot.window)
+                .expect("a headless renderer");
+            if let Some(dir) = &dir {
+                let path = dir.join(format!("{frame}-{name}.png"));
+                image.save(&path).expect("png written");
+                eprintln!("edition_shots: {}", path.display());
+            }
+        }
+    }
+}
+
 /// The chrome budget over a real log (the iced window's
 /// `the_chrome_budget_holds_on_the_log`): at 1440×900 the featured raid's
 /// first meter row starts no more than 290 px down, and 18 rows show

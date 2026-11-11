@@ -79,6 +79,14 @@ pub fn spec_icon(spec_id: u32, px: f32) -> Option<Tile> {
     class_icons()?.spec(spec_id, px, make)
 }
 
+/// An edition's emblem for the edition switch, `px` device pixels across:
+/// `None` for now — the switch draws each edition's name alone. The seam
+/// a cache of the emblems read from this machine's install fills, as the
+/// class and spell caches are filled; no game art enters the repository.
+pub fn edition_emblem(_edition: wowdps_model::Edition, _px: f32) -> Option<Tile> {
+    None
+}
+
 /// An ability's icon, read from the spell cache on first use.
 pub fn spell_icon(spell_id: u32) -> Option<Tile> {
     spell_icons()?.lookup(spell_id, make)

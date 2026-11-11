@@ -147,7 +147,7 @@ pub fn view(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
     // The chips stand still: by name, not by how much each was played.
     let mut chars: Vec<CharLine> = gui
         .hist
-        .known
+        .known()
         .iter()
         .filter(|c| !c.guid.is_empty())
         .cloned()

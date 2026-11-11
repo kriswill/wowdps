@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use gpui_kit::{Context, Task};
 use wowdps_proto::{
-    ClientMsg, ClientState, DaemonClient, DaemonMsg, HistoryStatus, OverlayState, Reconnect,
+    ClientMsg, ClientState, DaemonClient, DaemonMsg, EditionSource, HistoryStatus, OverlayState,
+    Reconnect,
 };
 
 /// The drain cadence: the daemon pushes changes at 10 Hz, the iced GUI
@@ -56,6 +57,9 @@ pub struct Status {
     pub linger: bool,
     pub overlay: OverlayState,
     pub history: HistoryStatus,
+    /// v49: every edition's source the daemon follows, the live one marked:
+    /// what the window's edition switch counts as installed.
+    pub editions: Vec<EditionSource>,
 }
 
 /// What a session says that its `ClientState` does not own.
@@ -217,6 +221,7 @@ impl Session {
                     linger,
                     overlay,
                     history,
+                    editions,
                     ..
                 } = &msg
                 {
@@ -227,6 +232,7 @@ impl Session {
                         linger: *linger,
                         overlay: overlay.clone(),
                         history: history.clone(),
+                        editions: editions.clone(),
                     });
                 }
                 if matches!(

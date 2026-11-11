@@ -131,6 +131,27 @@ glass = false
 A key that does not exist or a value that does not parse is reported (on
 stderr, and in the ⚙ menu) and skipped; the rest of the theme still applies.
 
+### Editions
+
+When this machine has more than one edition of the game (a log followed or
+a fight stored of each), the window's top bar carries an edition switch
+beside Home and Fights: **Follow the game I'm playing**, the default at
+every launch, or one edition. Retail goes by its current expansion's name
+(Midnight) and Forever by its own; the build is in the tooltip. The choice
+scopes the live meter, the pull rail, Home and the command palette. Each
+edition keeps its own character, class and Home dates: Retail's are the
+top-level `character`, `character_class`, `season_start` and `season_end`,
+and another edition's sit in a table of their own:
+
+```toml
+[editions.forever]
+season_start = "2026-11-10"   # Home counts from here; unset, from the
+                              # edition's first stored fight
+```
+
+With one edition the window shows no switch. The overlay has none: it
+always follows the game that is running.
+
 ### Game data caches
 
 Class crests, spec icons and spell icons come from your own game install,

@@ -10,9 +10,10 @@ use std::time::Duration;
 
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, Div, MouseButton, TestSupportExt as _, div, relative};
+use wowdps_gui_logic::editions::header_meta;
 use wowdps_gui_logic::fight_head::{
     GONE, NEWER_TIP, OLDER_TIP, RAIL_TIP, READING, RunClocks, Seen, Stats, Verdict, WAITING, You,
-    edition_meta, meta, outcome, pairs, pending, you,
+    meta, outcome, pairs, pending, you,
 };
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::home::wipe_pct;
@@ -106,8 +107,17 @@ impl Head {
                 .map_or_else(String::new, |_| duration(app.duration_ms())),
             stats: name.is_some().then(|| stats_of(gui, cx)),
             title: name,
-            // v49: a fight of another edition than Retail says which.
-            meta: edition_meta(meta(app.segment_encounter()), app.segment_edition()),
+            // v49: a fight of another edition than Retail says which, and
+            // a Retail fight in another edition's window says its name, by
+            // its own card's build where it has one.
+            meta: header_meta(
+                meta(app.segment_encounter()),
+                app.segment_edition(),
+                gui.header_edition(),
+                card.map(|c| c.build)
+                    .filter(|b| *b != (0, 0, 0))
+                    .or_else(|| gui.hist.store.census.build(wowdps_model::Edition::Retail)),
+            ),
             outcome: outcome(Verdict {
                 wipe_pct: card.and_then(wipe_pct),
                 ..Verdict::of(app)

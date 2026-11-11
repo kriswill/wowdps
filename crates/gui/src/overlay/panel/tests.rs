@@ -353,6 +353,11 @@ fn the_overlay_re_pins_when_the_live_edition_moves(cx: &mut TestAppContext) {
     rig.session.read_with(cx, |s, _| {
         let st = s.state();
         assert_eq!(st.edition(), Some(Edition::Forever));
+        assert_eq!(
+            st.edition_ref(),
+            wowdps_proto::EditionRef::Follow,
+            "the overlay has no switch: it follows the running game"
+        );
         assert_eq!(st.source.as_deref(), Some("forever.txt"));
         assert!(st.following_live(), "re-pinned to the live segment");
         assert!(
