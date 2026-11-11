@@ -71,16 +71,19 @@ rec {
   # CXX=clang++ (the compilers the cc-built crates use, DuckDB's bundled
   # C++ among them). On x86_64-unknown-linux-gnu, where rustc links with LLD out
   # of the box and stops adding its LLD flags once a driver is named, it
-  # names its `devenv-rust-linker` script, which forces ld.lld; on any other
-  # target, clang itself. The flake shell mirrors all of it: it adds the
+  # names its `devenv-rust-linker-clang` script, which forces ld.lld (rustc
+  # reads the driver from the name's ending, so it adds no `-fuse-ld=lld` of
+  # its own after it); on any other target, clang itself. The flake shell mirrors all of it: it adds the
   # same clang (flake.nix) and exports the same linker, the script written
   # out again with the same name and text so it builds to the same store
   # path. If devenv ever changes its choice, the paths part and the contract
   # says so.
   rustLinker =
     if pkgs.stdenv.hostPlatform.rust.rustcTarget == "x86_64-unknown-linux-gnu" then
-      pkgs.writeShellScript "devenv-rust-linker" ''
-        exec ${lib.getExe pkgs.clang} --ld-path=${pkgs.llvmPackages.bintools}/bin/ld.lld "$@"
+      pkgs.writeShellScript "devenv-rust-linker-clang" ''
+        exec ${lib.getExe pkgs.clang} ${
+          lib.escapeShellArgs [ "--ld-path=${pkgs.llvmPackages.bintools}/bin/ld.lld" ]
+        } "$@"
       ''
     else
       lib.getExe pkgs.clang;
