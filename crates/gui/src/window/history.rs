@@ -135,7 +135,7 @@ impl Store {
             DaemonMsg::History { req_id, answer } => {
                 let rail = self.earlier.absorb(*req_id, answer);
                 changed.rail |= rail;
-                let (census, moved) = self.census.absorb(*req_id, answer);
+                let (census, moved) = self.census.absorb(*req_id, answer, Instant::now());
                 changed.editions |= moved;
                 let mut home_read = false;
                 if let Some(home) = self.home.as_mut() {
@@ -366,6 +366,10 @@ pub struct Hist {
     /// A pin wants its game's newest stored pull on the stage while its
     /// meter has none (`Gui::land_pinned`).
     pub landing: bool,
+    /// When the window last told the meter where to look
+    /// (`ClientState::set_edition`): its empty list until the daemon's
+    /// next frame is the window's own reset, not an answer.
+    pub asked_at: Option<Instant>,
     /// Home was offered at launch (once, after the first snapshot), and
     /// whether the log's pull was live at the last word from the session:
     /// a pull STARTING replaces Home with the meter.
@@ -423,6 +427,7 @@ impl Hist {
             linked_up: true,
             caught_up: false,
             landing: false,
+            asked_at: None,
             considered: false,
             was_live: false,
             _subscriptions: vec![replies, changes],
@@ -779,6 +784,44 @@ mod tests {
         assert!(home.answered && !home.cards.is_empty());
         store.close_home();
         assert!(store.home.is_none());
+    }
+
+    /// A rescope that moves only Home's dates starts Home over, on its
+    /// way again rather than an answered empty store; one that moves
+    /// nothing starts nothing over; and a move of the window's edition takes
+    /// what Home derived with it, open or not.
+    #[test]
+    fn a_rescope_starts_home_over_on_its_way() {
+        let mut mock = MockDaemon::fixture().with_history();
+        let mut store = Store::new(&Config::default());
+        let first = store.requests(Instant::now());
+        settle(&mut store, &mut mock, first);
+        let sent = store.open_home(None);
+        settle(&mut store, &mut mock, sent);
+        assert!(store.home.as_ref().is_some_and(|h| h.answered));
+        let season = Season {
+            start_utc_ms: Some(1),
+            end_utc_ms: None,
+        };
+        assert!(
+            !store.rescope(None, season.clone(), false),
+            "the rail stays"
+        );
+        let home = store.home.as_ref().expect("Home is up");
+        assert!(!home.answered, "on its way, not an empty store");
+        assert!(home.cards.is_empty() && home.pages == 0);
+        let sent = store.requests(Instant::now());
+        settle(&mut store, &mut mock, sent);
+        assert!(store.home.as_ref().is_some_and(|h| h.answered));
+        store.rescope(None, season.clone(), false);
+        assert!(
+            store.home.as_ref().is_some_and(|h| h.answered),
+            "nothing moved, nothing started over"
+        );
+        store.panels.owner = Some(Char::default());
+        store.close_home();
+        store.rescope(None, season, true);
+        assert!(store.panels.owner.is_none(), "the owner went, Home shut");
     }
 
     #[test]

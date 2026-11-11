@@ -489,7 +489,9 @@ impl Census {
     /// Fold an answer in; `(mine, changed)`: whether it answered this
     /// census, and whether it changed what is known or what an edition is
     /// called.
-    pub fn absorb(&mut self, req_id: u32, answer: &HistoryAnswer) -> (bool, bool) {
+    /// `now` is when it landed, which an empty answer's second asking waits
+    /// from.
+    pub fn absorb(&mut self, req_id: u32, answer: &HistoryAnswer, now: Instant) -> (bool, bool) {
         let Some((asked, edition)) = self.pending else {
             return (false, false);
         };
@@ -510,7 +512,7 @@ impl Census {
                 self.retried.push(edition);
                 self.again.push(edition);
                 self.retry_at
-                    .get_or_insert(Instant::now() + crate::history::RETRY_AFTER);
+                    .get_or_insert(now + crate::history::RETRY_AFTER);
             }
             return (true, false);
         }

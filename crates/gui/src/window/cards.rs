@@ -23,6 +23,8 @@ mod toast;
 mod tests;
 
 pub use editions::view as editions;
+#[cfg(test)]
+pub use menu::row_id as menu_row_id;
 pub use menu::view as menu;
 pub use options::view as options;
 pub use sheet::view as sheet;
@@ -220,10 +222,10 @@ impl Gui {
     /// following means; the window's "you" never left it.
     pub(crate) fn picker_follow(&mut self, cx: &mut Context<Self>) {
         self.cards.picker = false;
-        let edition = self.hist.edition;
-        if self.cfg.character_in(self.keys()).is_some() {
-            self.cfg.set_character_in(edition, None);
-            wowdps_gui_logic::config::Config::store(|c| c.set_character_in(edition, None));
+        let keys = self.keys();
+        if self.cfg.character_in(keys).is_some() {
+            self.cfg.set_character_in(keys, None);
+            wowdps_gui_logic::config::Config::store(|c| c.set_character_in(keys, None));
         }
         if let Some(home) = self.hist.store.home.as_mut() {
             home.scope = None;

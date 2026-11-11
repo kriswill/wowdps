@@ -55,11 +55,11 @@ impl Gui {
     pub(crate) fn scope_home(&mut self, guid: Option<String>, cx: &mut Context<Self>) {
         // The one key, over what is on disk: the launch-time copy would put
         // back an overlay drag or a zoom saved since.
-        let edition = self.hist.edition;
-        if self.cfg.character_in(self.keys()) != guid.as_deref() {
-            self.cfg.set_character_in(edition, guid.clone());
+        let keys = self.keys();
+        if self.cfg.character_in(keys) != guid.as_deref() {
+            self.cfg.set_character_in(keys, guid.clone());
             let stored = guid.clone();
-            Config::store(move |c| c.set_character_in(edition, stored));
+            Config::store(move |c| c.set_character_in(keys, stored));
         }
         self.open_home(cx);
         if let Some(home) = self.hist.store.home.as_mut() {

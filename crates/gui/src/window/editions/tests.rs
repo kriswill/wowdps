@@ -14,7 +14,7 @@ use wowdps_gui_logic::editions::PLAYING_NOW;
 use wowdps_model::{Edition, Screen};
 use wowdps_proto::{ClientMsg, EditionRef, HistoryQuery};
 
-use super::super::tests::{Rig, config, own_config, press, rig_on, settle};
+use super::super::tests::{Rig, own_config, press, rig_on, settle};
 use super::super::{Gui, Place};
 use crate::session::Session;
 use crate::testkit::{self, EditionsLink, MockLink};
@@ -438,7 +438,13 @@ fn an_empty_game_says_how_to_get_a_fight(cx: &mut TestAppContext) {
         shown(cx, &rig, "top-edition"),
         "Forever is known by its log"
     );
-    pick(cx, &rig, "edition-forever");
+    // Picked, and not yet answered: the window's own reset is no answer.
+    rig.gui
+        .update(cx, |g, cx| g.pick_edition(Edition::Forever, cx));
+    rig.gui.read_with(cx, |g, cx| {
+        assert_eq!(g.empty_game(cx), None, "the daemon has not said yet");
+    });
+    settle(cx, &rig.session);
     assert!(shown(cx, &rig, "stage-empty"));
     rig.gui.read_with(cx, |g, cx| {
         assert_eq!(
@@ -476,6 +482,12 @@ fn the_talent_viewer_says_forever_logs_no_builds(cx: &mut TestAppContext) {
         );
         assert_eq!(st.segment_edition(), Some(Edition::Forever));
     });
+    rig.gui.read_with(cx, |g, _| {
+        assert!(
+            g.hist.store.stored.is_none(),
+            "a followed log shows its own pull, never a stored one"
+        );
+    });
     open_talents(cx, &rig);
     assert!(shown(cx, &rig, "talents-gap"));
     assert_eq!(
@@ -486,16 +498,20 @@ fn the_talent_viewer_says_forever_logs_no_builds(cx: &mut TestAppContext) {
 
 /// One game alone — Forever's, a config written before editions — reads
 /// the top-level keys its table lacks: Home opens on the configured
-/// character, and history questions stay every edition's.
+/// character, and history questions stay every edition's. The picker's
+/// follow item lets that pick go where it is read: the top-level key.
 #[gpui_kit::test]
 fn one_game_alone_reads_the_top_level_keys(cx: &mut TestAppContext) {
-    own_config();
+    let path = own_config();
     cx.update(crate::keys::bind);
     let guid = "Player-6101-0A2B3C01".to_string();
-    let cfg = Config {
-        character: Some(guid.clone()),
-        ..config()
-    };
+    std::fs::write(
+        &path,
+        format!("zoom = 1.0\nhome_on_start = false\ncharacter = \"{guid}\"\n"),
+    )
+    .expect("the config");
+    let cfg = Config::load();
+    assert_eq!(cfg.character.as_deref(), Some(guid.as_str()));
     let mock = MockDaemon::fixture_at(&EditionsLink::fixture("forever.txt"))
         .with_characters(&[FOREVER_ME.to_string()])
         .with_history();
@@ -527,6 +543,92 @@ fn one_game_alone_reads_the_top_level_keys(cx: &mut TestAppContext) {
         );
         assert_eq!(home.edition, None, "every edition's, as before");
     });
+    press(cx, &rig, "top-picker");
+    press(cx, &rig, super::super::cards::menu_row_id(None));
+    rig.gui.read_with(cx, |g, _| {
+        assert_eq!(g.cfg.character_in(g.keys()), None, "the pick let go");
+        let home = g.hist.store.home.as_ref().expect("Home is up");
+        assert_eq!(home.scope, None, "every character");
+    });
+    let disk = Config::load();
+    assert_eq!(disk.character, None, "cleared on disk, where it is read");
+    assert!(disk.editions.is_empty());
+}
+
+/// Review 7: a census question lost with the connection (the daemon
+/// restarted) is asked again once the link is back.
+#[gpui_kit::test]
+fn a_census_question_lost_to_a_restart_is_asked_again(cx: &mut TestAppContext) {
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+    struct Flaky {
+        inner: EditionsLink,
+        down: Rc<Cell<bool>>,
+    }
+    impl crate::session::Link for Flaky {
+        fn send(&mut self, msg: &ClientMsg) {
+            if !self.down.get() {
+                self.inner.send(msg);
+            }
+        }
+        fn poll(&mut self) -> Vec<wowdps_proto::DaemonMsg> {
+            if self.down.get() {
+                Vec::new()
+            } else {
+                self.inner.poll()
+            }
+        }
+        fn reconnect(&mut self) -> wowdps_proto::Reconnect {
+            if self.down.get() {
+                wowdps_proto::Reconnect::Waiting
+            } else {
+                wowdps_proto::Reconnect::Connected
+            }
+        }
+    }
+    // Forever has no fight stored: the census keeps asking about it.
+    let inner = EditionsLink::stored(&[RETAIL_ME], false);
+    let h = handles(&inner);
+    let down = Rc::new(Cell::new(false));
+    let rig = rig_on(
+        cx,
+        1440.,
+        900.,
+        Flaky {
+            inner,
+            down: Rc::clone(&down),
+        },
+    );
+    // The daemon goes away; a question goes out meanwhile and is lost.
+    down.set(true);
+    settle(cx, &rig.session);
+    let before = h.sent.borrow().len();
+    rig.gui.update(cx, |g, cx| {
+        g.hist.store.census.store_changed();
+        let sent = g
+            .hist
+            .store
+            .requests(Instant::now() + Duration::from_secs(60));
+        g.send_history(sent, cx);
+    });
+    assert_eq!(h.sent.borrow().len(), before, "nothing reached the daemon");
+    // It is back: the question is asked again.
+    down.set(false);
+    settle(cx, &rig.session);
+    let again = h.sent.borrow().iter().skip(before).any(|m| {
+        matches!(
+            m,
+            ClientMsg::GetHistory {
+                query: HistoryQuery::Fights {
+                    edition: Some(Edition::Forever),
+                    limit: 1,
+                    ..
+                },
+                ..
+            }
+        )
+    });
+    assert!(again, "the lost question is asked again");
 }
 
 fn open_talents(cx: &mut TestAppContext, rig: &Rig) {

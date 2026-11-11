@@ -75,18 +75,35 @@ impl Gui {
         editions::face(&self.hist.store.census, self.hist.edition)
     }
 
-    /// What the stage says when the game shown has no fight to show — no
-    /// pull of its log and none stored — once the window knows several
-    /// games: its heading and how to get a fight. `None` otherwise.
+    /// The daemon has answered the meter since the window last told it
+    /// where to look: until then the state's empty list is the window's
+    /// own reset, not the daemon's word.
+    fn answered(&self, cx: &App) -> bool {
+        let Some(asked) = self.hist.asked_at else {
+            return true;
+        };
+        self.session
+            .read(cx)
+            .last_snapshot()
+            .is_some_and(|at| at > asked)
+    }
+
+    /// What the stage says when the game shown has no fight to show — the
+    /// daemon answered with no pull of its log (a followed log once it is
+    /// listed: while it is still read, the stage says so as ever) and the
+    /// store holds none — once the window knows several games: its
+    /// heading and how to get a fight. `None` otherwise.
     pub(crate) fn empty_game(&self, cx: &App) -> Option<(String, String)> {
         let census = &self.hist.store.census;
-        if !census.several() || self.hist.store.stored.is_some() {
+        if !census.several() || self.hist.store.stored.is_some() || !self.answered(cx) {
             return None;
         }
         let state = self.session.read(cx).state();
         let shown = self.hist.edition;
-        let answered = state.edition().map(Edition::counts_as) == Some(shown);
-        (answered && state.segment_count() == 0 && census.seen(shown).stored == 0)
+        let seen = census.seen(shown);
+        let listed = !seen.source || state.source.is_some();
+        let here = state.edition().map(Edition::counts_as) == Some(shown);
+        (here && listed && state.segment_count() == 0 && seen.stored == 0)
             .then(|| editions::empty_stage(&census.name(shown)))
     }
 
@@ -157,15 +174,13 @@ impl Gui {
         self.cards.edition = false;
         let pick = pick.counts_as();
         if pick != self.edition_now(cx) {
+            // The live game by the daemon's freshest word: its frames while
+            // following, which can run a second ahead of `Status`.
             let follows_to = self
-                .hist
-                .store
-                .census
-                .live()
+                .live_edition(cx)
                 .or_else(|| (self.edition == EditionRef::Follow).then_some(self.hist.edition));
             let choice = editions::choice_for(pick, follows_to);
             self.set_choice(choice, cx);
-            self.hist.caught_up = false;
             self.sync_edition(cx);
         }
         cx.notify();
@@ -177,6 +192,8 @@ impl Gui {
             return;
         }
         self.edition = choice;
+        self.hist.caught_up = false;
+        self.hist.asked_at = Some(std::time::Instant::now());
         // A pinned game with no log of its own lands on its newest stored
         // pull once the rail has it.
         self.hist.landing = matches!(choice, EditionRef::Pin(_));
@@ -195,14 +212,22 @@ impl Gui {
         });
     }
 
-    /// A pinned game whose meter has no pull (no log of it is followed)
-    /// puts its newest stored pull on the stage, once, when the rail has
-    /// it: the window shows the game picked, never a blank.
+    /// A pinned game no log of which is followed puts its newest stored
+    /// pull on the stage, once the daemon has answered the pin with its
+    /// empty meter and the rail has the pull: the window shows the game
+    /// picked, never a blank. A game whose log is followed shows that log.
     pub(crate) fn land_pinned(&mut self, cx: &mut Context<Self>) {
         let EditionRef::Pin(pinned) = self.edition else {
             return;
         };
         if !self.hist.landing || self.place != Place::Fights || self.hist.store.stored.is_some() {
+            return;
+        }
+        if self.hist.store.census.seen(pinned).source {
+            self.hist.landing = false;
+            return;
+        }
+        if !self.answered(cx) {
             return;
         }
         let state = self.session.read(cx).state();

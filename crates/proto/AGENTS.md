@@ -21,7 +21,9 @@ the engine. Wire spec: CONTRACT.md, "Wire protocol".
   `select_player` are the window's; the TUI calls none of them.
   `set_edition` (v49: pin an edition, or follow the live one) the TUI
   calls once, before its first Watch, for `--edition`, and the window
-  on each pick of its edition switch; the overlay never does. A new capability
+  from its edition switch: on a pick, and to follow again once a pinned
+  game has been the live one and the live game moves on; the overlay
+  never does. A new capability
   for one frontend is opt-in too, and every other frontend keeps its
   semantics.
 - **Held keys never round-trip.** `j`/`k` clamp against the cached

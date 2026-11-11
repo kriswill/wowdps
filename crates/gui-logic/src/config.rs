@@ -403,11 +403,17 @@ impl Config {
         self.read(keys, |k| k.character.as_deref(), self.character.as_deref())
     }
 
-    /// Set the scope Home opens on in `edition`.
-    pub fn set_character_in(&mut self, edition: Edition, guid: Option<String>) {
-        match edition_key(edition) {
+    /// Set the scope Home opens on in `keys`' edition. While it is the
+    /// only edition known the top-level `character` is written too, as the
+    /// read falls back to it: a pick, or its clearing, lands where it is
+    /// read, and a config of one game keeps the key it always had.
+    pub fn set_character_in(&mut self, keys: KeysOf, guid: Option<String>) {
+        match edition_key(keys.edition) {
             None => self.character = guid,
             Some(key) => {
+                if keys.alone {
+                    self.character = guid.clone();
+                }
                 self.keys_mut(key.clone()).character = guid;
                 self.tidy(&key);
             }
@@ -1052,7 +1058,7 @@ mod passthrough {
         assert_eq!(cfg.season_in(retail), (Some("2026-08-12"), None));
         assert_eq!(cfg.season_in(forever), (None, None));
 
-        cfg.set_character_in(Edition::Forever, Some("Player-2".to_string()));
+        cfg.set_character_in(forever, Some("Player-2".to_string()));
         cfg.set_character_class_in(Edition::Forever, Some("Shaman".to_string()));
         assert_eq!(cfg.character_in(forever), Some("Player-2"));
         assert_eq!(
@@ -1066,11 +1072,11 @@ mod passthrough {
             "the class played last, for the overlay"
         );
 
-        cfg.set_character_in(Edition::Retail, None);
+        cfg.set_character_in(retail, None);
         assert_eq!(cfg.character, None);
         assert_eq!(cfg.character_in(forever), Some("Player-2"));
 
-        cfg.set_character_in(Edition::Forever, None);
+        cfg.set_character_in(forever, None);
         cfg.set_character_class_in(Edition::Forever, None);
         assert!(cfg.editions.is_empty(), "an empty table is dropped");
         assert_eq!(
@@ -1106,9 +1112,22 @@ mod passthrough {
             cfg.season_in(alone),
             (Some("2026-11-10"), Some("2027-01-01"))
         );
-        cfg.set_character_in(Edition::Forever, Some("Player-2".to_string()));
-        assert_eq!(cfg.character_in(alone), Some("Player-2"), "its own wins");
-        assert_eq!(cfg.character.as_deref(), Some("Player-1"), "written apart");
+        cfg.set_character_in(alone, Some("Player-2".to_string()));
+        assert_eq!(cfg.character_in(alone), Some("Player-2"));
+        assert_eq!(
+            cfg.character.as_deref(),
+            Some("Player-2"),
+            "the top-level key written with it, as it is read"
+        );
+        // Clearing the pick clears it where it is read: "All characters".
+        cfg.set_character_in(alone, None);
+        assert_eq!(cfg.character_in(alone), None);
+        assert_eq!(cfg.character, None);
+        // A pick that came from the top-level key alone clears too.
+        cfg.character = Some("Player-1".to_string());
+        assert_eq!(cfg.character_in(alone), Some("Player-1"));
+        cfg.set_character_in(alone, None);
+        assert_eq!(cfg.character_in(alone), None, "cleared, not stuck");
         // With several known the top-level keys are Retail's alone.
         let beside = KeysOf::new(Edition::Forever, false);
         assert_eq!(cfg.season_in(beside), (None, None));
@@ -1152,7 +1171,10 @@ mod passthrough {
         let forever = KeysOf::new(Edition::Forever, false);
         assert_eq!(cfg.season_in(forever), (Some("2026-11-10"), None));
         Config::store_at(&path, |c| {
-            c.set_character_in(Edition::Forever, Some("Player-2".to_string()))
+            c.set_character_in(
+                KeysOf::new(Edition::Forever, false),
+                Some("Player-2".to_string()),
+            )
         });
         let text = std::fs::read_to_string(&path).unwrap();
         let now = Config::load_from(&path);

@@ -32,7 +32,7 @@ fn settle(census: &mut Census, mock: &mut MockDaemon, now: Instant) -> bool {
     while let Some(msg) = census.next_request(id, now) {
         for reply in mock.handle(msg) {
             if let wowdps_proto::DaemonMsg::History { req_id, answer } = reply {
-                changed |= census.absorb(req_id, &answer).1;
+                changed |= census.absorb(req_id, &answer, now).1;
             }
         }
         id += 1;
@@ -254,6 +254,7 @@ fn one_edition_known_draws_no_switch() {
             cards: Vec::new(),
             total: 0,
         },
+        later,
     );
     assert!(
         census.next_request(2, later).is_none(),
@@ -378,6 +379,7 @@ fn a_store_write_asks_again_about_an_edition_with_no_fights() {
             cards: vec![card(Edition::Forever, (1, 60, 1), 5)],
             total: 1,
         },
+        now + Duration::from_secs(2),
     );
     assert!(census.several());
 }
@@ -402,14 +404,17 @@ fn store_writes_ask_again_at_most_every_interval() {
         census.next_request(20, t0).is_some(),
         "the first round asks"
     );
-    census.absorb(20, &empty);
+    census.absorb(20, &empty, t0);
     census.store_changed();
     let soon = t0 + Duration::from_secs(1);
-    // The first round's own retry (a pause after an empty answer) may be
+    // The first round's own retry (a pause after an empty answer) comes
     // due; answer it, and the second round still waits.
+    let mut retries = 0;
     while let Some(ClientMsg::GetHistory { req_id, .. }) = census.next_request(21, soon) {
-        census.absorb(req_id, &empty);
+        census.absorb(req_id, &empty, soon);
+        retries += 1;
     }
+    assert_eq!(retries, 1, "the retry, once");
     assert!(
         census
             .next_request(22, t0 + Duration::from_secs(4))
