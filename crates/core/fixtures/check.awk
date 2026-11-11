@@ -5,7 +5,7 @@
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
 # stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6,
 # R7 (+ its 2026-10-02 combat clock), R17, R18, R19 (+ the R2 amendment), R20, R21,
-# R22 (+ friendly fire), R26, R27 and R28 semantics, written from the log grammar.
+# R22 (+ friendly fire), R26, R27, R28 and R30 semantics, written from the log grammar.
 # It never calls, links, or consults the Rust implementation — that is the whole
 # point: the Rust is graded against this, not the other way round. R18 (aura
 # spans with caster and target) runs over a hard-coded copy of the FIXTURES'
@@ -14,7 +14,9 @@
 # stacked-debuff ledger) needs no table at all — admission is a data property.
 # Those copies, and R29's placed ids, are RETAIL's tables: a log whose
 # COMBAT_LOG_VERSION names another edition reads none of them (R8's per-edition
-# rule, `edition_tables`).
+# rule, `edition_tables`). R30 (role inference, for an edition whose log carries
+# no spec) runs over a copy of FOREVER's role-signal ids the fixtures cast
+# (SIG_F, in BEGIN), read only while the version line names Forever (18).
 #
 # Usage:  gawk -f check.awk sample.txt sample.txt     # file passed TWICE (2 passes)
 #   pass 1 builds the pet -> owner map (pets act before SPELL_SUMMON)
@@ -67,7 +69,81 @@ function newSeg(kind, name, ts, enc, diff) {
     segKind[nseg] = kind; segName[nseg] = name
     segStart[nseg] = ts;  segEnd[nseg] = ""; segOk[nseg] = ""
     segEnc[nseg] = enc;   segDiff[nseg] = diff
+    segInfer[nseg] = infers   # R30: the edition the segment opened in
     cur = nseg
+}
+
+# ---- R30 role inference (an edition whose log carries no spec: Forever). Per
+# segment, from its own lines alone: each player's casts (all, the tank kit —
+# taunt, mitigation, shield — and heals, by SIG), the enemies' melee swings at
+# them (SWING_DAMAGE, and SWING_MISSED through the passive gate, from a hostile
+# unit that is no player or pet), the healing and absorbs they landed on
+# another player (both sides folded through actor()), and the time a tanking
+# form or stance was on them (a removal with no open one began at the
+# segment's start, once per aura; one still on closes at segClose). Weighed at
+# END by role_solve with the weights in CONTRACT.md R30.
+function role_swing(sg, sf, dg) {
+    if (!segInfer[cur] || dg !~ /^Player-/) return
+    if (sg ~ /^(Player|Pet)-/ || sg == "" || sg == "0000000000000000") return
+    if (and(strtonum(sf), 0x40) == 0) return
+    rSwing[cur SUBSEP dg]++
+}
+function role_heal(sg, sf, dg, df, amt,   h, t) {
+    if (!segInfer[cur] || amt <= 0) return
+    h = actor(sg, sf); t = actor(dg, df)
+    if (h == "" || t == "" || h == t || t !~ /^Player-/) return
+    rHeal[cur SUBSEP h] += amt
+}
+function role_cast(sg, sid) {
+    if (!segInfer[cur] || sg !~ /^Player-/) return
+    rCast[cur SUBSEP sg]++
+    if (!(sid in SIG)) return
+    if (SIG[sid] <= 2) rKit[cur SUBSEP sg]++
+    else if (SIG[sid] == 4) rHeals[cur SUBSEP sg]++
+}
+function role_form(ev,   sid, k) {
+    if (passive_stale() || !segInfer[cur]) return
+    if (strip($13) != "BUFF" || $6 !~ /^Player-/) return
+    sid = $10 + 0
+    if (!(sid in SIG) || SIG[sid] != 3) return
+    k = cur SUBSEP $6 SUBSEP sid
+    if (ev == "SPELL_AURA_APPLIED") { if (!(k in fOpen)) fOpen[k] = now; return }
+    if (k in fOpen) { fMs[cur SUBSEP $6] += now - fOpen[k]; delete fOpen[k] }
+    else if (!(k in fRetro)) { fRetro[k] = 1; fMs[cur SUBSEP $6] += now - segStart[cur] }
+}
+# The scores over segment s's players plist[1..n] on its combat clock `comb`:
+# rRole[g] = 1 tank, 2 healer, 3 dps, 0 none (a fight under 10 s of combat, or
+# a player who neither dealt damage, healed nor cast).
+function role_solve(s, n, comb,   x, g, d, grp, totD, totS, topS, topH, span, swn, kit, form, low, hs, hc, T, H, act) {
+    grp = 0; totD = 0; totS = 0; topS = 0; topH = 0
+    for (x = 1; x <= n; x++) {
+        g = plist[x]
+        act[g] = (val[s SUBSEP g SUBSEP "damage"] + 0 > 0 || val[s SUBSEP g SUBSEP "heal"] + 0 > 0 || rCast[s SUBSEP g] + 0 > 0)
+        if (act[g]) { grp++; totD += val[s SUBSEP g SUBSEP "damage"] + 0 }
+        totS += rSwing[s SUBSEP g] + 0
+        if (rSwing[s SUBSEP g] + 0 > topS) topS = rSwing[s SUBSEP g] + 0
+        if (rHeal[s SUBSEP g] + 0 > topH) topH = rHeal[s SUBSEP g] + 0
+    }
+    span = segClose(s) - segStart[s]
+    for (x = 1; x <= n; x++) {
+        g = plist[x]
+        d = val[s SUBSEP g SUBSEP "damage"] + 0
+        swn = (totS >= 5 && topS > 0) ? (rSwing[s SUBSEP g] + 0) / topS : 0
+        kit = rKit[s SUBSEP g] + 0; if (kit > 3) kit = 3; kit = kit / 3
+        form = (span > 0) ? (fMs[s SUBSEP g] + 0) / span : 0
+        if (form > 1) form = 1; if (form < 0) form = 0
+        low = (totD == 0) ? 1 : 1 - (d * grp) / totD
+        if (low > 1) low = 1; if (low < 0) low = 0
+        hs = (topH > 0) ? (rHeal[s SUBSEP g] + 0) / topH : 0
+        hc = (rCast[s SUBSEP g] + 0 > 0) ? (rHeals[s SUBSEP g] + 0) / rCast[s SUBSEP g] : 0
+        T = 0.40 * swn + 0.30 * kit + 0.20 * form + 0.10 * low
+        H = 0.40 * hs + 0.35 * hc + 0.25 * low
+        if (comb < 10000 || !act[g]) rRole[g] = 0
+        else if (T >= 0.5 && T >= H) rRole[g] = 1
+        else if (H >= 0.5) rRole[g] = 2
+        else rRole[g] = 3
+        if (ROLES) printf "role: seg %d %s T %.4f H %.4f -> %d\n", s, g, T, H, rRole[g] > "/dev/stderr"
+    }
 }
 
 function note(seg, guid, metric, v) {
@@ -781,6 +857,22 @@ BEGIN {
     for (k in SHIELD) SHIELD_R[k] = SHIELD[k]
     for (k in PLACE)  PLACE_R[k] = PLACE[k]
     for (k in TELL)   TELL_R[k] = TELL[k]
+    # R30: Forever's role signals the fixtures cast or wear, by kind: 0 taunt,
+    # 1 mitigation, 2 needs a shield, 3 tanking form or stance, 4 heal (the
+    # generated table's codes). Read only for a Forever log (`edition_tables`).
+    SIG_F[355]   = 0    # Taunt
+    SIG_F[6795]  = 0    # Growl
+    SIG_F[6574]  = 1    # Revenge
+    SIG_F[6807]  = 1    # Maul
+    SIG_F[2565]  = 2    # Shield Block
+    SIG_F[871]   = 2    # Shield Wall (forever.txt wears its aura; never cast)
+    SIG_F[71]    = 3    # Defensive Stance
+    SIG_F[5487]  = 3    # Bear Form
+    SIG_F[331]   = 4    # Healing Wave
+    SIG_F[8004]  = 4    # Lesser Healing Wave
+    SIG_F[2050]  = 4    # Lesser Heal
+    SIG_F[2061]  = 4    # Flash Heal
+    SIG_F[19750] = 4    # Flash of Light
     # The lines the parser models with a source and a destination: what R29
     # learns hostility from (an unmodelled line — a swing's _LANDED twin, a
     # drain — teaches nothing).
@@ -826,7 +918,11 @@ FNR == NR {
 # client's, an unlisted id — has no role, absorb or placed table, so it opens
 # no R18 span, no R20 shield and no R29 placed row, and keys no aura as R18's.
 function edition_tables(pid,   k) {
-    delete ROLE; delete SHIELD; delete PLACE; delete TELL
+    delete ROLE; delete SHIELD; delete PLACE; delete TELL; delete SIG
+    # R30: Forever infers roles from its own signals; Retail (its spec says
+    # the role) and every other edition infer none.
+    infers = (pid == 18)
+    if (infers) for (k in SIG_F) SIG[k] = SIG_F[k]
     if (pid != 0 && pid != 1) return
     for (k in ROLE_R)   ROLE[k] = ROLE_R[k]
     for (k in SHIELD_R) SHIELD[k] = SHIELD_R[k]
@@ -982,6 +1078,7 @@ ev == "SWING_DAMAGE" {
     if (engaged($4, $8) && !friendly_fire($2, $4, $6, $8)) engage()   # R7 amendment (friendly fire never engages)
     taken($6, $8, $29 - ok, $35 + 0, $34 + 0, $30 + 0, $29 + 0)   # R17: off28 base, off34 absorbed, off33 blocked, off29 unmitigated
     stack_hit($6, $8, 0, "Melee", $29 + $35 - ok)  # R21
+    role_swing($2, $4, $6)                         # R30: an enemy's swing at a player
     a = actor($2, $4); if (a == "") next
     amt = $29 + $35 - ok               # off28 base_amount + off34 absorbed - overkill
     if (a == actor($6, $8)) { note(cur, a, "self_harm", amt) }   # R22
@@ -1033,6 +1130,7 @@ ev == "ENVIRONMENTAL_DAMAGE" {
 # NPC (a player's spell EVADEd, a swing DODGEd by the boss…) has no friendly
 # destination and is taken by nobody.
 ev == "SWING_MISSED" {                       # missType off9, isOffHand off10, amount off11
+    if (!passive_stale()) role_swing($2, $4, $6)   # R30: aimed at them all the same
     if ($10 == "ABSORB") { absorbed_whole(0, 0, "Melee", $12 + 0, $13 + 0); next }   # R1; off12 unmitigated
     dealt_miss($2, $4, $6)                     # R26: the attacker's side
     missed($6, $8, $10, $12)
@@ -1061,6 +1159,7 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
     amount = $33 + 0                   # off32 amount (INCLUDES overheal)
     over   = $34 + 0                   # off33 overheal
     habs   = $35 + 0                   # off34 absorbed — a heal-absorb ate it (R2, v44)
+    role_heal($2, $4, $6, $8, amount - over)               # R30: healing on another player
     t = actor($6, $8)
     if (t != "" && friendlyGuid($6)) {                     # R17's universe, like taken()
         note(cur, t, "healed_received", amount - over)
@@ -1148,6 +1247,7 @@ ev == "SPELL_ABSORBED" {
         next
     }
     a = actor(ag, af); if (a == "") next
+    role_heal(ag, af, $6, $8, amt)     # R30: an absorb is healing on its target
     note(cur, a, "heal", amt); note(cur, a, "absorbheal", amt)
     shield_absorb($6, sp, ag, a, amt)  # R20: the defender is fields 5-8 in both arities
     next
@@ -1160,6 +1260,7 @@ ev == "SPELL_ABSORBED" {
 # land nowhere. Kept apart from `note` so a player who only cast gets no row.
 ev == "SPELL_CAST_SUCCESS" {
     if (passive_stale()) next
+    role_cast($2, $10 + 0)             # R30: a player's own cast, by its signal
     a = actor($2, $4); if (a == "") next
     castv[cur SUBSEP a]++
     next
@@ -1215,13 +1316,14 @@ ev == "SPELL_AURA_APPLIED" {
     aura_apply(0)                                # R18: a BUFF on a player, in ROLE
     shield_aura(ev)                              # R20: a BUFF in SHIELD
     debuff_aura(ev)                              # R21: a hostile DEBUFF on a friendly
+    role_form(ev)                                # R30: a tanking form or stance on
     if (strip($13) != "DEBUFF") next
     if (!(($10 + 0) in cc)) next
     a = actor($2, $4); note(cur, a, "cc", 1)
     next
 }
 ev == "SPELL_AURA_REFRESH" { dot_aura(1); aura_apply(1); shield_aura(ev); debuff_aura(ev); next }   # R18: APPLIED's 13-field shape
-ev == "SPELL_AURA_REMOVED" { dot_aura(0); aura_remove(); shield_aura(ev); debuff_aura(ev); next }
+ev == "SPELL_AURA_REMOVED" { dot_aura(0); aura_remove(); shield_aura(ev); debuff_aura(ev); role_form(ev); next }
 ev == "SPELL_AURA_APPLIED_DOSE" || ev == "SPELL_AURA_REMOVED_DOSE" { debuff_aura(ev); next }   # R21: 14 fields, the trailer is the level
 
 # Deaths: players only (a pet death is not a player death), and never a
@@ -1272,6 +1374,9 @@ END {
     # last report and Σ over the player's types of the largest max.
     for (k in powv) { split(k, kk, SUBSEP); powSec[kk[1] SUBSEP kk[2]]++; powSum[kk[1] SUBSEP kk[2]] += powv[k] }
     for (k in powm) { split(k, kk, SUBSEP); powMax[kk[1] SUBSEP kk[2]] += powm[k] }
+    # R30: a tanking form still on closes at its segment's close (never below
+    # nothing: one put on after a trash fight's last hit adds no time).
+    for (k in fOpen) { split(k, kk, SUBSEP); d = segClose(kk[1]) - fOpen[k]; if (d > 0) fMs[kk[1] SUBSEP kk[2]] += d }
     if (SHIELDS) for (r in shRowCount) { split(r, kk, SUBSEP); printf "shield row: seg %d owner %s spell %d count %d applied %d consumed %d wasted %d unknown %d\n", kk[1], kk[2], kk[3], shRowCount[r], shRowApplied[r], shRowConsumed[r], shRowWasted[r], shRowUnknown[r] > "/dev/stderr" }
     for (s = 1; s <= nseg; s++) {
         dur = (segKind[s] == "Encounter" && segEnd[s] != "") \
@@ -1298,6 +1403,9 @@ END {
                 dy = val[s SUBSEP plist[y] SUBSEP "damage"]
                 if (dy > dx || (dy == dx && plist[y] < plist[x])) { t = plist[x]; plist[x] = plist[y]; plist[y] = t }
             }
+        # R30: the roles, for a segment of an edition that infers them.
+        delete rRole
+        if (segInfer[s]) role_solve(s, n, comb)
         for (x = 1; x <= n; x++) {
             g = plist[x]
             d = val[s SUBSEP g SUBSEP "damage"] + 0
@@ -1393,6 +1501,9 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpower_seconds\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, powSec[s SUBSEP g] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpower_sum\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, powSum[s SUBSEP g] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpower_max\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, powMax[s SUBSEP g] + 0
+            # R30: the inferred role (0 none, 1 tank, 2 healer, 3 dps); 0 for
+            # every player of an edition that infers none.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\trole\t%d\n",                s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, rRole[g] + 0
         }
         delete plist
     }

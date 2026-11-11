@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use wowdps_core::meter::{Meter, SegmentKind, View};
 use wowdps_core::parser::parse_line;
+use wowdps_model::Role;
 
 /// (segment index 0-based, player guid, metric) -> value
 type Totals = BTreeMap<(usize, String, String), f64>;
@@ -89,6 +90,9 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             .unwrap_or_default();
         segs.push((kind.to_string(), name, seg.duration_ms(last_ms), enc));
 
+        // R30: the roles this segment infers (none for an edition whose log
+        // carries a spec), as the golden's code: 0 none, 1 tank, 2 healer, 3 dps.
+        let roles = seg.inferred_roles();
         let mut players = std::collections::BTreeSet::new();
         for (view, amount_metric, extra_metric) in VIEWS {
             let rows = seg.rows(*view);
@@ -248,6 +252,15 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                     .sum(),
             );
             put_i("power_max", power.iter().map(|p| i64::from(p.max)).sum());
+            put_i(
+                "role",
+                match roles.get(key) {
+                    None => 0,
+                    Some(Role::Tank) => 1,
+                    Some(Role::Healer) => 2,
+                    Some(Role::Dps) => 3,
+                },
+            );
         }
         let _ = result;
     }
@@ -522,13 +535,30 @@ fn replay_fixture_totals_match_expected() {
 }
 
 /// R8 (editions) — the Forever fixture's meter rows against their goldens:
-/// a Forever client's log, read by Forever's tables, which hold no role,
-/// absorb or placed spell, so its Shield Wall opens no span and its Power
-/// Word: Shield no known shield, while every amount, the spell no table
-/// knows included, is counted as the rulings say.
+/// a Forever client's log, read by Forever's tables, which hold no role
+/// span, absorb or placed spell, so its Shield Wall opens no span and its
+/// Power Word: Shield no known shield, while every amount, the spell no
+/// table knows included, is counted as the rulings say, and (R30) each
+/// player's role is inferred from the fight's lines.
 #[test]
 fn forever_fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/forever.txt", "fixtures/forever.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R30: the roles fixture — five fights of a Forever log, each player's
+/// inferred role against `check.awk`'s own solver (`roles.expected.md`), and
+/// every pre-existing metric beside it. A missing golden FAILS.
+#[test]
+fn roles_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/roles.txt", "fixtures/roles.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

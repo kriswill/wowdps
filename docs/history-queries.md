@@ -268,8 +268,10 @@ not narrow by edition yet.
 A player whose log named no spec (an edition whose log carries none) may
 carry a stored role, `players.stored_role` (NULL for a word that names
 no role, as the daemon reads it); `players.role` is the spec's role, else
-that one, as the daemon reads it. No card carries one yet, so
-the column is NULL on every lake so far; `role-night` reads the spec's
+that one, as the daemon reads it. Its role is inferred from the fight's
+own lines when the fight is stored (CONTRACT.md R30): a card stored before
+that carries none until `wowdps history regrade` rewrites it, and a Retail
+card never does, its roles being its specs'. `role-night` reads the spec's
 role alone.
 
 ## The replay tier (R29, v45) — no view, by design

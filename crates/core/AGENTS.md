@@ -33,16 +33,22 @@ rulings, §Fixtures). Read the ruling before changing what it governs.
   the key timer.
 - **R8 inference** is segment-local, overwritten by COMBATANT_INFO, and
   never opens a segment.
+- **R30 role inference** (`roles.rs`) is segment-local too: its ledger is
+  written only for an edition with a role-signal table (Forever), from the
+  fight's own lines, never seeded, never carried, never opening a segment.
+  Retail's role is its spec's: no Retail segment keeps one. The weights are
+  constants in `roles.rs`; `check.awk`'s R30 block holds the same ones.
 - **The replay cut is passive** (`replay.rs`, R29): it moves no meter
   number and shares the meter's parse (`cut_and_meter`). Core cannot name
   proto's `placed` table; the daemon implements `PlacedTable` over it.
 - **Generated tables are never hand-edited.** `class_spells.rs`,
   `item_spells.rs`, `keystone_timers.rs`, `open_world_maps.rs`,
-  `role_spells.rs`, `absorb_spells.rs` and `proc_spells.rs` come from
-  `tools/gen-*.sh` (read `tools/AGENTS.md`). `class_spells` wins over
+  `role_spells.rs`, `absorb_spells.rs`, `proc_spells.rs` and Forever's
+  `role_signals.rs` come from `tools/gen-*.sh` (read `tools/AGENTS.md`). `class_spells` wins over
   `item_spells`' generous trigger chase.
 - **Each table is one edition's.** Retail's sit in `src/`, Forever's in
-  `src/forever/` (class, item, keystone, open-world). Code outside tests
+  `src/forever/` (class, item, keystone, open-world, and the role signals
+  Retail has none of). Code outside tests
   reads every table through `tables.rs` with the fight's edition
   (`Segment::project_id`): an edition with no table of a kind gets nothing
   of it, never another edition's entry, except open-world maps, which an
