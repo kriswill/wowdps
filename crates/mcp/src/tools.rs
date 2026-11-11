@@ -1240,11 +1240,14 @@ fn arg_difficulty(args: &Json) -> Result<Option<u32>, String> {
 
 /// `bucket: "local"` (or `local: true`) with an optional `cutover_hour`
 /// (default 6): days are the log's LOCAL days starting at that hour, so an
-/// evening past midnight is one night. Absent = UTC calendar days.
+/// evening past midnight is one night. Absent = UTC calendar days; a null
+/// `cutover_hour` is absent too, so it turns nothing on.
 fn arg_cutover(args: &Json) -> Result<Option<u8>, String> {
     let local = arg_str(args, "bucket")? == Some("local")
         || arg_bool(args, "local")? == Some(true)
-        || args.get("cutover_hour").is_some();
+        || args
+            .get("cutover_hour")
+            .is_some_and(|v| !matches!(v, Json::Null));
     if !local {
         return Ok(None);
     }
@@ -6510,6 +6513,35 @@ mod tests {
         );
     }
 
+    /// Local-day bucketing is turned on by `bucket: "local"`, `local: true`
+    /// or a `cutover_hour`, and a null is "not given" like everywhere else:
+    /// `cutover_hour: null` alone leaves the days UTC.
+    #[test]
+    fn a_null_cutover_hour_is_absent() {
+        let cutover = |args: &str| arg_cutover(&crate::json::parse(args).expect("test args parse"));
+        assert_eq!(cutover("{}"), Ok(None));
+        assert_eq!(cutover(r#"{"cutover_hour":null}"#), Ok(None));
+        assert_eq!(
+            cutover(r#"{"cutover_hour":null,"local":null,"bucket":null}"#),
+            Ok(None)
+        );
+        assert_eq!(cutover(r#"{"local":false,"cutover_hour":null}"#), Ok(None));
+        // Turned on another way, a null hour is the default.
+        assert_eq!(
+            cutover(r#"{"bucket":"local","cutover_hour":null}"#),
+            Ok(Some(6))
+        );
+        assert_eq!(
+            cutover(r#"{"local":true,"cutover_hour":null}"#),
+            Ok(Some(6))
+        );
+        assert_eq!(cutover(r#"{"cutover_hour":4}"#), Ok(Some(4)));
+        assert_eq!(cutover(r#"{"cutover_hour":4.0}"#), Ok(Some(4)));
+        assert_eq!(cutover(r#"{"cutover_hour":0}"#), Ok(Some(0)));
+        assert!(cutover(r#"{"cutover_hour":24}"#).is_err());
+        assert!(cutover(r#"{"cutover_hour":"6"}"#).is_err());
+    }
+
     /// Every tool reads and checks all of its arguments before it asks the
     /// daemon anything. The bridge is offline (`Bridge::offline`): it never
     /// finds, reaches or spawns a daemon, and answers any question with
@@ -6633,6 +6665,7 @@ fight          {"view":2}                                               view mus
         loadout        {"player":"A","fight_id":"$ID"}
         history        {"player":"Somebody","after_id":"$ID","sort":"fastest"}
         progression    {"encounter":3130,"difficulty":"Heroic","bucket":"local"}
+        progression    {$BOSS,"cutover_hour":null}
         role_night     {$BOSS,"night":1785196800000}
         role_night     {$BOSS,"date":"2026-07-28","edition":"retail"}
         trend          {"player":"Somebody","bucket":"week","measure":"hps"}
