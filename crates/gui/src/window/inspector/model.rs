@@ -973,7 +973,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         // R28 (v44): a healer's mana runs under their graph.
         g.power = app
             .drill_breakdown()
-            .and_then(|b| healer_mana(spec, &b.power));
+            .and_then(|b| healer_mana(row.and_then(Row::role), &b.power));
         let rows: Vec<Row> = match &spell {
             Some(_) => spell_row.iter().cloned().collect(),
             None => app.breakdown().0,

@@ -55,6 +55,7 @@ use crate::cache::{IndexCache, write_atomic};
 use crate::hub::HubMsg;
 use crate::loader::{LoadReply, LoadReq};
 use crate::mine::Mine;
+use crate::roles::Roles;
 
 /// Bound of the hub → history channel. A night's worth of pulls is a few
 /// dozen; 64 in flight means the thread is wedged, and dropping (counted)
@@ -5118,6 +5119,9 @@ fn answer(
         b.energize.clone_from(&d.energize);
         b.power.clone_from(&d.power);
     }
+    // v50 (R30): a player no spec names wears the card's stored role on
+    // every row, as the live rows wear the inferred one.
+    let roles = Roles::of_card(&card);
     // v42: a pair compares off the details tier (each side's abilities and
     // curve); the series tier adds its windows and an ability's curve.
     let pair = match (drill, ask.pair.as_deref()) {
@@ -5134,6 +5138,7 @@ fn answer(
             let side = |guid: &str, p: Option<&PlayerSeries>| {
                 let mut s = stored_side(rows_doc, details, p, &card, guid, window, ask);
                 s.total.mine = mine.owns(&s.guid, &s.total.label);
+                roles.mark_rows(std::slice::from_mut(&mut s.total));
                 s
             };
             Some(StoredPair {
@@ -5149,6 +5154,11 @@ fn answer(
     // v35: whose rows are the reader's, said at answer time — never
     // stored, so an alt the addon names later is "you" on old pulls too.
     mark_mine(mine, &card, &mut rows, breakdown.as_mut(), &mut raid);
+    roles.mark_rows(&mut rows);
+    if let Some(b) = breakdown.as_mut() {
+        roles.mark_breakdown(b);
+    }
+    roles.mark_raid(&mut raid);
     // v23 (R19): the drilled player's support block rides from the rows
     // tier whatever the view — `None` when they neither gave nor received
     // (the block is written only for players with support).
@@ -5533,6 +5543,7 @@ fn stored_raid(
                 rez,
                 mine: false,
                 enemy: p.is_some_and(|p| p.enemy),
+                inferred_role: None,
             }
         })
         .collect();

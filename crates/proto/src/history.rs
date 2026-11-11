@@ -2195,6 +2195,7 @@ pub fn row_from(v: &Json) -> Option<Row> {
         absorb: u64_of(v, "absorb"),
         // v44 (R2): absent on a row written before it, and 0 there.
         heal_absorbed: u64_of(v, "heal_absorbed").unwrap_or(0),
+        inferred_role: None,
     })
 }
 

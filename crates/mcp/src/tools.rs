@@ -145,7 +145,9 @@ pub fn catalog() -> Vec<Tool> {
         Tool {
             name: "fight",
             description: "One fight's meter: per-player totals, per-second rates, activity \
-                          share and crit rate for the chosen view. Totals leave overkill out \
+                          share and crit rate for the chosen view. A row's role is its spec's, \
+                          else (a log that names no spec, as Forever's) the one the fight's own \
+                          lines show (R30, v50), null under 10 s of combat. Totals leave overkill out \
                           (as the game's own meter does; a damage row reports it as \
                           overkill), and per_sec divides by the fight's COMBAT time — \
                           `combat_ms` on the fight object; a keystone run's rows add \
@@ -4504,7 +4506,9 @@ fn player_ident(r: &Row) -> Json {
         "key": Json::str(r.key.clone()),
         "class": r.class.map(|c| Json::str(format!("{c:?}"))).unwrap_or(Json::Null),
         "spec": r.spec.map(|s| Json::str(s.name())).unwrap_or(Json::Null),
-        "role": r.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
+        // v50: the spec's role, else the one inferred (R30), as a stored
+        // card's `role` says it.
+        "role": r.role().map_or(Json::Null, |x| Json::str(x.name())),
     }
 }
 
@@ -4535,7 +4539,7 @@ fn meter_row(rank: usize, r: &Row, view: View, run_ms: Option<i64>) -> Json {
         ),
         (
             "role".to_string(),
-            r.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
+            r.role().map_or(Json::Null, |x| Json::str(x.name())),
         ),
         ("amount".to_string(), Json::u64(r.amount)),
         ("share_pct".to_string(), Json::num(round1(r.pct))),
@@ -4952,7 +4956,7 @@ fn stored_loadout(bridge: &mut Bridge, who: &str, fight_id: &str) -> Result<Json
         "key": Json::str(p.guid.clone()),
         "class": p.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
         "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
-        "role": p.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
+        "role": p.role().map_or(Json::Null, |r| Json::str(r.name())),
     };
     let edition = f.card.edition();
     let fight = obj! {
@@ -6238,6 +6242,31 @@ mod tests {
         );
         assert_eq!(kind_name(SegmentKind::Trash), "trash");
         assert_eq!(opt_str(None), Json::Null);
+    }
+
+    /// v50 (R30): a live row's `role` is its spec's, else the one inferred
+    /// for a player whose log names no spec, in the one `role` field and
+    /// with no mark of where it came from, as a stored card says it.
+    #[test]
+    fn a_live_rows_role_is_the_specs_else_the_inferred_one() {
+        let row = |spec, inferred_role| Row {
+            key: "Player-1".to_string(),
+            label: "Ana".to_string(),
+            spec,
+            inferred_role,
+            ..Row::default()
+        };
+        for (r, want) in [
+            (row(Spec::from_id(63), None), Some("dps")),
+            (row(None, Some(Role::Tank)), Some("tank")),
+            (row(None, Some(Role::Healer)), Some("healer")),
+            (row(None, None), None),
+        ] {
+            for j in [meter_row(0, &r, View::Damage, None), player_ident(&r)] {
+                assert_eq!(j.get("role").and_then(Json::as_str), want, "{j:?}");
+                assert_eq!(j.get("inferred"), None, "{j:?}");
+            }
+        }
     }
 
     #[test]

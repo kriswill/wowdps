@@ -16,8 +16,8 @@ use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, EditionRef, EditionSource,
     FightSort, HistoryAnswer, HistoryQuery, HistoryStatus, ListEntry, LoadError, Night,
-    OverlayState, PROTO_VERSION, SegmentRef, StoredFight, StoredPair, StoredUptime, TrendBucket,
-    TrendMeasure, TrendPoint,
+    OverlayState, PROTO_VERSION, ROLE_SLOT, SegmentRef, StoredFight, StoredPair, StoredUptime,
+    TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// R12: one comparison side, with every marker kind represented.
@@ -113,6 +113,9 @@ fn row(key: &str, class: Option<Class>) -> Row {
         absorb: None,
         // v44 (R2): both arms of the heal-absorbed split.
         heal_absorbed: if class.is_some() { 6_000 } else { 0 },
+        // v50 (R30): both arms of the spec slot — a spec, or (with none) an
+        // inferred role.
+        inferred_role: class.is_none().then_some(Role::Healer),
     }
 }
 
@@ -143,6 +146,7 @@ fn raid() -> RaidTimeline {
                 }),
                 mine: true,
                 enemy: false,
+                inferred_role: None,
             },
             // An arena's hostile death: the `enemy` arm.
             RaidDeath {
@@ -159,6 +163,8 @@ fn raid() -> RaidTimeline {
                 rez: None,
                 mine: false,
                 enemy: true,
+                // v50 (R30): the slot's role arm, with no spec.
+                inferred_role: Some(Role::Tank),
             },
         ],
         lust: vec![LustWindow {
@@ -1278,7 +1284,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 49, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 50, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1527,6 +1533,7 @@ fn golden_bytes_pin_the_encoding() {
             offset_ms: Some(-2),  // v35: `01 feffffffffffffff`
             absorb: Some(7),      // v43: `01 0700000000000000`
             heal_absorbed: 6_000, // v44: `7017000000000000`
+            inferred_role: None,
         }],
         total_rows: 1,
         breakdown: None,
@@ -2531,6 +2538,68 @@ fn golden_bytes_pin_the_encoding() {
             .replace(' ', "")
     );
 
+    // v50 (R30): a row with no spec names its inferred role in the spec's
+    // u16 slot — `ROLE_SLOT` (0xff00) + the role's code: `00ff` tank,
+    // `01ff` healer, `02ff` dps, where `4000` (specID 64) stands above,
+    // after the class's `01 07` — and nothing else in the frame moves. A
+    // role beside a spec is not sent (the spec's role is the row's), so a
+    // row with a spec, or with neither, is the bytes v49 sent.
+    assert_eq!(ROLE_SLOT, 0xff00);
+    let pinned = hex(&snap.encode());
+    assert_eq!(
+        pinned.matches("01074000").count(),
+        1,
+        "the class and spec, once"
+    );
+    let with = |spec: Option<Spec>, role: Option<Role>| {
+        let mut m = snap.clone();
+        if let DaemonMsg::Snapshot { rows, .. } = &mut m {
+            rows[0].spec = spec;
+            rows[0].inferred_role = role;
+        }
+        m
+    };
+    for (role, slot) in [
+        (Role::Tank, "00ff"),
+        (Role::Healer, "01ff"),
+        (Role::Dps, "02ff"),
+    ] {
+        let m = with(None, Some(role));
+        assert_eq!(
+            hex(&m.encode()),
+            pinned.replacen("01074000", &format!("0107{slot}"), 1),
+            "{role:?}"
+        );
+        assert_eq!(decode_daemon(&m.encode()).unwrap(), m, "{role:?}");
+    }
+    assert_eq!(
+        hex(&with(None, None).encode()),
+        pinned.replacen("01074000", "01070000", 1),
+        "neither: 0, as ever"
+    );
+    let both = with(Some(Spec::FrostMage), Some(Role::Tank));
+    assert_eq!(
+        hex(&both.encode()),
+        pinned,
+        "a role beside a spec is not sent"
+    );
+    let DaemonMsg::Snapshot { rows, .. } = decode_daemon(&both.encode()).unwrap() else {
+        panic!("a snapshot")
+    };
+    assert_eq!(
+        (rows[0].spec, rows[0].inferred_role, rows[0].role()),
+        (Some(Spec::FrostMage), None, Some(Role::Dps)),
+        "the spec's role is the row's"
+    );
+    // A slot past the roles names nothing: a bad tag, never a guess.
+    let mut bytes = with(None, Some(Role::Tank)).encode();
+    let at = bytes
+        .windows(4)
+        .position(|w| w == [0x01, 0x07, 0x00, 0xff])
+        .expect("the tank's slot");
+    bytes[at + 2] = 0x03;
+    assert_eq!(decode_daemon(&bytes), Err(DecodeError::BadTag(3)));
+
     // v35 (R25): the raid timeline, pinned whole. Layout: u8 view | u32
     // bucket_ms | Vec<u64> series | Vec<RaidDeath> (str guid | str name |
     // Option<u8 class> | u16 specID | u32 index | i64 at_ms | str blow | str
@@ -2561,6 +2630,7 @@ fn golden_bytes_pin_the_encoding() {
             }),
             mine: true,
             enemy: false,
+            inferred_role: None,
         }],
         lust: vec![LustWindow {
             at_ms: 1000,
@@ -2635,6 +2705,18 @@ fn golden_bytes_pin_the_encoding() {
     let (got, bare) = (hex(&raided.encode()[4..]), hex(&bare.encode()[4..]));
     let head = bare.strip_suffix("0000");
     assert_eq!(head.map(|h| format!("{h}{tail}00")), Some(got));
+    // v50 (R30): a death with no spec names its player's inferred role in
+    // the same slot as a row's — `01ff`, a healer — and nothing else moves.
+    let mut healer = raided.clone();
+    if let DaemonMsg::Snapshot { raid: Some(r), .. } = &mut healer {
+        r.deaths[0].spec = None;
+        r.deaths[0].inferred_role = Some(Role::Healer);
+    }
+    assert_eq!(
+        hex(&healer.encode()[4..]),
+        hex(&raided.encode()[4..]).replacen("01084000", "010801ff", 1)
+    );
+    assert_eq!(decode_daemon(&healer.encode()).unwrap(), healer);
     // v35: a StoredFight carries the same bytes as its last field — after
     // the shields vec, so they close a `Fight` frame.
     let fight = |raid: Option<RaidTimeline>| {
