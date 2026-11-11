@@ -1039,9 +1039,9 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         // v49, the `edition`'s (Retail's without one).
         "talent_tree" => {
             let edition = talent_edition(args)?;
-            let tree =
-                crate::talents::tree_view(crate::talents::load_in(edition)?, arg_spec_id(args)?);
-            tree.map(|doc| with_edition(doc, edition))
+            let spec_id = arg_spec_id(args)?;
+            crate::talents::tree_view(crate::talents::load_in(edition)?, spec_id)
+                .map(|doc| with_edition(doc, edition))
         }
         "decode_talents" => {
             let edition = talent_edition(args)?;
@@ -1058,12 +1058,9 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
                 Some(Json::Arr(s)) => s.clone(),
                 _ => return Err("encode_talents requires a selections array".into()),
             };
-            crate::talents::encode(
-                crate::talents::load_in(edition)?,
-                arg_spec_id(args)?,
-                &selections,
-            )
-            .map(|doc| with_edition(doc, edition))
+            let spec_id = arg_spec_id(args)?;
+            crate::talents::encode(crate::talents::load_in(edition)?, spec_id, &selections)
+                .map(|doc| with_edition(doc, edition))
         }
         other => Err(format!("no such tool {other:?}")),
     }
@@ -1136,10 +1133,93 @@ fn edition_source_json(e: &wowdps_proto::EditionSource) -> Json {
 
 // ---- v20: the history store -----------------------------------------------------
 
-fn arg_u32(args: &Json, key: &str) -> Option<u32> {
-    args.get(key)
-        .and_then(Json::as_u64)
-        .and_then(|n| u32::try_from(n).ok())
+// Every tool reads and checks all of its arguments before it asks the
+// daemon anything: a malformed argument is the caller's error, said the
+// same whether or not a daemon is up, and never a question sent on its
+// behalf. Absent and null are "not given" throughout.
+
+/// A whole-number argument (`encounter`, `limit`, `spec`, …).
+fn arg_u32(args: &Json, key: &str) -> Result<Option<u32>, String> {
+    match args.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .map(Some)
+            .ok_or_else(|| format!("{key} must be a whole number, got {}", v.to_line())),
+    }
+}
+
+/// A string argument.
+fn arg_str<'a>(args: &'a Json, key: &str) -> Result<Option<&'a str>, String> {
+    match args.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Str(s)) => Ok(Some(s)),
+        Some(v) => Err(format!("{key} must be a string, got {}", v.to_line())),
+    }
+}
+
+/// A true/false argument.
+fn arg_bool(args: &Json, key: &str) -> Result<Option<bool>, String> {
+    match args.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Bool(b)) => Ok(Some(*b)),
+        Some(v) => Err(format!("{key} must be true or false, got {}", v.to_line())),
+    }
+}
+
+/// A player argument a tool cannot answer without: a name or a GUID.
+fn arg_player<'a>(args: &'a Json, key: &str) -> Result<&'a str, String> {
+    arg_str(args, key)?.ok_or_else(|| format!("{key:?} is required: a player name or GUID"))
+}
+
+/// A history fight id (`fight_id`, `after_id`): `<log:016x>-<start_ms>`,
+/// with an `s` after a key's or an Overall's (`history::fight_id`, the
+/// one spelling the store files every card under, imported ones too). An
+/// id of any other shape names no fight anywhere.
+fn arg_history_id<'a>(args: &'a Json, key: &str) -> Result<Option<&'a str>, String> {
+    let shaped = |id: &str| {
+        let Some((log, start)) = id.split_once('-') else {
+            return false;
+        };
+        let start = start.strip_suffix('s').unwrap_or(start);
+        log.len() == 16
+            && log.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            && start.parse::<i64>().is_ok_and(|ms| ms.to_string() == start)
+    };
+    match args.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Str(id)) if shaped(id) => Ok(Some(id)),
+        Some(v) => Err(format!(
+            "{key} {} is not a history fight id: 16 hex digits, a dash and the start in \
+             ms, with an s after a key's or an Overall's (history's id, list_fights' \
+             history_id)",
+            v.to_line()
+        )),
+    }
+}
+
+/// `segment_id`: a per-run fight id from list_fights.
+fn arg_segment_id(args: &Json) -> Result<Option<SegmentId>, String> {
+    match args.get("segment_id") {
+        None | Some(Json::Null) => Ok(None),
+        Some(v) => v.as_u64().map(|id| Some(SegmentId(id))).ok_or_else(|| {
+            format!(
+                "segment_id must be a fight id from list_fights (a whole number), got {}",
+                v.to_line()
+            )
+        }),
+    }
+}
+
+/// `kind`: a stored fight's kind by name.
+fn arg_kind(args: &Json) -> Result<Option<FightKind>, String> {
+    match arg_str(args, "kind")? {
+        None => Ok(None),
+        Some(k) => FightKind::parse(&k.to_lowercase())
+            .map(Some)
+            .ok_or_else(|| format!("unknown kind {k:?}")),
+    }
 }
 
 /// `difficulty`: an id, or a name ("Heroic", "Mythic Keystone", …) through
@@ -1162,8 +1242,8 @@ fn arg_difficulty(args: &Json) -> Result<Option<u32>, String> {
 /// (default 6): days are the log's LOCAL days starting at that hour, so an
 /// evening past midnight is one night. Absent = UTC calendar days.
 fn arg_cutover(args: &Json) -> Result<Option<u8>, String> {
-    let local = args.get("bucket").and_then(Json::as_str) == Some("local")
-        || args.get("local").and_then(Json::as_bool) == Some(true)
+    let local = arg_str(args, "bucket")? == Some("local")
+        || arg_bool(args, "local")? == Some(true)
         || args.get("cutover_hour").is_some();
     if !local {
         return Ok(None);
@@ -1178,15 +1258,21 @@ fn arg_cutover(args: &Json) -> Result<Option<u8>, String> {
     }
 }
 
-fn arg_i64(args: &Json, key: &str) -> Option<i64> {
-    args.get(key).and_then(Json::as_i64)
+fn arg_i64(args: &Json, key: &str) -> Result<Option<i64>, String> {
+    match args.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(v) => v
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| format!("{key} must be a whole number, got {}", v.to_line())),
+    }
 }
 
 /// `trend`'s own `measure` (v22), normalised lower-case; `None` = decide by
 /// the subject's role. `view: damage|healing` stays accepted for one
 /// release as an alias for `dps`|`hps`.
 fn arg_measure(args: &Json) -> Result<Option<TrendMeasure>, String> {
-    if let Some(m) = args.get("measure").and_then(Json::as_str) {
+    if let Some(m) = arg_str(args, "measure")? {
         return TrendMeasure::from_name(&m.to_lowercase())
             .map(Some)
             .ok_or_else(|| {
@@ -1195,12 +1281,7 @@ fn arg_measure(args: &Json) -> Result<Option<TrendMeasure>, String> {
                 )
             });
     }
-    match args
-        .get("view")
-        .and_then(Json::as_str)
-        .map(str::to_lowercase)
-        .as_deref()
-    {
+    match arg_str(args, "view")?.map(str::to_lowercase).as_deref() {
         None => Ok(None),
         Some("damage") => Ok(Some(TrendMeasure::Dps)),
         Some("healing") => Ok(Some(TrendMeasure::Hps)),
@@ -1284,12 +1365,7 @@ fn with_edition(doc: Json, edition: Edition) -> Json {
 
 /// `history`'s `role` filter: the SUBJECT's role, not a roster filter.
 fn arg_role(args: &Json) -> Result<Option<Role>, String> {
-    match args
-        .get("role")
-        .and_then(Json::as_str)
-        .map(str::to_lowercase)
-        .as_deref()
-    {
+    match arg_str(args, "role")?.map(str::to_lowercase).as_deref() {
         None => Ok(None),
         Some("tank") => Ok(Some(Role::Tank)),
         Some("healer") => Ok(Some(Role::Healer)),
@@ -1323,16 +1399,12 @@ fn name_windows(edition: Option<Edition>) -> Vec<Option<Edition>> {
 /// found in, else the filter's.
 fn history_subject(
     bridge: &mut Bridge,
-    args: &Json,
-    key: &str,
+    who: &str,
     edition: Option<Edition>,
-) -> Result<Option<(String, Option<Edition>)>, String> {
-    let Some(who) = args.get(key).and_then(Json::as_str) else {
-        return Ok(None);
-    };
+) -> Result<(String, Option<Edition>), String> {
     let edition = edition.map(|e| e.canonical().counts_as());
     if who.starts_with("Player-") {
-        return Ok(Some((who.to_string(), edition)));
+        return Ok((who.to_string(), edition));
     }
     let want = who.to_lowercase();
     let named = |p: &&CardPlayer| {
@@ -1372,7 +1444,7 @@ fn history_subject(
             "no stored fight has a player named {who:?} (among each edition's newest \
              {NAME_WINDOW}; pass the GUID for an older one)"
         )),
-        [(e, _, guid)] => Ok(Some((guid.clone(), Some(*e)))),
+        [(e, _, guid)] => Ok((guid.clone(), Some(*e))),
         many => Err(format!(
             "{who:?} is a player in more than one game edition's fights ({}): pass edition, \
              or the player's GUID",
@@ -1382,16 +1454,6 @@ fn history_subject(
                 .join("; ")
         )),
     }
-}
-
-/// [`history_subject`]'s guid alone.
-fn history_guid(
-    bridge: &mut Bridge,
-    args: &Json,
-    key: &str,
-    edition: Option<Edition>,
-) -> Result<Option<String>, String> {
-    Ok(history_subject(bridge, args, key, edition)?.map(|(guid, _)| guid))
 }
 
 /// v49: an answer's edition by key and PROJECT_ID — the one its filter
@@ -1505,42 +1567,39 @@ fn per_edition(mut answers: Vec<Json>, head: Vec<(String, Json)>) -> Json {
 
 fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let filter = arg_edition(args)?;
-    let subject = history_subject(bridge, args, "player", filter)?;
-    // A player's fights are their edition's: a name is looked up inside
-    // one, and the answer stays in it.
-    let edition = filter.or(subject.as_ref().and_then(|(_, e)| *e));
-    let guid = subject.map(|(g, _)| g);
-    let has_guid = guid.is_some();
+    let player = arg_str(args, "player")?;
+    let peer = arg_str(args, "players")?;
     let role = arg_role(args)?;
-    let kind = match args.get("kind").and_then(Json::as_str) {
-        None => None,
-        Some(k) => {
-            Some(FightKind::parse(&k.to_lowercase()).ok_or_else(|| format!("unknown kind {k:?}"))?)
-        }
-    };
-    let sort = match args
-        .get("sort")
-        .and_then(Json::as_str)
-        .map(str::to_lowercase)
-        .as_deref()
-    {
+    let kind = arg_kind(args)?;
+    let sort = match arg_str(args, "sort")?.map(str::to_lowercase).as_deref() {
         None | Some("newest") => FightSort::Newest,
         Some("fastest") => FightSort::Fastest,
         Some("owner_per_sec") => FightSort::OwnerPerSec,
         Some(other) => return Err(format!("unknown sort {other:?}")),
     };
+    let encounter = arg_u32(args, "encounter")?;
+    let difficulty = arg_difficulty(args)?;
+    let since_utc_ms = arg_i64(args, "since_utc_ms")?;
+    let limit = arg_u32(args, "limit")?.unwrap_or(0);
+    let after_id = arg_history_id(args, "after_id")?.map(str::to_string);
+    let subject = match player {
+        Some(who) => Some(history_subject(bridge, who, filter)?),
+        None => None,
+    };
+    // A player's fights are their edition's: a name is looked up inside
+    // one, and the answer stays in it.
+    let edition = filter.or(subject.as_ref().and_then(|(_, e)| *e));
+    let guid = subject.map(|(g, _)| g);
+    let has_guid = guid.is_some();
     let answer = bridge.history(HistoryQuery::Fights {
-        encounter: arg_u32(args, "encounter"),
-        difficulty: arg_difficulty(args)?,
+        encounter,
+        difficulty,
         guid: guid.clone(),
-        since_utc_ms: arg_i64(args, "since_utc_ms"),
+        since_utc_ms,
         kind,
         sort,
-        limit: arg_u32(args, "limit").unwrap_or(0),
-        after_id: args
-            .get("after_id")
-            .and_then(Json::as_str)
-            .map(str::to_string),
+        limit,
+        after_id,
         // v22: the subject's role (the `player` argument, else the owner) —
         // a no-op when the store has neither, which `role_applied` reports.
         role,
@@ -1551,14 +1610,13 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         return Err("unexpected answer".to_string());
     };
     let peer_guid;
-    let players = match args.get("players").and_then(Json::as_str) {
+    let players = match peer {
         None | Some("me") => Players::Me,
         Some("none") => Players::None,
         Some("all") => Players::All,
         // Any other value names a player: their row rides as `peer`.
-        Some(_) => {
-            peer_guid = history_guid(bridge, args, "players", edition)?
-                .ok_or("players: give me, none, all, or a player name / GUID")?;
+        Some(who) => {
+            peer_guid = history_subject(bridge, who, edition)?.0;
             Players::Peer(&peer_guid)
         }
     };
@@ -1604,11 +1662,12 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 }
 
 fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let encounter = arg_u32(args, "encounter").ok_or("progression requires encounter")?;
+    let encounter = arg_u32(args, "encounter")?.ok_or("progression requires encounter")?;
     let difficulty = arg_difficulty(args)?.ok_or("progression requires difficulty")?;
     let cutover = arg_cutover(args)?;
+    let asked = arg_edition(args)?;
     // v49: one edition's pulls, as asked; else each edition's on its own.
-    let editions = match arg_edition(args)? {
+    let editions = match asked {
         Some(e) => vec![Some(e)],
         None => match editions_with_pulls(bridge, encounter, difficulty)?.as_slice() {
             [] => vec![None],
@@ -1710,49 +1769,73 @@ fn progression_in(
 /// `night_local`, so a local-bucket night resolves to its local start
 /// instant), else to the day's UTC midnight.
 fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let encounter = arg_u32(args, "encounter").ok_or("role_night requires encounter")?;
+    let encounter = arg_u32(args, "encounter")?.ok_or("role_night requires encounter")?;
     let difficulty = arg_difficulty(args)?.ok_or("role_night requires difficulty")?;
     let cutover = arg_cutover(args)?;
+    let asked = arg_edition(args)?;
+    let when = arg_night(args)?;
+    let night_in = |bridge: &mut Bridge, edition: Option<Edition>| {
+        role_night_in(bridge, &when, encounter, difficulty, cutover, edition)
+    };
     // v49: one edition's roster, as asked; else each edition's that
     // pulled the boss that night, on its own — never one ranking of two
     // games' players.
-    let Some(asked) = arg_edition(args)? else {
+    let Some(asked) = asked else {
         let mut answers = Vec::new();
         for e in editions_with_pulls(bridge, encounter, difficulty)? {
-            let (doc, pulls) =
-                role_night_in(bridge, args, encounter, difficulty, cutover, Some(e))?;
+            let (doc, pulls) = night_in(bridge, Some(e))?;
             if pulls > 0 {
                 answers.push(doc);
             }
         }
         if answers.is_empty() {
-            return Ok(role_night_in(bridge, args, encounter, difficulty, cutover, None)?.0);
+            return Ok(night_in(bridge, None)?.0);
         }
         return Ok(per_edition(
             answers,
             bucket_head(encounter, difficulty, cutover),
         ));
     };
-    Ok(role_night_in(bridge, args, encounter, difficulty, cutover, Some(asked))?.0)
+    Ok(night_in(bridge, Some(asked))?.0)
+}
+
+/// `role_night`'s night as its arguments name it: a `day_utc_ms` from
+/// `progression` (`night`), else a `date`, checked YYYY-MM-DD, with its
+/// UTC midnight — resolved against each edition's own nights.
+enum NightArg<'a> {
+    Day(i64),
+    Date { date: &'a str, midnight: i64 },
+}
+
+fn arg_night(args: &Json) -> Result<NightArg<'_>, String> {
+    let night = arg_i64(args, "night")?;
+    let date = match arg_str(args, "date")? {
+        Some(date) => Some((date, utc_midnight_ms(date)?)),
+        None => None,
+    };
+    match (night, date) {
+        (Some(n), _) => Ok(NightArg::Day(n)),
+        (None, Some((date, midnight))) => Ok(NightArg::Date { date, midnight }),
+        (None, None) => Err(
+            "role_night requires night (a day_utc_ms from progression) or date (YYYY-MM-DD)"
+                .to_string(),
+        ),
+    }
 }
 
 /// `role_night` of one edition's pulls (`None`: every edition's), with
 /// how many pulls the night holds.
 fn role_night_in(
     bridge: &mut Bridge,
-    args: &Json,
+    when: &NightArg<'_>,
     encounter: u32,
     difficulty: u32,
     cutover: Option<u8>,
     edition: Option<Edition>,
 ) -> Result<(Json, u32), String> {
-    let night = match (
-        arg_i64(args, "night"),
-        args.get("date").and_then(Json::as_str),
-    ) {
-        (Some(n), _) => n,
-        (None, Some(date)) => {
-            let midnight = utc_midnight_ms(date)?;
+    let night = match *when {
+        NightArg::Day(n) => n,
+        NightArg::Date { date, midnight } => {
             let nights = match bridge.history(HistoryQuery::Progression {
                 encounter,
                 difficulty,
@@ -1763,12 +1846,6 @@ fn role_night_in(
                 _ => Vec::new(),
             };
             night_for_date(&nights, date)?.unwrap_or(midnight)
-        }
-        (None, None) => {
-            return Err(
-                "role_night requires night (a day_utc_ms from progression) or date (YYYY-MM-DD)"
-                    .to_string(),
-            );
         }
     };
     let answer = bridge.history(HistoryQuery::RoleNight {
@@ -1931,25 +2008,15 @@ fn night_json(n: &Night) -> Json {
 
 fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let filter = arg_edition(args)?;
-    let (guid, found_in) =
-        history_subject(bridge, args, "player", filter)?.ok_or("trend requires player")?;
-    // A player's trend is inside their edition: the one their name was
-    // found in, else the filter's.
-    let edition = filter.or(found_in);
+    let who = arg_str(args, "player")?.ok_or("trend requires player")?;
     let asked = arg_measure(args)?;
+    let spec = arg_u32(args, "spec")?;
     // Absent a `measure`, the subject's role picks one — from the `spec`
     // argument when it scopes the trend, else from what the first point was
     // played as (one probe query; the point list itself does not depend on
     // the measure).
-    let spec_role = arg_u32(args, "spec")
-        .and_then(Spec::from_id)
-        .map(Spec::role);
-    let bucket = match args
-        .get("bucket")
-        .and_then(Json::as_str)
-        .map(str::to_lowercase)
-        .as_deref()
-    {
+    let spec_role = spec.and_then(Spec::from_id).map(Spec::role);
+    let bucket = match arg_str(args, "bucket")?.map(str::to_lowercase).as_deref() {
         None | Some("none") => TrendBucket::None,
         // "local" is a day bucket cut at the local cutover hour (arg_cutover).
         Some("day") | Some("local") => TrendBucket::Day,
@@ -1958,15 +2025,22 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     };
     let cutover = arg_cutover(args)?;
     let difficulty = arg_difficulty(args)?;
+    let encounter = arg_u32(args, "encounter")?;
+    let since_utc_ms = arg_i64(args, "since_utc_ms")?;
+    let limit = arg_u32(args, "limit")?.unwrap_or(0);
+    let (guid, found_in) = history_subject(bridge, who, filter)?;
+    // A player's trend is inside their edition: the one their name was
+    // found in, else the filter's.
+    let edition = filter.or(found_in);
     let query = |m: TrendMeasure| HistoryQuery::Trend {
         guid: guid.clone(),
-        spec: arg_u32(args, "spec"),
-        encounter: arg_u32(args, "encounter"),
+        spec,
+        encounter,
         difficulty,
         measure: m,
         bucket,
-        since_utc_ms: arg_i64(args, "since_utc_ms"),
-        limit: arg_u32(args, "limit").unwrap_or(0),
+        since_utc_ms,
+        limit,
         local_cutover_hour: cutover,
         edition,
     };
@@ -1995,9 +2069,7 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             points = again;
         }
     }
-    let player_name = args
-        .get("player")
-        .and_then(Json::as_str)
+    let player_name = Some(who)
         .filter(|s| !s.starts_with("Player-"))
         .map(str::to_string);
     Ok(
@@ -2051,9 +2123,7 @@ fn trend_json(
 }
 
 fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let fight_id = args
-        .get("fight_id")
-        .and_then(Json::as_str)
+    let fight_id = arg_history_id(args, "fight_id")?
         .ok_or("stored_fight requires fight_id")?
         .to_string();
     let view = arg_view(args)?;
@@ -2065,18 +2135,34 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         );
     }
     let death = arg_death(args)?;
+    check_death_view(death, view)?;
     let window = arg_window(args)?;
+    let who = arg_str(args, "player")?;
+    if window.is_some() && who.is_none() {
+        return Err("from_secs/to_secs scope a player's drill: name the player".to_string());
+    }
+    if window.is_some() && !matches!(view, View::Damage | View::Healing) {
+        return Err(format!(
+            "from_secs/to_secs scope damage and healing drills only, not {}",
+            view_name(view)
+        ));
+    }
+    check_conditioned_on(args, view)?;
     // A key's member boss: name or 0-based index into the card's bosses[].
-    // Validated against the card first so a miss names what exists; the
-    // daemon parses the boss from the log and answers its own rows.
-    let boss = match args.get("boss") {
+    let boss_asked = match args.get("boss") {
         None | Some(Json::Null) => None,
-        Some(v) => {
-            let want = v
-                .as_str()
+        Some(v) => Some(
+            v.as_str()
                 .map(str::to_string)
                 .or_else(|| v.as_u64().map(|n| n.to_string()))
-                .ok_or("boss must be a name or an index")?;
+                .ok_or("boss must be a name or an index")?,
+        ),
+    };
+    // Validated against the card first so a miss names what exists; the
+    // daemon parses the boss from the log and answers its own rows.
+    let boss = match boss_asked {
+        None => None,
+        Some(want) => {
             let Some(card_only) = bridge.stored_fight(fight_id.clone(), view, None, None)? else {
                 return Err(not_stored(&fight_id));
             };
@@ -2105,7 +2191,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
     };
     // Resolve the drill against the fight's own players, not the whole store.
-    let drill = match args.get("player").and_then(Json::as_str) {
+    let drill = match who {
         None => None,
         Some(who) if who.starts_with("Player-") => Some(who.to_string()),
         Some(who) => {
@@ -2126,9 +2212,6 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Some(guid)
         }
     };
-    if window.is_some() && drill.is_none() {
-        return Err("from_secs/to_secs scope a player's drill: name the player".to_string());
-    }
     let Some(f) = bridge.stored_fight_boss(
         fight_id.clone(),
         view,
@@ -2300,12 +2383,6 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         // v39: a window answers only where the store keeps the seconds;
         // anywhere else the lists below would be the whole fight, so say so.
         if let (Some((lo, hi)), Some(b)) = (window, &f.breakdown) {
-            if !matches!(view, View::Damage | View::Healing) {
-                return Err(format!(
-                    "from_secs/to_secs scope damage and healing drills only, not {}",
-                    view_name(view)
-                ));
-            }
             if b.range.is_none() {
                 return Err(format!(
                     "{fight_id}: no per-second abilities stored — the series tier is kept for \
@@ -2513,27 +2590,15 @@ fn power_json(series: &[PowerSeries]) -> Json {
 }
 
 fn regrade_fights(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let fight_id = args
-        .get("fight_id")
-        .and_then(Json::as_str)
-        .map(str::to_string);
-    let encounter = arg_u32(args, "encounter");
-    let kind = match args.get("kind").and_then(Json::as_str) {
-        None => None,
-        Some(k) => {
-            Some(FightKind::parse(&k.to_lowercase()).ok_or_else(|| format!("unknown kind {k:?}"))?)
-        }
-    };
+    let fight_id = arg_history_id(args, "fight_id")?.map(str::to_string);
+    let encounter = arg_u32(args, "encounter")?;
+    let kind = arg_kind(args)?;
+    let difficulty = arg_difficulty(args)?;
+    let edition = arg_edition(args)?;
     if fight_id.is_none() && encounter.is_none() && kind.is_none() {
         return Err("regrade_fights requires fight_id, encounter or kind".to_string());
     }
-    let queued = bridge.regrade(
-        fight_id,
-        encounter,
-        arg_difficulty(args)?,
-        kind,
-        arg_edition(args)?,
-    )?;
+    let queued = bridge.regrade(fight_id, encounter, difficulty, kind, edition)?;
     Ok(obj! {
         "queued": Json::u64(u64::from(queued)),
         "note": Json::str("rewrites land through the import queue: poll status.history.importing to 0, then re-read"),
@@ -2541,12 +2606,10 @@ fn regrade_fights(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 }
 
 fn pin_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let fight_id = args
-        .get("fight_id")
-        .and_then(Json::as_str)
+    let fight_id = arg_history_id(args, "fight_id")?
         .ok_or("pin_fight requires fight_id")?
         .to_string();
-    let pinned = args.get("pinned").and_then(Json::as_bool).unwrap_or(true);
+    let pinned = arg_bool(args, "pinned")?.unwrap_or(true);
     let now = bridge.pin_fight(fight_id.clone(), pinned)?;
     // Retest 35: the daemon answers `false` both for "released" and for
     // "no such card", and a pin that did not take read as a silent refusal.
@@ -3223,12 +3286,19 @@ fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
 }
 
 fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let segment = arg_segment(bridge, args)?;
+    let which = arg_fight(args)?;
     let view = arg_view(args)?;
-    let top_n = args
-        .get("top")
-        .and_then(Json::as_u64)
-        .map(|n| n.min(u32::MAX as u64) as u32);
+    let top_n = match args.get("top") {
+        None | Some(Json::Null) => None,
+        Some(v) => Some(
+            v.as_u64()
+                .map(|n| n.min(u32::MAX as u64) as u32)
+                .ok_or_else(|| {
+                    format!("top must be a whole number of rows, got {}", v.to_line())
+                })?,
+        ),
+    };
+    let segment = segment_of(bridge, which)?;
     let snap = bridge.snapshot(Cursor::Segment {
         segment,
         view,
@@ -3369,8 +3439,13 @@ fn raid_rate_word(view: View) -> &'static str {
 }
 
 fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let segment = arg_segment(bridge, args)?;
+    let which = arg_fight(args)?;
     let view = arg_view(args)?;
+    arg_player(args, "player")?;
+    let death = arg_death(args)?;
+    check_death_view(death, view)?;
+    check_conditioned_on(args, view)?;
+    let segment = segment_of(bridge, which)?;
     let (segment, key, row, _) = match resolve_player(bridge, segment, view, args, "player") {
         Ok(found) => found,
         // R9: an EMPTY death recap is the documented "survived" signal, so a
@@ -3410,7 +3485,6 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
         Err(e) => return Err(e),
     };
-    let death = arg_death(args)?;
     let snap = bridge.snapshot(Cursor::Segment {
         segment,
         view,
@@ -3661,7 +3735,10 @@ fn stacks_json(
 }
 
 fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let segment = arg_segment(bridge, args)?;
+    let which = arg_fight(args)?;
+    arg_player(args, "a")?;
+    arg_player(args, "b")?;
+    let segment = segment_of(bridge, which)?;
     // Compare is damage-only (R12); resolve names against the damage meter.
     let (segment, a_key, _, _) = resolve_player(bridge, segment, View::Damage, args, "a")?;
     let (_, b_key, _, _) = resolve_player(bridge, segment, View::Damage, args, "b")?;
@@ -3692,17 +3769,19 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 }
 
 fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let which = arg_fight(args)?;
+    let who = arg_player(args, "player")?;
     // A stored fight (an older night, or anything the daemon's lists do
     // not hold) answers from the loadouts tier. The id is looked up once.
-    let listed = match args.get("fight_id").and_then(Json::as_str) {
+    let listed = match which.fight_id {
         Some(fight_id) => match live_fight(bridge, fight_id)?.hit {
             Some(segment) => Some(segment),
-            None => return stored_loadout(bridge, args, fight_id),
+            None => return stored_loadout(bridge, who, fight_id),
         },
         None => None,
     };
-    let segment = match args.get("segment_id").and_then(Json::as_u64) {
-        Some(id) => SegmentRef::Id(SegmentId(id)),
+    let segment = match which.segment {
+        Some(id) => SegmentRef::Id(id),
         None => listed.unwrap_or(SegmentRef::Live),
     };
     // The build doesn't belong to a view; damage rows list everyone who
@@ -4012,13 +4091,8 @@ fn arg_window(args: &Json) -> Result<Option<(u32, u32)>, String> {
 /// meaningless off the Deaths view, and saying so beats an out-of-range
 /// message about a window list that view never fills.
 fn check_death_index(death: Option<u32>, bd: &Breakdown, view: View) -> Result<(), String> {
+    check_death_view(death, view)?;
     let Some(asked) = death else { return Ok(()) };
-    if view != View::Deaths {
-        return Err(format!(
-            "\"death\" selects a death window and is only meaningful with view=deaths, not {}",
-            wowdps_model::fmt::view_name(view)
-        ));
-    }
     if bd.deaths.iter().any(|d| d.index == asked) {
         return Ok(());
     }
@@ -4029,6 +4103,35 @@ fn check_death_index(death: Option<u32>, bd: &Breakdown, view: View) -> Result<(
             bd.deaths.len(),
         ),
     })
+}
+
+/// `death` off view=deaths: checked before the daemon is asked, and again
+/// by [`check_death_index`] against the drill it answered.
+fn check_death_view(death: Option<u32>, view: View) -> Result<(), String> {
+    if death.is_some() && view != View::Deaths {
+        return Err(format!(
+            "\"death\" selects a death window and is only meaningful with view=deaths, not {}",
+            wowdps_model::fmt::view_name(view)
+        ));
+    }
+    Ok(())
+}
+
+/// R21: `conditioned_on`'s shape, and that it splits a taken drill — the
+/// only one that carries stacking debuffs — checked before the daemon is
+/// asked; [`stacks_json`] then finds the debuff in the drill.
+fn check_conditioned_on(args: &Json, view: View) -> Result<(), String> {
+    match args.get("conditioned_on") {
+        None | Some(Json::Null) => Ok(()),
+        Some(v) if v.as_u64().is_none() && v.as_str().is_none() => {
+            Err("conditioned_on must be a spell id or a debuff name".to_string())
+        }
+        Some(_) if view != View::Taken => Err(format!(
+            "conditioned_on splits a taken drill (view=taken) by a debuff's stacks, not {}",
+            wowdps_model::fmt::view_name(view)
+        )),
+        Some(_) => Ok(()),
+    }
 }
 
 /// The indices a death-window list offers, for an out-of-range message.
@@ -4080,7 +4183,7 @@ fn deaths_json(out: &mut Vec<(String, Json)>, bd: &Breakdown, view: View) {
 }
 
 fn arg_view(args: &Json) -> Result<View, String> {
-    let Some(name) = args.get("view").and_then(Json::as_str) else {
+    let Some(name) = arg_str(args, "view")? else {
         return Ok(View::Damage);
     };
     // Case-insensitive so the echoed display name ("Damage") round-trips.
@@ -4117,9 +4220,7 @@ fn resolve_player(
     args: &Json,
     arg: &str,
 ) -> Result<(SegmentRef, String, Row, Edition), String> {
-    let Some(who) = args.get(arg).and_then(Json::as_str) else {
-        return Err(format!("{arg:?} is required: a player name or GUID"));
-    };
+    let who = arg_player(args, arg)?;
     let snap = bridge.snapshot(Cursor::Segment {
         segment,
         view,
@@ -4214,14 +4315,31 @@ fn history_id(log_id: Option<u64>, live: bool, start_ms: i64, kind: SegmentKind)
     }
 }
 
+/// Which fight a live tool reads, as its arguments name it, checked by
+/// shape before the daemon is asked ([`segment_of`] then finds it):
 /// `segment_id` (a per-run integer from list_fights), or `fight_id` (the
-/// history store's stable id) resolved against the daemon's current lists;
-/// neither = the live fight (v49: the call's edition's).
-fn arg_segment(bridge: &mut Bridge, args: &Json) -> Result<SegmentRef, String> {
-    if let Some(id) = args.get("segment_id").and_then(Json::as_u64) {
-        return Ok(SegmentRef::Id(SegmentId(id)));
+/// history store's stable id); neither = the live fight.
+#[derive(Clone, Copy)]
+struct FightArg<'a> {
+    segment: Option<SegmentId>,
+    fight_id: Option<&'a str>,
+}
+
+fn arg_fight(args: &Json) -> Result<FightArg<'_>, String> {
+    Ok(FightArg {
+        segment: arg_segment_id(args)?,
+        fight_id: arg_history_id(args, "fight_id")?,
+    })
+}
+
+/// The segment a [`FightArg`] names: a `fight_id` resolved against the
+/// daemon's current lists; neither = the live fight (v49: the call's
+/// edition's).
+fn segment_of(bridge: &mut Bridge, which: FightArg<'_>) -> Result<SegmentRef, String> {
+    if let Some(id) = which.segment {
+        return Ok(SegmentRef::Id(id));
     }
-    let Some(fight_id) = args.get("fight_id").and_then(Json::as_str) else {
+    let Some(fight_id) = which.fight_id else {
         return Ok(SegmentRef::Live);
     };
     let found = live_fight(bridge, fight_id)?;
@@ -4797,11 +4915,7 @@ fn no_build_note(edition: Edition) -> String {
 
 /// `loadout {fight_id, player}` for a fight the daemon's list does not hold:
 /// the card names the player, the loadouts tier holds the build.
-fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Json, String> {
-    let who = args
-        .get("player")
-        .and_then(Json::as_str)
-        .ok_or("loadout by fight_id requires player")?;
+fn stored_loadout(bridge: &mut Bridge, who: &str, fight_id: &str) -> Result<Json, String> {
     let Some(card_only) = bridge.stored_fight(fight_id.to_string(), View::Damage, None, None)?
     else {
         return Err(not_stored(fight_id));
@@ -6253,12 +6367,12 @@ mod tests {
             ]))
             .is_err()
         );
-        let mut bridge = Bridge::lazy();
+        let mut bridge = Bridge::offline();
         let err = call(
             &mut bridge,
             "stored_fight",
             &args(&[
-                ("fight_id", Json::str("x-1")),
+                ("fight_id", Json::str("0123456789abcdef-1")),
                 ("from_secs", Json::num(0.0)),
                 ("to_secs", Json::num(5.0)),
             ]),
@@ -6396,45 +6510,162 @@ mod tests {
         );
     }
 
+    /// Every tool reads and checks all of its arguments before it asks the
+    /// daemon anything. The bridge is offline (`Bridge::offline`): it never
+    /// finds, reaches or spawns a daemon, and answers any question with
+    /// `OFFLINE`. So each malformed call below must fail with its own
+    /// argument error, which an offline bridge cannot give and a live
+    /// daemon cannot change; and each well-formed one must get as far as
+    /// asking — `OFFLINE` — which proves the checks pass good arguments
+    /// through and that no answer here came from a daemon.
     #[test]
     fn argument_errors_never_reach_the_daemon() {
-        let mut bridge = Bridge::lazy();
-        let err = call(&mut bridge, "no_such_tool", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("no such tool"), "{err}");
-        let err = call(&mut bridge, "encode_talents", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("selections array"), "{err}");
-        let err = call(&mut bridge, "decode_talents", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("requires a string"), "{err}");
-        // v20: the history tools' required arguments fail the same way.
-        let err = call(&mut bridge, "progression", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("requires encounter"), "{err}");
-        let err = call(&mut bridge, "stored_fight", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("requires fight_id"), "{err}");
-        let err = call(&mut bridge, "pin_fight", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("requires fight_id"), "{err}");
-        let err = call(&mut bridge, "trend", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("requires player"), "{err}");
-        let err = call(&mut bridge, "regrade_fights", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(
-            err.contains("requires fight_id, encounter or kind"),
-            "{err}"
-        );
-        let err = call(&mut bridge, "role_night", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("requires encounter"), "{err}");
-        let err = call(
-            &mut bridge,
-            "role_night",
-            &obj! { "encounter": Json::u64(3130), "difficulty": Json::u64(15) },
-        )
-        .unwrap_err();
-        assert!(err.contains("requires night"), "{err}");
-        let err = call(
-            &mut bridge,
-            "role_night",
-            &obj! { "encounter": Json::u64(3130), "difficulty": Json::u64(15), "date": Json::str("yesterday") },
-        )
-        .unwrap_err();
-        assert!(err.contains("YYYY-MM-DD"), "{err}");
+        use crate::bridge::OFFLINE;
+        // One call per line: the tool, its arguments as one JSON object
+        // (no spaces), and for a refusal what its error must say. `#`
+        // lines are comments.
+        const REFUSED: &str = r#"
+        no_such_tool   {}                                                       no such tool
+        # The talent tools answer locally, but check first too.
+        talent_tree    {}                                                       spec_id
+        talent_tree    {"spec_id":71,"edition":"pandaria"}                      unknown edition
+        decode_talents {}                                                       requires a string
+        decode_talents {"string":"x","edition":"pandaria"}                      unknown edition
+        encode_talents {}                                                       selections array
+        encode_talents {"selections":[]}                                        spec_id
+        encode_talents {"spec_id":71,"selections":[],"edition":9.5}             unknown edition
+        history_sql    {}                                                       requires a query
+        # The live tools: the edition, which fight, the view and the players,
+        # before the fight is looked up.
+        list_fights    {"edition":"pandaria"}                                   unknown edition
+        fight          {"edition":"pandaria"}                                   unknown edition
+        fight          {"fight_id":"$ID","view":"bogus"}                        unknown view
+fight          {"view":2}                                               view must be a string
+        fight          {"segment_id":"3"}                                       segment_id must be
+        fight          {"segment_id":-1}                                        segment_id must be
+        fight          {"fight_id":"nope"}                                      not a history fight id
+        fight          {"fight_id":7}                                           not a history fight id
+        fight          {"fight_id":"0123456789ABCDEF-1"}                        not a history fight id
+        fight          {"fight_id":"0123456789abcdef-+1"}                       not a history fight id
+        fight          {"top":"5"}                                              top must be
+        breakdown      {"fight_id":"$ID"}                                       "player" is required
+        breakdown      {"player":1}                                             player must be a string
+        breakdown      {"player":"A","edition":"pandaria"}                      unknown edition
+        breakdown      {"player":"A","fight_id":"x"}                            not a history fight id
+        breakdown      {"player":"A","fight_id":"$ID","view":"x"}               unknown view
+        breakdown      {"player":"A","death":1}                                 only meaningful with view=deaths
+        breakdown      {"player":"A","view":"deaths","death":-1}                non-negative whole number
+        breakdown      {"player":"A","view":"taken","conditioned_on":true}      a spell id or a debuff name
+        breakdown      {"player":"A","conditioned_on":5}                        splits a taken drill
+        compare        {"fight_id":"$ID"}                                       "a" is required
+        compare        {"a":"A"}                                                "b" is required
+        compare        {"a":"A","b":"B","segment_id":1.5}                       segment_id must be
+        compare        {"a":"A","b":"B","edition":"pandaria"}                   unknown edition
+        loadout        {}                                                       "player" is required
+        loadout        {"fight_id":"$ID"}                                       "player" is required
+        loadout        {"player":"A","fight_id":"x-1"}                          not a history fight id
+        loadout        {"player":"A","edition":"pandaria"}                      unknown edition
+        # The history tools: every filter, before a player's name is looked up
+        # or a boss's editions counted.
+        history        {"edition":"pandaria"}                                   unknown edition
+        history        {"player":5}                                             player must be a string
+        history        {"player":"Somebody","role":"bard"}                      unknown role
+        history        {"player":"Somebody","kind":"raid_night"}                unknown kind
+        history        {"player":"Somebody","sort":"best"}                      unknown sort
+        history        {"player":"Somebody","encounter":"3130"}                 encounter must be
+        history        {"player":"Somebody","difficulty":"Hard"}                unknown difficulty
+        history        {"player":"Somebody","since_utc_ms":"x"}                 since_utc_ms must be
+        history        {"player":"Somebody","limit":-1}                         limit must be
+        history        {"player":"Somebody","after_id":"nope"}                  not a history fight id
+        history        {"player":"Somebody","players":true}                     players must be a string
+        progression    {}                                                       requires encounter
+        progression    {"encounter":"3130","difficulty":15}                     encounter must be
+        progression    {"encounter":3130}                                       requires difficulty
+        progression    {$BOSS,"cutover_hour":30}                                cutover_hour must be
+        progression    {$BOSS,"local":"yes"}                                    local must be true or false
+        progression    {$BOSS,"edition":"pandaria"}                             unknown edition
+        role_night     {}                                                       requires encounter
+        role_night     {"encounter":3130}                                       requires difficulty
+        # No edition: the night is checked before each edition's pulls are
+        # counted (main's CI failure); and pinned to one.
+        role_night     {$BOSS}                                                  requires night
+        role_night     {$BOSS,"edition":"forever"}                              requires night
+        role_night     {$BOSS,"date":"yesterday"}                               YYYY-MM-DD
+        role_night     {$BOSS,"night":0,"date":"yesterday"}                     YYYY-MM-DD
+        role_night     {$BOSS,"date":20260728}                                  date must be a string
+        role_night     {$BOSS,"night":1.5}                                      night must be
+        role_night     {$BOSS,"night":0,"edition":"pandaria"}                   unknown edition
+        trend          {}                                                       requires player
+        trend          {"player":"Somebody","edition":"pandaria"}               unknown edition
+        trend          {"player":"Somebody","measure":"bogus"}                  unknown measure
+        trend          {"player":"Somebody","view":"taken"}                     deprecated aliases
+        trend          {"player":"Somebody","bucket":"month"}                   unknown bucket
+        trend          {"player":"Somebody","spec":"Fire"}                      spec must be
+        trend          {"player":"Somebody","difficulty":"Hard"}                unknown difficulty
+        stored_fight   {}                                                       requires fight_id
+        stored_fight   {"fight_id":"nope"}                                      not a history fight id
+        stored_fight   {"fight_id":"$ID","view":"enemy_taken"}                  never stored
+        stored_fight   {"fight_id":"$ID","boss":true}                           a name or an index
+        stored_fight   {"fight_id":"$ID","player":1}                            player must be a string
+        stored_fight   {"fight_id":"$ID","death":1}                             only meaningful with view=deaths
+        stored_fight   {"fight_id":"$ID","player":"A","conditioned_on":5}       splits a taken drill
+        # Before the boss or the player is looked up on the card.
+        stored_fight   {"fight_id":"$ID","boss":0,"from_secs":0,"to_secs":5}    name the player
+        stored_fight   {"fight_id":"$ID","boss":0,"player":"A","view":"taken","from_secs":0,"to_secs":5}  damage and healing drills only
+        regrade_fights {}                                                       requires fight_id, encounter or kind
+        regrade_fights {"fight_id":"x"}                                         not a history fight id
+        regrade_fights {"kind":"bogus"}                                         unknown kind
+        regrade_fights {"encounter":1,"difficulty":"Hard"}                      unknown difficulty
+        regrade_fights {"encounter":1,"edition":"pandaria"}                     unknown edition
+        pin_fight      {}                                                       requires fight_id
+        pin_fight      {"fight_id":"nope"}                                      not a history fight id
+        pin_fight      {"fight_id":"$ID","pinned":"false"}                      pinned must be true or false
+        "#;
+        const ASKED: &str = r#"
+        status         {}
+        list_fights    {"edition":"forever"}
+        fight          {}
+        fight          {"fight_id":"$ID","view":"Damage","top":5,"edition":0}
+        fight          {"fight_id":"$IDs","segment_id":null}
+        breakdown      {"player":"A","view":"deaths","death":1}
+        breakdown      {"player":"A","view":"taken","conditioned_on":"Brand"}
+        compare        {"a":"A","b":"B","segment_id":3}
+        loadout        {"player":"A","fight_id":"$ID"}
+        history        {"player":"Somebody","after_id":"$ID","sort":"fastest"}
+        progression    {"encounter":3130,"difficulty":"Heroic","bucket":"local"}
+        role_night     {$BOSS,"night":1785196800000}
+        role_night     {$BOSS,"date":"2026-07-28","edition":"retail"}
+        trend          {"player":"Somebody","bucket":"week","measure":"hps"}
+        stored_fight   {"fight_id":"$ID","player":"A","from_secs":0,"to_secs":5}
+        regrade_fights {"kind":"key"}
+        pin_fight      {"fight_id":"$ID","pinned":false}
+        "#;
+        let mut bridge = Bridge::offline();
+        let mut run = |line: &str| -> Option<(String, String, String)> {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (tool, rest) = line.split_once(' ').expect("a tool");
+            let rest = rest.trim_start();
+            let (args, want) = rest.split_once(' ').unwrap_or((rest, ""));
+            let args = args
+                .replace("$BOSS", r#""encounter":3130,"difficulty":15"#)
+                .replace("$ID", "0123456789abcdef-1722014400000");
+            let doc = crate::json::parse(&args).expect("test args parse");
+            let err = match call(&mut bridge, tool, &doc) {
+                Ok(answer) => panic!("{tool} {args}: answered {}", answer.to_line()),
+                Err(e) => e,
+            };
+            Some((format!("{tool} {args}"), err, want.trim().to_string()))
+        };
+        for (what, err, want) in REFUSED.lines().filter_map(&mut run) {
+            assert!(!want.is_empty(), "{what}: no error to expect");
+            assert!(err.contains(&want), "{what}: {err}");
+        }
+        for (what, err, _) in ASKED.lines().filter_map(&mut run) {
+            assert_eq!(err, OFFLINE, "{what}");
+        }
         // 16 fixed tools, plus `history_sql` exactly where the
         // `wowdps-history` binary is reachable — an absent binary means no
         // tool, not a tool that always fails. Stating the rule rather than a
