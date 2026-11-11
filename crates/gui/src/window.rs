@@ -772,6 +772,10 @@ impl Gui {
             .flatten()
             .filter(|r| !r.enemy);
         let segment = state.watched_segment();
+        // The fight's game's trees; the window's game with no fight shown.
+        let edition = state
+            .segment_edition()
+            .unwrap_or_else(|| self.edition_now(cx));
         // An edition whose log carries no builds says so, not a blank.
         let gap = wowdps_gui_logic::editions::builds_gap(state.segment_edition());
         let player = row.map(|r| Player {
@@ -790,7 +794,7 @@ impl Gui {
         // A pull of the log: the daemon answers with the build the player
         // wore in it, which wins over a stored paste.
         let viewer = cx.new(|cx| {
-            let mut viewer = TalentViewer::open(player.clone(), window, cx);
+            let mut viewer = TalentViewer::open(edition, player.clone(), window, cx);
             viewer.say_gap(gap, cx);
             match (&stored, &player) {
                 (Some(Some(loadout)), _) => viewer.adopt_logged(loadout, cx),

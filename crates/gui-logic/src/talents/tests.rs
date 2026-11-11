@@ -386,6 +386,44 @@ fn a_pasted_string_decodes_and_round_trips() {
     assert_eq!(ui.error.as_deref(), Some("the clipboard is empty"));
 }
 
+/// The viewer reads the trees of the game it was opened in, never
+/// another's: Forever's own dataset in a Forever fight — the bare tree,
+/// a pasted string and its round trip — and Retail's otherwise.
+#[test]
+fn the_viewer_reads_its_game_s_trees() {
+    let _sb = Sandbox::new("edition-trees");
+    // Forever's dataset: the fixture's trees under a Forever build.
+    let mut forever = dataset().clone();
+    if let Json::Obj(fields) = &mut forever {
+        for (key, value) in fields.iter_mut() {
+            if key == "build" {
+                *value = Json::str("1.60.1.70888 (product wowf)");
+            }
+        }
+    }
+    let forever: &'static Json = Box::leak(Box::new(forever));
+    use_dataset_in_on_this_thread(wowdps_model::Edition::Forever, forever);
+    let player = || Some(("Frosty-Proudmoore".to_string(), Some(62)));
+
+    let retail = Viewer::open(player());
+    assert_eq!(retail.edition, wowdps_model::Edition::Retail);
+    let built = |ui: &Viewer| ui.build.as_ref().map(|b| b.dataset_build.clone());
+    assert_eq!(built(&retail).as_deref(), Some("12.1.0.69497"));
+
+    let mut ui = Viewer::open_in(wowdps_model::Edition::Forever, player());
+    assert_eq!(ui.error, None);
+    assert_eq!(built(&ui).as_deref(), Some("1.60.1.70888 (product wowf)"));
+    let s = full_string();
+    ui.ingest(&s);
+    assert_eq!(ui.error, None);
+    assert_eq!(built(&ui).as_deref(), Some("1.60.1.70888 (product wowf)"));
+    assert_eq!(ui.encode_current().as_deref(), Some(s.as_str()));
+
+    // A fight that named no edition counts as Retail and reads its trees.
+    let none = Viewer::open_in(wowdps_model::Edition::Unknown(0), player());
+    assert_eq!(built(&none).as_deref(), Some("12.1.0.69497"));
+}
+
 #[test]
 fn decode_warnings_ride_into_the_build() {
     let _sb = Sandbox::new("paste-warn");

@@ -469,6 +469,7 @@ fn the_talent_viewer_says_forever_logs_no_builds(cx: &mut TestAppContext) {
     let (rig, _) = two(cx, link);
     open_talents(cx, &rig);
     assert_eq!(talents_gap(cx, &rig), None, "Retail logs its builds");
+    assert_eq!(talents_edition(cx, &rig), Some(Edition::Retail));
     close_talents(cx, &rig);
 
     pick(cx, &rig, "edition-forever");
@@ -493,6 +494,11 @@ fn the_talent_viewer_says_forever_logs_no_builds(cx: &mut TestAppContext) {
     assert_eq!(
         talents_gap(cx, &rig).as_deref(),
         Some("Forever's combat log does not carry talents or gear.")
+    );
+    assert_eq!(
+        talents_edition(cx, &rig),
+        Some(Edition::Forever),
+        "the viewer reads Forever's own trees"
     );
 }
 
@@ -650,5 +656,12 @@ fn close_talents(cx: &mut TestAppContext, rig: &Rig) {
 fn talents_gap(cx: &mut TestAppContext, rig: &Rig) -> Option<String> {
     rig.gui.read_with(cx, |g, cx| {
         g.talents.as_ref().and_then(|v| v.read(cx).gap.clone())
+    })
+}
+
+/// The game whose trees the open talent viewer reads.
+fn talents_edition(cx: &mut TestAppContext, rig: &Rig) -> Option<Edition> {
+    rig.gui.read_with(cx, |g, cx| {
+        g.talents.as_ref().map(|v| v.read(cx).ui.edition)
     })
 }
