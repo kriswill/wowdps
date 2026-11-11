@@ -1122,8 +1122,17 @@ the spec's role alone until then, and an import may name one for a specless play
 carry `edition` (the key, named off `project_id`; `players` carries `project_id` too), and
 `stats.kept.progression` is reckoned per edition as the store does. The MCP's stored cards say
 `edition`, `edition_name` and `project_id`, and a card by reference its `edition`; (v49) its live
-fights and list rows say `edition`, `status` lists `editions`, and the history tools (`history`,
-`progression`, `trend`, `role_night`, `regrade_fights`) take an `edition` filter.
+fights and list rows say `edition`, `status` lists `editions` and names the `live_edition`, and
+every tool that takes an edition takes it in one shape (`retail`, `forever` or a PROJECT_ID). The
+history tools (`history`, `progression`, `trend`, `role_night`, `regrade_fights`) filter by it;
+without it they answer every edition, each card naming its own, but count and rank each edition's
+pulls apart: `progression` and `role_night` answer an encounter id two editions hold as
+`editions[]`, one answer per edition, and an answer names its `edition`. A player named by name
+is looked up inside one edition: a name two editions' fights hold is an error naming both. The
+live tools (`list_fights`, `fight`, `breakdown`, `compare`, `loadout`) pin the edition it names,
+else follow the live one; a pinned call naming another edition's segment is an error, a
+`fight_id` is looked for in every edition's list while following, and a Forever fight's
+`loadout` says its log carries no builds. The talent tools pick that edition's dataset (R14).
 
 **Imported fights** (v46, `ClientMsg::ImportReplay`): a fight from outside this machine's
 logs — a client converted it (a Warcraft Logs fight, say) and hands the daemon what its source
@@ -1242,7 +1251,10 @@ the daemon socket, so it works across builds); plain windows may multiply freely
 from one lazily connected `ClientKind::Mcp` daemon session — the daemon is
 spawned only when a tool first needs it, failures are tool-level errors, and
 each fight tool call is answered from the first snapshot matching the cursor it
-declares (a client like every frontend; `loadout` rides `GetLoadout` (v19) and
+declares (v49: in the edition the call names, else following; a list or `Live` Watch in
+another edition than the session's last one is fenced by a `GetStatus` round trip and
+declared again, so no frame pushed before it answers it) (a client like every frontend;
+`loadout` rides `GetLoadout` (v19) and
 reports the player's COMBATANT_INFO talents + gear, naming the talents through
 the dataset via the same picks→encode→decode path as the GUI's logged view, raw
 picks when the dataset is absent, and `logged: false` — not an error — when the
@@ -1250,7 +1262,7 @@ log holds no build at or before that segment; the player resolves against the
 damage rows, then the healing rows, and every follow-up request is pinned to
 the id the first snapshot resolved `Live` to); talent tools
 `talent_tree`, `decode_talents`, `encode_talents` answer from the per-machine
-talent dataset (R14), never the daemon.
+talent dataset (R14) of the edition they name, Retail's by default, never the daemon.
 
 ## Dependencies
 

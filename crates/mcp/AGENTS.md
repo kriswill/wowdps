@@ -9,8 +9,15 @@ An MCP stdio server exposing the daemon's fight data as tools, reached as
   log. Live and stored answers come from the daemon (the history tools are
   the store's fixed questions); never read the store's files here.
 - **Talent tools answer locally.** `talent_tree`, `decode_talents` and
-  `encode_talents` read the per-machine `talents.json` (R14) through
-  `proto::talents`, never the daemon.
+  `encode_talents` read the per-machine `talents.json` (R14) of the
+  edition they name through `proto::talents` (`load_in`: Retail's by
+  default, Forever's at `forever/talents.json` beside it), never the
+  daemon.
+- **One edition per answer.** Every fight and card names its edition. The
+  live tools pin `edition` or follow the live one (`Bridge::set_scope`;
+  a Watch in another edition is fenced, `Bridge::watch`); the history
+  tools answer every edition without one but never count, rank or look a
+  player up across two.
 - **JSON is hand-rolled** (`proto::json`, re-exported here); parse never
   panics, and no serde.
 - **Say the clock.** Amounts are raw totals with overkill left out;
