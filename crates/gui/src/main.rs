@@ -50,7 +50,8 @@ Usage:
                          it stays at the configured offset. Under Hyprland
                          it is born on the game's monitor and follows the game:
                          it hides whenever WoW's workspace is off screen, and
-                         with two games open it follows the one being played
+                         with two games open it follows the live one, whose
+                         pull is the latest
                          (follow_game = false in the config disables this;
                          game_match sets the window class/title substring to
                          look for, or several separated by | with no

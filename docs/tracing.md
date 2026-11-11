@@ -113,7 +113,8 @@ With no live edition known, or no window's process naming it, the best match
 listed first is, as with one. When the live edition changes, the overlay
 shows and hides by its window's workspace at once and, unless `monitor` or
 `WOWDPS_OVERLAY_OUTPUT` pins the output, opens again on that window's
-monitor. Both transitions can be driven
+monitor when the surface is on another display (never when it is on that
+one already). Both transitions can be driven
 without WoW: point `game_match` at a fake title in a scratch config, then
 spawn and close such a window on a workspace nothing displays:
 

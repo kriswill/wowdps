@@ -995,8 +995,13 @@ match among several; with no edition known, or no such window (no pid, an unread
 command line), the best match listed first, as with one game. The overlay shows
 and hides by that window's workspace, re-asked when the edition changes; after a
 change, once that window is found, an output not pinned (`monitor`,
-`WOWDPS_OVERLAY_OUTPUT`) reopens on its monitor if it is not there already. It is
-born before the session names an edition, so on the first listed's monitor.
+`WOWDPS_OVERLAY_OUTPUT`) reopens on its monitor when the display the surface is
+on (the compositor's, else the one asked for) is another (`output::Home::rehome`):
+one already on the game's display is never recreated, and one whose display cannot
+be told is never moved. It is born before the session names an edition, so on the
+first listed's monitor, or where the system chose when no game window had mapped;
+so on a desk of several monitors the overlay of one game, too, moves to that game's
+monitor once, when the session first names the edition, if it was born elsewhere.
 
 Ability tree (v36, R26): `ClientState::drill_tree()` is the drilled snapshot's
 tree, empty with no drill and until the drilled snapshot arrives. The state

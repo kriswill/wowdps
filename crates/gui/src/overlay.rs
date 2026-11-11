@@ -107,12 +107,13 @@ pub fn choose_output(cfg: &Config) -> Option<String> {
     }
 }
 
-/// Whether the overlay's output is the game's monitor: none named by hand
-/// (`WOWDPS_OVERLAY_OUTPUT`) or by the config's `monitor`, and
-/// `follow_game` on. Only then is it born on the game's monitor and moved
-/// to the live game's when the live edition changes (`panel::Rehome`).
+/// Whether the overlay's output is the game's monitor (gui-logic's
+/// `output::follows_game`, `WOWDPS_OVERLAY_OUTPUT` read here): only then is
+/// it born on the game's monitor and moved to the live game's
+/// (`panel::Rehome`, `output::Home::rehome`).
 fn output_follows_game(cfg: &Config) -> bool {
-    std::env::var("WOWDPS_OVERLAY_OUTPUT").is_err() && cfg.monitor.is_none() && cfg.follow_game
+    let pinned_by_env = std::env::var("WOWDPS_OVERLAY_OUTPUT").is_ok();
+    wowdps_gui_logic::output::follows_game(cfg, pinned_by_env)
 }
 
 /// How long a daemon-spawned overlay waits for the game window to map
@@ -147,9 +148,13 @@ fn surface(
     let session = cx.new(|cx| crate::session::Session::running_with(Box::new(client), state, cx));
     let overlay = cx.new(|cx| panel::Overlay::new(session, cfg, Rc::new(split_link), cx));
     let current = Rc::new(Cell::new(Some(open_on(cx, output, display_id, &overlay)?)));
-    // Where the surface is: the output it was opened on, by name and by
+    // Where the surface opens: the output asked for, by name and by
     // display. A rehome moves it.
-    let home = Rc::new(RefCell::new((output.map(str::to_string), display_id)));
+    let home = Rc::new(RefCell::new(wowdps_gui_logic::output::Home {
+        output: output.map(str::to_string),
+        display: display_id,
+        follows_game,
+    }));
     // A tab dropped by another edge, or on macOS a size change (a resize
     // keeps the wrong corner fixed): the surface is recreated there — the
     // new one opened before the old one goes, so the app never stands
@@ -159,7 +164,10 @@ fn surface(
         let home = Rc::clone(&home);
         move |overlay: gpui_kit::Entity<panel::Overlay>, cx: &mut App| {
             overlay.update(cx, |o, _| o.fresh_surface());
-            let (output, display_id) = home.borrow().clone();
+            let (output, display_id) = {
+                let home = home.borrow();
+                (home.output.clone(), home.display)
+            };
             match open_on(cx, output.as_deref(), display_id, &overlay) {
                 Ok(new) => {
                     if let Some(old) = held.replace(Some(new)) {
@@ -182,21 +190,28 @@ fn surface(
     .detach();
     // The live edition changed and its game window is on another monitor:
     // the surface is recreated there, as on an edge change, when its
-    // output follows the game's. A name no display answers to leaves it.
+    // output follows the game's. Compared with the display the surface is
+    // actually on (the compositor's word, `enter`), so one already on the
+    // game's display is never recreated. A name no display answers to
+    // leaves it.
     cx.subscribe(&overlay, move |overlay, rehome: &panel::Rehome, cx| {
-        let name = &rehome.0;
-        if !follows_game || home.borrow().0.as_deref() == Some(name.as_str()) {
-            return;
-        }
-        let Some(display) = display_named(cx, name) else {
+        let name = rehome.0.as_str();
+        let there = display_named(cx, name);
+        if follows_game && there.is_none() {
             let _ = writeln!(
                 std::io::stderr(),
                 "wowdps-gui: no output named {name}; the overlay stays"
             );
-            return;
-        };
-        *home.borrow_mut() = (Some(name.clone()), Some(display));
-        reopen(overlay, cx);
+        }
+        let on = current.get().and_then(|window| {
+            window
+                .update(cx, |_, window, cx| window.display(cx).map(|d| d.id()))
+                .ok()
+                .flatten()
+        });
+        if home.borrow_mut().rehome(name, there, on) {
+            reopen(overlay, cx);
+        }
     })
     .detach();
     // The surface gone — its output unplugged, the compositor closing it:
