@@ -52,7 +52,8 @@ Usage:
                          it hides whenever WoW's workspace is off screen
                          (follow_game = false in the config disables this;
                          game_match sets the window class/title substring to
-                         look for, or several separated by |)
+                         look for, or several separated by | with no
+                         spaces around it)
   wowdps-gui --print-theme <name>
                          print every key of a theme as config.toml tables, to
                          copy into ~/.config/wowdps/config.toml and edit

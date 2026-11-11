@@ -224,20 +224,16 @@ fn visible_now(dir: &Path, needle: &str) -> bool {
 }
 
 /// The window needles a `game_match` names: one substring, or several
-/// separated by `|` (one per edition's window, say), each trimmed and
-/// lowercased, empty ones dropped — and a value with none at all is the
-/// one needle it always was.
+/// separated by `|` (one per edition's window, say), each lowercased and
+/// otherwise taken as written — spaces are part of a needle, and a window
+/// title holding a `|` cannot be named. An empty piece (`""`, a trailing
+/// `|`, `||`) is no needle: it would match every window.
 pub fn needles(game_match: &str) -> Vec<String> {
-    let all: Vec<String> = game_match
+    game_match
         .split('|')
-        .map(|n| n.trim().to_lowercase())
         .filter(|n| !n.is_empty())
-        .collect();
-    if all.is_empty() {
-        vec![game_match.to_lowercase()]
-    } else {
-        all
-    }
+        .map(str::to_lowercase)
+        .collect()
 }
 
 /// Find the game in a plain-text `clients` reply and return its workspace
@@ -254,6 +250,9 @@ pub fn needles(game_match: &str) -> Vec<String> {
 /// outranks the initial one.
 fn game_workspace(clients: &str, game_match: &str) -> Option<i32> {
     let needles = needles(game_match);
+    if needles.is_empty() {
+        return None;
+    }
     let mut best: Option<(u32, i32)> = None;
     let (mut ws, mut score, mut fullscreen) = (None::<i32>, 0u32, false);
     let mut flush = |ws: Option<i32>, score: u32, fullscreen: bool| {
@@ -657,12 +656,20 @@ Monitor DP-2 (ID 1):
     /// One needle, the default, matches as it always did.
     #[test]
     fn game_match_takes_several_windows() {
-        assert_eq!(needles("world of warcraft"), ["world of warcraft"]);
+        assert_eq!(needles("World of Warcraft"), ["world of warcraft"]);
         assert_eq!(
-            needles(" World of Warcraft | Other Game|"),
+            needles("World of Warcraft|Other Game|"),
             ["world of warcraft", "other game"]
         );
-        assert_eq!(needles(""), [""], "nothing named is the one needle it was");
+        // Spaces are part of a needle: a value is taken as written.
+        assert_eq!(needles(" wow |x"), [" wow ", "x"]);
+        // An empty piece is no needle: it would match every window.
+        for empty in ["", "|", "||", "|||"] {
+            assert!(needles(empty).is_empty(), "{empty:?}");
+            assert_eq!(game_workspace(CLIENTS, empty), None, "{empty:?}");
+        }
+        assert_eq!(needles("a||b|"), ["a", "b"]);
+        assert_eq!(game_workspace(CLIENTS, "||world of warcraft|"), Some(9));
         let other = "\
 Window 70aa -> Other Game:
 	mapped: 1

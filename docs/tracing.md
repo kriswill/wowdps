@@ -99,7 +99,11 @@ Notes:
 ## Exercising workspace tracking without the game (Hyprland)
 
 With `follow_game` on, the overlay hides whenever the `game_match` window's
-workspace is not displayed on any monitor. Both transitions can be driven
+workspace is not displayed on any monitor. `game_match` is a case-insensitive
+substring of the window's class or title, or several separated by `|` with no
+spaces around it (one per edition's window): a window matching any is the
+game's, a `|` always separates, and an empty value or piece matches no
+window. Both transitions can be driven
 without WoW: point `game_match` at a fake title in a scratch config, then
 spawn and close such a window on a workspace nothing displays:
 
