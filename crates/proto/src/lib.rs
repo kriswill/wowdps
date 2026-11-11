@@ -43,7 +43,8 @@ pub use state::ClientState;
 pub use msg::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, DeathWindow, EditionRef,
     EditionSource, FightSort, HistoryAnswer, HistoryQuery, HistoryStatus, ListEntry, LoadError,
-    Night, OriginFilter, OverlayState, PROTO_VERSION, SegmentRef, StoredFight, StoredPair,
-    StoredUptime, TrendBucket, TrendMeasure, TrendPoint, is_loading_status, loading_status,
+    Night, OriginFilter, OverlayState, PROTO_VERSION, ROLE_SLOT, SegmentRef, StoredFight,
+    StoredPair, StoredUptime, TrendBucket, TrendMeasure, TrendPoint, is_loading_status,
+    loading_status,
 };
 pub use wire::{DecodeError, MAX_FRAME};

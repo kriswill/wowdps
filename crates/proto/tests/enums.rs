@@ -9,7 +9,8 @@ use wowdps_model::{Class, Edition, Role, RoleNightRow, Row, SegmentInfo, Segment
 use wowdps_proto::wire;
 use wowdps_proto::{
     ClientKind, ClientMsg, DaemonMsg, EditionRef, FightSort, HistoryAnswer, HistoryQuery,
-    HistoryStatus, LoadError, Night, OverlayState, SegmentRef, TrendBucket, TrendMeasure,
+    HistoryStatus, LoadError, Night, OverlayState, ROLE_SLOT, SegmentRef, TrendBucket,
+    TrendMeasure,
 };
 
 fn roundtrip_daemon(msg: &DaemonMsg) -> DaemonMsg {
@@ -129,6 +130,54 @@ fn every_class_and_spec_roundtrips_on_a_row() {
     for class in CLASSES {
         let (r, g, b) = class.rgb();
         assert!(r > 0 || g > 0 || b > 0, "{class:?} has a class color");
+    }
+}
+
+/// v50 (R30): every role rides a specless row's spec slot and reads back
+/// as the row's role; a row with a spec reads the spec's whatever else it
+/// held. Every specID sits below `ROLE_SLOT`, so no spec reads as a role.
+#[test]
+fn every_inferred_role_roundtrips_on_a_specless_row() {
+    let roles = [Role::Tank, Role::Healer, Role::Dps];
+    let rows: Vec<Row> = roles
+        .iter()
+        .map(|&role| Row {
+            key: role.name().to_string(),
+            class: Some(Class::Warrior),
+            inferred_role: Some(role),
+            ..Row::default()
+        })
+        .collect();
+    let msg = snapshot(View::Damage, rows);
+    assert_eq!(roundtrip_daemon(&msg), msg);
+    let DaemonMsg::Snapshot { rows, .. } = roundtrip_daemon(&msg) else {
+        panic!("a snapshot")
+    };
+    let read: Vec<_> = rows.iter().map(Row::role).collect();
+    assert_eq!(read, roles.map(Some).to_vec());
+
+    for &id in &SPEC_IDS {
+        assert!(
+            id < u32::from(ROLE_SLOT),
+            "spec {id} sits below the role slot"
+        );
+        let spec = Spec::from_id(id).unwrap();
+        let both = Row {
+            spec: Some(spec),
+            inferred_role: Some(Role::Tank),
+            ..Row::default()
+        };
+        let DaemonMsg::Snapshot { rows, .. } =
+            roundtrip_daemon(&snapshot(View::Damage, vec![both]))
+        else {
+            panic!("a snapshot")
+        };
+        assert_eq!(rows[0].spec, Some(spec));
+        assert_eq!(
+            rows[0].inferred_role, None,
+            "{spec:?}: no role beside a spec"
+        );
+        assert_eq!(rows[0].role(), Some(spec.role()));
     }
 }
 

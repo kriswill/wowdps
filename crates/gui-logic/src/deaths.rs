@@ -144,6 +144,7 @@ pub fn drawn(raid: &RaidTimeline, filter: &str) -> Vec<usize> {
             label: d.name.clone(),
             class: d.class,
             spec: d.spec,
+            inferred_role: d.inferred_role,
             ..Row::default()
         })
         .collect();
@@ -223,5 +224,42 @@ pub fn before(ms: i64) -> String {
         format!("\u{2212}{secs:.1}s")
     } else {
         format!("\u{2212}{}", duration(back as i64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wowdps_model::{Role, View};
+
+    /// v50 (R30): the deaths are filtered by role as the meter's rows are —
+    /// an inferred role as a spec's.
+    #[test]
+    fn a_death_answers_to_its_players_inferred_role() {
+        let death = |guid: &str, inferred_role| RaidDeath {
+            guid: guid.to_string(),
+            name: format!("{guid}-Realm"),
+            class: None,
+            spec: None,
+            index: 0,
+            at_ms: 0,
+            blow: String::new(),
+            source: String::new(),
+            hit: 0,
+            overkill: None,
+            rez: None,
+            mine: false,
+            enemy: false,
+            inferred_role,
+        };
+        let raid = RaidTimeline {
+            view: View::Taken,
+            bucket_ms: 1000,
+            series: Vec::new(),
+            deaths: vec![death("Garrond", Some(Role::Tank)), death("Ashvel", None)],
+            lust: Vec::new(),
+        };
+        assert_eq!(drawn(&raid, "tank"), [0]);
+        assert_eq!(drawn(&raid, ""), [0, 1]);
     }
 }

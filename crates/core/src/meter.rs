@@ -2196,6 +2196,7 @@ impl Segment {
                 mine: false,
                 offset_ms: None,
                 heal_absorbed: 0,
+                inferred_role: None,
             })
             .collect();
         self.finish_rows(rows, View::EnemyTaken)
@@ -2259,6 +2260,7 @@ impl Segment {
                 } else {
                     0
                 },
+                inferred_role: None,
             })
             .collect();
         let mut rows = self.finish_rows(rows, view);
@@ -2379,6 +2381,7 @@ impl Segment {
                     mine: false,
                     offset_ms: None,
                     heal_absorbed: 0,
+                    inferred_role: None,
                 })
                 .collect()
         };
@@ -2705,6 +2708,7 @@ impl Segment {
                 mine: false,
                 offset_ms: None,
                 heal_absorbed: 0,
+                inferred_role: None,
             })
             .collect();
         self.finish_rows(rows, View::Damage)
@@ -2761,6 +2765,7 @@ impl Segment {
                 mine: false,
                 offset_ms: None,
                 heal_absorbed: 0,
+                inferred_role: None,
             })
             .collect();
         self.finish_rows(rows, View::Damage)
@@ -2941,6 +2946,7 @@ impl Segment {
                 mine: false,
                 offset_ms: Some(offset),
                 heal_absorbed: 0,
+                inferred_role: None,
             })
             .collect();
 
@@ -2974,6 +2980,7 @@ impl Segment {
                 mine: false,
                 offset_ms: None,
                 heal_absorbed: 0,
+                inferred_role: None,
             })
             .collect();
         (events, self.finish_rows(attacker_rows, View::Deaths))
@@ -3608,6 +3615,7 @@ impl Segment {
                 mine: false,
                 offset_ms: None,
                 heal_absorbed: 0,
+                inferred_role: None,
             })
             .collect();
         rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
@@ -3694,6 +3702,7 @@ impl Segment {
                 mine: false,
                 offset_ms: None,
                 heal_absorbed: 0,
+                inferred_role: None,
             })
             .collect();
         self.finish_window(rows, range)
@@ -4175,6 +4184,7 @@ impl Segment {
                     rez,
                     mine: false,
                     enemy,
+                    inferred_role: None,
                 });
             }
         }

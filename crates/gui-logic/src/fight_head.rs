@@ -387,20 +387,23 @@ pub fn you(
 pub struct Place {
     pub place: usize,
     pub of: usize,
-    /// "dps", "healers", "tank"; `None` when their spec (and so their
-    /// role) is not known, and the place is among everyone on our side.
+    /// "dps", "healers", "tank"; `None` when their role (the spec's, else
+    /// the inferred one) is not known, and the place is among everyone on
+    /// our side.
     pub noun: Option<&'static str>,
 }
 
 impl Place {
     /// `me`'s place among our side's rows of their role on `rows`.
     pub fn of(rows: &[Row], me: &Row) -> Self {
-        let role = me.spec.map(Spec::role);
-        // Everyone on our side who plays their role; with no spec known,
+        // v50: the spec's role, else the one inferred (R30): the same place
+        // whichever said it.
+        let role = me.role();
+        // Everyone on our side who plays their role; with no role known,
         // everyone on our side.
         let peers: Vec<&Row> = rows
             .iter()
-            .filter(|r| !r.enemy && (role.is_none() || r.spec.map(Spec::role) == role))
+            .filter(|r| !r.enemy && (role.is_none() || r.role() == role))
             .collect();
         Place {
             place: peers.iter().filter(|r| r.amount > me.amount).count() + 1,
@@ -630,6 +633,30 @@ mod tests {
             edition_meta(heroic(), Some(Edition::Unknown(7))),
             "Unknown edition, Heroic, 5 players"
         );
+    }
+
+    /// v50 (R30): a player whose log names no spec stands among their
+    /// INFERRED role exactly as one with a spec stands among theirs; the
+    /// two read alike, and a spec's role and an inferred one count together.
+    #[test]
+    fn a_place_among_an_inferred_role_is_a_place_among_that_role() {
+        let tank = |key: &str, amount| Row {
+            inferred_role: Some(Role::Tank),
+            ..row(key, amount, 0.0)
+        };
+        let rows = [
+            row("D", 900, 0.0),
+            tank("T1", 500),
+            Row {
+                spec: Some(Spec::ProtectionWarrior),
+                ..row("T2", 700, 0.0)
+            },
+            tank("T3", 300),
+        ];
+        let p = Place::of(&rows, &rows[1]);
+        assert_eq!((p.place, p.of, p.noun), (2, 3, Some("tanks")));
+        let nobody = Place::of(&rows, &rows[0]);
+        assert_eq!((nobody.of, nobody.noun), (4, None), "no role: everyone");
     }
 
     /// v40: a keystone run's Σ says both rates — the raid rate over combat

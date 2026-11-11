@@ -17,6 +17,7 @@ pub mod mine;
 pub mod mock;
 pub mod overlay;
 pub mod replay;
+pub mod roles;
 pub mod server;
 pub mod session;
 pub mod sources;

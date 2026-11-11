@@ -976,6 +976,54 @@ mod tests {
         assert_eq!(entries.len(), 1, "the new segment is on it");
     }
 
+    /// v50 (R30): a live Forever pull's roles ride its rows. None under the
+    /// solver's 10 s of combat, then its own: a role that arrives is a row
+    /// that changed, pushed by the same dedup as any other change, and a
+    /// tick that finds nothing new pushes nothing, roles and all.
+    #[test]
+    fn a_live_role_is_pushed_as_a_row_change_and_not_again_unchanged() {
+        const ROLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/roles.txt");
+        let text = std::fs::read_to_string(ROLES).unwrap();
+        let lines: Vec<String> = text.lines().map(str::to_string).collect();
+        let end = lines
+            .iter()
+            .position(|l| l.contains("ENCOUNTER_END"))
+            .unwrap();
+        let mut hub = Hub::new();
+        let rx = hub.connect(1, ClientKind::Window);
+        hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Live)));
+        hub.handle(HubMsg::Tail(
+            0,
+            TailEvent::Switched(PathBuf::from("/logs/WoWCombatLog-110226_200000.txt")),
+        ));
+        hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+        drain(&rx);
+        // Each pushed snapshot's rows, by how many wear a role.
+        let mut pushed = Vec::new();
+        for line in &lines[..=end] {
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(vec![line.clone()])));
+            hub.tick();
+            for m in drain(&rx) {
+                if let DaemonMsg::Snapshot { rows, .. } = m
+                    && !rows.is_empty()
+                {
+                    pushed.push(rows.iter().filter(|r| r.role().is_some()).count());
+                }
+            }
+        }
+        let first = pushed.iter().position(|&n| n > 0).expect("roles arrive");
+        assert!(first > 0, "no role at the pull's first rows: {pushed:?}");
+        assert_eq!(pushed.last(), Some(&5), "the five damage rows, settled");
+        hub.tick();
+        hub.tick();
+        assert!(
+            !drain(&rx)
+                .iter()
+                .any(|m| matches!(m, DaemonMsg::Snapshot { .. })),
+            "nothing new: nothing pushed"
+        );
+    }
+
     /// A `Watch` is answered inside `handle`, not on the next tick: a view
     /// change or drilldown open costs one round trip. Re-declaring the same
     /// cursor resets dedup, so the immediate reply is never suppressed by

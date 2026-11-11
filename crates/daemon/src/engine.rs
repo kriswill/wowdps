@@ -21,6 +21,7 @@ use wowdps_proto::{
 
 use crate::history::{ClosedFight, LogRef};
 use crate::mine::Mine;
+use crate::roles::Roles;
 
 /// Parsed historical segments kept in memory, across *all* clients. Each is
 /// one fight's per-actor hashmaps; the LRU bound is what keeps N clients
@@ -1628,6 +1629,17 @@ impl Engine {
                     if let Some(r) = raid.as_mut() {
                         mine.mark_raid(r);
                     }
+                    // v50 (R30): the role of each player no spec names,
+                    // solved once for the whole answer — and not at all for
+                    // an edition whose log carries a spec.
+                    let roles = Roles::of(s);
+                    roles.mark_rows(&mut rows);
+                    if let Some(b) = breakdown.as_mut() {
+                        roles.mark_breakdown(b);
+                    }
+                    if let Some(r) = raid.as_mut() {
+                        roles.mark_raid(r);
+                    }
                 }
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status, raid)
             }
@@ -1637,24 +1649,33 @@ impl Engine {
                 view,
                 range,
                 spell,
-            } => DaemonMsg::CompareSnapshot {
-                seq: 0,
-                segment: sref,
-                id,
-                info,
-                view: *view,
-                a: Box::new(self.mine_side(compare_side(seg, a, *view, *range, *spell))),
-                b: Box::new(self.mine_side(compare_side(seg, b, *view, *range, *spell))),
-                // v29: the window is applied where a sparse per-spell series
-                // stands behind the tables — Damage's (R12) and, v38,
-                // Healing's (R26); another view's tables answer the whole
-                // fight, and the echo says so rather than pairing a zoomed
-                // graph with full-fight numbers.
-                range: compare_windows(*view).then_some(*range).flatten(),
-                source: self.source_name.clone(),
-                status: status.or_else(|| self.status.clone()),
-                edition: self.edition(),
-            },
+            } => {
+                // v50 (R30): both sides' roles from one solve.
+                let roles = seg.map(Roles::of).unwrap_or_default();
+                let side = |guid: &str| {
+                    let mut side = self.mine_side(compare_side(seg, guid, *view, *range, *spell));
+                    roles.mark_rows(std::slice::from_mut(&mut side.total));
+                    Box::new(side)
+                };
+                DaemonMsg::CompareSnapshot {
+                    seq: 0,
+                    segment: sref,
+                    id,
+                    info,
+                    view: *view,
+                    a: side(a),
+                    b: side(b),
+                    // v29: the window is applied where a sparse per-spell series
+                    // stands behind the tables — Damage's (R12) and, v38,
+                    // Healing's (R26); another view's tables answer the whole
+                    // fight, and the echo says so rather than pairing a zoomed
+                    // graph with full-fight numbers.
+                    range: compare_windows(*view).then_some(*range).flatten(),
+                    source: self.source_name.clone(),
+                    status: status.or_else(|| self.status.clone()),
+                    edition: self.edition(),
+                }
+            }
         }
     }
 
