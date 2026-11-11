@@ -112,9 +112,19 @@ mod tests {
     /// the census it is not given), and writes nothing.
     #[test]
     fn every_generator_keeps_another_product_off_retails_outputs() {
+        // The games' emblems are every game's, read from the launcher and
+        // no product's client: gen-emblems takes no product at all.
+        let e = run(
+            "gen-emblems",
+            &["--product", "wowf", "--launcher", "/nonexistent"],
+        );
+        assert!(
+            e.starts_with("unexpected argument \"--product\""),
+            "gen-emblems: {e}"
+        );
         let gens: Vec<_> = EXTRACT
             .iter()
-            .filter(|c| c.name.starts_with("gen-"))
+            .filter(|c| c.name.starts_with("gen-") && c.name != "gen-emblems")
             .collect();
         assert_eq!(gens.len(), 14);
         let others = [

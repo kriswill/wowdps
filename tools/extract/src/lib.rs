@@ -36,6 +36,7 @@ pub mod command;
 pub mod db2sql;
 pub mod dbd;
 pub mod deflate;
+pub mod emblemgen;
 pub mod game;
 pub mod hash;
 pub mod icongen;

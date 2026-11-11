@@ -228,10 +228,17 @@ pub(crate) fn get_str<'a>(v: &'a Json, key: &str) -> &'a str {
 /// A decoded string, ready to edit: spec, selections, hero pick, warnings.
 pub type Decoded = (u64, HashMap<u64, Sel>, Option<u64>, Vec<String>);
 
-/// Decode a string into editable selections (the caller lays it out via
-/// `Viewer::rebuild`, which caches the spec's `tree_view`).
+/// Decode a string into editable selections against Retail's trees
+/// ([`decode_build_in`]).
 pub fn decode_build(string: &str) -> Result<Decoded, String> {
-    let ds = super::load_dataset()?;
+    decode_build_in(wowdps_model::Edition::Retail, string)
+}
+
+/// Decode a string into editable selections against `edition`'s trees (the
+/// caller lays it out via `Viewer::rebuild`, which caches the spec's
+/// `tree_view`).
+pub fn decode_build_in(edition: wowdps_model::Edition, string: &str) -> Result<Decoded, String> {
+    let ds = super::load_dataset_in(edition)?;
     let dec = codec::decode(ds, string)?;
     let spec_id = get_u64(&dec, "spec_id").ok_or("decode returned no spec_id")?;
     let (sels, hero, warnings) = selections_from_decode(&dec);

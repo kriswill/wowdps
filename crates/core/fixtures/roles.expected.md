@@ -42,7 +42,8 @@ Per player, from the fight's own lines: SWINGS = their enemy melee swings / the 
 player's (0 for all when the group took fewer than 5); KIT = min(casts of a taunt, a
 mitigation or a shield cast, 3) / 3; FORM = time under a tanking form / the fight's
 span; LOW = 1 − damage × group / Σ damage (clamped to [0, 1]); HEAL SHARE = healing on
-other players / the top player's; HEAL CASTS = heals / casts.
+other players / the top player's; HEAL CASTS = heals / casts, a heal's cast counting
+as a heal only at a friendly unit, at nobody or at themselves (every heal cast here is).
 
 TANK = 0.40 SWINGS + 0.30 KIT + 0.20 FORM + 0.10 LOW;
 HEALER = 0.40 HEAL SHARE + 0.35 HEAL CASTS + 0.25 LOW.

@@ -603,8 +603,10 @@ pub(crate) mod tests {
             child.stderr_tail()
         );
 
-        // A stayer: alive until terminated.
-        let staying = script("staying", "#!/bin/sh\nsleep 30\n");
+        // A stayer: alive until terminated. `exec`, so the child IS the
+        // sleep: a forked sleep would outlive the killed shell holding the
+        // stderr pipe, and `terminate`'s drain would wait out its 30 s.
+        let staying = script("staying", "#!/bin/sh\nexec sleep 30\n");
         let mut spawner = GuiSpawner { gui_bin: staying };
         let mut child = spawn(&mut spawner).expect("spawns");
         assert!(child.is_alive());
@@ -729,22 +731,36 @@ pub(crate) mod tests {
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let mut sup = Supervisor::new(true, GRACE, Some(Box::new(GuiSpawner { gui_bin: script })));
-        sup.on_game(true);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let failure = loop {
-            assert!(
-                Instant::now() < deadline,
-                "the child never died: {:?}",
-                sup.state()
+        // A sibling test's fork can hold the fresh script open for writing
+        // (ETXTBSY, as above): a spawn that lost that race fails at once,
+        // and is made again with a new supervisor.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (sup, failure) = 'spawn: loop {
+            let mut sup = Supervisor::new(
+                true,
+                GRACE,
+                Some(Box::new(GuiSpawner {
+                    gui_bin: script.clone(),
+                })),
             );
-            sup.on_tick();
-            if let OverlayState::Failed(f) = sup.state()
-                && f.contains("TAIL-END")
-            {
-                break f;
+            sup.on_game(true);
+            loop {
+                assert!(
+                    Instant::now() < deadline,
+                    "the child never died: {:?}",
+                    sup.state()
+                );
+                sup.on_tick();
+                match sup.state() {
+                    OverlayState::Failed(f) if f.contains("os error 26") => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        continue 'spawn;
+                    }
+                    OverlayState::Failed(f) if f.contains("TAIL-END") => break 'spawn (sup, f),
+                    _ => {}
+                }
+                std::thread::sleep(Duration::from_millis(10));
             }
-            std::thread::sleep(Duration::from_millis(10));
         };
         assert!(failure.len() <= 4096, "kept to the tail: {}", failure.len());
         assert!(!sup.holds_daemon_open());

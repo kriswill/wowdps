@@ -22,7 +22,7 @@ use gpui_kit::{AppContext as _, Entity, HeadlessAppContext, TestAppContext, px, 
 use wowdps_gui_logic::talents::fixture::{Sandbox, full_string};
 use wowdps_gui_logic::talents::{self as logic, Msg};
 use wowdps_gui_logic::theme as gl;
-use wowdps_model::{GearItem, Loadout, SegmentKind, TalentPick};
+use wowdps_model::{Edition, GearItem, Loadout, SegmentKind, TalentPick};
 use wowdps_proto::SegmentRef;
 
 use super::{Player, TalentViewer};
@@ -91,7 +91,7 @@ fn shoot(
 ) {
     let mut held = None;
     let (window, _) = testkit::open_headless(cx, size(px(at.0), px(at.1)), |window, cx| {
-        let viewer = cx.new(|cx| TalentViewer::open(player, window, cx));
+        let viewer = cx.new(|cx| TalentViewer::open(Edition::Retail, player, window, cx));
         held = Some(viewer.clone());
         viewer
     });
@@ -334,6 +334,7 @@ fn real_dataset_draws_every_spec(cx: &mut TestAppContext) {
         let (window, viewer) = testkit::open(cx, size(px(1440.), px(900.)), move |window, cx| {
             cx.new(|cx| {
                 TalentViewer::open(
+                    Edition::Retail,
                     Some(Player {
                         name: format!("Spec{spec_id}"),
                         spec_id: Some(spec_id),
