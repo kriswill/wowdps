@@ -392,17 +392,7 @@ fn a_pasted_string_decodes_and_round_trips() {
 #[test]
 fn the_viewer_reads_its_game_s_trees() {
     let _sb = Sandbox::new("edition-trees");
-    // Forever's dataset: the fixture's trees under a Forever build.
-    let mut forever = dataset().clone();
-    if let Json::Obj(fields) = &mut forever {
-        for (key, value) in fields.iter_mut() {
-            if key == "build" {
-                *value = Json::str("1.60.1.70888 (product wowf)");
-            }
-        }
-    }
-    let forever: &'static Json = Box::leak(Box::new(forever));
-    use_dataset_in_on_this_thread(wowdps_model::Edition::Forever, forever);
+    use_dataset_in_on_this_thread(wowdps_model::Edition::Forever, forever_dataset());
     let player = || Some(("Frosty-Proudmoore".to_string(), Some(62)));
 
     let retail = Viewer::open(player());
@@ -422,6 +412,82 @@ fn the_viewer_reads_its_game_s_trees() {
     // A fight that named no edition counts as Retail and reads its trees.
     let none = Viewer::open_in(wowdps_model::Edition::Unknown(0), player());
     assert_eq!(built(&none).as_deref(), Some("12.1.0.69497"));
+}
+
+/// Forever's dataset for a test: the fixture's trees under a Forever
+/// build, so what a reader built tells which game's trees it read.
+fn forever_dataset() -> &'static Json {
+    let mut forever = dataset().clone();
+    if let Json::Obj(fields) = &mut forever {
+        for (key, value) in fields.iter_mut() {
+            if key == "build" {
+                *value = Json::str("1.60.1.70888 (product wowf)");
+            }
+        }
+    }
+    Box::leak(Box::new(forever))
+}
+
+/// One paste store per game: a paste saved in a Retail fight is never
+/// restored in a Forever fight on the same Name-Realm, nor overwritten by
+/// one saved there, and the other way round; each reopens in its own game.
+/// Retail's file stays where it always was.
+#[test]
+fn each_game_keeps_its_own_pastes() {
+    use crate::simc::{load_stored_in, store_path_in};
+    use wowdps_model::Edition::{Classic, Forever, Retail};
+    let sb = Sandbox::new("paste-per-game");
+    use_dataset_in_on_this_thread(Forever, forever_dataset());
+    let row = || Some(("Frosty-Proudmoore".to_string(), Some(62)));
+    let retail_paste = simc_paste("Frosty", Some("proudmoore"), &[&full_string()], true);
+    let one = string_for(&[r#"{"node_id": 1, "ranks": 1}"#]);
+    let forever_paste = simc_paste("Frosty", Some("proudmoore"), &[&one], false);
+
+    // Retail first: Forever's viewer on the same row opens bare.
+    Viewer::open_in(Retail, row()).ingest(&retail_paste);
+    assert!(
+        sb.dir.join("simc/frosty_proudmoore.simc").is_file(),
+        "Retail's paste where it always was"
+    );
+    let forever = Viewer::open_in(Forever, row());
+    assert!(forever.profile.is_none(), "Retail's paste stays Retail's");
+    assert_eq!(selected_ids(&forever), Vec::<u64>::new());
+    assert_eq!(load_stored_in(Forever, "Frosty-Proudmoore"), None);
+
+    // Then Forever's: Retail's paste is untouched.
+    Viewer::open_in(Forever, row()).ingest(&forever_paste);
+    assert!(sb.dir.join("forever/simc/frosty_proudmoore.simc").is_file());
+    assert_eq!(
+        sb.stored("Frosty-Proudmoore").as_deref(),
+        Some(retail_paste.trim()),
+        "Forever's paste never overwrites Retail's"
+    );
+    assert_eq!(
+        load_stored_in(Forever, "Frosty-Proudmoore").as_deref(),
+        Some(forever_paste.trim())
+    );
+
+    // Each reopens on its own paste, decoded by its own trees.
+    let retail = Viewer::open_in(Retail, row());
+    assert_eq!(selected_ids(&retail), vec![1, 2, 3, 4, 5]);
+    assert_eq!(
+        retail.build.as_ref().map(|b| b.dataset_build.as_str()),
+        Some("12.1.0.69497")
+    );
+    let forever = Viewer::open_in(Forever, row());
+    assert_eq!(selected_ids(&forever), vec![1]);
+    assert_eq!(
+        forever.build.as_ref().map(|b| b.dataset_build.as_str()),
+        Some("1.60.1.70888 (product wowf)")
+    );
+
+    // A game wowdps keeps no trees for keeps no pastes either.
+    assert_eq!(store_path_in(Classic(2), "Frosty-Proudmoore"), None);
+    Viewer::open_in(Classic(2), row()).ingest(&retail_paste);
+    assert_eq!(
+        sb.stored("Frosty-Proudmoore").as_deref(),
+        Some(retail_paste.trim())
+    );
 }
 
 #[test]
