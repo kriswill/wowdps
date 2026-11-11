@@ -11,8 +11,9 @@ pub use crate::tail::SourceSpec;
 
 /// The editions whose product folder an install is known to keep them in
 /// (`Edition::product_dir`): what the game watcher can name a running
-/// client by, and what an install may hold beside Retail.
-pub const PRODUCTS: [Edition; 2] = [Edition::Retail, Edition::Forever];
+/// client by, and what an install may hold beside Retail. Model's, where
+/// `wowdps_model::product_of` reads them for the daemon and the overlay.
+pub use wowdps_model::PRODUCTS;
 
 /// The editions the daemon follows in an install: a `logs_dir` inside an
 /// install whose product folder is one of these names the install, and

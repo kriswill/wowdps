@@ -1106,6 +1106,10 @@ before its log's header carried the id, and an import); the payloads mean someth
 it — a key names a family (every Classic client shares `classic`, every unlisted id
 `unknown`), never a bookkeeping group; `product_dir()` / `product()` are the install's folder
 and `.build.info` product (`_retail_` / `wow`, `_forever_` / `wowf`, `None` where not known).
+model `PRODUCTS` lists the editions with a product folder (Retail, Forever; `cli::PRODUCTS`
+re-exports it), and `product_of(cmdline)` names the edition a process's command line names by
+a product folder among its path components, in any case (`None` for none): the game watcher
+names a running client by it, and the overlay a game window's process.
 `FightCard::edition()` reads a card's. Editions share encounter, difficulty and map ids with no
 promise that one id means one fight, so the store's bookkeeping keys on `Edition::counts_as()`
 — `Unknown(0)` counts as Retail, every other edition as itself (each Classic client apart, and
