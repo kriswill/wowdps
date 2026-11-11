@@ -2,17 +2,19 @@
 //! the install and never committed (extracted Blizzard art and words stay
 //! out of the repository): the class crests and spec icons
 //! (`gen-icons`), every spell's icon (`gen-spell-icons`), the talent trees
-//! (`gen-talent-trees`), the talent UI's art (`gen-talent-art`) and the
-//! spell tips for the reader gui-logic gains with them (`gen-spell-tips`).
+//! (`gen-talent-trees`), the talent UI's art (`gen-talent-art`), the
+//! spell tips for the reader gui-logic gains with them (`gen-spell-tips`),
+//! and each game's emblem for the window's edition switch, from the
+//! launcher's own files (`gen-emblems`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::args::Args;
 use super::install::{Install, load_tables};
 use super::owners::{cache_place, owned_only};
 use super::{Cmd, cmd, data_path, make_dir, read_text};
 use wowdps_extract::atomic::{write_atomic, write_if_changed};
-use wowdps_extract::{artgen, icongen, journal, spellicongen, spelltipgen, talentgen};
+use wowdps_extract::{artgen, emblemgen, icongen, journal, spellicongen, spelltipgen, talentgen};
 
 /// This module's commands, as the usage lists them.
 pub const COMMANDS: &[Cmd] = &[
@@ -55,6 +57,11 @@ pub const COMMANDS: &[Cmd] = &[
         talent_art,
     )
     .reads(&[&artgen::TABLES]),
+    cmd(
+        "gen-emblems",
+        "gen-emblems [wow-dir] [--launcher DIR] [-o edition-emblems.bin]",
+        emblems,
+    ),
 ];
 
 const CLASS_ICONS: &str = "class-icons.bin";
@@ -253,6 +260,68 @@ pub fn spell_tips(mut a: Args) -> Result<(), String> {
         g.bytes.len() / 1024,
         if wrote { "" } else { ", unchanged" },
         started.elapsed().as_secs_f32()
+    );
+    Ok(())
+}
+
+/// `gen-emblems`: each game's emblem as the launcher's play selector
+/// shows it, as edition-emblems.bin (`emblemgen`). The launcher's folder is
+/// `--launcher DIR` (the one holding its `Cache/`), else found beside the
+/// install (`[wow-dir]`, else the one `game::locate` finds) and under
+/// `%LOCALAPPDATA%`. Every game's at once: it reads no product's client,
+/// so it takes no `--product`.
+pub fn emblems(mut a: Args) -> Result<(), String> {
+    let out = a.path(&["-o", "--out"])?;
+    let launcher = a.path(&["--launcher"])?;
+    let wow_dir = match a.path(&["--wow-dir"])? {
+        Some(d) => Some(d),
+        None => a.positional().map(PathBuf::from),
+    };
+    a.finish()?;
+    let launchers = match launcher {
+        Some(dir) => vec![dir],
+        None => {
+            let install = match wow_dir {
+                Some(d) => Some(d),
+                None => wowdps_extract::game::locate().ok(),
+            };
+            emblemgen::launcher_dirs(install.as_deref())
+        }
+    };
+    if launchers.is_empty() {
+        return Err(
+            "no launcher found beside the install: pass --launcher DIR (the launcher's \
+             local data folder, the one holding its Cache/)"
+                .into(),
+        );
+    }
+    let g = emblemgen::generate(&launchers)?;
+    // A per-machine cache like the icons: the emblems are Blizzard's art
+    // and never land in the repository.
+    let out = match out {
+        Some(p) => p,
+        None => data_path(emblemgen::FILE)?,
+    };
+    if let Some(parent) = out.parent() {
+        make_dir(parent)?;
+    }
+    let bytes = emblemgen::encode(&g.found);
+    let wrote = write_if_changed(&out, &bytes)?;
+    fn names(editions: impl Iterator<Item = wowdps_core::model::Edition>) -> String {
+        editions.map(|e| e.label()).collect::<Vec<_>>().join(", ")
+    }
+    let missing = if g.missing.is_empty() {
+        String::new()
+    } else {
+        format!("; none for {}", names(g.missing.iter().copied()))
+    };
+    eprintln!(
+        "{}: {}{missing} ({} B{}; from {})",
+        out.display(),
+        names(g.found.iter().map(|(e, _)| *e)),
+        bytes.len(),
+        if wrote { "" } else { ", unchanged" },
+        g.catalog.display()
     );
     Ok(())
 }

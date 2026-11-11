@@ -75,7 +75,8 @@ function newSeg(kind, name, ts, enc, diff) {
 
 # ---- R30 role inference (an edition whose log carries no spec: Forever). Per
 # segment, from its own lines alone: each player's casts (all, the tank kit —
-# taunt, mitigation, shield — and heals, by SIG), the enemies' melee swings at
+# taunt, mitigation, shield — and heals at a friend, at nobody or at
+# themselves, by SIG), the enemies' melee swings at
 # them (SWING_DAMAGE, and SWING_MISSED through the passive gate, from a hostile
 # unit that is no player or pet), the healing and absorbs they landed on
 # another player (both sides folded through actor()), and the time a tanking
@@ -94,12 +95,17 @@ function role_heal(sg, sf, dg, df, amt,   h, t) {
     if (h == "" || t == "" || h == t || t !~ /^Player-/) return
     rHeal[cur SUBSEP h] += amt
 }
-function role_cast(sg, sid) {
+function role_cast(sg, sid, dg, df) {
     if (!segInfer[cur] || sg !~ /^Player-/) return
     rCast[cur SUBSEP sg]++
     if (!(sid in SIG)) return
     if (SIG[sid] <= 2) rKit[cur SUBSEP sg]++
-    else if (SIG[sid] == 4) rHeals[cur SUBSEP sg]++
+    else if (SIG[sid] == 4 && heal_cast_target(sg, dg, df)) rHeals[cur SUBSEP sg]++
+}
+# A heal's cast counts as one only at a friendly unit (REACTION_FRIENDLY), at
+# no unit or at the caster: Holy Shock or Penance at an enemy is no heal.
+function heal_cast_target(sg, dg, df) {
+    return dg == "" || dg == "0000000000000000" || dg == sg || and(strtonum(df), 0x10) != 0
 }
 function role_form(ev,   sid, k) {
     if (passive_stale() || !segInfer[cur]) return
@@ -1273,7 +1279,7 @@ ev == "SPELL_ABSORBED" {
 # land nowhere. Kept apart from `note` so a player who only cast gets no row.
 ev == "SPELL_CAST_SUCCESS" {
     if (passive_stale()) next
-    role_cast($2, $10 + 0)             # R30: a player's own cast, by its signal
+    role_cast($2, $10 + 0, $6, $8)     # R30: a player's own cast, by its signal
     a = actor($2, $4); if (a == "") next
     castv[cur SUBSEP a]++
     next

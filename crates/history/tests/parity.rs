@@ -5599,6 +5599,145 @@ fn role_night_folds_by_the_mode_role_in_both_readers() {
     assert_eq!(nospec.taken, 9_000);
 }
 
+/// A night of an edition whose log names no spec is rostered by the roles
+/// its pulls STORED (R30's), the same in both readers: a player with no
+/// spec on any pull takes the role stored most often (a tie → tank, then
+/// healer, then dps) and folds only the pulls stored in it; a pull with no
+/// role is outside that fold; a player with a spec keeps the spec's role
+/// and also folds a specless pull stored in it (`CardPlayer::role`, which
+/// `players.role` mirrors); a player with no role anywhere is unroled with
+/// all their pulls. The daemon's `Store` over the files against
+/// `Lake::role_night`, every field equal, f64 by bits.
+#[test]
+fn role_night_rosters_stored_roles_in_both_readers() {
+    const DAY: i64 = 86_400_000;
+    const TANKED: &str = "tanked";
+    const TIED: &str = "tied";
+    const MENDER: &str = "mender";
+    const MIXED: &str = "mixed";
+    const NOROLE: &str = "norole";
+    let secs = DURATION_4B as f64 / 1000.0;
+    let stored = |guid: &str, damage: u64, role: Option<Role>| {
+        let mut p = supported(guid, Spec::Arms, damage, 0, 0);
+        p.spec = None;
+        p.class = None;
+        p.stored_role = role;
+        p
+    };
+    let tank = |taken: u64, mitigated: u64, role: Option<Role>| CardPlayer {
+        taken,
+        dtps: taken as f64 / secs,
+        mitigated,
+        ..stored(TANKED, 10_000, role)
+    };
+    let heals = |guid: &str, healing: u64, role: Option<Role>| CardPlayer {
+        healing,
+        hps: healing as f64 / secs,
+        ..stored(guid, 1_000, role)
+    };
+    let pulls = [
+        (
+            "s1a",
+            vec![
+                tank(30_000, 15_000, Some(Role::Tank)),
+                heals(TIED, 40_000, Some(Role::Healer)),
+                heals(MENDER, 50_000, Some(Role::Healer)),
+                // 61.5 s pulls: 2 000, 1 000 and 3 000 per second, so
+                // the three-pull mean is exact in any summing order.
+                supported(MIXED, Spec::Fire, 123_000, 0, 0),
+                stored(NOROLE, 20_000, None),
+            ],
+        ),
+        (
+            "s1b",
+            vec![
+                tank(20_000, 5_000, Some(Role::Tank)),
+                stored(TIED, 30_000, Some(Role::Dps)),
+                heals(MENDER, 10_000, None),
+                supported(MIXED, Spec::Fire, 61_500, 0, 0),
+                stored(NOROLE, 30_000, None),
+            ],
+        ),
+        (
+            "s1c",
+            vec![
+                stored(TANKED, 50_000, Some(Role::Dps)),
+                heals(MENDER, 30_000, Some(Role::Healer)),
+                // A specless pull stored in the spec's role.
+                stored(MIXED, 184_500, Some(Role::Dps)),
+            ],
+        ),
+    ];
+    let tmp = Temp::new("role-night-stored");
+    for (i, (id, players)) in pulls.into_iter().enumerate() {
+        let mut c = shields_card(id);
+        c.encounter = Some(Encounter {
+            id: 3151,
+            difficulty: 16,
+            group_size: 20,
+        });
+        c.project_id = 18;
+        c.players = players;
+        c.start_utc_ms = 5 * DAY + 1_000 + 10_000 * i as i64;
+        c.success = Some(true);
+        write_fight(&tmp.0, &c.id, &c.to_json(), &shields_rows(&c.id).to_json());
+    }
+    let lake = Lake::open(&tmp.0).expect("lake opens");
+    let sql = lake.role_night(3151, 16, 5 * DAY).unwrap();
+    let store = Store::open(MemBackend::over_dir(&tmp.0), Retention::default());
+    let HistoryAnswer::RoleNight { night, rows } = store.answer(&HistoryQuery::RoleNight {
+        encounter: 3151,
+        difficulty: 16,
+        night: 5 * DAY,
+        local_cutover_hour: None,
+        edition: None,
+    }) else {
+        panic!("role night");
+    };
+    assert_eq!(night.pulls, 3, "{night:?}");
+    assert_role_night_matches(&rows, &sql, "stored roles");
+
+    let roster: Vec<(&str, Option<Role>, u32)> = rows
+        .iter()
+        .map(|r| (r.guid.as_str(), r.role, r.pulls))
+        .collect();
+    assert_eq!(
+        roster,
+        [
+            // Tank twice, dps once: the tank pulls alone.
+            (TANKED, Some(Role::Tank), 2),
+            // Healer twice, and a pull with no role outside the fold:
+            // (50 000 + 30 000) / 2 per pull.
+            (MENDER, Some(Role::Healer), 2),
+            // Healer once, dps once: the tie goes to the healer.
+            (TIED, Some(Role::Healer), 1),
+            (MIXED, Some(Role::Dps), 3),
+            (NOROLE, None, 2),
+        ],
+        "{rows:?}"
+    );
+    let mitigated_a: f64 = 15_000.0 * 100.0 / 30_000.0;
+    let mitigated_b: f64 = 5_000.0 * 100.0 / 20_000.0;
+    assert_eq!(
+        rows[0].measure.to_bits(),
+        ((mitigated_a + mitigated_b) / 2.0).to_bits()
+    );
+    assert_eq!(rows[0].taken, 50_000);
+    assert_eq!(
+        rows[1].measure.to_bits(),
+        ((50_000.0 / secs + 30_000.0 / secs) / 2.0f64).to_bits()
+    );
+    assert_eq!(rows[2].measure.to_bits(), (40_000.0f64 / secs).to_bits());
+    assert_eq!(rows[3].spec, Some(Spec::Fire.id() as u16));
+    assert_eq!(rows[3].measure, 2_000.0);
+    assert!(
+        rows.iter()
+            .filter(|r| r.guid != MIXED)
+            .all(|r| r.spec.is_none())
+    );
+    assert_eq!(rows[4].measure, 0.0);
+}
+
 #[test]
 fn a_mixed_lake_opens_and_says_which_shield_views_exist() {
     let card = shields_card("new").to_json();

@@ -3842,15 +3842,16 @@ impl<B: Backend> Store<B> {
     /// the lake's SQL twin mirrors. `name` is the last seen, `spec` the
     /// most-played (specless pulls ignored; a tie → the smallest id) and
     /// `role` that spec's — picked FIRST, and then `pulls` and every fold
-    /// count ONLY the pulls the player played in that role, so a spec-swap
-    /// night (a tank pull, then dps) has one denominator per column; a
-    /// player whose every pull is specless gets role `None`, measure 0 and
-    /// all their pulls.
+    /// count ONLY the pulls the player played in that role
+    /// (`CardPlayer::role`), so a spec-swap night (a tank pull, then dps)
+    /// has one denominator per column. A player with no spec on any pull
+    /// (an edition whose log names none) takes the role their pulls stored
+    /// most often (R30's; a tie → tank, then healer, then dps), the same
+    /// fold over the pulls stored in it; one with neither gets role `None`,
+    /// measure 0 and all their pulls.
     /// Rows: tank, healer, dps, no-role last, then `measure` desc, then
     /// guid. An empty night is the `Night` with 0 pulls and no rows.
-    /// v49: the role is the SPEC'S alone — a stored role (a player whose
-    /// log named no spec) joins the roster with the ruling that sets one;
-    /// `edition` keeps one edition's pulls.
+    /// v49: `edition` keeps one edition's pulls.
     fn role_night(
         &self,
         encounter: u32,
@@ -3881,12 +3882,15 @@ impl<B: Backend> Store<B> {
             tz_min: pulls.first().and_then(|c| c.tz_min),
         };
         // Pass 1: the roster — every friendly (card, player) pair per guid
-        // in start order, and the spec census the mode is picked from.
+        // in start order, and the spec and role censuses the modes are
+        // picked from (`roles` counts tank, healer, dps in rank order).
         struct Seen<'a> {
             name: String,
             specs: BTreeMap<u32, u32>,
+            roles: [u32; 3],
             pulls: Vec<(&'a FightCard, &'a CardPlayer)>,
         }
+        const ROLES: [Role; 3] = [Role::Tank, Role::Healer, Role::Dps];
         let mut seen: HashMap<&str, Seen<'_>> = HashMap::new();
         for c in &pulls {
             summary.pulls += 1;
@@ -3901,11 +3905,19 @@ impl<B: Backend> Store<B> {
                 let s = seen.entry(p.guid.as_str()).or_insert_with(|| Seen {
                     name: String::new(),
                     specs: BTreeMap::new(),
+                    roles: [0; 3],
                     pulls: Vec::new(),
                 });
                 s.name.clone_from(&p.name);
                 if let Some(spec) = p.spec {
                     *s.specs.entry(spec.id()).or_insert(0) += 1;
+                }
+                if let Some(k) = p
+                    .role()
+                    .and_then(|r| ROLES.iter().position(|&x| x == r))
+                    .and_then(|i| s.roles.get_mut(i))
+                {
+                    *k += 1;
                 }
                 s.pulls.push((c, p));
             }
@@ -3925,7 +3937,18 @@ impl<B: Backend> Store<B> {
                         _ => Some((id, k)),
                     })
                     .map(|(id, _)| id);
-                let role = spec.and_then(Spec::from_id).map(Spec::role);
+                // Without a spec, the role stored most often; a strict `>`
+                // keeps the first, so a tie lands on the earlier rank.
+                let stored = ROLES
+                    .iter()
+                    .zip(s.roles)
+                    .filter(|(_, k)| *k > 0)
+                    .fold(None, |best: Option<(Role, u32)>, (&r, k)| match best {
+                        Some((_, bk)) if bk >= k => best,
+                        _ => Some((r, k)),
+                    })
+                    .map(|(r, _)| r);
+                let role = spec.and_then(Spec::from_id).map(Spec::role).or(stored);
                 let mut n = 0u32;
                 let mut measure_sum = 0.0;
                 let mut best = 0.0;
@@ -3937,11 +3960,7 @@ impl<B: Backend> Store<B> {
                 let mut wasted = 0u64;
                 let mut known = false;
                 let mut externals_given = 0u32;
-                for (c, p) in s
-                    .pulls
-                    .iter()
-                    .filter(|(_, p)| p.spec.map(Spec::role) == role)
-                {
+                for (c, p) in s.pulls.iter().filter(|(_, p)| p.role() == role) {
                     let m = match role {
                         Some(Role::Dps) => p.effective_dps(c.rate_ms()),
                         Some(Role::Healer) => p.hps,

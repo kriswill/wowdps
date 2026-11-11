@@ -123,6 +123,14 @@ fn enemy_swing(src: &Unit, dst: &Unit) -> bool {
         && src.flags & REACTION_HOSTILE != 0
 }
 
+/// R30: a Heal-kind cast is a healing cast only at a friendly unit, at no
+/// unit or at the caster. One at an enemy is no healing cast: a spell that
+/// heals an ally and harms an enemy (Holy Shock, Penance) writes one cast id
+/// for both, and the role-signal table holds it as a heal.
+fn heal_cast_target(caster: &str, dst: &Unit) -> bool {
+    nil_guid(&dst.guid) || dst.guid == caster || dst.flags & REACTION_FRIENDLY != 0
+}
+
 /// Damage sources that count toward naming a pull: the group's own output.
 pub(crate) fn is_friendly_source(guid: &str) -> bool {
     guid.starts_with("Player-") || guid.starts_with("Pet-")
@@ -6170,7 +6178,7 @@ impl Meter {
             // lands nowhere. Before R18 this reached `segments.last_mut()`
             // unguarded, so a use after ENCOUNTER_END marked the closed
             // pull past its end; the gate closes that R12 hole too.
-            Event::Cast { src, spell, .. } => {
+            Event::Cast { src, dst, spell } => {
                 if let Some(s) = self.open_segment_for_passive(ts) {
                     let guid = src.guid.clone();
                     // R26: every cast by one of ours counts toward its
@@ -6187,9 +6195,13 @@ impl Meter {
                         s.note_mark(&guid, spell, ts, true);
                     }
                     // R30: a player's own cast, with what it signals, for an
-                    // edition that infers roles. Passive, like the rest.
+                    // edition that infers roles (a heal only at a friend, at
+                    // nobody or at themselves). Passive, like the rest.
                     if guid.starts_with("Player-") && s.tables().infers_roles() {
-                        let signal = s.tables().role_signal(spell.id);
+                        let signal = s
+                            .tables()
+                            .role_signal(spell.id)
+                            .filter(|k| *k != RoleSignal::Heal || heal_cast_target(&guid, dst));
                         s.roles.cast(&guid, signal);
                     }
                 }
@@ -12292,5 +12304,66 @@ mod tests {
                 .all(|h| !h.starts_with("Creature-"))
         );
         assert_eq!(seg.inferred_roles(), base.inferred_roles());
+    }
+
+    /// R30: a Heal-kind cast is a healing cast only at a friendly unit, at
+    /// nobody or at the caster. The paladin's Holy Shock (a cast id its heal
+    /// and its damage share, held as a heal) at the boss is one more cast
+    /// and no heal; at an ally, at nobody and at himself it is a heal each
+    /// time. `check.awk`'s `heal_cast_target` reads the same flags.
+    #[test]
+    fn a_heal_cast_at_an_enemy_is_no_healing_cast() {
+        const CORBIN: &str = "Player-6101-0C1D2E04";
+        let text = include_str!("../fixtures/roles.txt");
+        // His two casts: Judgement at the boss, Flash of Light at an ally.
+        let judgement = "SPELL_CAST_SUCCESS,Player-6101-0C1D2E04,\"Corbin-Nebula-US\",0x512,0x80000000,Creature-";
+        let flash =
+            "SPELL_CAST_SUCCESS,Player-6101-0C1D2E04,\"Corbin-Nebula-US\",0x512,0x80000000,Player-";
+        let ally = "Player-6101-0C1D2E03,\"Ashvel-Nebula-US\",0x512,0x80000000";
+        let line = |needle: &str| text.lines().find(|l| l.contains(needle)).unwrap();
+        let shock = |l: &str| {
+            l.replace("20271,\"Judgement\"", "20473,\"Holy Shock\"")
+                .replace("19750,\"Flash of Light\"", "20473,\"Holy Shock\"")
+        };
+        let at_enemy = shock(line(judgement));
+        let at_ally = shock(line(flash));
+        let at_nobody = at_ally.replace(ally, "0000000000000000,nil,0x80000000,0x80000000");
+        let at_self = at_ally.replace(
+            ally,
+            &format!("{CORBIN},\"Corbin-Nebula-US\",0x512,0x80000000"),
+        );
+        assert!(at_enemy.contains("20473,\"Holy Shock\"") && at_enemy.contains(",0xa48,"));
+        // Each new line right after the one it was made from, so the clock
+        // still runs forward.
+        let with = |extra: &[(&str, &str)]| {
+            let mut lines: Vec<&str> = Vec::new();
+            for l in text.lines() {
+                lines.push(l);
+                for (after, new) in extra {
+                    if l.contains(after) {
+                        lines.push(new);
+                    }
+                }
+            }
+            let m = meter_from_lines(lines);
+            m.segments()[0]
+                .role_scores()
+                .into_iter()
+                .find(|s| s.evidence.guid == CORBIN)
+                .unwrap()
+                .evidence
+        };
+        let base = with(&[]);
+        let enemy = with(&[(judgement, &at_enemy)]);
+        assert_eq!(
+            (enemy.casts, enemy.heals),
+            (base.casts + 1, base.heals),
+            "a cast, and no heal"
+        );
+        let friends = with(&[(flash, &at_ally), (flash, &at_nobody), (flash, &at_self)]);
+        assert_eq!(
+            (friends.casts, friends.heals),
+            (base.casts + 3, base.heals + 3)
+        );
     }
 }

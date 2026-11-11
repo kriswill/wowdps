@@ -3,7 +3,8 @@
 The dev-time game-data extractor and library. It reads the local install
 (CASC, BLTE, DB2 with WoWDBDefs schemas) and writes wowdps's committed
 tables and its per-machine caches (the icons, the talents, the spell
-tips), seeds the history store's creatures file, reads the store's fights
+tips; and the games' emblems, from the launcher's own files beside the
+install), seeds the history store's creatures file, reads the store's fights
 (`pulls`) and the journal (`journal`), and carries the dev-time
 `wowdps-db2`. No runtime crate depends on it. The replay's extractor
 (`wowdps-replay-extract`, in the private wowdps-replay repository: the
@@ -40,7 +41,8 @@ pinned revision. The scripts that drive it: `tools/AGENTS.md`.
   tips (`gen-spell-tips`, `spelltipgen.rs`) are written here alone and
   read by gui-logic's `spell_tips` (the reader it gains with its spell
   tips), as the spell icons are: a layout change moves both and the
-  version in both headers. The `placed` table (`gen-placed-spells`,
+  version in both headers. So are the games' emblems (`gen-emblems`,
+  `emblemgen.rs`), read by gui-logic's `emblems`. The `placed` table (`gen-placed-spells`,
   `placegen.rs`) is proto's (`wowdps_proto::placed`), read by the
   daemon's replay cut and the replay. A 2x atlas sheet's members share
   their 1x twins' elements: cut a scale's member through `Atlas::committed` and
