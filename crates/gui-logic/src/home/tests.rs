@@ -721,3 +721,21 @@ fn a_personal_best_is_labelled_with_its_figure() {
     assert_eq!(best_label(1_234_567.0), "best 1.2M");
     assert_eq!(best_label(-1.0), "best 0");
 }
+
+/// Home in a game the addon does not read (Forever's) names nothing it
+/// cannot do: its characters come from `history_characters` alone.
+#[test]
+fn an_unowned_week_says_what_to_do_in_each_game() {
+    let panels = Panels {
+        unowned: true,
+        ..Panels::default()
+    };
+    let retail = empty_night(true, None, &panels, None, None);
+    assert!(retail.contains("addon"), "{retail}");
+    let forever = empty_night(true, None, &panels, None, Some("Forever"));
+    assert_eq!(
+        forever,
+        "The store has not named a character of yours in Forever yet: list them in \
+         history_characters."
+    );
+}

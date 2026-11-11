@@ -19,8 +19,10 @@ pub use panels::view;
 
 use gpui_kit::{App, Context};
 use wowdps_gui_logic::config::Config;
-use wowdps_gui_logic::home::{derive, remember};
+use wowdps_gui_logic::home::{characters_by_edition, derive};
 use wowdps_gui_logic::rail::log_instances;
+use wowdps_model::Edition;
+use wowdps_proto::history::FightCard;
 
 use super::{Gui, Place};
 
@@ -30,7 +32,8 @@ impl Gui {
     pub(crate) fn open_home(&mut self, cx: &mut Context<Self>) {
         self.place = Place::Home;
         if self.hist.store.home.is_none() {
-            let sent = self.hist.store.open_home(self.cfg.character.clone());
+            let scope = self.cfg.character_in(self.keys()).map(str::to_string);
+            let sent = self.hist.store.open_home(scope);
             self.send_history(sent, cx);
         }
         cx.notify();
@@ -45,15 +48,18 @@ impl Gui {
 
     /// Scope Home to `guid` (`None`: every character of yours) — a chip, a
     /// pick of the picker's menu — opening it so scoped when it is not up.
-    /// The scope is Home's, and the one it opens on next time: the config's
-    /// `character` says no more than that. Whose window it is, its chrome
-    /// and the "you" on a meter follow the character played.
+    /// The scope is Home's, and the one it opens on next time in the
+    /// edition the window is in: the config's `character` (Retail's, or the
+    /// edition's own) says no more than that. Whose window it is, its
+    /// chrome and the "you" on a meter follow the character played.
     pub(crate) fn scope_home(&mut self, guid: Option<String>, cx: &mut Context<Self>) {
         // The one key, over what is on disk: the launch-time copy would put
         // back an overlay drag or a zoom saved since.
-        if self.cfg.character != guid {
-            self.cfg.character = guid.clone();
-            Config::store_character(guid.clone());
+        let keys = self.keys();
+        if self.cfg.character_in(keys) != guid.as_deref() {
+            self.cfg.set_character_in(keys, guid.clone());
+            let stored = guid.clone();
+            Config::store(move |c| c.set_character_in(keys, stored));
         }
         self.open_home(cx);
         if let Some(home) = self.hist.store.home.as_mut() {
@@ -73,14 +79,24 @@ impl Gui {
         // card the store has yet to write.
         let state = self.session.read(cx).state();
         let log = log_instances(state.entries(), state.log_id());
+        // `history_characters` names Retail's characters: another edition's
+        // chips are its own store's alone, once the window knows several.
+        let configured =
+            if self.hist.edition == Edition::Retail || !self.hist.store.census.several() {
+                self.cfg.history_characters()
+            } else {
+                Vec::new()
+            };
         let panels = derive(
             &home.cards,
             home.scope.as_deref(),
             &self.hist.store.season,
-            &self.cfg.history_characters(),
+            &configured,
             &log,
         );
-        remember(&mut self.hist.known, panels.characters.clone());
+        let cards: Vec<&FightCard> = home.cards.iter().collect();
+        let by = characters_by_edition(&cards);
+        self.hist.remember(by);
         self.hist.store.panels = panels;
     }
 }

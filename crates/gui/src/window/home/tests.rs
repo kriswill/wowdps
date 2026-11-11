@@ -37,7 +37,7 @@ fn home_derives_its_week_and_panels(cx: &mut TestAppContext) {
         assert!(!night.pulls.is_empty());
         assert_eq!(panels.raids.len(), 1, "one raid at one difficulty");
         assert!(
-            g.hist.known.iter().any(|c| c.guid == OWNER_GUID),
+            g.hist.known().iter().any(|c| c.guid == OWNER_GUID),
             "the owner is remembered for the chips"
         );
     });
@@ -91,15 +91,19 @@ fn the_picker_names_the_pick_else_the_character_played(cx: &mut TestAppContext) 
     const ALT: &str = "Player-1168-0A1B2CFF";
     let rig = home(cx);
     rig.gui.update(cx, |g, _| {
-        g.hist.known.push(CharLine {
-            guid: ALT.into(),
-            name: "Alt-Realm-US".into(),
-            class: Some(Class::Mage),
-            spec: Some(Spec::Fire),
-            fights: 1,
-            last_utc_ms: 0,
-            last_local_ms: 0,
-        })
+        g.hist
+            .known_by
+            .entry(wowdps_model::Edition::Retail)
+            .or_default()
+            .push(CharLine {
+                guid: ALT.into(),
+                name: "Alt-Realm-US".into(),
+                class: Some(Class::Mage),
+                spec: Some(Spec::Fire),
+                fights: 1,
+                last_utc_ms: 0,
+                last_local_ms: 0,
+            })
     });
     let shows = |cx: &mut TestAppContext| {
         rig.gui.read_with(cx, |g, cx| {

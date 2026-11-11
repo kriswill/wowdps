@@ -91,9 +91,33 @@ pub struct Earlier {
     total: Option<u32>,
     /// An answer has landed: an empty list is the store's, not a wait.
     pub answered: bool,
+    /// The edition whose fights are listed (`editions::history_edition`):
+    /// `None`, every edition's, while the window knows one.
+    edition: Option<Edition>,
 }
 
 impl Earlier {
+    /// List `edition`'s fights (`None`: every edition's). Another edition
+    /// is another list: what is in hand goes, and its newest page is asked
+    /// for; a page in flight for the old one is dropped when it lands.
+    /// `true` when that changed anything.
+    pub fn scope(&mut self, edition: Option<Edition>) -> bool {
+        if self.edition == edition {
+            return false;
+        }
+        *self = Earlier {
+            edition,
+            ..Earlier::default()
+        };
+        self.want_newest = true;
+        true
+    }
+
+    /// The edition listed.
+    pub fn edition(&self) -> Option<Edition> {
+        self.edition
+    }
+
     /// Ask for the newest page — at launch, and whenever the store wrote a
     /// fight — merged over what is in hand, so the older pages the reader
     /// already paged in stay.
@@ -181,8 +205,9 @@ impl Earlier {
                 after_id,
                 role: None,
                 origin: OriginFilter::Local,
-                // Every edition's: each card names its own.
-                edition: None,
+                // The window's edition once it knows several; every
+                // edition's before, each card naming its own.
+                edition: self.edition,
             },
         })
     }

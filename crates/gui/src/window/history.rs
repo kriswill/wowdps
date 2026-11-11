@@ -5,19 +5,25 @@
 //! its `Reply` events — and the store's state from `Status`, which tells a
 //! disabled store from a cold one from a degraded one.
 //!
+//! Once the window knows more than one edition of the game (the census,
+//! gui-logic's `editions`), every reader asks for the edition the window
+//! is in, and moving to another starts each over on its fights.
+//!
 //! The rules are gui-logic's (`history`, `home`): one request in flight
 //! per reader, a refused read asked again after a pause, a stored pull's
 //! own `ClientState` fed from `GetFight` answers. This module only routes:
 //! what each reader wants goes out, what comes back goes to its reader.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{App, Context, Entity, Subscription, Task};
 use wowdps_gui_logic::config::Config;
+use wowdps_gui_logic::editions::Census;
 use wowdps_gui_logic::history::{Earlier, Stored};
 use wowdps_gui_logic::home::{Char, CharLine, Home, Panels, Season};
 use wowdps_gui_logic::rail::Pull;
-use wowdps_model::{Drill, SegmentKind, View};
+use wowdps_model::{Drill, Edition, SegmentKind, View};
 use wowdps_proto::history::{FightCard, fight_id};
 use wowdps_proto::{ClientMsg, ClientState, DaemonMsg, HistoryAnswer, HistoryStatus};
 
@@ -37,6 +43,9 @@ pub struct Changed {
     pub home: bool,
     /// The stored pull on the stage was answered.
     pub stage: bool,
+    /// What the window knows of the game's editions moved: the switch, and
+    /// the edition every reader asks for.
+    pub editions: bool,
 }
 
 /// The window's history readers.
@@ -57,6 +66,8 @@ pub struct Store {
     pub dropped: u32,
     /// When `GetStatus` was last asked off the store-changed path.
     status_at: Option<Instant>,
+    /// Which editions the store holds fights of.
+    pub census: Census,
     next_id: u32,
 }
 
@@ -75,6 +86,7 @@ impl Store {
             disabled: None,
             dropped: 0,
             status_at: None,
+            census: Census::new(),
             // 0 is the session's own `GetStatus`.
             next_id: 1,
         }
@@ -107,6 +119,11 @@ impl Store {
             self.id();
             out.push(msg);
         }
+        let id = self.next_id;
+        if let Some(msg) = self.census.next_request(id, now) {
+            self.id();
+            out.push(msg);
+        }
         out
     }
 
@@ -116,12 +133,25 @@ impl Store {
         let mut out = Vec::new();
         match msg {
             DaemonMsg::History { req_id, answer } => {
-                changed.rail |= self.earlier.absorb(*req_id, answer);
+                let rail = self.earlier.absorb(*req_id, answer);
+                changed.rail |= rail;
+                let (census, moved) = self.census.absorb(*req_id, answer, Instant::now());
+                changed.editions |= moved;
+                let mut home_read = false;
                 if let Some(home) = self.home.as_mut() {
                     let before = home.cards.len();
                     let answered = home.answered;
                     home.absorb(*req_id, answer);
-                    changed.home |= home.cards.len() != before || home.answered != answered;
+                    home_read = home.cards.len() != before || home.answered != answered;
+                    changed.home |= home_read;
+                }
+                // The cards the rail and Home read name their editions and
+                // builds too.
+                if !census
+                    && (rail || home_read)
+                    && let HistoryAnswer::Fights { cards, .. } = answer
+                {
+                    changed.editions |= self.census.learn(cards);
                 }
                 if let HistoryAnswer::Pinned { fight_id, pinned } = answer {
                     changed.rail |= self.earlier.pinned(fight_id, *pinned);
@@ -142,8 +172,10 @@ impl Store {
             }
             DaemonMsg::HistoryChanged { .. } => {
                 // The rail's newest few cards, merged over what it holds;
-                // Home's week read again from the top.
+                // Home's week read again from the top; an edition the store
+                // held no fight of asked about again.
                 self.earlier.want_fresh();
+                self.census.store_changed();
                 if let Some(home) = self.home.as_mut() {
                     home.reset();
                     changed.home = true;
@@ -178,6 +210,37 @@ impl Store {
             home.dropped = self.dropped;
         }
         changed
+    }
+
+    /// The sources `Status` lists: an edition the daemon follows is known.
+    pub fn on_sources(&mut self, sources: &[wowdps_proto::EditionSource]) -> bool {
+        self.census.on_sources(sources)
+    }
+
+    /// Read `edition`'s fights (`None`: every edition's), Home counting
+    /// from `season`: the rail and Home start over on that edition's when
+    /// it is another, or (`moved`) when the window moved to another
+    /// edition, and Home when its dates moved. What Home derived — whose
+    /// window it is among it — goes with them, open or not, so another
+    /// game's owner never names this one's. `true` when the rail started
+    /// over.
+    pub fn rescope(&mut self, edition: Option<Edition>, season: Season, moved: bool) -> bool {
+        let rail = self.earlier.scope(edition);
+        let dates = self.season != season;
+        self.season = season;
+        if rail || moved {
+            self.panels = Panels::default();
+        }
+        if let Some(home) = self.home.as_mut()
+            && (rail || moved || dates || home.edition != edition)
+        {
+            home.reset();
+            // Another edition's week is on its way, not an empty store.
+            home.answered = false;
+            home.edition = edition;
+            self.panels = Panels::default();
+        }
+        rail
     }
 
     /// A `GetStatus` one-shot: `Status` carries the whole answer.
@@ -239,6 +302,8 @@ impl Store {
     pub fn open_home(&mut self, scope: Option<String>) -> Vec<ClientMsg> {
         let mut home = Home::new();
         home.scope = scope;
+        // The rail's edition is the window's.
+        home.edition = self.earlier.edition();
         home.disabled_reason = self.disabled.clone();
         home.dropped = self.dropped;
         self.home = Some(home);
@@ -275,9 +340,14 @@ pub struct Hist {
     pub store: Store,
     pub rail: RailUi,
     pub home_scroll: crate::scrollbar::Scroll,
-    /// Every character the store has named as yours, most played first:
-    /// what Home's chips offer.
-    pub known: Vec<CharLine>,
+    /// Every character the store has named as yours, most played first, by
+    /// the edition they play in (`Edition::counts_as`): what Home's chips
+    /// and the picker offer in that edition ([`Hist::known`]).
+    pub known_by: BTreeMap<Edition, Vec<CharLine>>,
+    /// The edition the window is in, as last synced
+    /// (`editions::window_edition`): whose characters, class and dates
+    /// the window reads.
+    pub edition: Edition,
     /// The log's view while a stored pull stood in for it: the store keeps
     /// no answer for some views, and the step back restores it.
     pub log_view: Option<View>,
@@ -285,6 +355,21 @@ pub struct Hist {
     pub tonight_pin: Option<i64>,
     /// The store's state as `Status` last said it.
     status_seen: Option<HistoryStatus>,
+    /// `Status`'s sources as last seen, so an unchanged list costs nothing.
+    sources_seen: Option<Vec<wowdps_proto::EditionSource>>,
+    /// The link was up at the last word: a reconnect asks again what the
+    /// readers had out on the connection that went down.
+    linked_up: bool,
+    /// The pinned game has been the live one since the pin: the window
+    /// follows again once the live game moves on (`editions.rs`).
+    pub caught_up: bool,
+    /// A pin wants its game's newest stored pull on the stage while its
+    /// meter has none (`Gui::land_pinned`).
+    pub landing: bool,
+    /// When the window last told the meter where to look
+    /// (`ClientState::set_edition`): its empty list until the daemon's
+    /// next frame is the window's own reset, not an answer.
+    pub asked_at: Option<Instant>,
     /// Home was offered at launch (once, after the first snapshot), and
     /// whether the log's pull was live at the last word from the session:
     /// a pull STARTING replaces Home with the meter.
@@ -333,14 +418,33 @@ impl Hist {
             store,
             rail: RailUi::default(),
             home_scroll: crate::scrollbar::Scroll::new(),
-            known: Vec::new(),
+            known_by: BTreeMap::new(),
+            edition: Edition::Retail,
             log_view: None,
             tonight_pin: None,
             status_seen: None,
+            sources_seen: None,
+            linked_up: true,
+            caught_up: false,
+            landing: false,
+            asked_at: None,
             considered: false,
             was_live: false,
             _subscriptions: vec![replies, changes],
             _tick: tick,
+        }
+    }
+
+    /// The characters of the edition the window is in.
+    pub fn known(&self) -> &[CharLine] {
+        self.known_by.get(&self.edition).map_or(&[], Vec::as_slice)
+    }
+
+    /// Remember the characters cards named, each under its edition
+    /// (`home::characters_by_edition`).
+    pub fn remember(&mut self, by: BTreeMap<Edition, Vec<CharLine>>) {
+        for (edition, lines) in by {
+            wowdps_gui_logic::home::remember(self.known_by.entry(edition).or_default(), lines);
         }
     }
 
@@ -432,8 +536,14 @@ impl Gui {
         // Home.
         if changed.rail {
             let cards: Vec<&FightCard> = self.hist.store.earlier.cards.iter().collect();
-            let seen = wowdps_gui_logic::home::character_lines(&cards, &[]);
-            wowdps_gui_logic::home::remember(&mut self.hist.known, seen);
+            let by = wowdps_gui_logic::home::characters_by_edition(&cards);
+            self.hist.remember(by);
+            self.land_pinned(cx);
+        }
+        // Another edition known, or one named anew: the switch, and every
+        // reader scoped to the edition the window is in.
+        if changed.editions {
+            self.sync_edition(cx);
         }
         if changed.home {
             self.derive_home(cx);
@@ -443,7 +553,7 @@ impl Gui {
         if changed.stage {
             self.on_session(cx);
         }
-        if changed.rail || changed.home || changed.stage {
+        if changed.rail || changed.home || changed.stage || changed.editions {
             cx.notify();
         }
     }
@@ -456,13 +566,35 @@ impl Gui {
     fn history_observes(&mut self, cx: &mut Context<Self>) {
         let session = self.session.read(cx);
         let status = session.status().map(|s| s.history.clone());
+        let sources = session
+            .status()
+            .map(|s| &s.editions)
+            .filter(|e| self.hist.sources_seen.as_ref() != Some(*e))
+            .cloned();
         let snapshot = session.last_snapshot().is_some();
         let live = session.state().is_live();
+        let up = *session.linked() == crate::session::Linked::Up;
+        // Back from a daemon restart: the census's question went down with
+        // the old connection.
+        if up && !self.hist.linked_up {
+            self.hist.store.census.lost();
+            let sent = self.hist.store.requests(Instant::now());
+            self.send_history(sent, cx);
+        }
+        self.hist.linked_up = up;
         if let Some(h) = status
             && self.hist.status_seen.as_ref() != Some(&h)
         {
             self.hist.status_seen = Some(h.clone());
             if self.hist.store.on_status(&h) {
+                cx.notify();
+            }
+        }
+        if let Some(sources) = sources {
+            let moved = self.hist.store.on_sources(&sources);
+            self.hist.sources_seen = Some(sources);
+            if moved {
+                self.sync_edition(cx);
                 cx.notify();
             }
         }
@@ -586,7 +718,20 @@ mod tests {
         let mut mock = MockDaemon::fixture().with_history();
         let mut store = Store::new(&Config::default());
         let first = store.requests(Instant::now());
-        assert_eq!(first.len(), 1, "one page in flight");
+        let pages = first
+            .iter()
+            .filter(|m| {
+                matches!(
+                    m,
+                    ClientMsg::GetHistory {
+                        query: wowdps_proto::HistoryQuery::Fights { limit, .. },
+                        ..
+                    } if *limit > 1
+                )
+            })
+            .count();
+        assert_eq!(pages, 1, "one page in flight, beside the census's question");
+        assert_eq!(first.len(), 2);
         let changed = settle(&mut store, &mut mock, first);
         assert!(changed.rail);
         assert!(store.earlier.answered);
@@ -639,6 +784,44 @@ mod tests {
         assert!(home.answered && !home.cards.is_empty());
         store.close_home();
         assert!(store.home.is_none());
+    }
+
+    /// A rescope that moves only Home's dates starts Home over, on its
+    /// way again rather than an answered empty store; one that moves
+    /// nothing starts nothing over; and a move of the window's edition takes
+    /// what Home derived with it, open or not.
+    #[test]
+    fn a_rescope_starts_home_over_on_its_way() {
+        let mut mock = MockDaemon::fixture().with_history();
+        let mut store = Store::new(&Config::default());
+        let first = store.requests(Instant::now());
+        settle(&mut store, &mut mock, first);
+        let sent = store.open_home(None);
+        settle(&mut store, &mut mock, sent);
+        assert!(store.home.as_ref().is_some_and(|h| h.answered));
+        let season = Season {
+            start_utc_ms: Some(1),
+            end_utc_ms: None,
+        };
+        assert!(
+            !store.rescope(None, season.clone(), false),
+            "the rail stays"
+        );
+        let home = store.home.as_ref().expect("Home is up");
+        assert!(!home.answered, "on its way, not an empty store");
+        assert!(home.cards.is_empty() && home.pages == 0);
+        let sent = store.requests(Instant::now());
+        settle(&mut store, &mut mock, sent);
+        assert!(store.home.as_ref().is_some_and(|h| h.answered));
+        store.rescope(None, season.clone(), false);
+        assert!(
+            store.home.as_ref().is_some_and(|h| h.answered),
+            "nothing moved, nothing started over"
+        );
+        store.panels.owner = Some(Char::default());
+        store.close_home();
+        store.rescope(None, season, true);
+        assert!(store.panels.owner.is_none(), "the owner went, Home shut");
     }
 
     #[test]

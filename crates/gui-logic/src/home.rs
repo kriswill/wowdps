@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 
 use wowdps_model::fmt::key_tier;
-use wowdps_model::{Class, Role, Spec, difficulty_name};
+use wowdps_model::{Class, Edition, Role, Spec, difficulty_name};
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{ClientMsg, FightSort, HistoryAnswer, HistoryQuery, OriginFilter};
 
@@ -68,6 +68,9 @@ pub struct Home {
     /// From `Status`: writes or reads the daemon dropped. A dashboard over a
     /// store that lost something must say so rather than imply completeness.
     pub dropped: u32,
+    /// The edition whose fights are read (`editions::history_edition`):
+    /// `None`, every edition's, while the window knows one.
+    pub edition: Option<Edition>,
 }
 
 impl Home {
@@ -122,7 +125,7 @@ impl Home {
                 after_id: self.cursor.clone(),
                 role: None,
                 origin: OriginFilter::Local,
-                edition: None,
+                edition: self.edition,
             },
         })
     }
@@ -179,11 +182,32 @@ pub struct Season {
 }
 
 impl Season {
+    /// Retail's dates, the top-level `season_start` and `season_end`.
     pub fn from_config(cfg: &Config) -> Self {
+        Self::for_edition(cfg, crate::config::KeysOf::RETAIL)
+    }
+
+    /// The dates Home counts from in an edition: the config's for it
+    /// (`Config::season_in`, the top-level ones while it is the only
+    /// edition known), each date it leaves unset the edition's default
+    /// ([`Season::default_for`]).
+    pub fn for_edition(cfg: &Config, keys: crate::config::KeysOf) -> Self {
+        let (start, end) = cfg.season_in(keys);
+        let standing = Self::default_for(keys.edition);
         Self {
-            start_utc_ms: cfg.season_start.as_deref().and_then(parse_ymd),
-            end_utc_ms: cfg.season_end.as_deref().and_then(parse_ymd),
+            start_utc_ms: start.and_then(parse_ymd).or(standing.start_utc_ms),
+            end_utc_ms: end.and_then(parse_ymd).or(standing.end_utc_ms),
         }
+    }
+
+    /// The dates an edition counts from when the config names none: the
+    /// whole store for every edition — Retail's season is the user's to
+    /// set, and Forever has no seasons. THE SEAM for whatever stands in for
+    /// a season in an edition without one (a content patch's dates, say):
+    /// a span returned here is Home's for that edition until the user sets
+    /// their own.
+    pub fn default_for(_edition: Edition) -> Self {
+        Self::default()
     }
 
     /// Half-open: the end date is the first day NOT in the season.
@@ -953,6 +977,20 @@ pub fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharL
     out
 }
 
+/// [`character_lines`] for each edition the cards are of (as
+/// `Edition::counts_as` groups them), none configured: the characters the
+/// picker and Home's chips offer while the window is in that edition. A
+/// character is one edition's: each game has its own.
+pub fn characters_by_edition(cards: &[&FightCard]) -> BTreeMap<Edition, Vec<CharLine>> {
+    let mut by: BTreeMap<Edition, Vec<&FightCard>> = BTreeMap::new();
+    for c in cards {
+        by.entry(c.edition().counts_as()).or_default().push(c);
+    }
+    by.into_iter()
+        .map(|(e, cards)| (e, character_lines(&cards, &[])))
+        .collect()
+}
+
 /// Merge characters the store named into what the window remembers of
 /// them, most played first. A configured name with no guid yet is not a
 /// character the store can be asked about, so it waits until a card
@@ -1047,20 +1085,29 @@ pub const EMPTY_CAP: &str = "Your week";
 /// Why the night card has no night: words for each reason, never an empty
 /// frame — a store off or not heard from yet in its own words (`settled`
 /// false: the screen's state line), before any "none". `scope` is the
-/// scoped character's name as drawn, `None` scoped to all of them.
+/// scoped character's name as drawn, `None` scoped to all of them. `game`
+/// names the game Home shows when it is not the one the addon reads (its
+/// own characters are named by `history_characters` alone).
 pub fn empty_night(
     settled: bool,
     state_line: Option<&str>,
     panels: &Panels,
     scope: Option<&str>,
+    game: Option<&str>,
 ) -> String {
     if !settled {
         return state_line.unwrap_or_default().to_string();
     }
     if panels.unowned {
-        return "The store has not named a character of yours yet: list them in \
-                history_characters, or install the wowdps addon."
-            .to_string();
+        return match game {
+            Some(game) => format!(
+                "The store has not named a character of yours in {game} yet: \
+                 list them in history_characters."
+            ),
+            None => "The store has not named a character of yours yet: list them in \
+                     history_characters, or install the wowdps addon."
+                .to_string(),
+        };
     }
     match scope {
         Some(name) => format!("No pulls on {name} this week."),

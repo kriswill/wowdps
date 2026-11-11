@@ -15,6 +15,7 @@
 mod cards;
 mod chrome;
 mod deaths;
+mod editions;
 pub(crate) mod field;
 mod fight_head;
 mod history;
@@ -53,7 +54,7 @@ use wowdps_gui_logic::keys::Zoom;
 use wowdps_gui_logic::table::{Col, filtered_indexed, meter_set, meter_step, step_in};
 use wowdps_gui_logic::theme::{Chrome, class_accent};
 use wowdps_model::{Action, RaidTimeline, Row, Screen, View};
-use wowdps_proto::DaemonClient;
+use wowdps_proto::{DaemonClient, EditionRef};
 
 /// Esc or Enter in the row filter: done filtering, the keys back on the
 /// meter (Esc clears the text first).
@@ -164,6 +165,8 @@ pub struct Cards {
     pub sheet: bool,
     pub palette: bool,
     pub picker: bool,
+    /// The edition switch's menu.
+    pub edition: bool,
     /// The rail's drawer, at 1180 px and under (step 3.4 draws it).
     pub rail: bool,
 }
@@ -211,6 +214,11 @@ pub struct Gui {
     pub(crate) cards_ui: cards::CardsUi,
     /// The rail's and Home's reads of the history store (steps 3.4, 3.5).
     pub(crate) hist: history::Hist,
+    /// The edition switch's choice: Follow (the default, every launch) or
+    /// one edition pinned (`editions.rs`).
+    pub(crate) edition: EditionRef,
+    /// The switch's bounds at its last paint: where its menu hangs.
+    pub(crate) edition_at: Rc<Cell<Bounds<Pixels>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -275,6 +283,8 @@ impl Gui {
             reveal: Cell::new(None),
             cards_ui: cards::CardsUi::default(),
             hist,
+            edition: EditionRef::Follow,
+            edition_at: Rc::new(Cell::new(Bounds::default())),
             _subscriptions: vec![changes, typed],
         }
     }
@@ -309,6 +319,9 @@ impl Gui {
             self.session
                 .update(cx, |s, cx| s.act(|st| st.pin_live(), cx));
         }
+        // The live edition moved under a following window, or the state
+        // first named one: every reader follows it.
+        self.sync_edition(cx);
         if let Some(me) = owner {
             self.learn_class(&me, cx);
         }
@@ -515,8 +528,15 @@ impl Gui {
         self.learned = true;
         let def = self.theme_def(cx);
         theme::apply(&def, Some(class_accent(class)), cx);
-        if self.cfg.character_class() != Some(class) {
-            Config::store_character_class(Some(class.name().to_string()));
+        // Remembered as the edition's own (each game has its characters),
+        // and as the class played last, which the overlay reads.
+        let edition = self.hist.edition;
+        if self.cfg.character_class_in(self.keys()) != Some(class)
+            || self.cfg.character_class() != Some(class)
+        {
+            let name = class.name().to_string();
+            self.cfg.set_character_class_in(edition, Some(name.clone()));
+            Config::store(move |c| c.set_character_class_in(edition, Some(name)));
         }
     }
 
@@ -527,9 +547,8 @@ impl Gui {
     pub(crate) fn picked(&self, cx: &App) -> Option<CharPick> {
         let pick = self
             .cfg
-            .character
-            .as_deref()
-            .and_then(|guid| self.hist.known.iter().find(|c| c.guid == guid));
+            .character_in(self.keys())
+            .and_then(|guid| self.hist.known().iter().find(|c| c.guid == guid));
         match pick {
             Some(c) => Some(CharPick {
                 guid: c.guid.clone(),
@@ -753,6 +772,8 @@ impl Gui {
             .flatten()
             .filter(|r| !r.enemy);
         let segment = state.watched_segment();
+        // An edition whose log carries no builds says so, not a blank.
+        let gap = wowdps_gui_logic::editions::builds_gap(state.segment_edition());
         let player = row.map(|r| Player {
             name: r.label.clone(),
             spec_id: r.spec.map(|s| s.id()),
@@ -770,6 +791,7 @@ impl Gui {
         // wore in it, which wins over a stored paste.
         let viewer = cx.new(|cx| {
             let mut viewer = TalentViewer::open(player.clone(), window, cx);
+            viewer.say_gap(gap, cx);
             match (&stored, &player) {
                 (Some(Some(loadout)), _) => viewer.adopt_logged(loadout, cx),
                 (Some(None), _) | (None, None) => {}
@@ -823,6 +845,27 @@ impl Gui {
             .h_full()
             .flex()
             .flex_col();
+        // A game with no fight to show says how to get one, never a blank
+        // meter under a header waiting for combat.
+        if let Some((head, line)) = self.empty_game(cx) {
+            return stage
+                .child(
+                    div()
+                        .id("stage-empty")
+                        .test_support()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap(w.z(6.))
+                        .px(w.z(24.))
+                        .child(w.text(head, w.size.body, w.c(|t| t.ink), w::SEMIBOLD))
+                        .child(w.text(line, w.size.small, w.c(|t| t.ink_2), REGULAR)),
+                )
+                .children(self.footer(w, cx))
+                .children(cards::toast(self, w, window, cx));
+        }
         let pushed = w.narrow() && self.fight(cx).inspecting();
         if pushed {
             stage = stage.child(self.inspector_seat(w, Seat::Pushed, window, cx));
@@ -1018,6 +1061,8 @@ impl Render for Gui {
             Some(cards::options(self, &w, window, cx))
         } else if self.cards.picker {
             Some(cards::menu(self, &w, window, cx))
+        } else if self.cards.edition {
+            Some(cards::editions(self, &w, window, cx))
         } else {
             None
         };
