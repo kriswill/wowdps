@@ -665,3 +665,131 @@ fn talents_edition(cx: &mut TestAppContext, rig: &Rig) -> Option<Edition> {
         g.talents.as_ref().map(|v| v.read(cx).ui.edition)
     })
 }
+
+/// A drawn stand-in for a game's emblem: a disc, never the game's art.
+const DISC: &[u8] = br##"<svg width="4" height="4" viewBox="0 0 4 4" xmlns="http://www.w3.org/2000/svg"><circle cx="2" cy="2" r="2" fill="#808080"/></svg>"##;
+
+/// The top bar's pieces beside the switch.
+const BAR: [&str; 6] = [
+    "place-home",
+    "place-fights",
+    "top-jump",
+    "top-picker",
+    "top-gear",
+    "top-help",
+];
+
+/// What the bar is measured by: the switch, the bar's other pieces, the
+/// meter's top under it, and the menu's rows, Retail's and Forever's.
+#[derive(Debug, PartialEq)]
+struct Measure {
+    /// The emblem's side in the switch: the places' type size, zoomed.
+    side: gpui_kit::Pixels,
+    switch: gpui_kit::Bounds<gpui_kit::Pixels>,
+    bar: Vec<gpui_kit::Bounds<gpui_kit::Pixels>>,
+    meter_top: gpui_kit::Pixels,
+    rows: [gpui_kit::Bounds<gpui_kit::Pixels>; 2],
+}
+
+/// The window over two editions at `at`, in its real faces, measured with
+/// `emblem` as every game's (`None`: no emblem cached).
+fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
+    use super::super::cards::Menu;
+    use super::super::shots::{Shot, app};
+    crate::images::without_art(emblem.is_none());
+    crate::images::emblem_on_this_thread(emblem);
+    let mut cx = app();
+    let path = own_config();
+    std::fs::write(&path, "zoom = 1.0\nhome_on_start = false\n").expect("the config");
+    let cfg = Config::load();
+    let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
+    link.playing.set(Some(Edition::Retail));
+    let mut held = None;
+    let (window, gui) = testkit::open_headless(&mut cx, size(px(at.0), px(at.1)), |window, cx| {
+        let session =
+            cx.new(|_| Session::with_state(Box::new(link), wowdps_proto::ClientState::new()));
+        held = Some(session.clone());
+        cx.new(|cx| Gui::new(session, cfg, window, cx))
+    });
+    let shot = Shot {
+        window,
+        gui,
+        session: held.expect("the session was built"),
+    };
+    shot.settle(&mut cx);
+    let (side, switch, bar, meter_top) = cx
+        .update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let w = super::super::w::W::new(1.0, at.0, cx);
+            (
+                w.z(w.size.place),
+                window.find("top-edition").bounds(),
+                BAR.iter()
+                    .filter_map(|id| window.try_find(*id).map(|e| e.bounds()))
+                    .collect::<Vec<_>>(),
+                window.find("meter-list").bounds().origin.y,
+            )
+        })
+        .expect("the window");
+    let gui = shot.gui.clone();
+    let rows = cx
+        .update_window(window, |_, window, cx| {
+            gui.update(cx, |g, cx| g.toggle_menu(Menu::Edition, window, cx));
+            window.render_frame(cx);
+            window.render_frame(cx);
+            ["edition-retail", "edition-forever"]
+                .map(|id| window.find(ElementId::Name(id.into())).bounds())
+        })
+        .expect("the window");
+    crate::images::emblem_on_this_thread(None);
+    crate::images::without_art(false);
+    Measure {
+        side,
+        switch,
+        bar,
+        meter_top,
+        rows,
+    }
+}
+
+/// An emblem rides beside each game's name without moving the bar, at
+/// each of the three frames: the switch keeps its height and grows by the
+/// emblem and one gap, exactly, so a game with no emblem cached is its
+/// name alone with no gap where the emblem would be; the bar's other
+/// pieces keep their line and height (the jump box may give up width),
+/// the meter starts where it did, and the menu's rows keep their sizes.
+#[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "gpui's mac platform must be created on the main thread"
+)]
+fn an_emblem_keeps_the_bar_s_rhythm() {
+    for (frame, w, h) in super::super::shots::SIZES {
+        let bare = measure((w, h), None);
+        let worn = measure((w, h), Some(DISC));
+        // At zoom 1 the switch's gap is 6 px.
+        assert_eq!(worn.switch.size.height, bare.switch.size.height, "{frame}");
+        assert_eq!(worn.switch.origin.y, bare.switch.origin.y, "{frame}");
+        assert_eq!(
+            worn.switch.size.width - bare.switch.size.width,
+            worn.side + px(6.),
+            "{frame}: the emblem and one gap, no more"
+        );
+        assert!(bare.bar.len() >= 2, "{frame}: the places at least");
+        assert_eq!(worn.bar.len(), bare.bar.len(), "{frame}");
+        // The jump box flexes: where the bar is short, it gives the
+        // emblem its room. Every piece keeps its line and its height.
+        for (worn, bare) in worn.bar.iter().zip(&bare.bar) {
+            assert_eq!(
+                (worn.origin.y, worn.size.height),
+                (bare.origin.y, bare.size.height),
+                "{frame}: the bar keeps its line"
+            );
+        }
+        assert_eq!(worn.meter_top, bare.meter_top, "{frame}");
+        for (worn, bare) in worn.rows.iter().zip(&bare.rows) {
+            assert_eq!(worn.size, bare.size, "{frame}: a menu row keeps its size");
+        }
+    }
+}

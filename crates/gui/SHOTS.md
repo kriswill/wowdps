@@ -58,8 +58,13 @@ beside the places on the game played, its live dot), `editions-menu` (its
 menu: the games, "Playing now" beside Retail), `editions-forever` (Forever
 shown: its own pull on the stage, its rail, no dot), `editions-forever-menu`
 (the menu while Forever is shown) and `editions-forever-home` (Forever's
-Home). Over the committed fixtures only, so they hold no real names. The
-window shots above are one edition's and draw no switch.
+Home). Over the committed fixtures only, so they hold no real names; with
+this machine's `edition-emblems.bin` (`tools/gen-emblems.sh`) each game
+wears its emblem, which is the launcher's art: keep those pictures off the
+repository. The window shots above are one edition's and draw no switch.
+`window::editions::tests::an_emblem_keeps_the_bar_s_rhythm` holds the
+switch's layout with an emblem on every `cargo test`, a drawn disc standing
+in for the art.
 
 ## Window shots — `window::shots::window_shots`
 
