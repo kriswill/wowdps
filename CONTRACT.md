@@ -1001,8 +1001,8 @@ would become an event store by accident. Magic `\x14` (R8) added the checkpoint'
 edition (`ScanState::project_id`, a u8 after `arena_over`), which a resumed scan reads its
 tables by, and retired every checkpoint scanned before the tables were per edition.
 It keeps the eight newest entries of each edition (v49: the checkpoint's edition,
-reckoned as `counts_as`; an entry it cannot read counts as Retail's), not eight in
-all. And the **history store** (roadmap
+reckoned as `counts_as`; an entry it cannot decode whole — another magic, a short
+or torn file — counts as Retail's), not eight in all. And the **history store** (roadmap
 item 1, the history store's spec): per-fight JSON documents under
 `$XDG_DATA_HOME/wowdps/history/v1/` (`fights/<id>.json` card — per player the
 damage / healing totals and rates, deaths, since v22 the R17 tank measures

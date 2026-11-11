@@ -205,24 +205,15 @@ impl IndexCache {
     }
 }
 
-/// The edition a cache entry's checkpoint stood in, as it is reckoned: its
-/// last byte (`ScanState::project_id`, written last) when the entry wears
-/// this build's magic, else Retail's.
+/// The edition a cache entry's checkpoint stood in, as it is reckoned: the
+/// `ScanState::project_id` of an entry this build decodes whole, else —
+/// another magic, a short or torn file — Retail's.
 fn entry_edition(path: &Path) -> Edition {
-    let read = || -> Option<u8> {
-        let mut f = File::open(path).ok()?;
-        let mut magic = [0u8; 8];
-        f.read_exact(&mut magic).ok()?;
-        if &magic != MAGIC {
-            return None;
-        }
-        f.seek(SeekFrom::End(-1)).ok()?;
-        let mut last = [0u8; 1];
-        f.read_exact(&mut last).ok()?;
-        let [project_id] = last;
-        Some(project_id)
-    };
-    Edition::from_project_id(read().unwrap_or(0)).counts_as()
+    let project_id = std::fs::read(path)
+        .ok()
+        .and_then(|bytes| decode(&bytes))
+        .map_or(0, |(.., state)| state.project_id);
+    Edition::from_project_id(project_id).counts_as()
 }
 
 fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
@@ -637,10 +628,25 @@ mod tests {
         for log in &forever {
             assert!(cache.cache_path(log).exists(), "{}", log.display());
         }
-        // An entry this build cannot read counts as Retail's.
+        // An entry this build cannot read counts as Retail's: another magic,
+        // and one wearing this build's magic but too short to be an entry,
+        // whatever its last byte says.
         let odd = tmp.0.join("cache").join("odd.bin");
         std::fs::write(&odd, b"WDPSIDX\x01\x12").unwrap();
         assert_eq!(entry_edition(&odd), Edition::Retail);
+        let short = tmp.0.join("cache").join("short.bin");
+        let mut bytes = MAGIC.to_vec();
+        bytes.push(Edition::Forever.project_id());
+        std::fs::write(&short, &bytes).unwrap();
+        assert_eq!(entry_edition(&short), Edition::Retail);
+        // A whole Forever entry, torn short of its last bytes, is unreadable.
+        let whole = std::fs::read(cache.cache_path(&forever[0])).unwrap();
+        assert_eq!(whole.last(), Some(&Edition::Forever.project_id()));
+        let torn = tmp.0.join("cache").join("torn.bin");
+        let mut cut = whole[..whole.len() - 3].to_vec();
+        cut.push(Edition::Forever.project_id());
+        std::fs::write(&torn, &cut).unwrap();
+        assert_eq!(entry_edition(&torn), Edition::Retail);
     }
 
     const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
