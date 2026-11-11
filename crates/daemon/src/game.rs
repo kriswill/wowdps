@@ -5,7 +5,8 @@
 //!
 //! Every edition's client is a `Wow.exe` (`Wow` on macOS), so the pattern
 //! finds them all; the product folder in a matched process's command line
-//! (`_retail_`, `_forever_`: `wowdps_core::cli::PRODUCTS`) names which.
+//! (`_retail_`, `_forever_`: `wowdps_core::cli::PRODUCTS`) names which, by
+//! model's `product_of`, which the overlay names a game window's process by.
 
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -16,6 +17,8 @@ use std::path::Path;
 
 use wowdps_core::cli::PRODUCTS;
 use wowdps_model::Edition;
+/// Model's, where the overlay reads a game window's process by it too.
+pub use wowdps_model::product_of;
 
 use crate::hub::HubMsg;
 
@@ -78,18 +81,6 @@ impl Running {
             None => self.unnamed = true,
         }
     }
-}
-
-/// The edition a command line names by a product folder among its path
-/// components (`…\_retail_\Wow.exe`, `/…/_forever_/…`), case-insensitively;
-/// `None` when it names none of [`PRODUCTS`].
-pub fn product_of(cmdline: &[u8]) -> Option<Edition> {
-    let hay = String::from_utf8_lossy(cmdline).to_ascii_lowercase();
-    let parts: Vec<&str> = hay.split(['\\', '/', '\0']).collect();
-    PRODUCTS.into_iter().find(|e| {
-        e.product_dir()
-            .is_some_and(|dir| parts.iter().any(|p| p.trim() == dir))
-    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -198,28 +189,65 @@ mod tests {
         assert!(!matches("", b"anything", b"anything"));
     }
 
-    /// v49: the product folder among the command line's path components
-    /// names the edition — wine's and macOS's spellings, any case — and a
-    /// folder that merely contains the word, or none at all, names nothing.
+    /// Forever's client as it runs under wine, its command line ending in
+    /// the install's `_forever_\Wow.exe`: the default pattern finds it, as
+    /// a `World of Warcraft` pattern does, and the watcher names it
+    /// Forever — no pattern of its own is needed.
     #[test]
-    fn the_product_folder_names_the_edition() {
-        assert_eq!(
-            product_of(b"Z:\\Games\\World of Warcraft\\_retail_\\Wow.exe\0-launch\0"),
-            Some(Edition::Retail)
+    fn forevers_client_is_found_and_named_by_its_product_folder() {
+        let cmdline = b"Z:\\games\\World of Warcraft\\_forever_\\Wow.exe\0";
+        #[cfg(not(target_os = "macos"))]
+        assert!(matches(
+            crate::config::default_game_process(),
+            b"Wow.exe",
+            cmdline
+        ));
+        assert!(matches("world of warcraft", b"Wow.exe", cmdline));
+        assert_eq!(product_of(cmdline), Some(Edition::Forever));
+        let root = fake_proc(
+            "forever",
+            &[
+                ("1", "systemd", "/sbin/init\0"),
+                (
+                    "700",
+                    "Wow.exe",
+                    "Z:\\games\\World of Warcraft\\_forever_\\Wow.exe\0",
+                ),
+            ],
         );
-        assert_eq!(
-            product_of(b"C:\\Program Files (x86)\\World of Warcraft\\_FOREVER_\\Wow.exe\0"),
-            Some(Edition::Forever)
+        for pattern in ["wow.exe", "world of warcraft"] {
+            assert_eq!(
+                scan_proc(&root, pattern),
+                Running::of(&[Edition::Forever]),
+                "{pattern}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        // Retail's beside it, spelled `WoW.exe`: the same pattern finds
+        // both, each named by its own product folder.
+        let both = fake_proc(
+            "both",
+            &[
+                (
+                    "700",
+                    "Wow.exe",
+                    "Z:\\games\\World of Warcraft\\_forever_\\Wow.exe\0",
+                ),
+                (
+                    "800",
+                    "WoW.exe",
+                    "Z:\\games\\World of Warcraft\\_retail_\\WoW.exe\0",
+                ),
+            ],
         );
-        assert_eq!(
-            product_of(
-                b"/Applications/World of Warcraft/_retail_/World of Warcraft.app/Contents/MacOS/World of Warcraft"
-            ),
-            Some(Edition::Retail)
-        );
-        assert_eq!(product_of(b"Z:\\wow\\Wow.exe\0"), None);
-        assert_eq!(product_of(b"Z:\\wow\\_retail_old\\Wow.exe\0"), None);
-        assert_eq!(product_of(b"Z:\\wow\\_classic_beta_\\Wow.exe\0"), None);
+        for pattern in ["wow.exe", "world of warcraft"] {
+            assert_eq!(
+                scan_proc(&both, pattern),
+                Running::of(&[Edition::Retail, Edition::Forever]),
+                "{pattern}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&both);
     }
 
     fn fake_proc(tag: &str, procs: &[(&str, &str, &str)]) -> std::path::PathBuf {

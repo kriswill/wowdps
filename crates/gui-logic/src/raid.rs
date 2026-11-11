@@ -93,6 +93,7 @@ pub fn raid_timeline() -> wowdps_model::RaidTimeline {
             }),
             mine: i == 16,
             enemy: false,
+            inferred_role: None,
         }
     };
     RaidTimeline {

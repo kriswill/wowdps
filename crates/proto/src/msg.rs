@@ -21,7 +21,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 49;
+pub const PROTO_VERSION: u16 = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -1052,6 +1052,38 @@ fn role_from(b: u8) -> Result<Role> {
     })
 }
 
+/// v50: where a row's (and a raid death's) u16 spec slot names a role
+/// instead: `ROLE_SLOT` + the role's code (Tank `0xFF00`, Healer `0xFF01`,
+/// Dps `0xFF02`), above every specID. A spec, else (R30) the role inferred
+/// for a player with none, else `0`: one slot, so no frame can carry a
+/// role beside a spec to disagree with it, and every row with a spec or
+/// with neither is the bytes it was.
+pub const ROLE_SLOT: u16 = 0xFF00;
+
+/// v50: the spec slot — the spec's raw specID (not an enum code, so an
+/// unknown id degrades to `None` on decode instead of erroring), else the
+/// inferred role at [`ROLE_SLOT`], else `0`. A role beside a spec is not
+/// sent: the spec's role is the row's.
+fn put_spec_slot(buf: &mut Vec<u8>, spec: Option<Spec>, role: Option<Role>) {
+    let slot = match (spec, role) {
+        (Some(s), _) => s.id() as u16,
+        (None, Some(r)) => ROLE_SLOT | u16::from(role_code(r)),
+        (None, None) => 0,
+    };
+    wire::put_u16(buf, slot);
+}
+
+/// v50: the spec slot read back — a spec, or a role with none. A slot at
+/// or above [`ROLE_SLOT`] that names no role is `BadTag`; below it, an id
+/// no spec has is `None`, as ever.
+fn get_spec_slot(rd: &mut Reader) -> Result<(Option<Spec>, Option<Role>)> {
+    let slot = rd.u16()?;
+    Ok(match slot.checked_sub(ROLE_SLOT) {
+        Some(code) => (None, Some(role_from(code as u8)?)),
+        None => (Spec::from_id(u32::from(slot)), None),
+    })
+}
+
 /// v49: an edition on the wire is the `PROJECT_ID` it was read from, one
 /// byte: every number reads back as the edition it named
 /// (`Edition::from_project_id`), an unknown one kept, so no byte is a bad
@@ -1215,9 +1247,9 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     wire::put_opt(buf, r.class.as_ref(), |b, c| {
         wire::put_u8(b, class_code(*c))
     });
-    // Blizzard specID, 0 = none. Sent as the raw id (not an enum code) so an
-    // unknown value degrades to `None` on decode instead of erroring.
-    wire::put_u16(buf, r.spec.map_or(0, |s| s.id() as u16));
+    // Blizzard specID, 0 = none; v50: else the inferred role (R30) in the
+    // same slot (`put_spec_slot`).
+    put_spec_slot(buf, r.spec, r.inferred_role);
     wire::put_u64(buf, r.count);
     wire::put_u64(buf, r.crits);
     wire::put_opt(buf, r.hp.as_ref(), |b, (cur, max)| {
@@ -1244,15 +1276,24 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
+    let key = rd.string()?;
+    let label = rd.string()?;
+    let amount = rd.u64()?;
+    let extra = rd.u64()?;
+    let per_sec = rd.f64()?;
+    let pct = rd.f64()?;
+    let class = rd.opt(|r| class_from(r.u8()?))?;
+    let (spec, inferred_role) = get_spec_slot(rd)?;
     Ok(Row {
-        key: rd.string()?,
-        label: rd.string()?,
-        amount: rd.u64()?,
-        extra: rd.u64()?,
-        per_sec: rd.f64()?,
-        pct: rd.f64()?,
-        class: rd.opt(|r| class_from(r.u8()?))?,
-        spec: Spec::from_id(rd.u16()? as u32),
+        key,
+        label,
+        amount,
+        extra,
+        per_sec,
+        pct,
+        class,
+        spec,
+        inferred_role,
         count: rd.u64()?,
         crits: rd.u64()?,
         hp: rd.opt(|r| Ok((r.u64()?, r.u64()?)))?,
@@ -1531,7 +1572,8 @@ fn get_raid(rd: &mut Reader) -> Result<RaidTimeline> {
 }
 
 /// v35 (R25): `RaidDeath` = string guid | string name | Option<u8 class> |
-/// u16 specID (0 = none, as a Row's) | u32 index | i64 at_ms | string blow |
+/// u16 specID (0 = none, as a Row's; v50: else the inferred role at
+/// `ROLE_SLOT`, as a Row's) | u32 index | i64 at_ms | string blow |
 /// string source | u64 hit | Option<u64> overkill | Option<Rez> (i64 at_ms |
 /// string by | string by_name | string spell) | bool mine | bool enemy.
 fn put_raid_death(buf: &mut Vec<u8>, d: &RaidDeath) {
@@ -1540,7 +1582,7 @@ fn put_raid_death(buf: &mut Vec<u8>, d: &RaidDeath) {
     wire::put_opt(buf, d.class.as_ref(), |b, c| {
         wire::put_u8(b, class_code(*c))
     });
-    wire::put_u16(buf, d.spec.map_or(0, |s| s.id() as u16));
+    put_spec_slot(buf, d.spec, d.inferred_role);
     wire::put_u32(buf, d.index);
     wire::put_i64(buf, d.at_ms);
     wire::put_str(buf, &d.blow);
@@ -1558,11 +1600,16 @@ fn put_raid_death(buf: &mut Vec<u8>, d: &RaidDeath) {
 }
 
 fn get_raid_death(rd: &mut Reader) -> Result<RaidDeath> {
+    let guid = rd.string()?;
+    let name = rd.string()?;
+    let class = rd.opt(|r| class_from(r.u8()?))?;
+    let (spec, inferred_role) = get_spec_slot(rd)?;
     Ok(RaidDeath {
-        guid: rd.string()?,
-        name: rd.string()?,
-        class: rd.opt(|r| class_from(r.u8()?))?,
-        spec: Spec::from_id(rd.u16()? as u32),
+        guid,
+        name,
+        class,
+        spec,
+        inferred_role,
         index: rd.u32()?,
         at_ms: rd.i64()?,
         blow: rd.string()?,

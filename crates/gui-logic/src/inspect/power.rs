@@ -5,7 +5,7 @@
 //! a stored pull's details tier); which line a player gets, and where its
 //! points stand, is decided here so the window only strokes them.
 
-use wowdps_model::{PowerSeries, Role, Spec, power_name};
+use wowdps_model::{PowerSeries, Role, power_name};
 
 use crate::labels::sentence;
 
@@ -53,9 +53,10 @@ pub fn power_label(power_type: u32) -> String {
 
 /// The line a drilled player gets by default: a HEALER's mana, when their
 /// pools carry it with a max to measure against. Anyone else — and a
-/// healer whose mana went unreported — gets none.
-pub fn healer_mana(spec: Option<Spec>, series: &[PowerSeries]) -> Option<PowerLine> {
-    if spec.map(Spec::role) != Some(Role::Healer) {
+/// healer whose mana went unreported — gets none. `role` is the drilled
+/// row's (`Row::role`: the spec's, else v50's inferred one).
+pub fn healer_mana(role: Option<Role>, series: &[PowerSeries]) -> Option<PowerLine> {
+    if role != Some(Role::Healer) {
         return None;
     }
     let mana = series
@@ -139,14 +140,14 @@ mod tests {
                 per_sec: vec![Some(50)],
             },
         ];
-        let line = healer_mana(Some(Spec::Discipline), &series).expect("a healer's mana");
+        let line = healer_mana(Some(Role::Healer), &series).expect("a healer's mana");
         assert_eq!(line.label, "Mana");
         assert_eq!(line.fractions, vec![Some(1.0), None, Some(0.25)]);
         assert_eq!(line.words(), "Mana, low 25%");
-        assert_eq!(healer_mana(Some(Spec::FrostMage), &series), None, "a dps");
-        assert_eq!(healer_mana(None, &series), None, "no spec, no role");
+        assert_eq!(healer_mana(Some(Role::Dps), &series), None, "a dps");
+        assert_eq!(healer_mana(None, &series), None, "no role");
         assert_eq!(
-            healer_mana(Some(Spec::Discipline), &series[1..]),
+            healer_mana(Some(Role::Healer), &series[1..]),
             None,
             "no mana reported"
         );

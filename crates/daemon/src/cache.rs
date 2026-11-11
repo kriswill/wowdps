@@ -22,8 +22,10 @@ use wowdps_proto::wire::{self, Reader};
 
 /// Cache files kept per edition (v49: the edition each entry's checkpoint
 /// stood in, `ScanState::project_id`, reckoned as `Edition::counts_as`);
-/// older ones are evicted so "newest logs warm, ancient ones rescan" falls
-/// out of the layout, and one edition's logs never push another's out.
+/// the entries of older logs are evicted (each entry wears its log's mtime,
+/// [`IndexCache::scan_file`]) so "newest logs warm, ancient ones rescan"
+/// falls out of the layout, and one edition's logs never push another's
+/// out.
 const KEEP: usize = 8;
 
 /// Bytes hashed before the checkpoint to prove the prefix is unchanged.
@@ -166,11 +168,24 @@ impl IndexCache {
         wire::put_bool(&mut buf, state.arena_over);
         wire::put_u8(&mut buf, state.project_id);
 
-        let _ = write_atomic(&self.cache_path(path), &buf);
+        let entry = self.cache_path(path);
+        let _ = write_atomic(&entry, &buf);
+        // The prune ranks entries by their mtime: each wears its log's, so
+        // the newest logs keep their checkpoints whatever order they were
+        // scanned in — the history's start-up sweep scans newest first,
+        // which would otherwise leave the oldest logs warm and rescan the
+        // tailed one on every start.
+        if let Ok(mtime) = meta.modified() {
+            let _ = File::options()
+                .write(true)
+                .open(&entry)
+                .and_then(|f| f.set_modified(mtime));
+        }
         self.prune();
     }
 
-    /// Keep the newest [`KEEP`] entries by mtime of each edition (v49). An
+    /// Keep the [`KEEP`] entries of each edition (v49) whose logs were
+    /// written last, by the entry's mtime, which is its log's. An
     /// entry's edition is its checkpoint's, read from the entry decoded
     /// whole ([`entry_edition`]); one this build cannot decode (another
     /// magic, a short or torn file) counts as Retail's, where every entry
@@ -586,6 +601,42 @@ mod tests {
         let idx = cache.scan_file(&log, &mut File::open(&log).unwrap());
         let full = index::scan(&mut File::open(&log).unwrap());
         assert_eq!(idx, full);
+    }
+
+    /// The newest logs keep their checkpoints whatever order they are
+    /// scanned in: a sweep newest first (the history's on every start)
+    /// leaves the eight newest warm, the tailed one among them, and the
+    /// oldest to rescan — not the other way round.
+    #[test]
+    fn the_newest_logs_keep_their_checkpoints_however_scanned() {
+        let tmp = Temp::new("prune-order");
+        let cache = IndexCache::new(tmp.0.join("cache"));
+        let now = std::time::SystemTime::now();
+        let logs: Vec<PathBuf> = (0..(KEEP + 4))
+            .map(|i| {
+                let log = tmp.0.join(format!("WoWCombatLog-{i:02}.txt"));
+                std::fs::copy(FIXTURE, &log).unwrap();
+                let hours = (KEEP + 4 - i) as u64;
+                File::options()
+                    .write(true)
+                    .open(&log)
+                    .unwrap()
+                    .set_modified(now - std::time::Duration::from_secs(3600 * hours))
+                    .unwrap();
+                log
+            })
+            .collect();
+        for log in logs.iter().rev() {
+            cache.scan_file(log, &mut File::open(log).unwrap());
+        }
+        let warm: Vec<usize> = (0..logs.len())
+            .filter(|i| cache.cache_path(&logs[*i]).exists())
+            .collect();
+        assert_eq!(warm, (4..KEEP + 4).collect::<Vec<_>>());
+        // Rescanning an old log evicts nothing newer: its own entry goes.
+        cache.scan_file(&logs[0], &mut File::open(&logs[0]).unwrap());
+        assert!(!cache.cache_path(&logs[0]).exists());
+        assert!(cache.cache_path(&logs[KEEP + 3]).exists());
     }
 
     #[test]

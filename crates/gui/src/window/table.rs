@@ -382,7 +382,7 @@ fn row_line(
         .pr(w.z(8.))
         .child(icon)
         .child(name)
-        .children(name_tags(r.spec.map(|s| s.role()), mine, slot, w));
+        .children(name_tags(r.role(), mine, slot, w));
     let cells = div()
         .flex_none()
         .flex()

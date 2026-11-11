@@ -95,18 +95,25 @@ pub fn choose_output(cfg: &Config) -> Option<String> {
     if let Ok(name) = std::env::var("WOWDPS_OVERLAY_OUTPUT") {
         return Some(name);
     }
-    cfg.monitor.clone().or_else(|| {
-        if !cfg.follow_game {
-            return None;
-        }
-        let dir = hypr::socket_dir()?;
-        if std::env::var_os("WOWDPS_OVERLAY_GAME_STARTING").is_some() {
-            let deadline = std::time::Instant::now() + GAME_WINDOW_WAIT;
-            hypr::game_monitor_wait(&dir, &cfg.game_match, deadline)
-        } else {
-            hypr::game_monitor(&dir, &cfg.game_match)
-        }
-    })
+    if !output_follows_game(cfg) {
+        return cfg.monitor.clone();
+    }
+    let dir = hypr::socket_dir()?;
+    if std::env::var_os("WOWDPS_OVERLAY_GAME_STARTING").is_some() {
+        let deadline = std::time::Instant::now() + GAME_WINDOW_WAIT;
+        hypr::game_monitor_wait(&dir, &cfg.game_match, deadline)
+    } else {
+        hypr::game_monitor(&dir, &cfg.game_match)
+    }
+}
+
+/// Whether the overlay's output is the game's monitor (gui-logic's
+/// `output::follows_game`, `WOWDPS_OVERLAY_OUTPUT` read here): only then is
+/// it born on the game's monitor and moved to the live game's
+/// (`panel::Rehome`, `output::Home::rehome`).
+fn output_follows_game(cfg: &Config) -> bool {
+    let pinned_by_env = std::env::var("WOWDPS_OVERLAY_OUTPUT").is_ok();
+    wowdps_gui_logic::output::follows_game(cfg, pinned_by_env)
 }
 
 /// How long a daemon-spawned overlay waits for the game window to map
@@ -120,7 +127,7 @@ fn surface(
     client: DaemonClient,
     cfg: Config,
 ) -> Result<(), String> {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use gpui_kit::AppContext as _;
@@ -132,6 +139,7 @@ fn surface(
             "wowdps-gui: no output named {name}; the system chooses"
         );
     }
+    let follows_game = output_follows_game(&cfg);
     // WOWDPS_OVERLAY_AUTOVIEW: start on that view, before the first Watch.
     let mut state = wowdps_proto::ClientState::new();
     if let Some(view) = panel::start_view() {
@@ -140,26 +148,69 @@ fn surface(
     let session = cx.new(|cx| crate::session::Session::running_with(Box::new(client), state, cx));
     let overlay = cx.new(|cx| panel::Overlay::new(session, cfg, Rc::new(split_link), cx));
     let current = Rc::new(Cell::new(Some(open_on(cx, output, display_id, &overlay)?)));
+    // Where the surface opens: the output asked for, by name and by
+    // display. A rehome moves it.
+    let home = Rc::new(RefCell::new(wowdps_gui_logic::output::Home {
+        output: output.map(str::to_string),
+        display: display_id,
+        follows_game,
+    }));
     // A tab dropped by another edge, or on macOS a size change (a resize
     // keeps the wrong corner fixed): the surface is recreated there — the
     // new one opened before the old one goes, so the app never stands
     // without a window.
-    let held = Rc::clone(&current);
-    let output = output.map(str::to_string);
-    cx.subscribe(&overlay, move |overlay, _: &panel::Reanchor, cx| {
-        overlay.update(cx, |o, _| o.fresh_surface());
-        match open_on(cx, output.as_deref(), display_id, &overlay) {
-            Ok(new) => {
-                if let Some(old) = held.replace(Some(new)) {
-                    let _ = old.update(cx, |_, window, _| window.remove_window());
+    let reopen = {
+        let held = Rc::clone(&current);
+        let home = Rc::clone(&home);
+        move |overlay: gpui_kit::Entity<panel::Overlay>, cx: &mut App| {
+            overlay.update(cx, |o, _| o.fresh_surface());
+            let (output, display_id) = {
+                let home = home.borrow();
+                (home.output.clone(), home.display)
+            };
+            match open_on(cx, output.as_deref(), display_id, &overlay) {
+                Ok(new) => {
+                    if let Some(old) = held.replace(Some(new)) {
+                        let _ = old.update(cx, |_, window, _| window.remove_window());
+                    }
+                }
+                Err(e) => {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "wowdps-gui: the overlay cannot re-anchor: {e}"
+                    );
                 }
             }
-            Err(e) => {
-                let _ = writeln!(
-                    std::io::stderr(),
-                    "wowdps-gui: the overlay cannot re-anchor: {e}"
-                );
-            }
+        }
+    };
+    let reanchor = reopen.clone();
+    cx.subscribe(&overlay, move |overlay, _: &panel::Reanchor, cx| {
+        reanchor(overlay, cx);
+    })
+    .detach();
+    // The live edition changed and its game window is on another monitor:
+    // the surface is recreated there, as on an edge change, when its
+    // output follows the game's. Compared with the display the surface is
+    // actually on (the compositor's word, `enter`), so one already on the
+    // game's display is never recreated. A name no display answers to
+    // leaves it.
+    cx.subscribe(&overlay, move |overlay, rehome: &panel::Rehome, cx| {
+        let name = rehome.0.as_str();
+        let there = display_named(cx, name);
+        if follows_game && there.is_none() {
+            let _ = writeln!(
+                std::io::stderr(),
+                "wowdps-gui: no output named {name}; the overlay stays"
+            );
+        }
+        let on = current.get().and_then(|window| {
+            window
+                .update(cx, |_, window, cx| window.display(cx).map(|d| d.id()))
+                .ok()
+                .flatten()
+        });
+        if home.borrow_mut().rehome(name, there, on) {
+            reopen(overlay, cx);
         }
     })
     .detach();

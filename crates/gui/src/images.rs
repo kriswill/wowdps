@@ -102,12 +102,13 @@ pub fn spec_icon(spec_id: u32, px: f32) -> Option<Tile> {
     class_icons()?.spec(spec_id, px, make)
 }
 
-/// An edition's emblem for a game's badge (`window::marks`), `px` device
-/// pixels across: the launcher's own for that game
-/// (`edition-emblems.bin`, an SVG document), rasterized at exactly the
-/// whole pixels that cover it — GPUI samples without mipmaps — once per
-/// game and size. `None` without the cache or with no emblem of that game
-/// in it: the badge holds our own mark.
+/// An edition's emblem for a game's badge (`window::marks`), drawn in a
+/// square `px` device pixels across: the launcher's own for that game
+/// (`edition-emblems.bin`, an SVG document), rasterized so its longer side
+/// is exactly the whole pixels that cover that square — GPUI samples
+/// without mipmaps, and fits the image in the square without scaling it —
+/// once per game and size. `None` without the cache or with no emblem of
+/// that game in it: the badge holds our own mark.
 pub fn edition_emblem(edition: Edition, px: f32) -> Option<Tile> {
     let edge = px.ceil().clamp(1.0, 1024.0) as u32;
     #[cfg(test)]
@@ -132,22 +133,40 @@ pub fn edition_emblem(edition: Edition, px: f32) -> Option<Tile> {
         .clone()
 }
 
-/// An SVG document as one image `edge` device pixels wide (its height
-/// kept to its proportions), through GPUI's own SVG renderer; `None` for a
-/// document it cannot read. No asset source: an emblem names no file.
+thread_local! {
+    /// The UI thread's one SVG renderer, so a document with text would
+    /// load the font database once, not once per game and size. No asset
+    /// source: an emblem names no file.
+    static SVG: SvgRenderer = SvgRenderer::new(Arc::new(()));
+}
+
+/// An SVG document as one image whose longer side is `edge` device
+/// pixels, its proportions kept, through GPUI's own SVG renderer; `None`
+/// for a document it cannot read. GPUI sizes a document by its width, so a
+/// taller one is drawn again at the width that makes its height `edge`.
 fn rasterize(svg: &[u8], edge: u32) -> Option<Tile> {
-    let renderer = SvgRenderer::new(Arc::new(()));
-    let tree = renderer.parse_svg(svg).ok()?;
-    let side = DevicePixels(i32::try_from(edge).ok()?);
-    renderer
-        .render_parsed(
-            &tree,
-            SvgSize::Size(Size {
-                width: side,
-                height: side,
-            }),
-        )
-        .ok()
+    SVG.with(|renderer| {
+        let tree = renderer.parse_svg(svg).ok()?;
+        let at = |width: u32| -> Option<Tile> {
+            let width = DevicePixels(i32::try_from(width.max(1)).ok()?);
+            renderer
+                .render_parsed(
+                    &tree,
+                    SvgSize::Size(Size {
+                        width,
+                        height: width,
+                    }),
+                )
+                .ok()
+        };
+        let wide = at(edge)?;
+        let tall = i64::from(wide.size(0).height.0);
+        if tall <= i64::from(edge) {
+            return Some(wide);
+        }
+        let width = (f64::from(edge) * f64::from(edge) / tall as f64).round() as u32;
+        at(width)
+    })
 }
 
 /// An ability's icon, read from the spell cache on first use.
@@ -195,6 +214,10 @@ mod tests {
         );
     }
 
+    /// Drawn shapes of other proportions: 2 × 4 and 4 × 2.
+    const TALL: &[u8] = br##"<svg width="2" height="4" viewBox="0 0 2 4" xmlns="http://www.w3.org/2000/svg"><rect width="2" height="4" fill="#ff0000"/></svg>"##;
+    const WIDE: &[u8] = br##"<svg width="4" height="2" viewBox="0 0 4 2" xmlns="http://www.w3.org/2000/svg"><rect width="4" height="2" fill="#ff0000"/></svg>"##;
+
     /// A drawn disc in a 4 × 4 box: no game art.
     const DISC: &[u8] = br##"<svg width="4" height="4" viewBox="0 0 4 4" xmlns="http://www.w3.org/2000/svg"><circle cx="2" cy="2" r="2" fill="#ff0000"/></svg>"##;
 
@@ -212,6 +235,15 @@ mod tests {
         assert!(Arc::ptr_eq(&tile, &again));
         let large = edition_emblem(Edition::Retail, 40.0).expect("a larger size");
         assert_eq!(large.size(0).width.0, 40);
+        // A document of another shape keeps its proportions, its longer
+        // side the square's: a tall one is not drawn at the square's width.
+        emblem_on_this_thread(Some(TALL));
+        let tall = edition_emblem(Edition::Retail, 18.0).expect("a tall stand-in");
+        assert_eq!((tall.size(0).width.0, tall.size(0).height.0), (9, 18));
+        emblem_on_this_thread(Some(WIDE));
+        let wide = edition_emblem(Edition::Retail, 18.0).expect("a wide stand-in");
+        assert_eq!((wide.size(0).width.0, wide.size(0).height.0), (18, 9));
+        emblem_on_this_thread(Some(DISC));
         let px = tile.as_bytes(0).expect("one frame");
         let at = |x: usize, y: usize| &px[(y * 18 + x) * 4..(y * 18 + x) * 4 + 4];
         assert_eq!(at(0, 0)[3], 0, "a clear corner");

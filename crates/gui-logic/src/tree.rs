@@ -337,6 +337,7 @@ fn blank() -> Row {
         offset_ms: None,
         absorb: None,
         heal_absorbed: 0,
+        inferred_role: None,
     }
 }
 

@@ -11,16 +11,16 @@ pub use crate::tail::SourceSpec;
 
 /// The editions whose product folder an install is known to keep them in
 /// (`Edition::product_dir`): what the game watcher can name a running
-/// client by, and what an install may hold beside Retail.
-pub const PRODUCTS: [Edition; 2] = [Edition::Retail, Edition::Forever];
+/// client by, and what an install may hold beside Retail. Model's, where
+/// `wowdps_model::product_of` reads them for the daemon and the overlay.
+pub use wowdps_model::PRODUCTS;
 
 /// The editions the daemon follows in an install: a `logs_dir` inside an
 /// install whose product folder is one of these names the install, and
-/// each other one's `Logs` folder is followed beside it. Retail alone for
-/// now: Forever's logs are read by `wowdps history import` and by tests
-/// that name its folder, never followed on their own. Following Forever
-/// is adding it here.
-pub const FOLLOWED: &[Edition] = &[Edition::Retail];
+/// each other one's `Logs` folder is followed beside it — Retail's and
+/// Forever's, each from when it first holds a log, so an install with no
+/// Forever log is followed as Retail's alone always was.
+pub const FOLLOWED: &[Edition] = &[Edition::Retail, Edition::Forever];
 
 /// A WoW install root: the folder holding `.build.info` and `Data/data`.
 pub fn is_wow_install(p: &Path) -> bool {
@@ -81,8 +81,9 @@ pub fn sibling_logs(logs_dir: &Path, followed: &[Edition]) -> Vec<(Edition, Path
     install_logs(&install, &others)
 }
 
-/// The retail logs directory to tail when no `logs_dir` is configured:
-/// `$WOWDPS_WOW_DIR` when it names an install, else the most recently
+/// The retail logs directory to tail when no `logs_dir` is configured —
+/// the install's other followed products' folders are followed beside it
+/// ([`sibling_logs`]): `$WOWDPS_WOW_DIR` when it names an install, else the most recently
 /// updated install found under the conventional install roots (Battle.net's
 /// on macOS, Steam's Proton prefixes elsewhere). `None` when
 /// nothing is found — the daemon reports that instead of tailing a
@@ -524,7 +525,7 @@ mod tests {
     /// A logs folder inside an install names its product's edition and the
     /// followed editions' folders beside it; one outside an install, or of
     /// a product not followed, is followed alone. Discovery follows Retail
-    /// alone today: an install's Forever folder is never a sibling.
+    /// and Forever: each one's folder names the other's.
     #[test]
     fn a_logs_folder_names_its_install_and_the_followed_products_beside_it() {
         let root = std::env::temp_dir().join(format!("wowdps-cli-sib-{}", std::process::id()));
@@ -546,28 +547,28 @@ mod tests {
         );
         assert_eq!(product_edition(&root.join("_retail_").join("Logs")), None);
 
-        // Today: Retail alone is followed, so no folder has a sibling.
-        assert_eq!(FOLLOWED, &[Edition::Retail]);
-        assert!(sibling_logs(&retail, FOLLOWED).is_empty());
-        assert!(
-            sibling_logs(&forever, FOLLOWED).is_empty(),
-            "Forever's folder alone"
-        );
         // Both followed: each names the other, whether it exists yet or not.
-        let both = [Edition::Retail, Edition::Forever];
+        assert_eq!(FOLLOWED, &[Edition::Retail, Edition::Forever]);
         assert_eq!(
-            sibling_logs(&retail, &both),
-            vec![(Edition::Forever, forever.clone())]
+            sibling_logs(&retail, FOLLOWED),
+            vec![(Edition::Forever, forever.clone())],
+            "Forever's folder, though no Forever folder exists yet"
         );
         assert_eq!(
-            sibling_logs(&forever, &both),
+            sibling_logs(&forever, FOLLOWED),
             vec![(Edition::Retail, retail.clone())]
         );
         assert!(
-            sibling_logs(&beta, &both).is_empty(),
+            sibling_logs(&beta, FOLLOWED).is_empty(),
             "a product not followed"
         );
-        assert!(sibling_logs(Path::new("/tmp/Logs"), &both).is_empty());
+        assert!(sibling_logs(Path::new("/tmp/Logs"), FOLLOWED).is_empty());
+        // A list of one follows its folder alone.
+        assert!(sibling_logs(&retail, &[Edition::Retail]).is_empty());
+        assert!(
+            sibling_logs(&forever, &[Edition::Retail]).is_empty(),
+            "a product not on the list has no siblings"
+        );
         assert_eq!(
             install_logs(
                 &wow,

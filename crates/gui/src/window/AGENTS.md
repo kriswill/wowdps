@@ -122,8 +122,9 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   machine `viewer`, the geometry). Each pane is one canvas painted in the
   game's layer order (`talents/pane.rs`).
 - The logged loadout (`GetLoadout`) wins over a stored SimC paste and is
-  never persisted; pastes persist per character under
-  `~/.local/share/wowdps/simc/`.
+  never persisted; pastes persist per game and character, Retail's under
+  `~/.local/share/wowdps/simc/` and another game's under a folder named for
+  it (`forever/simc/`), as its trees are: a paste is decoded by its game's.
 - Without `talents.json` or `talent-art.bin` it draws plain panels.
 - `cargo test -p wowdps-gui real_dataset_draws_every_spec -- --ignored`
   draws every spec of the real dataset.
