@@ -445,3 +445,211 @@ fn a_lost_question_is_asked_again() {
         "the same question again"
     );
 }
+
+// ---- marks and colors ---------------------------------------------------------
+
+/// Each game has one mark: Midnight's crescent (Retail by its expansion,
+/// the newest one before any build is known), Forever's loop, Classic's
+/// hourglass, and the neutral ring for a game this build does not know —
+/// and for Retail under an expansion with no mark of ours, so a new
+/// expansion never wears Midnight's crescent under its own name.
+#[test]
+fn each_game_has_one_mark_and_retail_s_is_its_expansion_s() {
+    assert_eq!(mark(Edition::Retail, Some((12, 1, 5))), MIDNIGHT);
+    assert_eq!(mark(Edition::Retail, None), MIDNIGHT, "the newest's");
+    assert_eq!(mark(Edition::Retail, Some((0, 0, 0))), MIDNIGHT);
+    assert_eq!(
+        mark(Edition::Unknown(0), None),
+        MIDNIGHT,
+        "counts as Retail"
+    );
+    assert_eq!(mark(Edition::Retail, Some((13, 0, 2))), NEUTRAL);
+    assert_eq!(name(Edition::Retail, Some((13, 0, 2))), "Retail");
+    assert_eq!(
+        mark(Edition::Retail, Some((11, 2, 7))),
+        NEUTRAL,
+        "drawn for none"
+    );
+    assert_eq!(mark(Edition::Forever, Some((1, 60, 1))), FOREVER);
+    assert_eq!(mark(Edition::Classic(2), None), CLASSIC);
+    assert_eq!(mark(Edition::Unknown(40), None), NEUTRAL);
+    let glyphs: std::collections::HashSet<_> = [MIDNIGHT, FOREVER, CLASSIC, NEUTRAL]
+        .iter()
+        .map(|m| m.glyph)
+        .collect();
+    assert_eq!(glyphs.len(), 4, "every mark its own shape");
+    assert!(MIDNIGHT.own() && FOREVER.own() && CLASSIC.own());
+    assert!(!NEUTRAL.own(), "no emblem stands for the neutral ring");
+    assert_eq!(MIDNIGHT.tone, Tone::Midnight);
+    assert_eq!(FOREVER.tone, Tone::Forever);
+    assert_eq!(CLASSIC.tone, Tone::Muted);
+}
+
+fn themes() -> [(&'static str, &'static crate::theme::Def); 3] {
+    [
+        ("navy", &crate::theme::NAVY),
+        ("onyx", &crate::theme::ONYX),
+        ("frost", &crate::theme::FROST),
+    ]
+}
+
+/// On every built-in theme the games' colors read at a glance on the bar
+/// and on a menu (3:1 and more), differ from each other in lightness as
+/// well as hue, keep clear of what the window's colors already mean
+/// (the chrome, a kill, a wipe, a best), and carry words on a chip's fill
+/// at AA — the muted fill of a game with no color too.
+#[test]
+fn the_games_colors_read_on_every_theme() {
+    use crate::theme::{AA_CONTRAST, contrast, difference, oklab};
+    for (name, def) in themes() {
+        let t = &def.window;
+        let menu = t.glass.over(t.ground);
+        for tone in [Tone::Midnight, Tone::Forever] {
+            let c = tone.color(t);
+            for (on, under) in [("bar", t.surface), ("menu", menu)] {
+                let ratio = contrast(c, under);
+                assert!(ratio >= 3.0, "{name} {tone:?} on the {on}: {ratio}");
+            }
+            for (what, meaning) in [
+                ("the chrome", t.accent),
+                ("a kill", t.good),
+                ("a wipe", t.bad),
+                ("a best", t.legendary),
+            ] {
+                let d = difference(c, meaning);
+                assert!(d >= NEAR, "{name} {tone:?} too like {what}: {d}");
+            }
+        }
+        let (m, f) = (oklab(t.midnight).0, oklab(t.forever).0);
+        assert!((f - m).abs() >= 0.15, "{name}: lightness {m} and {f}");
+        assert!(difference(t.midnight, t.forever) >= 0.3, "{name}");
+        for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
+            let fill = tone.fill(t);
+            assert!(reads_on(fill, t), "{name} {tone:?}'s fill");
+            assert!(contrast(ink_on(fill, t), fill) >= AA_CONTRAST);
+        }
+        let muted = contrast(Tone::Muted.color(t), t.surface);
+        assert!(muted >= 3.0, "{name} muted: {muted}");
+    }
+}
+
+/// A class chrome that looks like a game's color would read as that game
+/// (a Warlock's lavender beside Midnight's violet): the mark then wears the
+/// bar's ink and its shape tells the game. On the built-in themes that is
+/// the Warlock's chrome beside Midnight's color and no other pair; a
+/// theme's own chrome never takes a mark's color away, and the muted ink
+/// is never swapped.
+#[test]
+fn a_chrome_too_like_a_game_s_color_takes_its_mark_to_ink() {
+    use crate::theme::{CLASSES, chrome_base, difference};
+    use wowdps_model::Class;
+    for (name, def) in themes() {
+        let t = &def.window;
+        for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
+            assert_eq!(tone.mark_color(t, t.accent), tone.color(t), "{name}");
+        }
+        let near: Vec<(Class, Tone)> = CLASSES
+            .into_iter()
+            .flat_map(|class| {
+                [Tone::Midnight, Tone::Forever]
+                    .into_iter()
+                    .filter(move |tone| tone.mark_color(t, chrome_base(class)) != tone.color(t))
+                    .map(move |tone| (class, tone))
+            })
+            .collect();
+        assert_eq!(near, vec![(Class::Warlock, Tone::Midnight)], "{name}");
+        let warlock = chrome_base(Class::Warlock);
+        assert!(difference(warlock, t.midnight) < NEAR);
+        assert_eq!(Tone::Midnight.mark_color(t, warlock), t.ink_2);
+        assert_eq!(Tone::Forever.mark_color(t, warlock), t.forever);
+        assert_eq!(Tone::Muted.mark_color(t, t.ink_3), t.ink_3, "{name}");
+    }
+}
+
+/// The live dot on a chip filled with a game's color: red on violet or
+/// teal is lost, so it wears a ring of the bar's color; on the bar itself
+/// it needs none.
+#[test]
+fn the_live_dot_wears_a_ring_where_a_fill_drowns_it() {
+    for (name, def) in themes() {
+        let t = &def.window;
+        assert!(!dot_needs_ring(t.bad, t.surface), "{name}: the bar");
+        for tone in [Tone::Midnight, Tone::Forever] {
+            assert!(dot_needs_ring(t.bad, tone.fill(t)), "{name} {tone:?}");
+        }
+    }
+}
+
+/// The switch is a row of chips while it fits — up to three games on a
+/// bar that is not narrow — and the dropdown otherwise. A chip's tooltip
+/// is its game's build, and says so of the game being played.
+#[test]
+fn the_switch_is_chips_while_they_fit() {
+    assert!(chips(2, false) && chips(3, false));
+    assert!(!chips(4, false), "more than three fold into the dropdown");
+    assert!(!chips(2, true), "a narrow bar has no room for them");
+    let mut census = Census::new();
+    let source = |e: Option<Edition>| EditionSource {
+        edition: e,
+        ..EditionSource::default()
+    };
+    census.on_sources(&[
+        source(Some(Edition::Retail)),
+        source(Some(Edition::Forever)),
+    ]);
+    let entries = entries(&census, Edition::Retail);
+    let entry = |e: Edition| {
+        entries
+            .iter()
+            .flatten()
+            .find(|x| x.edition == e)
+            .cloned()
+            .expect("the entry")
+    };
+    let mut retail = entry(Edition::Retail);
+    assert_eq!(retail.mark, MIDNIGHT);
+    assert_eq!(entry(Edition::Forever).mark, FOREVER);
+    retail.note = None;
+    assert_eq!(chip_tip(&retail), retail.tip);
+    retail.note = Some(PLAYING_NOW);
+    assert_eq!(chip_tip(&retail), format!("{}, playing now", retail.tip));
+}
+
+/// With several games known, the game a header would lead its words with
+/// is a tag of its own — the mark and the name — and the words are the
+/// meta alone; with one game known the line is as it always was, and a
+/// fight that names no other game has no tag.
+#[test]
+fn a_fight_header_tags_its_game_once_several_are_known() {
+    let heroic = || "Heroic, 20 players".to_string();
+    let b = Some((12, 0, 0));
+    assert_eq!(
+        header_parts(heroic(), Some(Edition::Forever), None, b),
+        (None, "Forever, Heroic, 20 players".to_string()),
+        "one game known: the words as ever"
+    );
+    let (tag, words) = header_parts(heroic(), Some(Edition::Forever), Some(Edition::Forever), b);
+    assert_eq!(words, heroic());
+    assert_eq!(
+        tag,
+        Some(Tag {
+            edition: Edition::Forever,
+            name: "Forever".to_string(),
+            mark: FOREVER
+        })
+    );
+    let (tag, words) = header_parts(heroic(), Some(Edition::Retail), Some(Edition::Forever), b);
+    assert_eq!(words, heroic());
+    assert_eq!(
+        tag.map(|t| (t.name, t.mark)),
+        Some(("Midnight".to_string(), MIDNIGHT))
+    );
+    assert_eq!(
+        header_parts(heroic(), Some(Edition::Retail), Some(Edition::Retail), b),
+        (None, heroic())
+    );
+    assert_eq!(
+        header_parts(String::new(), None, Some(Edition::Forever), b),
+        (None, String::new())
+    );
+}

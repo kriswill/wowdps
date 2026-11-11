@@ -85,11 +85,18 @@ pub enum Glyph {
     // meter.
     Expand,
     Collapse,
+    // The games' marks (`editions::Mark`): ours, drawn in this table's
+    // language, never a game's logo. Midnight's crescent, Forever's loop,
+    // Classic's hourglass, and a ring for a game this build does not know.
+    Moon,
+    Infinity,
+    Hourglass,
+    Ring,
 }
 
 impl Glyph {
     /// Every glyph, for the tests that draw them all.
-    pub const ALL: [Glyph; 24] = [
+    pub const ALL: [Glyph; 28] = [
         Glyph::Sword,
         Glyph::Cross,
         Glyph::Shield,
@@ -114,6 +121,10 @@ impl Glyph {
         Glyph::Check,
         Glyph::Expand,
         Glyph::Collapse,
+        Glyph::Moon,
+        Glyph::Infinity,
+        Glyph::Hourglass,
+        Glyph::Ring,
     ];
 
     /// The glyph a view's tab wears — the prototype's `VIEWS` table.
@@ -293,6 +304,55 @@ impl Glyph {
                 poly(&[(6.8, 12.4), (6.8, 9.2), (3.6, 9.2)], false),
                 line((6.8, 9.2), (3.2, 12.8)),
             ],
+            // A crescent of two arcs, its horns to the upper right: the
+            // circle r5.5 round (8, 8), less the circle r4.6 round its
+            // center moved 2.5 toward 320°. M13.28 9.53A5.5 5.5 0 1 1 7.42
+            // 2.53 M13.28 9.53A4.6 4.6 0 1 1 7.42 2.53 — each arc drawn
+            // clockwise, the outer one round the left, the inner one
+            // through the side that faces the center.
+            Glyph::Moon => vec![Shape::Path(vec![
+                Seg::Arc {
+                    center: (8.0, 8.0),
+                    radius: 5.5,
+                    start: 0.2809,
+                    end: 4.6060,
+                },
+                Seg::Arc {
+                    center: (9.9151, 6.3930),
+                    radius: 4.6,
+                    start: 0.7489,
+                    end: 4.1381,
+                },
+            ])],
+            // One continuous loop through the center: M8 8C9.8 5.3 13.7 4.6
+            // 13.7 8S9.8 10.7 8 8S2.3 4.6 2.3 8S6.2 10.7 8 8 — four cubics,
+            // each tangent to the next.
+            Glyph::Infinity => vec![Shape::Path(vec![
+                Move((8.0, 8.0)),
+                Cubic((9.8, 5.3), (13.7, 4.6), (13.7, 8.0)),
+                Cubic((13.7, 11.4), (9.8, 10.7), (8.0, 8.0)),
+                Cubic((6.2, 5.3), (2.3, 4.6), (2.3, 8.0)),
+                Cubic((2.3, 11.4), (6.2, 10.7), (8.0, 8.0)),
+            ])],
+            // M4 2.5h8 M4 13.5h8 M5.2 2.5h5.6L8 8l2.8 5.5H5.2L8 8z: two
+            // glasses meeting at the waist, between their caps
+            Glyph::Hourglass => vec![
+                line((4.0, 2.5), (12.0, 2.5)),
+                line((4.0, 13.5), (12.0, 13.5)),
+                poly(
+                    &[
+                        (5.2, 2.5),
+                        (10.8, 2.5),
+                        (8.0, 8.0),
+                        (10.8, 13.5),
+                        (5.2, 13.5),
+                        (8.0, 8.0),
+                    ],
+                    true,
+                ),
+            ],
+            // circle 8,8 r3.8: no game's, a game this build does not know
+            Glyph::Ring => vec![circle(8.0, 8.0, 3.8)],
             // circle r2.2 and eight spokes
             Glyph::Gear => vec![
                 circle(8.0, 8.0, 2.2),
