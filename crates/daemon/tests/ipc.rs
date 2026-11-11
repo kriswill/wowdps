@@ -730,6 +730,121 @@ fn real_log_first_snapshot_is_fast_cold_and_faster_warm() {
     first_snapshot("warm", 100);
 }
 
+/// Manual perf gate: what a second edition's source costs while no game
+/// writes it. Run alone, in release:
+/// `cargo test --release -p wowdps-daemon --test ipc -- --ignored idle_edition --nocapture`
+/// Each daemon idles at production's tick with a window watching its live
+/// segment; the CPU its own threads spend (`/proc/self/task/*/schedstat`,
+/// the threads it started) over the idle stretch is printed per source
+/// set: Retail's log alone, beside a missing Forever folder, and beside an
+/// idle Forever log. The second source must cost under a millisecond of
+/// CPU per second.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "a timing measurement: run it alone, in release"]
+fn an_idle_edition_costs_close_to_nothing() {
+    use std::collections::HashMap;
+    use wowdps_model::Edition;
+    /// Each thread of this process and the nanoseconds it has run.
+    fn tasks() -> HashMap<u64, u64> {
+        let mut out = HashMap::new();
+        for e in std::fs::read_dir("/proc/self/task")
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let tid = e.file_name().to_string_lossy().parse::<u64>();
+            let ns = std::fs::read_to_string(e.path().join("schedstat"))
+                .ok()
+                .and_then(|s| s.split_whitespace().next()?.parse::<u64>().ok());
+            if let (Ok(tid), Some(ns)) = (tid, ns) {
+                out.insert(tid, ns);
+            }
+        }
+        out
+    }
+    const IDLE: Duration = Duration::from_secs(5);
+    let tmp = Temp::new("idle-edition");
+    let retail = tmp.join("retail");
+    let forever = tmp.join("forever");
+    assert!(std::fs::create_dir_all(&retail).is_ok());
+    assert!(std::fs::create_dir_all(&forever).is_ok());
+    assert!(std::fs::copy(FIXTURE, retail.join("WoWCombatLog-072726_200000.txt")).is_ok());
+    let forever_fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+    assert!(
+        std::fs::copy(
+            forever_fixture,
+            forever.join("WoWCombatLog-110126_200000.txt")
+        )
+        .is_ok()
+    );
+    let missing = tmp.join("missing");
+    // What is followed beside Retail's log, and how many sources `Status`
+    // lists once every listed one holds its log.
+    let sets = [
+        ("Retail alone", Vec::<(Edition, PathBuf)>::new(), 1),
+        (
+            "beside a missing Forever folder",
+            vec![(Edition::Forever, missing)],
+            1,
+        ),
+        (
+            "beside an idle Forever log",
+            vec![(Edition::Forever, forever)],
+            2,
+        ),
+    ];
+    let mut cost = Vec::new();
+    for (what, more, listed) in sets {
+        let before = tasks();
+        let mut opts = options(&tmp, SourceSpec::Dir(retail.clone()));
+        opts.tick = Duration::from_millis(100);
+        opts.editions = wowdps_daemon::Followed {
+            source: Some(Edition::Retail),
+            more,
+        };
+        let d = start(opts);
+        let mut c = Client::hello(&d.socket);
+        c.watch_live(View::Damage, None);
+        // Caught up: every source listed with its log, then a second more.
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            assert!(Instant::now() < deadline, "{what}: never listed");
+            c.send(&ClientMsg::GetStatus { req_id: 1 });
+            let st = c.recv_until(&mut Vec::new(), |m| matches!(m, DaemonMsg::Status { .. }));
+            if let DaemonMsg::Status { editions, .. } = st
+                && editions.len() == listed
+                && editions.iter().all(|e| e.log.is_some())
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        thread::sleep(Duration::from_secs(1));
+        let ours = |now: &HashMap<u64, u64>| -> u64 {
+            now.iter()
+                .filter(|(tid, _)| !before.contains_key(tid))
+                .map(|(_, ns)| *ns)
+                .sum()
+        };
+        let (t0, at) = (ours(&tasks()), Instant::now());
+        thread::sleep(IDLE);
+        let (t1, secs) = (ours(&tasks()), at.elapsed().as_secs_f64());
+        let per_s = (t1.saturating_sub(t0)) as f64 / 1e6 / secs;
+        println!("{what}: {per_s:.3} ms of CPU per second idle");
+        cost.push(per_s);
+        c.send(&ClientMsg::Shutdown);
+        let _ = d.done.recv_timeout(DEADLINE);
+    }
+    for (i, c) in cost.iter().enumerate().skip(1) {
+        assert!(
+            c - cost[0] < 1.0,
+            "set {i} costs {c:.3} ms/s against {:.3}",
+            cost[0]
+        );
+    }
+}
+
 /// v49 end to end: a daemon following two editions' folders, one source
 /// and one engine each. `Status` lists both, the live one marked; a session
 /// pinned to Retail is answered Retail's log whichever is live; a
