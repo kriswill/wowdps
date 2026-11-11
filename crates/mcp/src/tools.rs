@@ -14,8 +14,9 @@ use wowdps_model::{
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
-    Breakdown, Cursor, DeathWindow, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night,
-    OriginFilter, OverlayState, SegmentRef, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    Breakdown, Cursor, DeathWindow, EditionRef, FightSort, HistoryAnswer, HistoryQuery, ListEntry,
+    Night, OriginFilter, OverlayState, SegmentRef, StoredUptime, TrendBucket, TrendMeasure,
+    TrendPoint,
 };
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -71,18 +72,46 @@ pub fn catalog() -> Vec<Tool> {
             ),
         }
     };
-    // v49: the history tools' edition filter.
-    let edition_arg = || {
+    // v49: one `edition` shape on every tool that takes one; what its
+    // absence means is the tool's.
+    let edition_of = |what: &str| {
         obj! {
             "type": Json::Arr(vec![Json::str("string"), Json::str("integer")]),
-            "description": Json::str(
-                "Only fights of this game edition: retail or forever, or the PROJECT_ID \
-                 its log names (a Classic client by its number). A card stored before \
-                 its log carried the number (project_id 0) counts with retail, so \
-                 edition 0 answers exactly as retail does: retail's cards and those. \
-                 Absent: every edition, each fight naming its own.",
-            ),
+            "description": Json::str(format!(
+                "The game edition: retail or forever, or the PROJECT_ID its log names \
+                 (a Classic client by its number; 0, a card stored before its log \
+                 carried the number, counts with retail). {what}"
+            )),
         }
+    };
+    let edition_arg = || {
+        edition_of(
+            "Only fights of this edition. Absent: every edition, each fight naming \
+             its own, and a player named by name is looked up inside one edition, \
+             among each edition's newest 500 fights (a name that is a player in two \
+             editions' fights there is an error naming both).",
+        )
+    };
+    let edition_boss = || {
+        edition_of(
+            "Only this edition's pulls. Absent: each edition with pulls of the boss \
+             is answered on its own — one edition is the answer itself, more are \
+             editions[] — never counted or ranked together.",
+        )
+    };
+    let edition_live = || {
+        edition_of(
+            "Look in this edition: its list and its live fight. Absent: follow the \
+             live edition (status's live_edition: the running game's, else the one \
+             whose log was written last). A segment_id names one fight of one \
+             edition either way; one of another edition than this names is an error.",
+        )
+    };
+    let edition_trees = || {
+        edition_of(
+            "Whose talent trees answer: each edition's are its own per-machine file. \
+             Default retail.",
+        )
     };
     let mut tools = vec![
         Tool {
@@ -90,7 +119,8 @@ pub fn catalog() -> Vec<Tool> {
             description: "Daemon and game state: what log is followed, whether the game is \
                           running, and whether a fight is happening right now. `editions` \
                           lists each game edition's source (v49): its edition (null before \
-                          the log names one), what is followed, the log, and which is live.",
+                          the log names one), what is followed, the log, and which is live; \
+                          `live_edition` names the live one, which the live tools follow.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {},
@@ -102,10 +132,14 @@ pub fn catalog() -> Vec<Tool> {
                           (win/loss), trash stretches, and per-visit Overall totals for \
                           dungeons/raids (keystone runs include their par timers). Returns \
                           ids for the other tools. Each fight, and the list, names its game \
-                          `edition` (retail, forever, classic or unknown) — the live one's.",
+                          `edition` (retail, forever, classic or unknown): the live one's, or \
+                          the one `edition` pins (an edition the daemon follows no log of \
+                          lists nothing).",
             schema: obj! {
                 "type": Json::str("object"),
-                "properties": obj! {},
+                "properties": obj! {
+                    "edition": edition_live(),
+                },
             },
         },
         Tool {
@@ -132,12 +166,14 @@ pub fn catalog() -> Vec<Tool> {
                           team, never one of the group's deaths) and the lust windows \
                           (Bloodlust and kin). Drill a \
                           player with `breakdown` for their curve and marks (trinkets, \
-                          consumables, and the R18 role auras with their caster).",
+                          consumables, and the R18 role auras with their caster). The fight \
+                          object names its game `edition`; `edition` pins one (v49).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
                     "segment_id": segment_id(),
                     "view": view(),
+                    "edition": edition_live(),
                     "top": obj! {
                         "type": Json::str("integer"),
                         "description": Json::str("Only the top N rows. Default: all."),
@@ -204,13 +240,16 @@ pub fn catalog() -> Vec<Tool> {
                           summing to the row), `misses` + `miss_pct` (the player's own \
                           misses under that name, of hits + misses) and a DoT's \
                           `uptime_pct` (the union of its debuff on any enemy over the \
-                          fight); `ability_groups` totals each group.",
+                          fight); `ability_groups` totals each group. The player is looked \
+                          up in that one fight, so in one game edition, which the fight \
+                          object names; `edition` pins one (v49).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
                     "segment_id": segment_id(),
                     "player": player("The player to drill into"),
                     "view": view(),
+                    "edition": edition_live(),
                     "death": obj! {
                         "type": Json::str("integer"),
                         "description": Json::str(
@@ -253,7 +292,9 @@ pub fn catalog() -> Vec<Tool> {
                           stored before its log carried the number, counted with retail, \
                           else a number this build does not know), `edition_name` and \
                           `project_id`; `edition` narrows to one edition, and without it \
-                          an encounter id two editions share lists both. Each \
+                          an encounter id two editions share lists both. A `player` named by \
+                          name is looked up inside one edition, and the answer's `edition` \
+                          names the one it is of (null: every edition). Each \
                           fight's `me` block is the requested `player`'s graded row when \
                           `player` is given, else the owner's. The `me` / \
                           `peer` rows carry two grades: the legacy DPS-pool block (rank_dps, \
@@ -385,9 +426,11 @@ pub fn catalog() -> Vec<Tool> {
             name: "progression",
             description: "Pulls-to-kill progression on one boss + difficulty from the \
                           history store: total pulls, kills, the first kill, a per-night \
-                          breakdown and the median kill time. first_kill and best_kill \
-                          name their game `edition`; an encounter id two editions share \
-                          counts both editions' pulls unless `edition` names one.",
+                          breakdown and the median kill time. The answer names its game \
+                          `edition`, as do first_kill and best_kill. An encounter id two \
+                          editions share is never counted together: without `edition`, \
+                          each edition with pulls is answered on its own, as editions[] \
+                          (v49).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -396,7 +439,7 @@ pub fn catalog() -> Vec<Tool> {
                         "description": Json::str("ENCOUNTER_START encounter id."),
                     },
                     "difficulty": difficulty_arg(),
-                    "edition": edition_arg(),
+                    "edition": edition_boss(),
                 },
                 "required": Json::Arr(vec![Json::str("encounter"), Json::str("difficulty")]),
             },
@@ -423,7 +466,10 @@ pub fn catalog() -> Vec<Tool> {
                           progression's night row (date, night_local, day_utc_ms, pulls, \
                           kill, kills, best_pct). A fixed daemon question over the card \
                           index — the same answer `wowdps history role-night` gives from \
-                          SQL.",
+                          SQL. The answer names its game `edition`; two editions' players \
+                          are never ranked together: without `edition`, each edition that \
+                          pulled the boss that night is its own roster, as editions[] \
+                          (v49).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -466,7 +512,7 @@ pub fn catalog() -> Vec<Tool> {
                         "type": Json::str("integer"),
                         "description": Json::str("0..=23, default 6; implies bucket: local."),
                     },
-                    "edition": edition_arg(),
+                    "edition": edition_boss(),
                 },
                 "required": Json::Arr(vec![Json::str("encounter"), Json::str("difficulty")]),
             },
@@ -507,7 +553,9 @@ pub fn catalog() -> Vec<Tool> {
                           ratios (role_night's night efficiency IS a pooled ratio). \
                           Scope with spec, encounter and difficulty; since_utc_ms scopes \
                           to a game build's era. Deprecated: `view: damage|healing` is \
-                          still accepted for one release as an alias for measure dps|hps.",
+                          still accepted for one release as an alias for measure dps|hps. \
+                          The answer names its game `edition`: the player's, whose name is \
+                          looked up inside one edition (v49).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -755,12 +803,16 @@ pub fn catalog() -> Vec<Tool> {
                           at or before this fight, so an open-world fight after \
                           an instance carries that instance's build (stale if the \
                           player respecced or regeared since), and logged: false \
-                          means none has fired yet in this log.",
+                          means none has fired yet in this log — or, on a Forever fight, \
+                          that its edition's log carries no builds at all (no \
+                          COMBATANT_INFO). The fight names its game `edition`, whose \
+                          talent dataset names the picks; `edition` pins one (v49).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
                     "segment_id": segment_id(),
                     "player": player("The player whose build to fetch"),
+                    "edition": edition_live(),
                 },
                 "required": Json::Arr(vec![Json::str("player")]),
             },
@@ -771,7 +823,11 @@ pub fn catalog() -> Vec<Tool> {
                           positions, ranks, choice entries, spell ids/names/icons, hero \
                           subtrees, point gates, and the node walk order of the in-game \
                           import string. Needs the per-machine dataset from \
-                          tools/gen-talent-trees.sh.",
+                          tools/gen-talent-trees.sh. `edition` picks whose trees (v49): \
+                          retail's talents.json by default, forever's its own file beside \
+                          it (forever/talents.json); an edition with none is an error \
+                          naming the file and the generator. The answer names its \
+                          `edition`.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -781,6 +837,7 @@ pub fn catalog() -> Vec<Tool> {
                             "ChrSpecialization id (e.g. 266 = Demonology Warlock).",
                         ),
                     },
+                    "edition": edition_trees(),
                 },
                 "required": Json::Arr(vec![Json::str("spec_id")]),
             },
@@ -790,7 +847,8 @@ pub fn catalog() -> Vec<Tool> {
             description: "Decode an in-game talent import/export string (the one from the \
                           talent pane or a SimC export's talents= line) into the chosen \
                           spec, hero tree, and every selected node with ranks and choice \
-                          picks, named from local game data.",
+                          picks, named from local game data — the `edition`'s trees, as \
+                          talent_tree reads them.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -798,6 +856,7 @@ pub fn catalog() -> Vec<Tool> {
                         "type": Json::str("string"),
                         "description": Json::str("The talent import string."),
                     },
+                    "edition": edition_trees(),
                 },
                 "required": Json::Arr(vec![Json::str("string")]),
             },
@@ -807,7 +866,8 @@ pub fn catalog() -> Vec<Tool> {
             description: "Build an in-game talent import string from a spec id and a list \
                           of node selections ({node_id, ranks?, choice_index?}); ranks \
                           default to the node's maximum. The game client validates the \
-                          result on import.",
+                          result on import. `edition` picks whose trees, as talent_tree \
+                          reads them.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -830,6 +890,7 @@ pub fn catalog() -> Vec<Tool> {
                             "required": Json::Arr(vec![Json::str("node_id")]),
                         },
                     },
+                    "edition": edition_trees(),
                 },
                 "required": Json::Arr(vec![Json::str("spec_id"), Json::str("selections")]),
             },
@@ -838,13 +899,16 @@ pub fn catalog() -> Vec<Tool> {
             name: "compare",
             description: "Two players of one fight side by side: totals, per-ability tables \
                           and both DPS curves on one clock — the tool for 'why is their \
-                          number bigger than mine'.",
+                          number bigger than mine'. Both are looked up in that one fight, \
+                          so in one game edition, which the fight object names; `edition` \
+                          pins one (v49).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
                     "segment_id": segment_id(),
                     "a": player("One side"),
                     "b": player("The other side"),
+                    "edition": edition_live(),
                 },
                 "required": Json::Arr(vec![Json::str("a"), Json::str("b")]),
             },
@@ -944,6 +1008,17 @@ pub fn catalog() -> Vec<Tool> {
 /// Run one tool. `Err` is a tool-level failure (bad args, no such fight) —
 /// reported to the harness as `isError`, never as a protocol fault.
 pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String> {
+    // v49: the live tools look in the edition their `edition` names, else
+    // follow the live one; every other tool asks in no edition of its own.
+    let live = matches!(
+        name,
+        "list_fights" | "fight" | "breakdown" | "loadout" | "compare"
+    );
+    bridge.set_scope(if live {
+        arg_edition(args)?.map_or(EditionRef::Follow, EditionRef::Pin)
+    } else {
+        EditionRef::Follow
+    });
     match name {
         "status" => status(bridge),
         "list_fights" => list_fights(bridge),
@@ -960,21 +1035,35 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         "regrade_fights" => regrade_fights(bridge, args),
         "pin_fight" => pin_fight(bridge, args),
         "history_sql" => history_sql(args),
-        // The talent tools read the per-machine dataset, never the daemon.
-        "talent_tree" => crate::talents::tree_view(crate::talents::load()?, arg_spec_id(args)?),
+        // The talent tools read the per-machine dataset, never the daemon:
+        // v49, the `edition`'s (Retail's without one).
+        "talent_tree" => {
+            let edition = talent_edition(args)?;
+            let tree =
+                crate::talents::tree_view(crate::talents::load_in(edition)?, arg_spec_id(args)?);
+            tree.map(|doc| with_edition(doc, edition))
+        }
         "decode_talents" => {
+            let edition = talent_edition(args)?;
             let string = args
                 .get("string")
                 .and_then(Json::as_str)
                 .ok_or("decode_talents requires a string")?;
-            crate::talents::decode(crate::talents::load()?, string)
+            crate::talents::decode(crate::talents::load_in(edition)?, string)
+                .map(|doc| with_edition(doc, edition))
         }
         "encode_talents" => {
+            let edition = talent_edition(args)?;
             let selections = match args.get("selections") {
                 Some(Json::Arr(s)) => s.clone(),
                 _ => return Err("encode_talents requires a selections array".into()),
             };
-            crate::talents::encode(crate::talents::load()?, arg_spec_id(args)?, &selections)
+            crate::talents::encode(
+                crate::talents::load_in(edition)?,
+                arg_spec_id(args)?,
+                &selections,
+            )
+            .map(|doc| with_edition(doc, edition))
         }
         other => Err(format!("no such tool {other:?}")),
     }
@@ -994,9 +1083,15 @@ fn status(bridge: &mut Bridge) -> Result<Json, String> {
         "source": opt_str(s.source),
         "game_running": Json::Bool(s.game_running),
         "fight_active": Json::Bool(active),
-        // v49: each game edition's source — today the one — and which is
-        // live: the one the live tools answer from.
+        // v49: each game edition's source and which is live: the one the
+        // live tools follow when no `edition` pins one.
         "editions": Json::Arr(s.editions.iter().map(edition_source_json).collect()),
+        "live_edition": s
+            .editions
+            .iter()
+            .find(|e| e.live)
+            .and_then(|e| e.edition)
+            .map_or(Json::Null, |e| Json::str(e.key())),
         "clients": Json::u64(s.clients as u64),
         "overlay": Json::str(match s.overlay {
             OverlayState::Absent => "absent".to_string(),
@@ -1169,6 +1264,24 @@ fn arg_edition(args: &Json) -> Result<Option<Edition>, String> {
     })
 }
 
+/// v49: the talent tools' `edition`: whose trees answer — Retail's
+/// without one, and for edition 0, which counts as Retail.
+fn talent_edition(args: &Json) -> Result<Edition, String> {
+    Ok(arg_edition(args)?.map_or(Edition::Retail, |e| e.canonical().counts_as()))
+}
+
+/// `doc` with the edition it answers for named last, by key.
+fn with_edition(doc: Json, edition: Edition) -> Json {
+    match doc {
+        Json::Obj(mut o) => {
+            o.retain(|(k, _)| k != "edition");
+            o.push(("edition".to_string(), Json::str(edition.key())));
+            Json::Obj(o)
+        }
+        other => other,
+    }
+}
+
 /// `history`'s `role` filter: the SUBJECT's role, not a roster filter.
 fn arg_role(args: &Json) -> Result<Option<Role>, String> {
     match args
@@ -1185,44 +1298,218 @@ fn arg_role(args: &Json) -> Result<Option<Role>, String> {
     }
 }
 
+/// How many of the newest cards a player's name is looked up among, per
+/// window ([`name_windows`]).
+const NAME_WINDOW: u32 = 500;
+
+/// The windows a name is looked up in: the filter's edition's newest
+/// cards; without a filter, every edition's newest and Retail's and
+/// Forever's newest each too, so one edition's many recent fights never
+/// hide another's player of the same name.
+fn name_windows(edition: Option<Edition>) -> Vec<Option<Edition>> {
+    match edition {
+        Some(e) => vec![Some(e)],
+        None => vec![None, Some(Edition::Retail), Some(Edition::Forever)],
+    }
+}
+
 /// A `player` argument as a guid: a "Player-…" key passes through; a name
-/// is looked up among the store's cards (case-insensitive).
-fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<String>, String> {
+/// is looked up (case-insensitive) among the newest [`NAME_WINDOW`] cards
+/// of each of [`name_windows`] — of `edition`, the call's filter, else of
+/// every edition and of Retail and Forever each. v49: inside ONE edition —
+/// without a filter, a name that is a player in two editions' fights is
+/// two characters of two games, and the answer says so rather than pick
+/// one. With the guid, the edition (by `Edition::counts_as`) the name was
+/// found in, else the filter's.
+fn history_subject(
+    bridge: &mut Bridge,
+    args: &Json,
+    key: &str,
+    edition: Option<Edition>,
+) -> Result<Option<(String, Option<Edition>)>, String> {
     let Some(who) = args.get(key).and_then(Json::as_str) else {
         return Ok(None);
     };
+    let edition = edition.map(|e| e.canonical().counts_as());
     if who.starts_with("Player-") {
-        return Ok(Some(who.to_string()));
+        return Ok(Some((who.to_string(), edition)));
     }
-    let cards = match bridge.history(HistoryQuery::Fights {
-        encounter: None,
-        difficulty: None,
-        guid: None,
-        since_utc_ms: None,
-        kind: None,
-        sort: FightSort::Newest,
-        limit: 500,
-        after_id: None,
-        role: None,
-        origin: OriginFilter::Local,
-        edition: arg_edition(args)?,
-    })? {
-        HistoryAnswer::Fights { cards, .. } => cards,
-        _ => Vec::new(),
-    };
     let want = who.to_lowercase();
-    cards
-        .iter()
-        .flat_map(|c| c.players.iter())
-        .find(|p| {
-            p.name.to_lowercase() == want || p.name.to_lowercase().starts_with(&format!("{want}-"))
-        })
-        .map(|p| Some(p.guid.clone()))
-        .ok_or_else(|| format!("no stored fight has a player named {who:?}"))
+    let named = |p: &&CardPlayer| {
+        p.name.to_lowercase() == want || p.name.to_lowercase().starts_with(&format!("{want}-"))
+    };
+    // Each edition's newest match: (edition, name, guid).
+    let mut found: Vec<(Edition, String, String)> = Vec::new();
+    for window in name_windows(edition) {
+        let cards = match bridge.history(HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: NAME_WINDOW,
+            after_id: None,
+            role: None,
+            origin: OriginFilter::Local,
+            edition: window,
+        })? {
+            HistoryAnswer::Fights { cards, .. } => cards,
+            _ => Vec::new(),
+        };
+        for c in &cards {
+            let e = c.edition().counts_as();
+            if found.iter().any(|(f, _, _)| *f == e) {
+                continue;
+            }
+            if let Some(p) = c.players.iter().find(named) {
+                found.push((e, p.name.clone(), p.guid.clone()));
+            }
+        }
+    }
+    match found.as_slice() {
+        [] => Err(format!(
+            "no stored fight has a player named {who:?} (among each edition's newest \
+             {NAME_WINDOW}; pass the GUID for an older one)"
+        )),
+        [(e, _, guid)] => Ok(Some((guid.clone(), Some(*e)))),
+        many => Err(format!(
+            "{who:?} is a player in more than one game edition's fights ({}): pass edition, \
+             or the player's GUID",
+            many.iter()
+                .map(|(e, name, guid)| format!("{}: {name} {guid}", e.key()))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )),
+    }
+}
+
+/// [`history_subject`]'s guid alone.
+fn history_guid(
+    bridge: &mut Bridge,
+    args: &Json,
+    key: &str,
+    edition: Option<Edition>,
+) -> Result<Option<String>, String> {
+    Ok(history_subject(bridge, args, key, edition)?.map(|(guid, _)| guid))
+}
+
+/// v49: an answer's edition by key and PROJECT_ID — the one its filter
+/// named or its subject was found in, as it is reckoned
+/// (`Edition::counts_as`); null for every edition.
+fn edition_label(out: &mut Vec<(String, Json)>, edition: Option<Edition>) {
+    let edition = edition.map(|e| e.canonical().counts_as());
+    out.push((
+        "edition".to_string(),
+        edition.map_or(Json::Null, |e| Json::str(e.key())),
+    ));
+    out.push((
+        "project_id".to_string(),
+        edition.map_or(Json::Null, |e| Json::u64(u64::from(e.project_id()))),
+    ));
+}
+
+/// v49: the editions the store holds pulls of a boss + difficulty in (by
+/// `Edition::counts_as`, as `Progression` counts them), Retail first: what
+/// a question that names no edition is answered per edition from, so no
+/// count, best or ranking crosses two games.
+fn editions_with_pulls(
+    bridge: &mut Bridge,
+    encounter: u32,
+    difficulty: u32,
+) -> Result<Vec<Edition>, String> {
+    let pulls = |bridge: &mut Bridge, edition: Option<Edition>| -> Result<u32, String> {
+        match bridge.history(HistoryQuery::Progression {
+            encounter,
+            difficulty,
+            local_cutover_hour: None,
+            edition,
+        })? {
+            HistoryAnswer::Progression { pulls, .. } => Ok(pulls),
+            _ => Err("unexpected answer".to_string()),
+        }
+    };
+    let all = pulls(bridge, None)?;
+    let mut found = Vec::new();
+    let mut counted = 0;
+    for e in [Edition::Retail, Edition::Forever] {
+        if counted == all {
+            return Ok(found);
+        }
+        let n = pulls(bridge, Some(e))?;
+        if n > 0 {
+            found.push(e);
+            counted += n;
+        }
+    }
+    // The rest are some other edition's — a Classic client's, a number
+    // this build does not know — and their cards name it.
+    let mut seen = vec![Edition::Retail, Edition::Forever];
+    let mut after_id = None;
+    while counted < all {
+        let HistoryAnswer::Fights { cards, .. } = bridge.history(HistoryQuery::Fights {
+            encounter: Some(encounter),
+            difficulty: Some(difficulty),
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: 500,
+            after_id: after_id.take(),
+            role: None,
+            origin: OriginFilter::Local,
+            edition: None,
+        })?
+        else {
+            return Err("unexpected answer".to_string());
+        };
+        let Some(last) = cards.last() else {
+            break;
+        };
+        after_id = Some(last.id.clone());
+        for e in cards.iter().map(|c| c.edition().counts_as()) {
+            if seen.contains(&e) {
+                continue;
+            }
+            seen.push(e);
+            // A card that is no pull (an aborted one) names no edition
+            // with pulls.
+            let n = pulls(bridge, Some(e))?;
+            if n > 0 {
+                found.push(e);
+                counted += n;
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// One answer per edition when a question named none and the boss's pulls
+/// are in more than one: `{encounter, difficulty, …, editions: [answer per
+/// edition], note}`. One answer (or none) is that answer, as before.
+fn per_edition(mut answers: Vec<Json>, head: Vec<(String, Json)>) -> Json {
+    if answers.len() <= 1 {
+        return answers.pop().unwrap_or(Json::Null);
+    }
+    let mut out = head;
+    out.push(("editions".to_string(), Json::Arr(answers)));
+    out.push((
+        "note".to_string(),
+        Json::str(
+            "this boss's id has pulls in more than one game edition: each edition is \
+             answered on its own, never counted together — pass edition for one",
+        ),
+    ));
+    Json::Obj(out)
 }
 
 fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let guid = history_guid(bridge, args, "player")?;
+    let filter = arg_edition(args)?;
+    let subject = history_subject(bridge, args, "player", filter)?;
+    // A player's fights are their edition's: a name is looked up inside
+    // one, and the answer stays in it.
+    let edition = filter.or(subject.as_ref().and_then(|(_, e)| *e));
+    let guid = subject.map(|(g, _)| g);
     let has_guid = guid.is_some();
     let role = arg_role(args)?;
     let kind = match args.get("kind").and_then(Json::as_str) {
@@ -1258,7 +1545,7 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         // a no-op when the store has neither, which `role_applied` reports.
         role,
         origin: OriginFilter::Local,
-        edition: arg_edition(args)?,
+        edition,
     })?;
     let HistoryAnswer::Fights { cards, total } = answer else {
         return Err("unexpected answer".to_string());
@@ -1270,7 +1557,7 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         Some("all") => Players::All,
         // Any other value names a player: their row rides as `peer`.
         Some(_) => {
-            peer_guid = history_guid(bridge, args, "players")?
+            peer_guid = history_guid(bridge, args, "players", edition)?
                 .ok_or("players: give me, none, all, or a player name / GUID")?;
             Players::Peer(&peer_guid)
         }
@@ -1279,6 +1566,9 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ("count".to_string(), Json::u64(cards.len() as u64)),
         ("total".to_string(), Json::u64(u64::from(total))),
     ];
+    // v49: the edition the fights are of; null for every edition, each
+    // card naming its own.
+    edition_label(&mut out, edition);
     if role.is_some() {
         // The daemon filters on the subject's role and silently skips the
         // filter without a subject; the owner stamp on the cards is the
@@ -1317,11 +1607,54 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let encounter = arg_u32(args, "encounter").ok_or("progression requires encounter")?;
     let difficulty = arg_difficulty(args)?.ok_or("progression requires difficulty")?;
     let cutover = arg_cutover(args)?;
+    // v49: one edition's pulls, as asked; else each edition's on its own.
+    let editions = match arg_edition(args)? {
+        Some(e) => vec![Some(e)],
+        None => match editions_with_pulls(bridge, encounter, difficulty)?.as_slice() {
+            [] => vec![None],
+            found => found.iter().copied().map(Some).collect(),
+        },
+    };
+    let answers = editions
+        .into_iter()
+        .map(|e| progression_in(bridge, encounter, difficulty, cutover, e))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(per_edition(
+        answers,
+        bucket_head(encounter, difficulty, cutover),
+    ))
+}
+
+/// The head a per-edition answer of a boss carries: the boss, its
+/// difficulty and how its nights are bucketed.
+fn bucket_head(encounter: u32, difficulty: u32, cutover: Option<u8>) -> Vec<(String, Json)> {
+    vec![
+        ("encounter".to_string(), Json::u64(u64::from(encounter))),
+        ("difficulty".to_string(), Json::u64(u64::from(difficulty))),
+        (
+            "bucket".to_string(),
+            Json::str(if cutover.is_some() { "local" } else { "utc" }),
+        ),
+        (
+            "cutover_hour".to_string(),
+            cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
+        ),
+    ]
+}
+
+/// `progression` of one edition's pulls (`None`: every edition's).
+fn progression_in(
+    bridge: &mut Bridge,
+    encounter: u32,
+    difficulty: u32,
+    cutover: Option<u8>,
+    edition: Option<Edition>,
+) -> Result<Json, String> {
     let answer = bridge.history(HistoryQuery::Progression {
         encounter,
         difficulty,
         local_cutover_hour: cutover,
-        edition: arg_edition(args)?,
+        edition,
     })?;
     let HistoryAnswer::Progression {
         pulls,
@@ -1345,12 +1678,12 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         after_id: None,
         role: None,
         origin: OriginFilter::Local,
-        edition: arg_edition(args)?,
+        edition,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next(),
         _ => None,
     };
-    Ok(obj! {
+    let doc = obj! {
         "encounter": Json::u64(u64::from(encounter)),
         "difficulty": Json::u64(u64::from(difficulty)),
         "pulls": Json::u64(u64::from(pulls)),
@@ -1362,7 +1695,13 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         "bucket": Json::str(if cutover.is_some() { "local" } else { "utc" }),
         "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
         "nights": Json::Arr(nights.iter().map(night_json).collect()),
-    })
+    };
+    let Json::Obj(mut out) = doc else {
+        return Err("progression shaped no object".to_string());
+    };
+    // v49: whose pulls these are.
+    edition_label(&mut out, edition);
+    Ok(Json::Obj(out))
 }
 
 /// v26 (step 5): one night of one boss as a role roster. The night is named
@@ -1374,6 +1713,39 @@ fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let encounter = arg_u32(args, "encounter").ok_or("role_night requires encounter")?;
     let difficulty = arg_difficulty(args)?.ok_or("role_night requires difficulty")?;
     let cutover = arg_cutover(args)?;
+    // v49: one edition's roster, as asked; else each edition's that
+    // pulled the boss that night, on its own — never one ranking of two
+    // games' players.
+    let Some(asked) = arg_edition(args)? else {
+        let mut answers = Vec::new();
+        for e in editions_with_pulls(bridge, encounter, difficulty)? {
+            let (doc, pulls) =
+                role_night_in(bridge, args, encounter, difficulty, cutover, Some(e))?;
+            if pulls > 0 {
+                answers.push(doc);
+            }
+        }
+        if answers.is_empty() {
+            return Ok(role_night_in(bridge, args, encounter, difficulty, cutover, None)?.0);
+        }
+        return Ok(per_edition(
+            answers,
+            bucket_head(encounter, difficulty, cutover),
+        ));
+    };
+    Ok(role_night_in(bridge, args, encounter, difficulty, cutover, Some(asked))?.0)
+}
+
+/// `role_night` of one edition's pulls (`None`: every edition's), with
+/// how many pulls the night holds.
+fn role_night_in(
+    bridge: &mut Bridge,
+    args: &Json,
+    encounter: u32,
+    difficulty: u32,
+    cutover: Option<u8>,
+    edition: Option<Edition>,
+) -> Result<(Json, u32), String> {
     let night = match (
         arg_i64(args, "night"),
         args.get("date").and_then(Json::as_str),
@@ -1385,7 +1757,7 @@ fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 encounter,
                 difficulty,
                 local_cutover_hour: cutover,
-                edition: arg_edition(args)?,
+                edition,
             })? {
                 HistoryAnswer::Progression { nights, .. } => nights,
                 _ => Vec::new(),
@@ -1404,7 +1776,7 @@ fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         difficulty,
         night,
         local_cutover_hour: cutover,
-        edition: arg_edition(args)?,
+        edition,
     })?;
     let HistoryAnswer::RoleNight { night, rows } = answer else {
         return Err("unexpected answer".to_string());
@@ -1424,19 +1796,27 @@ fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         after_id: None,
         role: None,
         origin: OriginFilter::Local,
-        edition: arg_edition(args)?,
+        edition,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next().and_then(|c| c.owner),
         _ => None,
     };
-    Ok(role_night_json(
+    let doc = match role_night_json(
         encounter,
         difficulty,
         cutover,
         &night,
         &rows,
         owner.as_deref(),
-    ))
+    ) {
+        // v49: whose pulls these are.
+        Json::Obj(mut out) => {
+            edition_label(&mut out, edition);
+            Json::Obj(out)
+        }
+        other => other,
+    };
+    Ok((doc, night.pulls))
 }
 
 /// The `role_night` document: the night header in `progression`'s spelling
@@ -1550,7 +1930,12 @@ fn night_json(n: &Night) -> Json {
 }
 
 fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let guid = history_guid(bridge, args, "player")?.ok_or("trend requires player")?;
+    let filter = arg_edition(args)?;
+    let (guid, found_in) =
+        history_subject(bridge, args, "player", filter)?.ok_or("trend requires player")?;
+    // A player's trend is inside their edition: the one their name was
+    // found in, else the filter's.
+    let edition = filter.or(found_in);
     let asked = arg_measure(args)?;
     // Absent a `measure`, the subject's role picks one — from the `spec`
     // argument when it scopes the trend, else from what the first point was
@@ -1573,7 +1958,6 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     };
     let cutover = arg_cutover(args)?;
     let difficulty = arg_difficulty(args)?;
-    let edition = arg_edition(args)?;
     let query = |m: TrendMeasure| HistoryQuery::Trend {
         guid: guid.clone(),
         spec: arg_u32(args, "spec"),
@@ -1616,7 +2000,16 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .and_then(Json::as_str)
         .filter(|s| !s.starts_with("Player-"))
         .map(str::to_string);
-    Ok(trend_json(&guid, player_name, cutover, measure, &points))
+    Ok(
+        match trend_json(&guid, player_name, cutover, measure, &points) {
+            // v49: whose game the points are of.
+            Json::Obj(mut out) => {
+                edition_label(&mut out, edition);
+                Json::Obj(out)
+            }
+            other => other,
+        },
+    )
 }
 
 /// The `trend` document: the subject, which days the points are on, the
@@ -2821,8 +3214,8 @@ fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
         .collect();
     Ok(obj! {
         "source": opt_str(source),
-        // v49: the edition the list is of — the live one; null before the
-        // log names one.
+        // v49: the edition the list is of — the pinned one, else the live
+        // one; null before the log names one.
         "edition": edition.map_or(Json::Null, |e| Json::str(e.key())),
         "fight_active": Json::Bool(active),
         "fights": Json::Arr(fights),
@@ -2845,6 +3238,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         spell: None,
         range: None,
     })?;
+    in_scope(bridge.scope(), snap.id, &snap.info)?;
     let rows = snap
         .rows
         .iter()
@@ -2854,7 +3248,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let mut out = vec![
         (
             "fight".to_string(),
-            fight_info(snap.id, &snap.info, bridge.log_id()?),
+            fight_info(snap.id, &snap.info, snap_log(bridge, &snap)?),
         ),
         (
             "view".to_string(),
@@ -2977,7 +3371,7 @@ fn raid_rate_word(view: View) -> &'static str {
 fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let segment = arg_segment(bridge, args)?;
     let view = arg_view(args)?;
-    let (segment, key, row) = match resolve_player(bridge, segment, view, args, "player") {
+    let (segment, key, row, _) = match resolve_player(bridge, segment, view, args, "player") {
         Ok(found) => found,
         // R9: an EMPTY death recap is the documented "survived" signal, so a
         // player who lived owes the caller a document, not an error — only
@@ -2987,7 +3381,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         Err(unknown) if view == View::Deaths => {
             let alive = resolve_player(bridge, segment, View::Damage, args, "player")
                 .or_else(|_| resolve_player(bridge, segment, View::Healing, args, "player"));
-            let Ok((segment, _, row)) = alive else {
+            let Ok((segment, _, row, _)) = alive else {
                 return Err(unknown);
             };
             let snap = bridge.snapshot(Cursor::Segment {
@@ -3005,7 +3399,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 "this player did not die in this fight"
             };
             return Ok(obj! {
-                "fight": fight_info(snap.id, &snap.info, bridge.log_id()?),
+                "fight": fight_info(snap.id, &snap.info, snap_log(bridge, &snap)?),
                 "view": Json::str(wowdps_model::fmt::view_name(view)),
                 "player": player_ident(&row),
                 "death_recap": Json::Arr(Vec::new()),
@@ -3026,15 +3420,13 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         spell: None,
         range: None,
     })?;
+    let log = snap_log(bridge, &snap)?;
     let bd = snap
         .breakdown
         .ok_or("daemon sent no breakdown for the drilled player")?;
     check_death_index(death, &bd, view)?;
     let mut out = vec![
-        (
-            "fight".to_string(),
-            fight_info(snap.id, &snap.info, bridge.log_id()?),
-        ),
+        ("fight".to_string(), fight_info(snap.id, &snap.info, log)),
         (
             "view".to_string(),
             Json::str(wowdps_model::fmt::view_name(view)),
@@ -3271,9 +3663,15 @@ fn stacks_json(
 fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let segment = arg_segment(bridge, args)?;
     // Compare is damage-only (R12); resolve names against the damage meter.
-    let (segment, a_key, _) = resolve_player(bridge, segment, View::Damage, args, "a")?;
-    let (_, b_key, _) = resolve_player(bridge, segment, View::Damage, args, "b")?;
-    let (info, a, b) = bridge.compare(segment, a_key, b_key)?;
+    let (segment, a_key, _, _) = resolve_player(bridge, segment, View::Damage, args, "a")?;
+    let (_, b_key, _, _) = resolve_player(bridge, segment, View::Damage, args, "b")?;
+    let crate::bridge::Pair {
+        info,
+        a,
+        b,
+        source,
+        edition,
+    } = bridge.compare(segment, a_key, b_key)?;
     let side = |s: &wowdps_proto::CompareSide| {
         obj! {
             "player": player_ident(&s.total),
@@ -3287,73 +3685,77 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
     };
     Ok(obj! {
-        "fight": fight_info(None, &info, bridge.log_id()?),
+        "fight": fight_info(None, &info, bridge.log_id_of(edition, source.as_deref())?),
         "a": side(&a),
         "b": side(&b),
     })
 }
 
 fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    // A stored fight (an older night, or anything the daemon's list does
-    // not hold) answers from the loadouts tier.
-    if let Some(fight_id) = args.get("fight_id").and_then(Json::as_str)
-        && !bridge.segments()?.entries.iter().any(|e| {
-            history_id(bridge_log(bridge), e.row.live, e.row.start_ms, e.row.kind).as_str()
-                == Some(fight_id)
-        })
-    {
-        return stored_loadout(bridge, args, fight_id);
-    }
-    let segment = arg_segment(bridge, args)?;
+    // A stored fight (an older night, or anything the daemon's lists do
+    // not hold) answers from the loadouts tier. The id is looked up once.
+    let listed = match args.get("fight_id").and_then(Json::as_str) {
+        Some(fight_id) => match live_fight(bridge, fight_id)?.hit {
+            Some(segment) => Some(segment),
+            None => return stored_loadout(bridge, args, fight_id),
+        },
+        None => None,
+    };
+    let segment = match args.get("segment_id").and_then(Json::as_u64) {
+        Some(id) => SegmentRef::Id(SegmentId(id)),
+        None => listed.unwrap_or(SegmentRef::Live),
+    };
     // The build doesn't belong to a view; damage rows list everyone who
     // contributed, which is where a coach's questions start anyway — but a
     // healer who never swung is only on the healing rows, so try those too.
-    let (segment, key, row) = match resolve_player(bridge, segment, View::Damage, args, "player") {
-        Ok(hit) => hit,
-        Err(damage_err) => resolve_player(bridge, segment, View::Healing, args, "player")
-            .map_err(|_| damage_err)?,
-    };
-    let Some(l) = bridge.loadout(segment, key.clone())? else {
-        return Ok(obj! {
-            "player": player_ident(&row),
-            "logged": Json::Bool(false),
-            "note": Json::str(
-                "no COMBATANT_INFO for this player at or before this fight — the \
-                 game logs a build only inside instances (raids, dungeons, arenas), \
-                 and none has fired for them yet in this log",
-            ),
-        });
-    };
+    let (segment, key, row, edition) =
+        match resolve_player(bridge, segment, View::Damage, args, "player") {
+            Ok(hit) => hit,
+            Err(damage_err) => resolve_player(bridge, segment, View::Healing, args, "player")
+                .map_err(|_| damage_err)?,
+        };
+    // Asked while the cursor is still parked on the segment: a load that
+    // fails pushes its failure for the cursor (`Bridge::loadout`).
+    let loadout = bridge.loadout(segment, key.clone())?;
     let fight = match segment {
         SegmentRef::Id(id) => {
-            let log = bridge_log(bridge);
-            let row = bridge
-                .segments()?
-                .entries
-                .into_iter()
-                .find(|e| e.id == id)
-                .map(|e| e.row);
+            let segs = bridge.segments_in(EditionRef::Pin(edition))?;
+            let row = segs.entries.into_iter().find(|e| e.id == id).map(|e| e.row);
             obj! {
                 "id": Json::u64(id.0),
-                "history_id": row.as_ref().map_or(Json::Null, |r| history_id(log, r.live, r.start_ms, r.kind)),
+                "history_id": row.as_ref().map_or(Json::Null, |r| history_id(segs.log_id, r.live, r.start_ms, r.kind)),
                 "name": row.map_or(Json::Null, |r| Json::str(r.name)),
+                "edition": Json::str(edition.key()),
             }
         }
-        SegmentRef::Live => obj! { "id": Json::Null, "history_id": Json::Null },
+        SegmentRef::Live => obj! {
+            "id": Json::Null,
+            "history_id": Json::Null,
+            "edition": Json::str(edition.key()),
+        },
+    };
+    let Some(l) = loadout else {
+        return Ok(obj! {
+            "fight": fight,
+            "player": player_ident(&row),
+            "logged": Json::Bool(false),
+            "note": Json::str(no_build_note(edition)),
+        });
     };
     Ok(obj! {
         "fight": fight,
         "player": player_ident(&row),
         "logged": Json::Bool(true),
         "spec_id": l.spec_id.map(|s| Json::u64(s as u64)).unwrap_or(Json::Null),
-        // The dataset the picks were named through; the log itself carries
-        // only the major version (BUILD_VERSION 12.1.0), so drift against the
-        // client can only be judged by the reader.
-        "dataset_build": crate::talents::load()
+        // The dataset the picks were named through — the fight's edition's;
+        // the log itself carries only the major version (BUILD_VERSION
+        // 12.1.0), so drift against the client can only be judged by the
+        // reader.
+        "dataset_build": crate::talents::load_in(edition)
             .ok()
             .and_then(|d| d.get("build").cloned())
             .unwrap_or(Json::Null),
-        "talents": talents_json(&l),
+        "talents": talents_json(&l, edition),
         "gear": gear_json(&l.gear),
         // v43: the stats and the auras at the line.
         "stats": stats_json(&l.stats),
@@ -3365,7 +3767,7 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 /// — the same picks→encode→decode path the GUI's "from combat log" view
 /// takes, so validation and warnings match it exactly. Raw (node, entry,
 /// rank) triples otherwise; rank 0 marks a granted node.
-fn talents_json(l: &Loadout) -> Json {
+fn talents_json(l: &Loadout, edition: Edition) -> Json {
     let raw = |note: String| {
         obj! {
             "picks": Json::Arr(
@@ -3389,14 +3791,18 @@ fn talents_json(l: &Loadout) -> Json {
         .iter()
         .map(|p| (p.node_id, p.entry_id, p.rank))
         .collect();
-    match named_talents(spec_id, &picks) {
+    match named_talents(edition, spec_id, &picks) {
         Ok(doc) => doc,
         Err(e) => raw(format!("{e} — raw picks only")),
     }
 }
 
-fn named_talents(spec_id: u64, picks: &[(u32, u32, u32)]) -> Result<Json, String> {
-    let dataset = crate::talents::load()?;
+fn named_talents(
+    edition: Edition,
+    spec_id: u64,
+    picks: &[(u32, u32, u32)],
+) -> Result<Json, String> {
+    let dataset = crate::talents::load_in(edition)?;
     let shaped = crate::talents::picks_to_selections(dataset, spec_id, picks)?;
     let selections = match shaped.get("selections") {
         Some(Json::Arr(s)) => s.clone(),
@@ -3701,14 +4107,16 @@ fn arg_view(args: &Json) -> Result<View, String> {
 /// Also returns the segment to use for every follow-up request: `Live`
 /// re-resolves on each round trip, so a pull opening between two calls would
 /// pair this fight's player with the next fight's data. The snapshot carries
-/// the id it resolved to, and the caller pins to it.
+/// the id it resolved to, and the caller pins to it. v49: and the segment's
+/// edition — a player's name is looked up inside that one fight, so inside
+/// one edition.
 fn resolve_player(
     bridge: &mut Bridge,
     segment: SegmentRef,
     view: View,
     args: &Json,
     arg: &str,
-) -> Result<(SegmentRef, String, Row), String> {
+) -> Result<(SegmentRef, String, Row, Edition), String> {
     let Some(who) = args.get(arg).and_then(Json::as_str) else {
         return Err(format!("{arg:?} is required: a player name or GUID"));
     };
@@ -3721,6 +4129,8 @@ fn resolve_player(
         spell: None,
         range: None,
     })?;
+    in_scope(bridge.scope(), snap.id, &snap.info)?;
+    let edition = snap.info.edition;
     let found = snap
         .rows
         .iter()
@@ -3733,7 +4143,7 @@ fn resolve_player(
         });
     let pinned = snap.id.map(SegmentRef::Id).unwrap_or(segment);
     match found {
-        Some(r) => Ok((pinned, r.key.clone(), r.clone())),
+        Some(r) => Ok((pinned, r.key.clone(), r.clone(), edition)),
         // "it has:" followed by nothing reads as a bug; say so plainly.
         None if snap.rows.is_empty() => Err(format!(
             "no player {:?} in this fight's {} rows — it has none",
@@ -3805,8 +4215,8 @@ fn history_id(log_id: Option<u64>, live: bool, start_ms: i64, kind: SegmentKind)
 }
 
 /// `segment_id` (a per-run integer from list_fights), or `fight_id` (the
-/// history store's stable id) resolved against the daemon's current list;
-/// neither = the live fight.
+/// history store's stable id) resolved against the daemon's current lists;
+/// neither = the live fight (v49: the call's edition's).
 fn arg_segment(bridge: &mut Bridge, args: &Json) -> Result<SegmentRef, String> {
     if let Some(id) = args.get("segment_id").and_then(Json::as_u64) {
         return Ok(SegmentRef::Id(SegmentId(id)));
@@ -3814,21 +4224,105 @@ fn arg_segment(bridge: &mut Bridge, args: &Json) -> Result<SegmentRef, String> {
     let Some(fight_id) = args.get("fight_id").and_then(Json::as_str) else {
         return Ok(SegmentRef::Live);
     };
-    let segs = bridge.segments()?;
-    let Some(log) = segs.log_id else {
-        return Err(format!(
-            "fight_id {fight_id:?}: the daemon's log has no identity yet — use segment_id, or stored_fight"
-        ));
-    };
-    segs.entries
-        .iter()
-        .find(|e| history_id(Some(log), e.row.live, e.row.start_ms, e.row.kind).as_str() == Some(fight_id))
-        .map(|e| SegmentRef::Id(e.id))
-        .ok_or_else(|| {
+    let found = live_fight(bridge, fight_id)?;
+    found.hit.ok_or_else(|| {
+        if found.identified {
             format!(
-                "fight_id {fight_id:?} is not in the daemon's current log — an older night: use stored_fight"
+                "fight_id {fight_id:?} is not in the daemon's current logs — an older night: use stored_fight"
             )
-        })
+        } else {
+            format!(
+                "fight_id {fight_id:?}: the daemon's log has no identity yet — use segment_id, or stored_fight"
+            )
+        }
+    })
+}
+
+/// What a history fight id names among the daemon's lists.
+struct LiveFight {
+    /// Its segment, in whichever edition's list holds it.
+    hit: Option<SegmentRef>,
+    /// The call's own edition's list names its log's identity: a miss is
+    /// then an older night's fight, not one of a log whose header is not
+    /// yet whole.
+    identified: bool,
+}
+
+/// A history fight id among the daemon's lists: the call's edition's
+/// first, then every other edition's source's, since the id names one log
+/// of one edition. A pinned call that names another edition's fight is
+/// then told so by its snapshot (`in_scope`), never answered from the
+/// store as a fight the daemon does not hold.
+fn live_fight(bridge: &mut Bridge, fight_id: &str) -> Result<LiveFight, String> {
+    let find = |segs: &crate::bridge::Segments| {
+        segs.entries
+            .iter()
+            .find(|e| {
+                history_id(segs.log_id, e.row.live, e.row.start_ms, e.row.kind).as_str()
+                    == Some(fight_id)
+            })
+            .map(|e| SegmentRef::Id(e.id))
+    };
+    let segs = bridge.segments()?;
+    let identified = segs.log_id.is_some();
+    if let Some(hit) = find(&segs) {
+        return Ok(LiveFight {
+            hit: Some(hit),
+            identified,
+        });
+    }
+    let others: Vec<Edition> = bridge
+        .status()?
+        .editions
+        .iter()
+        .filter_map(|e| e.edition)
+        .filter(|e| Some(e.canonical()) != segs.edition.map(Edition::canonical))
+        .collect();
+    for edition in others {
+        if let Some(hit) = find(&bridge.segments_in(EditionRef::Pin(edition))?) {
+            return Ok(LiveFight {
+                hit: Some(hit),
+                identified,
+            });
+        }
+    }
+    Ok(LiveFight {
+        hit: None,
+        identified,
+    })
+}
+
+/// v49: a call that pinned an edition is answered from that edition's
+/// fights alone. A segment named by id answers whatever edition it is of,
+/// so a pinned call naming another edition's fight is told so; and an
+/// edition the daemon holds no fight of has no live fight to answer.
+fn in_scope(scope: EditionRef, id: Option<SegmentId>, info: &SegmentInfo) -> Result<(), String> {
+    let EditionRef::Pin(edition) = scope else {
+        return Ok(());
+    };
+    if id.is_none() {
+        return Err(format!(
+            "no {} fight to answer: the daemon holds none of that edition's \
+             (status lists each edition's source)",
+            edition.key()
+        ));
+    }
+    if !scope.serves(Some(info.edition)) {
+        return Err(wrong_edition(info.edition, edition, "list_fights"));
+    }
+    Ok(())
+}
+
+/// A pinned call named a fight of another edition than its pin: which
+/// edition it is, and where the pin's ids come from (`ids_from`).
+fn wrong_edition(fight: Edition, pin: Edition, ids_from: &str) -> String {
+    format!(
+        "that fight is {}'s, not {}'s: drop edition, or take an id from \
+         {ids_from} with edition {}",
+        fight.key(),
+        pin.key(),
+        pin.key()
+    )
 }
 
 fn fight_info(id: Option<SegmentId>, info: &SegmentInfo, log_id: Option<u64>) -> Json {
@@ -4279,9 +4773,26 @@ fn round1(x: f64) -> f64 {
     (x * 10.0).round() / 10.0
 }
 
-/// The bridge's cached log identity, or none: only used to name rows here.
-fn bridge_log(bridge: &mut Bridge) -> Option<u64> {
-    bridge.log_id().ok().flatten()
+/// The identity of the log a snapshot's segment is in: what its history id
+/// is named by.
+fn snap_log(bridge: &mut Bridge, snap: &crate::bridge::Snap) -> Result<Option<u64>, String> {
+    bridge.log_id_of(snap.edition, snap.source.as_deref())
+}
+
+/// `loadout`'s answer when the log holds no build for the player. A Forever
+/// log carries no COMBATANT_INFO at all, so no build is ever logged for one
+/// of its fights; elsewhere the game logs one only inside instances.
+fn no_build_note(edition: Edition) -> String {
+    match edition.canonical() {
+        Edition::Forever => "this is a forever fight, and forever's combat log carries no \
+                             COMBATANT_INFO: it records no build (spec, talents or gear) for \
+                             any player"
+            .to_string(),
+        _ => "no COMBATANT_INFO for this player at or before this fight — the \
+              game logs a build only inside instances (raids, dungeons, arenas), \
+              and none has fired for them yet in this log"
+            .to_string(),
+    }
 }
 
 /// `loadout {fight_id, player}` for a fight the daemon's list does not hold:
@@ -4295,6 +4806,12 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
     else {
         return Err(not_stored(fight_id));
     };
+    // v49: a pinned call answers its own edition's fights alone.
+    if let EditionRef::Pin(pin) = bridge.scope()
+        && !bridge.scope().serves(Some(card_only.card.edition()))
+    {
+        return Err(wrong_edition(card_only.card.edition(), pin, "history"));
+    }
     let want = who.to_lowercase();
     let p = card_only
         .card
@@ -4323,20 +4840,25 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
         "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
         "role": p.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
     };
+    let edition = f.card.edition();
     let fight = obj! {
         "id": Json::Null,
         "history_id": Json::str(fight_id),
         "name": Json::str(f.card.name.clone()),
+        "edition": Json::str(edition.key()),
     };
     let Some(l) = f.loadout else {
+        let note = match edition.canonical() {
+            Edition::Forever => no_build_note(edition),
+            _ => "no COMBATANT_INFO was stored for this player in that fight (none fired, or the \
+                  loadout file is gone)"
+                .to_string(),
+        };
         return Ok(obj! {
             "fight": fight,
             "player": ident,
             "logged": Json::Bool(false),
-            "note": Json::str(
-                "no COMBATANT_INFO was stored for this player in that fight (none fired, or the \
-                 loadout file is gone)",
-            ),
+            "note": Json::str(note),
         });
     };
     Ok(obj! {
@@ -4344,11 +4866,11 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
         "player": ident,
         "logged": Json::Bool(true),
         "spec_id": l.spec_id.map(|s| Json::u64(s as u64)).unwrap_or(Json::Null),
-        "dataset_build": crate::talents::load()
+        "dataset_build": crate::talents::load_in(edition)
             .ok()
             .and_then(|d| d.get("build").cloned())
             .unwrap_or(Json::Null),
-        "talents": talents_json(&l),
+        "talents": talents_json(&l, edition),
         "gear": gear_json(&l.gear),
         // v43: the stats and the auras at the line.
         "stats": stats_json(&l.stats),
@@ -4387,6 +4909,111 @@ mod tests {
             let err = arg(bad).unwrap_err();
             assert!(err.contains("retail, forever"), "{bad}: {err}");
         }
+    }
+
+    /// v49: a pinned call answers its own edition's fights alone — an id
+    /// of another edition's is refused, and so is an edition with nothing
+    /// to answer — while a following call takes whatever it is given.
+    #[test]
+    fn a_pinned_call_answers_its_own_editions_fights() {
+        let info = |edition| SegmentInfo {
+            kind: SegmentKind::Encounter,
+            name: "Boss".to_string(),
+            start_ms: 0,
+            duration_ms: 1_000,
+            combat_ms: 1_000,
+            success: Some(true),
+            live: false,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+            encounter: None,
+            edition,
+        };
+        let id = Some(SegmentId(3));
+        let forever = EditionRef::Pin(Edition::Forever);
+        assert_eq!(
+            in_scope(EditionRef::Follow, None, &info(Edition::Retail)),
+            Ok(())
+        );
+        assert_eq!(in_scope(forever, id, &info(Edition::Forever)), Ok(()));
+        let err = in_scope(forever, id, &info(Edition::Retail)).unwrap_err();
+        assert!(err.contains("retail's, not forever's"), "{err}");
+        let err = in_scope(forever, None, &info(Edition::Retail)).unwrap_err();
+        assert!(err.contains("no forever fight to answer"), "{err}");
+        // A segment whose log named no edition counts with Retail.
+        let retail = EditionRef::Pin(Edition::Retail);
+        assert_eq!(in_scope(retail, id, &info(Edition::Unknown(0))), Ok(()));
+    }
+
+    /// v49: one answer is the answer; two editions' are each their own,
+    /// under the boss's head, with the note that says why.
+    #[test]
+    fn answers_of_two_editions_stay_apart() {
+        let head = bucket_head(3130, 15, None);
+        let one = obj! { "pulls": Json::u64(2), "edition": Json::str("retail") };
+        assert_eq!(per_edition(vec![one.clone()], head.clone()), one);
+        assert_eq!(per_edition(Vec::new(), head.clone()), Json::Null);
+        let two = obj! { "pulls": Json::u64(3), "edition": Json::str("forever") };
+        let both = per_edition(vec![one.clone(), two.clone()], head);
+        assert_eq!(
+            keys(&both),
+            [
+                "encounter",
+                "difficulty",
+                "bucket",
+                "cutover_hour",
+                "editions",
+                "note"
+            ]
+        );
+        assert_eq!(both.get("editions"), Some(&Json::Arr(vec![one, two])));
+        let mut out = Vec::new();
+        edition_label(&mut out, Some(Edition::Unknown(0)));
+        assert_eq!(
+            out,
+            [
+                ("edition".to_string(), Json::str("retail")),
+                ("project_id".to_string(), Json::u64(1)),
+            ],
+            "an answer names the edition as it is reckoned"
+        );
+    }
+
+    /// v49: the talent tools read Retail's trees without an edition, and
+    /// for edition 0, which counts with it; the answer names whose.
+    #[test]
+    fn the_talent_tools_name_whose_trees_answered() {
+        let edition = |args: &str| talent_edition(&crate::json::parse(args).unwrap());
+        assert_eq!(edition("{}"), Ok(Edition::Retail));
+        assert_eq!(edition(r#"{"edition":0}"#), Ok(Edition::Retail));
+        assert_eq!(edition(r#"{"edition":"forever"}"#), Ok(Edition::Forever));
+        assert!(edition(r#"{"edition":"moon"}"#).is_err());
+        let doc = with_edition(obj! { "spec": Json::str("Fire") }, Edition::Forever);
+        assert_eq!(keys(&doc), ["spec", "edition"]);
+        assert_eq!(doc.get("edition"), Some(&Json::str("forever")));
+        assert!(no_build_note(Edition::Forever).contains("carries no COMBATANT_INFO"));
+        assert!(no_build_note(Edition::Retail).contains("only inside instances"));
+    }
+
+    /// v49: a name is looked up in the filter's edition's newest cards, else
+    /// in every edition's and in Retail's and Forever's each, so one
+    /// edition's many recent fights hide no other edition's player.
+    #[test]
+    fn a_name_is_looked_up_in_each_editions_newest_fights() {
+        assert_eq!(
+            name_windows(Some(Edition::Forever)),
+            [Some(Edition::Forever)]
+        );
+        assert_eq!(
+            name_windows(None),
+            [None, Some(Edition::Retail), Some(Edition::Forever)]
+        );
+        let err = wrong_edition(Edition::Retail, Edition::Forever, "history");
+        assert!(
+            err.contains("that fight is retail's, not forever's") && err.contains("from history"),
+            "{err}"
+        );
     }
 
     /// R21: the conditioned split derives level 0 from the by-ability row
@@ -5554,7 +6181,7 @@ mod tests {
             stats: vec![],
             auras: vec![],
         };
-        let j = talents_json(&no_spec);
+        let j = talents_json(&no_spec, Edition::Retail);
         assert!(
             j.get("note")
                 .and_then(Json::as_str)
@@ -5571,7 +6198,7 @@ mod tests {
             spec_id: Some(71),
             ..no_spec.clone()
         };
-        let j = talents_json(&with_spec);
+        let j = talents_json(&with_spec, Edition::Retail);
         assert!(
             j.get("note")
                 .and_then(Json::as_str)
@@ -5584,7 +6211,7 @@ mod tests {
             ..no_spec
         };
         assert!(
-            talents_json(&zero)
+            talents_json(&zero, Edition::Retail)
                 .get("note")
                 .and_then(Json::as_str)
                 .is_some_and(|n| n.contains("no spec id"))

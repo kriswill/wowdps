@@ -6,7 +6,9 @@
 //! `tools/gen-talent-trees.sh` from the local install once per patch — the
 //! same per-machine-cache arrangement as the GUI's icon files, read here
 //! with plain file IO (this crate stays model+stdlib). A missing file is a
-//! caller-level error naming the generator, never a crash.
+//! caller-level error naming the generator, never a crash. That is
+//! Retail's; another edition's trees are its own file, in a folder named
+//! for it beside Retail's (`forever/talents.json`, [`load_in`]).
 //!
 //! The string format is Blizzard's own (serialization version 2, unchanged
 //! Dragonflight → Midnight): a bitstream packed LSB-first into 6-bit groups
@@ -45,25 +47,113 @@ fn dataset_path() -> Result<std::path::PathBuf, String> {
     data_path("talents.json").ok_or_else(|| "no XDG_DATA_HOME or HOME".to_string())
 }
 
-/// Load and parse the dataset, with the fix spelled out when it is absent.
-/// Parsed once per process — the file is ~1.2 MB and changes once per game
-/// patch, so a long-lived stdio server must not re-parse it per tool call.
-/// A failed load is NOT cached: the caller can run the generator and retry.
+/// Where `edition`'s dataset lives: Retail's is [`dataset_path`]'s file (a
+/// card that names no edition reads it too), and another edition's has the
+/// same name in a folder named for that edition beside it
+/// (`forever/talents.json`), so `$WOWDPS_TALENTS` moves both. `None` for an
+/// edition whose install product wowdps does not know: no generator writes
+/// its trees.
+pub fn dataset_path_in(
+    edition: wowdps_model::Edition,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(edition_path(&dataset_path()?, edition))
+}
+
+/// [`dataset_path_in`] from Retail's path, touching nothing.
+fn edition_path(
+    retail: &std::path::Path,
+    edition: wowdps_model::Edition,
+) -> Option<std::path::PathBuf> {
+    let edition = edition.canonical().counts_as();
+    if edition == wowdps_model::Edition::Retail {
+        return Some(retail.to_path_buf());
+    }
+    edition.product()?;
+    let name = retail
+        .file_name()
+        .map_or_else(|| "talents.json".into(), std::ffi::OsStr::to_os_string);
+    let dir = retail.parent().unwrap_or_else(|| std::path::Path::new(""));
+    Some(dir.join(edition.key()).join(name))
+}
+
+/// Load and parse Retail's dataset ([`load_in`]).
 pub fn load() -> Result<&'static Json, String> {
-    static CACHE: std::sync::OnceLock<Json> = std::sync::OnceLock::new();
-    if let Some(dataset) = CACHE.get() {
+    load_in(wowdps_model::Edition::Retail)
+}
+
+/// Load and parse `edition`'s dataset, with the fix spelled out when it is
+/// absent. Parsed once per process and edition — the file is ~1.2 MB and
+/// changes once per game patch, so a long-lived stdio server must not
+/// re-parse it per tool call. A failed load is NOT cached: the caller can
+/// run the generator and retry. A dataset whose `build` names another
+/// product than the edition's (`12.1.0 (product wowf)` is Forever's) is
+/// refused: another game's trees never answer for this one's.
+pub fn load_in(edition: wowdps_model::Edition) -> Result<&'static Json, String> {
+    use std::sync::OnceLock;
+    use wowdps_model::Edition;
+    static RETAIL: OnceLock<Json> = OnceLock::new();
+    static FOREVER: OnceLock<Json> = OnceLock::new();
+    let edition = edition.canonical().counts_as();
+    let cache = match edition {
+        Edition::Retail => &RETAIL,
+        Edition::Forever => &FOREVER,
+        other => return Err(no_trees_for(other)),
+    };
+    if let Some(dataset) = cache.get() {
         return Ok(dataset);
     }
-    let path = dataset_path()?;
+    let Some(path) = dataset_path_in(edition)? else {
+        return Err(no_trees_for(edition));
+    };
     let text = std::fs::read_to_string(&path).map_err(|e| {
+        let product = match edition.product() {
+            Some(p) if edition != Edition::Retail => {
+                format!(" --product {p} -o {}", path.display())
+            }
+            _ => String::new(),
+        };
         format!(
-            "no talent dataset at {} ({e}) — generate it from the local game \
-             install with tools/gen-talent-trees.sh",
+            "no {} talent dataset at {} ({e}) — generate it from the local game \
+             install with tools/gen-talent-trees.sh{product}",
+            edition.label(),
             path.display()
         )
     })?;
     let parsed = crate::json::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(CACHE.get_or_init(|| parsed))
+    let want = edition.product().unwrap_or("wow");
+    if let Some(got) = dataset_product(&parsed)
+        && got != want
+    {
+        return Err(format!(
+            "{} holds the trees of product {got}, not {}'s ({want}) — regenerate it \
+             with tools/gen-talent-trees.sh",
+            path.display(),
+            edition.label()
+        ));
+    }
+    Ok(cache.get_or_init(|| parsed))
+}
+
+/// The error for an edition no talent dataset is kept for.
+fn no_trees_for(edition: wowdps_model::Edition) -> String {
+    format!(
+        "no talent trees for the {} edition: wowdps keeps a talent dataset for \
+         retail and forever only",
+        edition.key()
+    )
+}
+
+/// The install product a dataset's `build` names: the generator writes
+/// `<build> (product <row>)` for any product but Retail's `wow`, and the
+/// bare build for it. `None` for a dataset with no `build`.
+fn dataset_product(dataset: &Json) -> Option<&str> {
+    let build = dataset.get("build").and_then(Json::as_str)?;
+    Some(
+        build
+            .rsplit_once("(product ")
+            .and_then(|(_, rest)| rest.strip_suffix(')'))
+            .map_or("wow", str::trim),
+    )
 }
 
 fn trees(dataset: &Json) -> &[Json] {
@@ -672,6 +762,51 @@ pub fn tree_view(dataset: &Json, spec_id: u64) -> Result<Json, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each edition's dataset sits beside Retail's in a folder named for
+    /// it; a card that names no edition reads Retail's, and an edition with
+    /// no known product has none.
+    #[test]
+    fn each_edition_has_its_own_dataset_beside_retails() {
+        use std::path::{Path, PathBuf};
+        use wowdps_model::Edition;
+        let retail = Path::new("/data/wowdps/talents.json");
+        assert_eq!(
+            edition_path(retail, Edition::Retail),
+            Some(retail.to_path_buf())
+        );
+        assert_eq!(
+            edition_path(retail, Edition::Unknown(0)),
+            Some(retail.to_path_buf())
+        );
+        assert_eq!(
+            edition_path(retail, Edition::Forever),
+            Some(PathBuf::from("/data/wowdps/forever/talents.json"))
+        );
+        assert_eq!(
+            edition_path(Path::new("/t/x.json"), Edition::Unknown(18)),
+            Some(PathBuf::from("/t/forever/x.json")),
+            "an edition reads as its number names it"
+        );
+        assert_eq!(edition_path(retail, Edition::Classic(2)), None);
+        assert_eq!(edition_path(retail, Edition::Unknown(7)), None);
+        assert!(load_in(Edition::Classic(2)).is_err_and(|e| e.contains("classic edition")));
+    }
+
+    /// The product a dataset's build names: the bare build is Retail's.
+    #[test]
+    fn a_datasets_build_names_its_product() {
+        let product = |build: &str| {
+            let d = crate::json::parse(&format!(r#"{{"build":"{build}"}}"#)).unwrap();
+            dataset_product(&d).map(str::to_string)
+        };
+        assert_eq!(product("12.1.0.69497").as_deref(), Some("wow"));
+        assert_eq!(
+            product("1.60.1.123 (product wowf)").as_deref(),
+            Some("wowf")
+        );
+        assert_eq!(dataset_product(&crate::json::parse("{}").unwrap()), None);
+    }
 
     /// Two-spec class tree: node 1 single 2-rank, node 2 choice (2 entries),
     /// node 3 spec-62-only single, node 4 subtree selection offering hero

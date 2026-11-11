@@ -611,6 +611,107 @@ fn talent_tools_over_a_fixture_dataset() {
         "{}",
         decoded.to_line()
     );
+    assert_eq!(str_of(&decoded, "edition"), "retail");
+
+    // ---- v49: each edition's trees are its own file, beside Retail's ----
+    let forever_dir = tmp.0.join("forever");
+    let forever = forever_dir.join("talents.json");
+    let tree_of = |bridge: &mut Bridge, args: &str| {
+        drive(bridge, &[&call_line(9, "talent_tree", args)])
+            .into_iter()
+            .next()
+            .expect("reply")
+    };
+    // No file yet: said plainly, with where it goes and how to make it.
+    let reply = tree_of(&mut bridge, r#"{"spec_id":1446,"edition":"forever"}"#);
+    assert!(is_error(&reply), "{}", reply.to_line());
+    let text = error_text(&reply);
+    assert!(
+        text.contains("no Forever talent dataset at")
+            && text.contains("forever/talents.json")
+            && text.contains("--product wowf"),
+        "{text}"
+    );
+    // Retail's trees in Forever's place are refused, not read as Forever's.
+    assert!(std::fs::create_dir_all(&forever_dir).is_ok());
+    assert!(std::fs::copy(&dataset, &forever).is_ok());
+    let reply = tree_of(&mut bridge, r#"{"spec_id":63,"edition":"forever"}"#);
+    assert!(
+        is_error(&reply) && error_text(&reply).contains("product wow, not Forever's"),
+        "{}",
+        reply.to_line()
+    );
+    assert!(
+        std::fs::write(
+            &forever,
+            r#"{
+              "build": "1.60.1.70000 (product wowf)",
+              "trees": [{
+                "treeId": 90, "classId": 1, "className": "Warrior",
+                "specs": [{"specId": 1446, "name": "Warrior", "role": 2}],
+                "currencies": [{"index": 0, "id": 901}, {"index": 1, "id": 902}],
+                "subTrees": [],
+                "nodeOrder": [5],
+                "nodes": [
+                  {"id": 5, "type": "single", "posX": 0, "posY": 0, "maxRanks": 1,
+                   "entries": [{"id": 501, "spellId": 5001, "name": "Rend", "maxRanks": 1}]}
+                ]
+              }]
+            }"#,
+        )
+        .is_ok()
+    );
+    let tree = tool_doc(&tree_of(
+        &mut bridge,
+        r#"{"spec_id":1446,"edition":"forever"}"#,
+    ));
+    assert_eq!(str_of(&tree, "class"), "Warrior");
+    assert_eq!(str_of(&tree, "edition"), "forever");
+    // Each edition answers its own specs alone.
+    let reply = tree_of(&mut bridge, r#"{"spec_id":63,"edition":"forever"}"#);
+    assert!(is_error(&reply), "{}", reply.to_line());
+    let reply = tree_of(&mut bridge, r#"{"spec_id":1446}"#);
+    assert!(is_error(&reply), "{}", reply.to_line());
+    let tree = tool_doc(&tree_of(&mut bridge, r#"{"spec_id":63,"edition":0}"#));
+    assert_eq!(
+        str_of(&tree, "edition"),
+        "retail",
+        "edition 0 counts with retail"
+    );
+    let encoded = tool_doc(
+        &drive(
+            &mut bridge,
+            &[&call_line(
+                10,
+                "encode_talents",
+                r#"{"spec_id":1446,"edition":"forever","selections":[{"node_id":5}]}"#,
+            )],
+        )[0],
+    );
+    assert_eq!(str_of(&encoded, "edition"), "forever");
+    let forever_string = str_of(&encoded, "string").to_string();
+    let decoded = tool_doc(
+        &drive(
+            &mut bridge,
+            &[&call_line(
+                11,
+                "decode_talents",
+                &format!(
+                    r#"{{"string":{},"edition":"forever"}}"#,
+                    Json::str(&forever_string).to_line()
+                ),
+            )],
+        )[0],
+    );
+    assert_eq!(str_of(&decoded, "spec"), "Warrior");
+    assert_eq!(str_of(&decoded, "edition"), "forever");
+    // An edition wowdps keeps no trees for says so.
+    let reply = tree_of(&mut bridge, r#"{"spec_id":63,"edition":19}"#);
+    assert!(
+        is_error(&reply) && error_text(&reply).contains("no talent trees for the classic edition"),
+        "{}",
+        reply.to_line()
+    );
 
     // ---- loadout: the fixture's COMBATANT_INFO named through the dataset ----
     let replies = drive(&mut bridge, &[&call_line(6, "list_fights", "{}")]);
@@ -2852,5 +2953,565 @@ fn an_empowered_ability_carries_its_stages() {
         rows.iter()
             .all(|r| r.get("heal_absorbed").and_then(Json::as_u64) == Some(0)),
         "{rows:?}"
+    );
+}
+
+// ---- v49: editions -----------------------------------------------------------------
+
+const FOREVER_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+
+/// A daemon following two editions' folders, a source each — Retail's with
+/// `retail`, Forever's with `forever` — the way install discovery sets one
+/// up. With no game running the live edition is the one whose log was
+/// written last: `stale` is set an hour back.
+fn start_two_editions(
+    tmp: &Temp,
+    retail: &[(&str, &str)],
+    forever: &[(&str, &str)],
+    stale: &str,
+    history: bool,
+) -> PathBuf {
+    use wowdps_model::Edition;
+    let rdir = tmp.0.join("retail");
+    let fdir = tmp.0.join("forever");
+    for (dir, logs) in [(&rdir, retail), (&fdir, forever)] {
+        std::fs::create_dir_all(dir).expect("mkdir");
+        for (name, text) in logs {
+            std::fs::write(dir.join(name), text).expect("write log");
+        }
+    }
+    let hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+    for dir in [&rdir, &fdir] {
+        let path = dir.join(stale);
+        if path.exists() {
+            let set = std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|f| f.set_modified(hour_ago));
+            assert!(set.is_ok(), "{set:?}");
+        }
+    }
+    let opts = history.then(|| history_opts(tmp));
+    start_daemon_with(tmp, FIXTURE, move |o| {
+        o.source = SourceSpec::Dir(rdir);
+        o.editions = wowdps_daemon::Followed {
+            source: Some(Edition::Retail),
+            more: vec![(Edition::Forever, fdir)],
+        };
+        o.history = opts;
+    })
+}
+
+fn call(bridge: &mut Bridge, tool: &str, args: &str) -> Json {
+    let reply = drive(bridge, &[&call_line(1, tool, args)]);
+    reply.into_iter().next().expect("one reply")
+}
+
+fn doc_of(bridge: &mut Bridge, tool: &str, args: &str) -> Json {
+    let reply = call(bridge, tool, args);
+    assert!(!is_error(&reply), "{tool} {args}: {}", reply.to_line());
+    tool_doc(&reply)
+}
+
+/// The live tools over two editions' sources: a call with `edition` is
+/// answered from that edition's list and live fight whichever is live, one
+/// without follows the live one, and calls that move between them in turn
+/// are each answered in their own edition, never from frames pushed for
+/// the one before. A fight named by id answers in the edition it is of —
+/// a pinned call naming another's is an error — a history id is found in
+/// whichever edition's list holds it, every fight names its edition, and
+/// a Forever fight's loadout says its log carries no builds.
+#[test]
+fn the_live_tools_follow_or_pin_an_edition() {
+    let tmp = Temp::new("editions");
+    let retail = std::fs::read_to_string(FIXTURE).expect("fixture");
+    let forever = std::fs::read_to_string(FOREVER_FIXTURE).expect("forever fixture");
+    let socket = start_two_editions(
+        &tmp,
+        &[("WoWCombatLog-072726_200000.txt", &retail)],
+        &[("WoWCombatLog-110126_200000.txt", &forever)],
+        "WoWCombatLog-072726_200000.txt",
+        false,
+    );
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+
+    // Both sources come up; Forever's log was written last, so it is live.
+    let deadline = Instant::now() + DEADLINE;
+    let status = loop {
+        let status = doc_of(&mut bridge, "status", "{}");
+        let named = match status.get("editions") {
+            Some(Json::Arr(e)) => e
+                .iter()
+                .filter(|e| e.get("log") != Some(&Json::Null))
+                .count(),
+            _ => 0,
+        };
+        if named == 2 && status.get("live_edition") == Some(&Json::str("forever")) {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "{}", status.to_line());
+        thread::sleep(Duration::from_millis(20));
+    };
+    let Some(Json::Arr(editions)) = status.get("editions") else {
+        panic!("{}", status.to_line());
+    };
+    let rows: Vec<(String, String, bool)> = editions
+        .iter()
+        .map(|e| {
+            (
+                str_of(e, "edition").to_string(),
+                str_of(e, "log").to_string(),
+                e.get("live") == Some(&Json::Bool(true)),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "retail".to_string(),
+                "WoWCombatLog-072726_200000.txt".to_string(),
+                false
+            ),
+            (
+                "forever".to_string(),
+                "WoWCombatLog-110126_200000.txt".to_string(),
+                true
+            ),
+        ]
+    );
+
+    // Wait for both lists to fill.
+    let lists = |bridge: &mut Bridge| {
+        let r = doc_of(bridge, "list_fights", r#"{"edition":"retail"}"#);
+        let f = doc_of(bridge, "list_fights", r#"{"edition":"forever"}"#);
+        (r, f)
+    };
+    let deadline = Instant::now() + DEADLINE;
+    let (rlist, flist) = loop {
+        let (r, f) = lists(&mut bridge);
+        let named = |l: &Json, name: &str| fights(l).iter().any(|x| str_of(x, "name") == name);
+        if named(&r, "The Ashen Warden") && named(&f, "Geilhast") {
+            break (r, f);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} / {}",
+            r.to_line(),
+            f.to_line()
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    for (list, key) in [(&rlist, "retail"), (&flist, "forever")] {
+        assert_eq!(str_of(list, "edition"), key);
+        assert!(
+            fights(list).iter().all(|f| str_of(f, "edition") == key),
+            "{}",
+            list.to_line()
+        );
+    }
+    let id_of = |list: &Json, name: &str| {
+        fights(list)
+            .iter()
+            .find(|f| str_of(f, "name") == name)
+            .map(|f| (num_of(f, "id") as u64, f.get("history_id").cloned()))
+            .expect(name)
+    };
+    let (warden, warden_hid) = id_of(&rlist, "The Ashen Warden");
+    let (geilhast, geilhast_hid) = id_of(&flist, "Geilhast");
+    assert_ne!(warden, geilhast, "one id counter across the daemon");
+
+    // Following answers the live edition; the calls in turn, each its own —
+    // while Forever's log is written, so frames for its live fight are
+    // still arriving when a call moves to Retail's.
+    let flog = tmp.0.join("forever").join("WoWCombatLog-110126_200000.txt");
+    let mut sec = 0;
+    let mut write_forever = || {
+        let line = format!(
+            "11/1/2026 20:01:{sec:02}.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990002-0000A0B002,\"Ashwing Acolyte\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990002-0000A0B002,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST\n"
+        );
+        sec += 1;
+        let wrote = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&flog)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+        assert!(wrote.is_ok(), "{wrote:?}");
+        // Long enough for the daemon to tail the line and push the
+        // changed frame to the session still watching Forever.
+        thread::sleep(Duration::from_millis(150));
+    };
+    let edition_of = |doc: &Json| str_of(doc.get("fight").expect("fight"), "edition").to_string();
+    for _ in 0..4 {
+        let live = doc_of(&mut bridge, "fight", "{}");
+        assert_eq!(edition_of(&live), "forever");
+        write_forever();
+        let live = doc_of(&mut bridge, "fight", r#"{"edition":"retail"}"#);
+        assert_eq!(edition_of(&live), "retail", "following, then retail");
+        let follow = doc_of(&mut bridge, "list_fights", "{}");
+        assert_eq!(str_of(&follow, "edition"), "forever");
+        let live = doc_of(&mut bridge, "fight", r#"{"edition":18}"#);
+        assert_eq!(edition_of(&live), "forever");
+        write_forever();
+        let live = doc_of(&mut bridge, "fight", r#"{"edition":"retail"}"#);
+        assert_eq!(edition_of(&live), "retail", "forever, then retail");
+        let pinned = doc_of(&mut bridge, "list_fights", r#"{"edition":"retail"}"#);
+        assert_eq!(str_of(&pinned, "edition"), "retail");
+    }
+    // The writes are Forever's live fight.
+    let live = doc_of(&mut bridge, "fight", r#"{"edition":"forever"}"#);
+    let fight = live.get("fight").expect("fight");
+    assert_eq!(
+        fight.get("live"),
+        Some(&Json::Bool(true)),
+        "{}",
+        live.to_line()
+    );
+    assert_eq!(str_of(fight, "kind"), "trash");
+
+    // An id answers in its own edition; its history id is its log's.
+    let doc = doc_of(
+        &mut bridge,
+        "fight",
+        &format!(r#"{{"segment_id":{warden}}}"#),
+    );
+    let fight = doc.get("fight").expect("fight");
+    assert_eq!(str_of(fight, "edition"), "retail");
+    assert_eq!(fight.get("history_id").cloned(), warden_hid);
+    let doc = doc_of(
+        &mut bridge,
+        "fight",
+        &format!(r#"{{"segment_id":{geilhast},"edition":"forever"}}"#),
+    );
+    assert_eq!(
+        doc.get("fight").and_then(|f| f.get("history_id").cloned()),
+        geilhast_hid
+    );
+    let reply = call(
+        &mut bridge,
+        "fight",
+        &format!(r#"{{"segment_id":{warden},"edition":"forever"}}"#),
+    );
+    assert!(is_error(&reply), "{}", reply.to_line());
+    assert!(
+        error_text(&reply).contains("that fight is retail's, not forever's"),
+        "{}",
+        error_text(&reply)
+    );
+
+    // A history id is looked for in every edition's list while following.
+    let hid = warden_hid
+        .as_ref()
+        .and_then(Json::as_str)
+        .expect("the closed kill has a history id");
+    let doc = doc_of(&mut bridge, "fight", &format!(r#"{{"fight_id":"{hid}"}}"#));
+    assert_eq!(
+        num_of(doc.get("fight").expect("fight"), "id") as u64,
+        warden
+    );
+    let reply = call(
+        &mut bridge,
+        "fight",
+        &format!(r#"{{"fight_id":"{hid}","edition":"forever"}}"#),
+    );
+    // Pinned, another edition's history id is that edition's fight, said
+    // so — not "an older night", not answered from the store.
+    assert!(is_error(&reply), "{}", reply.to_line());
+    assert!(
+        error_text(&reply).contains("that fight is retail's, not forever's"),
+        "{}",
+        error_text(&reply)
+    );
+    let reply = call(
+        &mut bridge,
+        "loadout",
+        &format!(r#"{{"fight_id":"{hid}","player":"Thraxx","edition":"forever"}}"#),
+    );
+    assert!(
+        is_error(&reply) && error_text(&reply).contains("that fight is retail's, not forever's"),
+        "{}",
+        reply.to_line()
+    );
+
+    // A player is looked up inside the one fight, so one edition.
+    let doc = doc_of(
+        &mut bridge,
+        "breakdown",
+        &format!(r#"{{"segment_id":{geilhast},"player":"Velkris"}}"#),
+    );
+    assert_eq!(
+        str_of(doc.get("fight").expect("fight"), "edition"),
+        "forever"
+    );
+    assert_eq!(
+        doc.get("player").map(|p| str_of(p, "name").to_string()),
+        Some("Velkris-Nebula-US".to_string())
+    );
+    let doc = doc_of(
+        &mut bridge,
+        "compare",
+        &format!(r#"{{"segment_id":{geilhast},"a":"Velkris","b":"Hollin"}}"#),
+    );
+    let fight = doc.get("fight").expect("fight");
+    assert_eq!(str_of(fight, "edition"), "forever");
+    assert_eq!(fight.get("history_id").cloned(), geilhast_hid);
+
+    // Forever's log carries no builds, and the loadout says so.
+    let doc = doc_of(
+        &mut bridge,
+        "loadout",
+        &format!(r#"{{"segment_id":{geilhast},"player":"Velkris"}}"#),
+    );
+    assert_eq!(doc.get("logged"), Some(&Json::Bool(false)));
+    assert_eq!(
+        str_of(doc.get("fight").expect("fight"), "edition"),
+        "forever"
+    );
+    assert!(
+        str_of(&doc, "note").contains("forever's combat log carries no COMBATANT_INFO"),
+        "{}",
+        doc.to_line()
+    );
+
+    // An edition no source is of: an empty list, and no live fight.
+    let none = doc_of(&mut bridge, "list_fights", r#"{"edition":7}"#);
+    assert_eq!(str_of(&none, "edition"), "unknown");
+    assert!(fights(&none).is_empty(), "{}", none.to_line());
+    let reply = call(&mut bridge, "fight", r#"{"edition":7}"#);
+    assert!(
+        is_error(&reply) && error_text(&reply).contains("no unknown fight to answer"),
+        "{}",
+        reply.to_line()
+    );
+    let reply = call(&mut bridge, "list_fights", r#"{"edition":"classic"}"#);
+    assert!(
+        is_error(&reply) && error_text(&reply).contains("unknown edition"),
+        "{}",
+        reply.to_line()
+    );
+    // And following still answers the live edition after all that.
+    let follow = doc_of(&mut bridge, "list_fights", "{}");
+    assert_eq!(str_of(&follow, "edition"), "forever");
+}
+
+/// One boss's log in one edition: encounter 3130 at Heroic in every
+/// edition, one player — `guid`, named `name` — hitting it once per pull;
+/// pulls are (seconds, kill), ten minutes apart from `hour`:00 local.
+fn boss_log(project_id: u8, hour: u32, guid: &str, name: &str, pulls: &[(u32, bool)]) -> String {
+    let date = "7/27/2026";
+    let mut out = format!(
+        "{date} {hour}:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,{project_id}\n\
+         {date} {hour}:00:01.000-4  ZONE_CHANGE,2769,\"Hall of Echoes\",15\n"
+    );
+    for (i, (secs, kill)) in pulls.iter().enumerate() {
+        let m = 10 * (i as u32 + 1);
+        let ts = |s: u32| format!("{date} {hour}:{:02}:{:02}.000-4", m + s / 60, s % 60);
+        out.push_str(&format!(
+            "{}  ENCOUNTER_START,3130,\"The Ashen Warden\",15,20,2769\n",
+            ts(0)
+        ));
+        out.push_str(&format!(
+            "{}  SPELL_DAMAGE,{guid},\"{name}\",0x511,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,9000,9000,0,0,0,0,0,nil,nil\n",
+            ts(1)
+        ));
+        out.push_str(&format!(
+            "{}  ENCOUNTER_END,3130,\"The Ashen Warden\",15,20,{},{}\n",
+            ts(*secs),
+            u8::from(*kill),
+            secs * 1000
+        ));
+    }
+    out
+}
+
+/// The history tools over a store holding two editions' pulls of one boss
+/// id, by two characters of one name — and a third game's, a PROJECT_ID
+/// this build does not know, whose log sits in Retail's folder and is
+/// filed by its header: a question with no edition answers every
+/// edition's fights, each card labeled, but counts and ranks each
+/// edition's pulls on its own; a player named by name is looked up inside
+/// one edition, and a name two editions share is an error naming both.
+#[test]
+fn the_history_tools_keep_editions_apart() {
+    let tmp = Temp::new("hist-editions");
+    let retail = boss_log(
+        1,
+        20,
+        "Player-1-0000A001",
+        "Ana-Realm",
+        &[(30, false), (40, true)],
+    );
+    let forever = boss_log(
+        18,
+        21,
+        "Player-6101-0000B001",
+        "Ana-Realm",
+        &[(30, false), (25, false), (50, true)],
+    );
+    let other = boss_log(7, 22, "Player-77-0000C001", "Bo-Realm", &[(45, true)]);
+    let socket = start_two_editions(
+        &tmp,
+        &[
+            ("WoWCombatLog-072726_200000.txt", &retail),
+            ("WoWCombatLog-072726_220000.txt", &other),
+        ],
+        &[("WoWCombatLog-072726_210000.txt", &forever)],
+        "WoWCombatLog-072726_200000.txt",
+        true,
+    );
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    // Six pulls, and Retail's visit's Overall: its log is swept whole, not
+    // tailed, once a newer log sits in its folder.
+    wait_for_store(&mut bridge, 7);
+
+    // Every edition, each card naming its own.
+    let all = doc_of(&mut bridge, "history", "{}");
+    assert_eq!(all.get("edition"), Some(&Json::Null));
+    let mut keys: Vec<&str> = fights(&all).iter().map(|f| str_of(f, "edition")).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "forever", "forever", "forever", "retail", "retail", "retail", "unknown"
+        ]
+    );
+    let only = doc_of(&mut bridge, "history", r#"{"edition":"forever"}"#);
+    assert_eq!(str_of(&only, "edition"), "forever");
+    assert_eq!(fights(&only).len(), 3);
+
+    // A name is looked up inside one edition.
+    let reply = call(&mut bridge, "history", r#"{"player":"Ana"}"#);
+    assert!(is_error(&reply), "{}", reply.to_line());
+    let text = error_text(&reply);
+    assert!(
+        text.contains("more than one game edition")
+            && text.contains("retail: Ana-Realm Player-1-0000A001")
+            && text.contains("forever: Ana-Realm Player-6101-0000B001"),
+        "{text}"
+    );
+    let mine = doc_of(
+        &mut bridge,
+        "history",
+        r#"{"player":"Ana","edition":"retail","kind":"encounter"}"#,
+    );
+    assert_eq!(str_of(&mine, "edition"), "retail");
+    assert_eq!(fights(&mine).len(), 2);
+    let by_guid = doc_of(
+        &mut bridge,
+        "history",
+        r#"{"player":"Player-6101-0000B001"}"#,
+    );
+    assert_eq!(fights(&by_guid).len(), 3);
+    let reply = call(&mut bridge, "trend", r#"{"player":"Ana"}"#);
+    assert!(is_error(&reply), "{}", reply.to_line());
+    let trend = doc_of(
+        &mut bridge,
+        "trend",
+        r#"{"player":"Ana","edition":"forever"}"#,
+    );
+    assert_eq!(str_of(&trend, "edition"), "forever");
+    assert_eq!(str_of(&trend, "player"), "Player-6101-0000B001");
+    assert!(matches!(trend.get("points"), Some(Json::Arr(p)) if p.len() == 3));
+
+    // Progression: one edition as asked, else each on its own.
+    let one = doc_of(
+        &mut bridge,
+        "progression",
+        r#"{"encounter":3130,"difficulty":15,"edition":"retail"}"#,
+    );
+    assert_eq!(str_of(&one, "edition"), "retail");
+    assert_eq!(num_of(&one, "pulls"), 2.0);
+    let both = doc_of(
+        &mut bridge,
+        "progression",
+        r#"{"encounter":3130,"difficulty":15}"#,
+    );
+    assert_eq!(
+        both.get("pulls"),
+        None,
+        "no count across two games: {}",
+        both.to_line()
+    );
+    let Some(Json::Arr(per)) = both.get("editions") else {
+        panic!("{}", both.to_line());
+    };
+    let got: Vec<(&str, f64, f64, &str)> = per
+        .iter()
+        .map(|p| {
+            (
+                str_of(p, "edition"),
+                num_of(p, "pulls"),
+                num_of(p, "kills"),
+                str_of(p.get("best_kill").expect("best_kill"), "edition"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("retail", 2.0, 1.0, "retail"),
+            ("forever", 3.0, 1.0, "forever"),
+            ("unknown", 1.0, 1.0, "unknown")
+        ]
+    );
+    assert_eq!(per[2].get("project_id").and_then(Json::as_u64), Some(7));
+    assert!(str_of(&both, "note").contains("never counted together"));
+
+    // The role night: each edition's roster on its own.
+    let night = doc_of(
+        &mut bridge,
+        "role_night",
+        r#"{"encounter":3130,"difficulty":15,"date":"2026-07-28"}"#,
+    );
+    let Some(Json::Arr(per)) = night.get("editions") else {
+        panic!("{}", night.to_line());
+    };
+    let got: Vec<(&str, f64)> = per
+        .iter()
+        .map(|p| {
+            (
+                str_of(p, "edition"),
+                num_of(p.get("night").expect("night"), "pulls"),
+            )
+        })
+        .collect();
+    assert_eq!(got, [("retail", 2.0), ("forever", 3.0), ("unknown", 1.0)]);
+    let one = doc_of(
+        &mut bridge,
+        "role_night",
+        r#"{"encounter":3130,"difficulty":15,"date":"2026-07-28","edition":"forever"}"#,
+    );
+    assert_eq!(str_of(&one, "edition"), "forever");
+    assert_eq!(num_of(one.get("night").expect("night"), "pulls"), 3.0);
+
+    // A stored fight's loadout by id: Retail's log is swept, in no live
+    // list, so its card answers — and a call pinned to another edition is
+    // told whose fight it is.
+    let retail_kill = doc_of(
+        &mut bridge,
+        "history",
+        r#"{"edition":"retail","kind":"encounter","limit":1}"#,
+    );
+    let rid = str_of(&fights(&retail_kill)[0], "id").to_string();
+    let doc = doc_of(
+        &mut bridge,
+        "loadout",
+        &format!(r#"{{"fight_id":"{rid}","player":"Ana"}}"#),
+    );
+    assert_eq!(doc.get("logged"), Some(&Json::Bool(false)));
+    assert_eq!(
+        str_of(doc.get("fight").expect("fight"), "edition"),
+        "retail"
+    );
+    let reply = call(
+        &mut bridge,
+        "loadout",
+        &format!(r#"{{"fight_id":"{rid}","player":"Ana","edition":"forever"}}"#),
+    );
+    assert!(is_error(&reply), "{}", reply.to_line());
+    assert!(
+        error_text(&reply).contains("that fight is retail's, not forever's")
+            && error_text(&reply).contains("from history"),
+        "{}",
+        error_text(&reply)
     );
 }
