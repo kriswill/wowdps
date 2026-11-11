@@ -171,15 +171,18 @@ pub struct Engine {
     /// log named none: what names the log's edition from the moment its
     /// index lands, before the seed lines bring the same line to the meter.
     index_project_id: u8,
+    /// v49: a new log was switched to and neither its index nor any of its
+    /// lines has landed: its edition is not known yet, so a pinned session
+    /// is not served it ([`Engine::serves`]) until they do.
+    awaiting_index: bool,
 }
 
 /// v49: what the hub (and the mock) compare to know the segment list
 /// changed and must be broadcast: the id table and the edition the source
-/// names. The edition is part of it because it arrives apart from the ids
-/// — a new log's index lands before the seed lines that name its edition
-/// — and every session's list (whose edition it names, whose rows wear it,
-/// and which a session pinned to that edition is only sent once the source
-/// is known to be of it) must hear of it.
+/// names. The edition is part of it because it can move with no id moving
+/// — a version line after a log's first pull, a source named anew — and
+/// every session's list names it, its rows wear it, and which pinned
+/// sessions are served depends on it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ListKey {
     ids: Vec<SegmentId>,
@@ -227,6 +230,7 @@ impl Engine {
             mine: Arc::default(),
             source_edition: None,
             index_project_id: 0,
+            awaiting_index: false,
         }
     }
 
@@ -276,6 +280,7 @@ impl Engine {
             // State only (owners, classes, visits): a seed opens no segment,
             // so there is nothing to number or announce.
             TailEvent::Seeds(lines) => {
+                self.awaiting_index = false;
                 for line in &lines {
                     if let Some(parsed) = parse_line(line) {
                         self.now_ms = self.now_ms.max(parsed.ts_ms);
@@ -284,6 +289,7 @@ impl Engine {
                 }
             }
             TailEvent::Lines(lines) => {
+                self.awaiting_index = false;
                 if self.caught_up && !lines.is_empty() {
                     self.last_fresh = Some(Instant::now());
                 }
@@ -371,11 +377,13 @@ impl Engine {
                 self.last_fresh = None;
                 self.first_id_of_file = self.next_id;
                 self.index_project_id = 0;
+                self.awaiting_index = true;
             }
             TailEvent::Index { index, .. } => {
                 // v49: the scan read the header; the log's edition is
                 // known now, not only once the seed lines replay it.
                 self.index_project_id = index.checkpoint.project_id;
+                self.awaiting_index = false;
                 self.index = index.segments;
                 self.index_ids = (0..self.index.len()).map(|_| self.fresh_id()).collect();
                 self.index_overalls = index.overalls;
@@ -745,9 +753,25 @@ impl Engine {
     }
 
     /// v49: whether this engine answers a session looking in `scope`: a
-    /// following one always, a pinned one when this log is of its edition.
+    /// following one always, a pinned one when this log is of its edition —
+    /// never while a log just switched to is still unread (no index, no
+    /// line) and nothing names its edition: it may be any edition's, so a
+    /// pin is sent its own empty list until the index lands (an empty one
+    /// too), not this log under its name.
     pub fn serves(&self, scope: EditionRef) -> bool {
-        scope.serves(self.edition())
+        let unread = self.awaiting_index && self.edition().is_none();
+        match scope {
+            EditionRef::Follow => true,
+            EditionRef::Pin(_) if unread => false,
+            EditionRef::Pin(_) => scope.serves(self.edition()),
+        }
+    }
+
+    /// v49: a log was switched to and nothing of it has landed yet (see
+    /// [`Engine::serves`]): the hub sends pinned sessions the list once it
+    /// has, the list's key moved or not.
+    pub fn awaiting_index(&self) -> bool {
+        self.awaiting_index
     }
 
     /// v49: this engine's source as `Status` lists it. One source is the
@@ -767,7 +791,7 @@ impl Engine {
     /// or — when this engine does not answer that session (a pin to an
     /// edition its log is not) — that edition's empty list
     /// ([`absent_list`]), so a session that stops being served (its
-    /// source's edition named only now, or changed) is emptied at once
+    /// source's edition named at last, or changed) is emptied at once
     /// rather than left holding another edition's ids.
     pub fn list_for(&self, scope: EditionRef, list: &DaemonMsg) -> DaemonMsg {
         let named = scope.named(self.edition());

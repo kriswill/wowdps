@@ -670,12 +670,17 @@ edition's EMPTY list, so a session that stops being served is emptied at once
 and never keeps another edition's ids. The daemon names a log's edition from
 the moment its index lands (the scan read the header: `Engine::edition` takes
 the checkpoint's `PROJECT_ID` before the seed lines replay it), so a log whose
-header names an edition is never listed under another. The choice for a source
-whose edition is still unknown — a log that names none, a file whose header is
-not yet written — is to reckon it Retail's and let it serve Retail pins, as a
-fight that names none is Retail's in the history, rather than withhold its
-list: such a source holds no other edition's fights, and a pin to Retail is
-then answered at once. A frame answering a SEGMENT ID (`segment: Id`) is the exception: it
+header names an edition is never listed, nor named, under another: from the
+switch to a new log until its index (or a line of it) lands — a moment when
+nothing has named its edition yet — no pinned session is served it (it is sent
+its own edition's empty list, naming no log), and when the index lands, even
+an empty one, every pinned session is sent the list as it now answers it;
+following sessions are answered throughout exactly as before. The choice for a
+source whose edition is still unknown once its index has landed — a log that
+names none, a file whose header is not yet written — is to reckon it Retail's
+and let it serve Retail pins, as a fight that names none is Retail's in the
+history, rather than withhold its list: such a source holds no other edition's
+fights, and a pin to Retail is then answered at once. A frame answering a SEGMENT ID (`segment: Id`) is the exception: it
 names where its segment lives — `source` that source's log and `edition` that
 source's edition — whatever the session looks in, and a client takes it as it
 is and lets it move nothing. A pin to an edition no source carries is
