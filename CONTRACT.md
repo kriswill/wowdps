@@ -1097,9 +1097,10 @@ is answered from it, the history files its fights by it); the folder names a sou
 its header is read, and only while the daemon follows more than one. The LIVE edition (what a
 following session is answered from, `Status`'s `live`): with one followed edition's game running
 (`Running`: by name), that one; with both, the one with a pull open (`Engine::pull_open`, lines
-having arrived since the backlog: a boss fight begun and not ended — while its game runs,
-however quiet, else until no line has come for five minutes (`ENCOUNTER_QUIET`: the game crashed
-or stopped logging) — or any other open segment with lines within the trash gap), kept while it
+having arrived since the backlog: a boss fight begun and not ended — while the watcher NAMES
+its edition's client running, however quiet, else (no game, or only one it cannot name or of an
+edition no source follows) until no line has come for five minutes (`ENCOUNTER_QUIET`: the game
+crashed or stopped logging) — or any other open segment with lines within the trash gap), kept while it
 has one, and while neither has, until the other OPENS one — two games writing in turn never move
 a follower on every line; with none running, the one whose log was written last (its modified
 time when opened, then each batch of fresh lines), kept too while it has a pull open or is still

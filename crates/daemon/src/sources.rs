@@ -260,9 +260,18 @@ impl Sources {
     }
 
     fn apply_running(&mut self) {
-        let verdicts: Vec<bool> = (0..self.len()).map(|i| self.runs_for(i)).collect();
-        for (engine, v) in self.engines_mut().zip(verdicts) {
-            engine.game_running = v;
+        let verdicts: Vec<(bool, bool)> = (0..self.len())
+            .map(|i| {
+                let named = self
+                    .engine(i)
+                    .edition()
+                    .is_some_and(|e| self.running.names(e));
+                (self.runs_for(i), named)
+            })
+            .collect();
+        for (engine, (runs, named)) in self.engines_mut().zip(verdicts) {
+            engine.game_running = runs;
+            engine.edition_running = named;
         }
     }
 

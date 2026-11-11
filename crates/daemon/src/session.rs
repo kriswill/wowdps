@@ -26,6 +26,10 @@ pub struct Session {
     /// when another source answers its edition now, the hub sends it that
     /// one's list (`hub::resync`), which moves the client.
     pub answered_by: Option<usize>,
+    /// v49: the last segment list queued to the session (by a broadcast or
+    /// its cursor), seq zeroed: `hub::resync` sends no list the session
+    /// already holds — an unserved pin's empty one, on every live move.
+    last_list: Option<DaemonMsg>,
     /// Per-session monotonic sequence stamped on pushed snapshots.
     seq: u64,
     /// Last pushed snapshot/list, seq zeroed, for change detection.
@@ -54,6 +58,7 @@ impl Session {
             cursor: None,
             edition: EditionRef::Follow,
             answered_by: None,
+            last_list: None,
             seq: 0,
             last_pushed: None,
             last_load_error: None,
@@ -91,12 +96,17 @@ impl Session {
     pub fn push_list(&mut self, msg: DaemonMsg) {
         debug_assert!(matches!(msg, DaemonMsg::SegmentList { .. }));
         self.seq += 1;
-        match self.tx.try_send(stamp(msg, self.seq)) {
-            Ok(()) => {}
+        match self.tx.try_send(stamp(msg.clone(), self.seq)) {
+            Ok(()) => self.last_list = Some(msg),
             Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
                 self.dead = true;
             }
         }
+    }
+
+    /// v49: the last segment list queued to the session, seq zeroed.
+    pub fn last_list(&self) -> Option<&DaemonMsg> {
+        self.last_list.as_ref()
     }
 
     /// Queue a snapshot or segment list iff it differs from the last one
@@ -115,7 +125,12 @@ impl Session {
         self.seq += 1;
         let stamped = stamp(msg.clone(), self.seq);
         match self.tx.try_send(stamped) {
-            Ok(()) => self.last_pushed = Some(msg),
+            Ok(()) => {
+                if matches!(msg, DaemonMsg::SegmentList { .. }) {
+                    self.last_list = Some(msg.clone());
+                }
+                self.last_pushed = Some(msg);
+            }
             Err(TrySendError::Full(_)) => {} // stale by definition; drop
             Err(TrySendError::Disconnected(_)) => self.dead = true,
         }

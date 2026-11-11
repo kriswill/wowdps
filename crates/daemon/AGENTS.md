@@ -27,11 +27,12 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   editions paragraph). Every answer goes through `Sources`: an id to the
   engine holding it, `Live` and the list to the session's edition's, the
   live edition by its rule there. A session no source serves acts on
-  nothing. A daemon of one source sends the frames it sent before editions
-  were followed: the hub's `one_source_frames_are_the_daemon_s_before_editions`
-  holds them to `tests/golden/one_source_frames.txt`, made by the daemon
-  before; re-bless it (`WOWDPS_BLESS=1`) only for a change every Retail
-  client should see, and say so in the commit.
+  nothing. Over the hub's one-source scenario a daemon of one source queues
+  the wire bytes it queued before editions were followed:
+  `one_source_frames_are_the_daemon_s_before_editions` holds them to
+  `tests/golden/one_source_frames.txt`, made by the daemon before. Re-bless
+  it (`WOWDPS_BLESS=1`, which rewrites it and fails) only for a change every
+  Retail client should see, and say so in the commit.
   Discovery follows `wowdps_core::cli::FOLLOWED` (Retail alone today);
   tests name other editions' folders through `DaemonOptions::editions`.
 - **Build per-client extras only for the kinds that read them:** the raid

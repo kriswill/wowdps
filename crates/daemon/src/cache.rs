@@ -171,9 +171,10 @@ impl IndexCache {
     }
 
     /// Keep the newest [`KEEP`] entries by mtime of each edition (v49). An
-    /// entry's edition is its checkpoint's, the file's last byte; one this
-    /// build cannot read (another magic, a short file) counts as Retail's,
-    /// where every entry counted before editions were told apart.
+    /// entry's edition is its checkpoint's, read from the entry decoded
+    /// whole ([`entry_edition`]); one this build cannot decode (another
+    /// magic, a short or torn file) counts as Retail's, where every entry
+    /// counted before editions were told apart.
     fn prune(&self) {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return;

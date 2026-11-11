@@ -202,6 +202,11 @@ pub struct Engine {
     /// game runs or lines arrive — a stale log's last key is not a fight
     /// happening now.
     pub game_running: bool,
+    /// v49: the watcher names this source's edition's client running — not
+    /// merely a game it cannot name, or of an edition no source follows,
+    /// which `game_running` counts for every source. What lets a boss fight
+    /// with no END hold a pull open however quiet (`pull_open`).
+    pub edition_running: bool,
     /// v35: the account's characters as the history thread last resolved
     /// them (`HistoryLink::mine`), set by the hub each tick — what every
     /// answer's rows are marked `mine` from.
@@ -281,6 +286,7 @@ impl Engine {
             seen_segments: 0,
             last_fresh: None,
             game_running: false,
+            edition_running: false,
             mine: Arc::default(),
             source_edition: None,
             index_project_id: 0,
@@ -327,9 +333,11 @@ impl Engine {
 
     /// v49: this source's log has a pull open now, lines of it having
     /// arrived since the backlog (a stale log's forever-open last segment
-    /// is none): a boss fight begun and not ended — while its game runs,
-    /// however long a quiet phase lasts, and otherwise until no line has
-    /// come for [`ENCOUNTER_QUIET`] (the game crashed, logging stopped) — or
+    /// is none): a boss fight begun and not ended — while the watcher names
+    /// this source's edition running (`edition_running`), however long a
+    /// quiet phase lasts, and otherwise (no game, or one it cannot name)
+    /// until no line has come for [`ENCOUNTER_QUIET`] (the game crashed,
+    /// logging stopped; a real boss fight writes far more often) — or
     /// any other open segment whose lines arrived within the meter's trash
     /// gap. What keeps the live edition where it is while two games write
     /// in turn.
@@ -343,7 +351,7 @@ impl Engine {
         let quiet = fresh.elapsed();
         last.end_ms.is_none()
             && match last.kind {
-                SegmentKind::Encounter => self.game_running || quiet < ENCOUNTER_QUIET,
+                SegmentKind::Encounter => self.edition_running || quiet < ENCOUNTER_QUIET,
                 _ => quiet < PULL_QUIET,
             }
     }
@@ -2052,7 +2060,15 @@ mod tests {
         e.age_for_test(Duration::from_secs(2 * 60));
         assert!(!e.pull_open(), "six minutes, no game: over");
         e.game_running = true;
-        assert!(e.pull_open(), "its game runs: a quiet phase is no end");
+        assert!(
+            !e.pull_open(),
+            "a game counted for every source (unnamed, or another's) holds nothing"
+        );
+        e.edition_running = true;
+        assert!(
+            e.pull_open(),
+            "its edition named running: a quiet phase is no end"
+        );
 
         let mut e = Engine::new();
         e.on_tail(TailEvent::CaughtUp, &mut Vec::new());

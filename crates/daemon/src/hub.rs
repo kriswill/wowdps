@@ -763,7 +763,12 @@ fn resync(sources: &Sources, sessions: &mut [Session]) {
         if s.answered_by.is_some_and(|was| was != i) {
             let engine = sources.engine(i);
             let list = engine.build_list(engine.game_running);
-            s.push_list(engine.list_for(s.edition, &list));
+            let msg = engine.list_for(s.edition, &list);
+            // A list the session holds already (an unserved pin's empty
+            // one, the same from every source) moves nothing: not re-sent.
+            if s.last_list() != Some(&msg) {
+                s.push_list(msg);
+            }
             s.answered_by = Some(i);
         }
     }
@@ -1300,6 +1305,36 @@ mod tests {
     /// lines; what the hub had sent each receiver drained after each.
     fn deliver_log(hub: &mut Hub, path: &str) -> usize {
         deliver_log_to(hub, 0, path, 0)
+    }
+
+    /// A log as the tail delivers it to the first source, in its three
+    /// messages: `Switched`, `Index` (written just now), `Seeds`.
+    fn log_parts(path: &str) -> (HubMsg, HubMsg, HubMsg) {
+        let bytes = std::fs::read(path).unwrap();
+        let idx = wowdps_core::index::scan(&mut &bytes[..]);
+        let seed_ranges = match idx.open.as_ref() {
+            Some(open) => open.seeds.clone(),
+            None => idx.checkpoint.seeds.clone(),
+        };
+        let seeds: Vec<String> = seed_ranges
+            .iter()
+            .map(|&(a, b)| {
+                String::from_utf8_lossy(&bytes[a as usize..b as usize])
+                    .trim_end()
+                    .to_string()
+            })
+            .collect();
+        (
+            HubMsg::Tail(0, TailEvent::Switched(path.into())),
+            HubMsg::Tail(
+                0,
+                TailEvent::Index {
+                    index: Box::new(idx),
+                    file_age_ms: Some(0),
+                },
+            ),
+            HubMsg::Tail(0, TailEvent::Seeds(seeds)),
+        )
     }
 
     /// v49: [`deliver_log`] to source `i`, the log last written `age_ms`
@@ -2078,18 +2113,19 @@ mod tests {
     }
 
     impl Frame {
-        /// The text the golden hashes: `step sN: Debug`.
+        /// The frame as a reader sees it, for a failing assertion.
         fn line(&self) -> String {
             format!("{} s{}: {:?}", self.step, self.session, self.msg)
         }
 
-        /// The golden's line: step, session, message kind, FNV-1a of
-        /// [`Frame::line`].
+        /// The golden's line: step, session, message kind, and FNV-1a of
+        /// the frame's wire bytes (`DaemonMsg::encode`: length, tag, body)
+        /// — what the session's socket carries, not how it prints.
         fn golden(&self) -> String {
             let text = format!("{:?}", self.msg);
             let kind: String = text.chars().take_while(|c| c.is_alphanumeric()).collect();
             let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-            for b in self.line().bytes() {
+            for b in self.msg.encode() {
                 h ^= u64::from(b);
                 h = h.wrapping_mul(0x0000_0100_0000_01b3);
             }
@@ -2160,7 +2196,11 @@ mod tests {
         record("tick", &mut dump);
         hub.handle(HubMsg::Game(Running::of(&[Edition::Retail])));
         record("game", &mut dump);
-        deliver_log(&mut hub, FIXTURE);
+        let (switch, index, seeds) = log_parts(FIXTURE);
+        hub.handle(switch);
+        record("deliver switched", &mut dump);
+        hub.handle(index);
+        hub.handle(seeds);
         record("deliver", &mut dump);
         hub.tick();
         hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
@@ -2229,7 +2269,11 @@ mod tests {
         hub.handle(HubMsg::Game(Running::default()));
         hub.tick();
         record("no game", &mut dump);
-        deliver_log(&mut hub, FOREVER);
+        let (switch, index, seeds) = log_parts(FOREVER);
+        hub.handle(switch);
+        record("rotate switched", &mut dump);
+        hub.handle(index);
+        hub.handle(seeds);
         record("rotate", &mut dump);
         hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
         hub.tick();
@@ -2260,15 +2304,16 @@ mod tests {
     /// The one-source scenario's frames as the daemon sent them before it
     /// followed more than one source: produced by `0b5714f`'s hub over the
     /// same scenario (`one_source_scenario`, ported to that hub's API), a
-    /// line per frame (step, session, kind, FNV-1a of its `Debug` text).
+    /// line per frame — step, session, kind, and FNV-1a of its wire bytes.
     const ONE_SOURCE_GOLDEN: &str = include_str!("../tests/golden/one_source_frames.txt");
 
     /// The Retail guard: a daemon of one source — as production follows an
-    /// install while discovery follows Retail alone — sends every session
-    /// the frames the daemon sent before it followed editions, byte for
-    /// byte (`ONE_SOURCE_GOLDEN`). `WOWDPS_BLESS=1` rewrites the golden;
-    /// that is a change to what every Retail client sees, so the commit
-    /// says why.
+    /// install while discovery follows Retail alone — queues every session
+    /// of the scenario the same frames, in the same order, byte for byte on
+    /// the wire, as `0b5714f`'s daemon did (`ONE_SOURCE_GOLDEN`). It proves
+    /// that scenario's frames and nothing wider. `WOWDPS_BLESS=1` rewrites
+    /// the golden and then fails, so no run passes by blessing; a re-bless
+    /// changes what every Retail client is sent, and its commit says why.
     #[test]
     fn one_source_frames_are_the_daemon_s_before_editions() {
         let frames = one_source_scenario(Hub::with_sources(vec![SourceSetup {
@@ -2287,7 +2332,7 @@ mod tests {
                 .map(|l| format!("{l}\n"))
                 .collect();
             std::fs::write(path, head + &got.join("\n") + "\n").unwrap();
-            return;
+            panic!("WOWDPS_BLESS rewrote {path}: rerun without it, and say why in the commit");
         }
         let want: Vec<&str> = ONE_SOURCE_GOLDEN
             .lines()
@@ -2299,48 +2344,128 @@ mod tests {
         assert_eq!(got.len(), want.len(), "the frame count moved");
     }
 
-    /// The scenario's steps in which a log is switched to.
-    const SWITCHES: [&str; 2] = ["deliver", "rotate"];
+    /// The steps of the scenario between a log's switch and its index.
+    const SWITCHED: [&str; 2] = ["deliver switched", "rotate switched"];
 
-    /// A frame as two daemons are compared: its `seq` zeroed (each session
-    /// numbers its own frames), and `None` for a list with no entries sent
-    /// in a step that switches to a log ([`SWITCHES`]).
-    fn compared(frame: &Frame) -> Option<(&'static str, u64, DaemonMsg)> {
-        let empty_list =
-            matches!(&frame.msg, DaemonMsg::SegmentList { entries, .. } if entries.is_empty());
-        (!(empty_list && SWITCHES.contains(&frame.step))).then(|| {
-            (
-                frame.step,
-                frame.session,
-                crate::session::stamp(frame.msg.clone(), 0),
-            )
-        })
+    /// The frames of every other step, seq zeroed (each session numbers its
+    /// own frames).
+    fn outside_switches(frames: &[Frame]) -> Vec<(&'static str, u64, DaemonMsg)> {
+        frames
+            .iter()
+            .filter(|f| !SWITCHED.contains(&f.step))
+            .map(|f| (f.step, f.session, crate::session::stamp(f.msg.clone(), 0)))
+            .collect()
+    }
+
+    /// The frames of one step as lists: session, entries, log named,
+    /// edition named; anything but a list fails.
+    fn lists_in(
+        frames: &[Frame],
+        step: &str,
+    ) -> Vec<(u64, usize, Option<String>, Option<Edition>)> {
+        frames
+            .iter()
+            .filter(|f| f.step == step)
+            .map(|f| match &f.msg {
+                DaemonMsg::SegmentList {
+                    entries,
+                    source,
+                    edition,
+                    ..
+                } => (f.session, entries.len(), source.clone(), *edition),
+                _ => panic!("not a list: {}", f.line()),
+            })
+            .collect()
     }
 
     /// The same guard with a second source, configured as a real daemon
     /// following two editions configures it — each source named by its
-    /// folder — whose folder never holds a log: every session is sent the
-    /// one-source daemon's frames, sequence numbers aside, but the empty
-    /// lists sent while a log switched to awaits its index — there the
-    /// first source is named by its folder (Retail) rather than by nothing,
-    /// so its list is broadcast and its Retail pin served that log's empty
-    /// list, until the index names the log's own edition.
+    /// folder — whose folder never holds a log. Every frame of every step
+    /// is the one-source daemon's, sequence numbers aside, but those sent
+    /// while a log switched to awaits its index: there the first source is
+    /// named Retail by its folder where one source names nothing, so (v49's
+    /// rule for a named source) its list is broadcast at the first switch,
+    /// followers' lists name Retail, and its Retail pin is served the
+    /// unread log's empty list. Those frames are asserted one by one.
     #[test]
-    fn a_second_source_that_never_holds_a_log_changes_no_frame_but_an_unread_logs_lists() {
+    fn a_second_source_changes_no_frame_but_those_of_an_unread_log() {
         let one = one_source_scenario(Hub::with_sources(vec![SourceSetup {
             spec: Some(RETAIL_SPEC.to_string()),
             edition: Some(Edition::Retail),
         }]));
         let two = one_source_scenario(two_editions());
         assert!(one.len() > 60, "the scenario says something: {}", one.len());
-        let set_aside = two.iter().filter(|f| compared(f).is_none()).count();
-        assert!(set_aside > 0, "the folder's name shows somewhere");
-        let one: Vec<_> = one.iter().filter_map(compared).collect();
-        let two: Vec<_> = two.iter().filter_map(compared).collect();
-        for (i, (a, b)) in one.iter().zip(&two).enumerate() {
-            assert_eq!(a, b, "frame {i}");
+        let (a, b) = (outside_switches(&one), outside_switches(&two));
+        for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+            assert_eq!(x, y, "frame {i}");
         }
-        assert_eq!(one.len(), two.len());
+        assert_eq!(a.len(), b.len());
+
+        let (r, f) = (Some(Edition::Retail), Some(Edition::Forever));
+        let log = |name: &str| Some(name.to_string());
+        assert_eq!(
+            lists_in(&one, "deliver switched"),
+            [],
+            "no list moved for one"
+        );
+        assert_eq!(
+            lists_in(&two, "deliver switched"),
+            [
+                (1, 0, log("sample.txt"), r),
+                (2, 0, log("sample.txt"), r),
+                (3, 0, None, f),
+                (4, 0, log("sample.txt"), r),
+                (5, 0, log("sample.txt"), r),
+            ]
+        );
+        assert_eq!(
+            lists_in(&one, "rotate switched"),
+            [
+                (1, 0, log("forever.txt"), None),
+                (2, 0, None, r),
+                (3, 0, None, f),
+                (4, 0, log("forever.txt"), None),
+                (5, 0, log("forever.txt"), None),
+            ]
+        );
+        assert_eq!(
+            lists_in(&two, "rotate switched"),
+            [
+                (1, 0, log("forever.txt"), r),
+                (2, 0, log("forever.txt"), r),
+                (3, 0, None, f),
+                (4, 0, log("forever.txt"), r),
+                (5, 0, log("forever.txt"), r),
+            ]
+        );
+    }
+
+    /// v49: a pin no source serves holds its edition's empty list from
+    /// every source alike, so a move of the live edition sends it none.
+    #[test]
+    fn an_unserved_pin_is_not_resent_its_empty_list_on_a_move() {
+        let mut hub = two_editions();
+        let classic = hub.connect(1, ClientKind::Tui);
+        hub.client(
+            1,
+            ClientMsg::Watch {
+                cursor: Cursor::List,
+                edition: EditionRef::Pin(Edition::Classic(2)),
+            },
+        );
+        deliver_both(&mut hub);
+        drain(&classic);
+        for running in [
+            Running::of(&[Edition::Retail]),
+            Running::of(&[Edition::Forever]),
+            Running::of(&[Edition::Retail]),
+        ] {
+            let was = hub.sources.live();
+            hub.handle(HubMsg::Game(running));
+            assert_ne!(hub.sources.live(), was, "the live edition moved");
+            let got = drain(&classic);
+            assert!(got.is_empty(), "{got:?}");
+        }
     }
 
     /// Each edition's log has its own engine: one's index, live meter and
