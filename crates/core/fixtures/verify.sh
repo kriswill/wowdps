@@ -4,8 +4,9 @@
 # must fail. With no arguments every gated fixture runs: sample.txt (R1-R7),
 # taken.txt (R17), support.txt (R19 + the R2 amendment), spans.txt (R18) and
 # shields.txt (R20), stacks.txt (R21), tree.txt (R26), relog.txt (R5 + R6),
-# replay.txt (R29, the replay cut) and forever.txt (R8's editions: a Forever
-# log, which reads no Retail table);
+# replay.txt (R29, the replay cut), forever.txt (R8's editions: a Forever
+# log, which reads no Retail table) and roles.txt (R30: a Forever log's roles
+# inferred per fight);
 # a log given without a golden pairs with <log>.expected.tsv,
 # falling back to sample.expected.tsv (the corrupt.txt negative control).
 # check.awk's own self-checks (R20: a REMOVED trailer disagreeing with the
@@ -32,7 +33,7 @@ check() {
 
 if [ $# -eq 0 ]; then
     rc=0
-    for name in sample taken support spans shields stacks tree relog replay forever; do
+    for name in sample taken support spans shields stacks tree relog replay forever roles; do
         check "$here/$name.txt" "$here/$name.expected.tsv" || rc=1
     done
     exit $rc

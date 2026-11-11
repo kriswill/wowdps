@@ -62,6 +62,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C02	power_seconds	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C02	power_sum	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C02	power_max	0
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C02	role	3
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C05	damage	205
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C05	overkill	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C05	petdamage	0
@@ -125,6 +126,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C05	power_seconds	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C05	power_sum	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C05	power_max	0
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C05	role	3
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C01	damage	180
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C01	overkill	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C01	petdamage	0
@@ -188,6 +190,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C01	power_seconds	2
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C01	power_sum	70
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C01	power_max	100
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C01	role	3
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	damage	140
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	overkill	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	petdamage	0
@@ -251,6 +254,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	power_seconds	2
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	power_sum	250
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	power_max	1000
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	role	3
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	damage	95
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	overkill	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	petdamage	0
@@ -314,6 +318,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	power_seconds	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	power_sum	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	power_max	0
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	role	2
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_units	2
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_posts	0
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_absorb	0

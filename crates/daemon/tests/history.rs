@@ -34,6 +34,7 @@ use wowdps_proto::{
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
 const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
 const ARENA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/arena.txt");
+const ROLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/roles.txt");
 const DEADLINE: Duration = Duration::from_secs(15);
 
 // ---- scaffolding ------------------------------------------------------------
@@ -218,6 +219,74 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
             assert_eq!(l.hash, p.loadout.unwrap());
         }
     }
+}
+
+/// R30 (v49's stored role): a card of an edition whose log carries no spec
+/// stores each player's role as its own lines infer it — two tanks, a
+/// healer, one dealing damage, and nothing for the rogue who only died —
+/// and it reads back through `CardPlayer::role`; a Retail card stores none,
+/// its roles being its specs'.
+#[test]
+fn a_forever_card_stores_its_inferred_roles_and_a_retail_card_none() {
+    use wowdps_core::model::Role;
+    let path = Path::new(ROLES);
+    let fights = closed_fights(path);
+    let mut store = mem(Retention::default());
+    store_all(&mut store, path, &fights);
+    let cards = store.cards();
+    let boss = cards
+        .iter()
+        .find(|c| c.encounter.is_some_and(|e| e.id == 2910))
+        .expect("the second boss is stored");
+    let stored: Vec<(&str, Option<Role>)> = boss
+        .players
+        .iter()
+        .map(|p| (p.guid.as_str(), p.stored_role))
+        .collect();
+    let mut stored = stored;
+    stored.sort_by_key(|(guid, _)| *guid);
+    assert_eq!(
+        stored,
+        [
+            ("Player-6101-0C1D2E01", Some(Role::Tank)),
+            ("Player-6101-0C1D2E06", Some(Role::Tank)),
+            ("Player-6101-0C1D2E07", Some(Role::Healer)),
+            ("Player-6101-0C1D2E08", Some(Role::Dps)),
+            ("Player-6101-0C1D2E09", None),
+        ]
+    );
+    assert!(
+        boss.players
+            .iter()
+            .all(|p| p.spec.is_none() && p.role() == p.stored_role)
+    );
+    let first = cards
+        .iter()
+        .find(|c| c.encounter.is_some_and(|e| e.id == 2911))
+        .expect("the first boss is stored");
+    let tanks = first
+        .players
+        .iter()
+        .filter(|p| p.role() == Some(Role::Tank))
+        .count();
+    let healers = first
+        .players
+        .iter()
+        .filter(|p| p.role() == Some(Role::Healer))
+        .count();
+    assert_eq!((tanks, healers, first.players.len()), (1, 1, 5));
+
+    let sample = Path::new(SAMPLE);
+    let mut retail = mem(Retention::default());
+    store_all(&mut retail, sample, &closed_fights(sample));
+    let cards = retail.cards();
+    assert!(!cards.is_empty());
+    assert!(
+        cards
+            .iter()
+            .flat_map(|c| &c.players)
+            .all(|p| p.stored_role.is_none())
+    );
 }
 
 #[test]

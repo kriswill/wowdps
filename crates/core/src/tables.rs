@@ -22,6 +22,7 @@
 //! different editions' tables for one fight. A table generated for an
 //! edition is one entry in that edition's [`Tables`].
 
+use crate::roles::RoleSignal;
 use wowdps_model::{Class, Edition, ItemKind, RoleSpellKind, Spec};
 
 /// A keystone dungeon's (par, +2, +3) timers, in milliseconds.
@@ -48,6 +49,11 @@ pub(crate) struct Tables {
     keystones: Option<Keystones>,
     /// R10 (`open_world_maps`): whether a map is open world.
     open_world: Option<fn(u32) -> bool>,
+    /// R30 (`role_signals`): what a cast or a form says about a player's
+    /// role. Only an edition whose log carries no spec has one: with it the
+    /// meter keeps R30's ledger and infers each fight's roles; without it
+    /// (Retail, whose role is its spec's) it keeps none and infers nothing.
+    signals: Option<fn(u32) -> Option<RoleSignal>>,
 }
 
 /// An item table's two questions.
@@ -81,11 +87,13 @@ static RETAIL: Tables = Tables {
         by_map: crate::keystone_timers::pars_for_map,
     }),
     open_world: Some(crate::open_world_maps::open_world),
+    signals: None,
 };
 
 /// Forever's: its classes (by the client's class masks, no spec), its
-/// items, its keystones (none: it has no Mythic+) and its open-world maps.
-/// Its shields, roles and procs have no table yet.
+/// items, its keystones (none: it has no Mythic+), its open-world maps and
+/// its role signals (R30: its log carries no spec, so roles are inferred).
+/// Its shields, role spans and procs have no table yet.
 static FOREVER: Tables = Tables {
     class: Some(crate::forever::class_spells::resolve),
     items: Some(Items {
@@ -100,6 +108,7 @@ static FOREVER: Tables = Tables {
         by_map: crate::forever::keystone_timers::pars_for_map,
     }),
     open_world: Some(crate::forever::open_world_maps::open_world),
+    signals: Some(crate::forever::role_signals::signal),
 };
 
 /// An edition no table was generated for: a Classic client, or a game this
@@ -113,6 +122,7 @@ static NONE: Tables = Tables {
     procs: None,
     keystones: None,
     open_world: Some(crate::open_world_maps::open_world),
+    signals: None,
 };
 
 impl Tables {
@@ -150,6 +160,16 @@ impl Tables {
     /// R20: whether a spell places a shield.
     pub(crate) fn is_absorb_spell(&self, spell_id: u32) -> bool {
         self.absorb.is_some_and(|f| f(spell_id))
+    }
+
+    /// R30: whether this edition infers roles (it has a role-signal table).
+    pub(crate) fn infers_roles(&self) -> bool {
+        self.signals.is_some()
+    }
+
+    /// R30: what a cast (or a form's aura) says about a player's role.
+    pub(crate) fn role_signal(&self, spell_id: u32) -> Option<RoleSignal> {
+        self.signals.and_then(|f| f(spell_id))
     }
 
     /// R18: the role a buff plays.
@@ -297,6 +317,31 @@ mod tests {
         assert_eq!(Tables::of(Edition::Unknown(7)).role_kind(871), None);
     }
 
+    /// R30: only Forever infers roles; Retail's role is its spec's, and an
+    /// edition with no table of its own reads none of Forever's.
+    #[test]
+    fn a_role_signal_lookup_reads_forevers_table_alone() {
+        for e in every_edition() {
+            for id in STRANGERS.into_iter().chain([0]) {
+                assert_eq!(Tables::of(e).role_signal(id), None, "{e:?} {id}");
+            }
+            assert_eq!(Tables::of(e).infers_roles(), e == Edition::Forever, "{e:?}");
+        }
+        let forever = Tables::of(Edition::Forever);
+        // Taunt, Shield Block, Revenge, Defensive Stance, Healing Wave.
+        assert_eq!(forever.role_signal(355), Some(RoleSignal::Taunt));
+        assert_eq!(forever.role_signal(2565), Some(RoleSignal::Shield));
+        assert_eq!(forever.role_signal(6574), Some(RoleSignal::Mitigation));
+        assert_eq!(forever.role_signal(71), Some(RoleSignal::Form));
+        assert_eq!(forever.role_signal(331), Some(RoleSignal::Heal));
+        // Earth Shock's plain rank is no taunt; its taunting one is.
+        assert_eq!(forever.role_signal(8046), None);
+        assert_eq!(forever.role_signal(1219379), Some(RoleSignal::Taunt));
+        for e in [Edition::Retail, Edition::Unknown(7), Edition::Classic(2)] {
+            assert_eq!(Tables::of(e).role_signal(355), None, "{e:?}");
+        }
+    }
+
     #[test]
     fn a_proc_lookup_of_an_id_no_table_holds_is_none() {
         for e in every_edition() {
@@ -353,6 +398,7 @@ mod tests {
                 assert_eq!(t.open_world(map), retail.open_world(map), "{e:?} {map}");
             }
             assert!(t.class.is_none() && t.items.is_none() && t.absorb.is_none());
+            assert!(t.signals.is_none());
             assert!(t.role.is_none() && t.procs.is_none() && t.keystones.is_none());
         }
         assert!(Tables::of(Edition::Classic(2)).open_world(1));

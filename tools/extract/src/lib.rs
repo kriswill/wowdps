@@ -52,6 +52,7 @@ pub mod pulls;
 pub mod raw;
 pub mod rolegen;
 pub mod salsa20;
+pub mod signalgen;
 pub mod spellicongen;
 pub mod spelltip;
 pub mod spelltipgen;

@@ -1,0 +1,1153 @@
+segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	damage	1700
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	overkill	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	petdamage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	dps	56.67
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	combat_ms	30000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	pct	32.69
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	overheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	absorbheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	interrupts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	cc	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	dispels	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	deaths	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	taken	300
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	blocked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	prevented	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	misses	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	stagger	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	stagger_ticked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	reduced	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	self_harm	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	friendly_fire	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	support_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	support_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	support_given_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	support_received_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	healed_received	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	self_healed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	effective	1700
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	am_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	externals_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	externals_given_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	externals_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	externals_received_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	support_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	spans	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	taken10_0	300
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	absorb_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	absorb_wasted	
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	shields_unknown	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	stack_hits	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	stack_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	stack_max	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	stack_cells	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	stack_auras	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	casts	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	cast_starts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	damage_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	heal_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	misses_dealt	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	dot_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	energize_gained	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	energize_wasted	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	heal_absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	empower_stage1	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	empower_stage2	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	empower_stage3	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	empower_stage4	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	empower_cancelled	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	power_seconds	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	power_sum	120
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	power_max	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	role	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	damage	1500
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	overkill	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	petdamage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	dps	50.00
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	combat_ms	30000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	pct	28.85
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	heal	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	overheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	absorbheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	interrupts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	cc	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	dispels	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	deaths	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	taken	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	blocked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	prevented	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	misses	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	stagger	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	stagger_ticked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	reduced	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	self_harm	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	friendly_fire	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	support_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	support_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	support_given_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	support_received_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	healed_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	self_healed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	effective	1500
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	am_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	externals_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	externals_given_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	externals_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	externals_received_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	support_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	spans	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	taken10_0	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	absorb_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	absorb_wasted	
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	shields_unknown	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	stack_hits	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	stack_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	stack_max	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	stack_cells	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	stack_auras	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	casts	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	cast_starts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	damage_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	heal_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	misses_dealt	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	dot_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	energize_gained	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	energize_wasted	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	heal_absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	empower_stage1	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	empower_stage2	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	empower_stage3	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	empower_stage4	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	empower_cancelled	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	power_seconds	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	power_sum	120
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	power_max	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	role	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	damage	1400
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	overkill	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	petdamage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	dps	46.67
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	combat_ms	30000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	pct	26.92
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	heal	200
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	overheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	absorbheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	interrupts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	cc	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	dispels	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	deaths	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	taken	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	blocked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	prevented	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	misses	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	stagger	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	stagger_ticked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	reduced	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	self_harm	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	friendly_fire	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	support_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	support_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	support_given_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	support_received_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	healed_received	200
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	self_healed	200
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	effective	1400
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	am_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	externals_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	externals_given_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	externals_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	externals_received_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	support_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	spans	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	taken10_0	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	absorb_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	absorb_wasted	
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	shields_unknown	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	stack_hits	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	stack_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	stack_max	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	stack_cells	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	stack_auras	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	casts	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	cast_starts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	damage_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	heal_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	misses_dealt	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	dot_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	energize_gained	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	energize_wasted	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	heal_absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	empower_stage1	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	empower_stage2	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	empower_stage3	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	empower_stage4	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	empower_cancelled	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	power_seconds	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	power_sum	180
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	power_max	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	role	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	damage	500
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	overkill	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	petdamage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	dps	16.67
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	combat_ms	30000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	pct	9.62
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	overheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	absorbheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	interrupts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	cc	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	dispels	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	deaths	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	taken	2400
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	blocked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	prevented	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	misses	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	stagger	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	stagger_ticked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	reduced	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	self_harm	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	friendly_fire	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	support_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	support_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	support_given_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	support_received_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	healed_received	1200
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	self_healed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	effective	500
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	am_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	externals_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	externals_given_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	externals_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	externals_received_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	support_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	spans	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	taken10_0	820
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	absorb_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	absorb_wasted	
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	shields_unknown	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	stack_hits	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	stack_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	stack_max	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	stack_cells	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	stack_auras	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	casts	5
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	cast_starts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	damage_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	heal_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	misses_dealt	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	dot_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	energize_gained	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	energize_wasted	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	heal_absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	empower_stage1	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	empower_stage2	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	empower_stage3	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	empower_stage4	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	empower_cancelled	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	power_seconds	9
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	power_sum	540
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	power_max	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	role	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	damage	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	overkill	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	petdamage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	dps	3.33
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	combat_ms	30000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	pct	1.92
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	heal	1350
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	overheal	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	absorbheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	interrupts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	cc	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	dispels	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	deaths	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	taken	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	blocked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	prevented	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	misses	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	stagger	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	stagger_ticked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	reduced	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	self_harm	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	friendly_fire	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	support_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	support_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	support_given_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	support_received_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	healed_received	150
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	self_healed	150
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	effective	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	am_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	externals_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	externals_given_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	externals_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	externals_received_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	support_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	spans	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	taken10_0	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	absorb_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	absorb_wasted	
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	shields_unknown	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	stack_hits	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	stack_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	stack_max	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	stack_cells	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	stack_auras	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	casts	5
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	cast_starts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	damage_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	heal_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	misses_dealt	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	dot_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	energize_gained	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	energize_wasted	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	heal_absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	empower_stage1	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	empower_stage2	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	empower_stage3	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	empower_stage4	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	empower_cancelled	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	power_seconds	6
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	power_sum	360
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	power_max	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	role	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	damage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	overkill	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	petdamage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	dps	0.00
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	combat_ms	30000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	pct	0.00
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	overheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	absorbheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	interrupts	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	cc	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	dispels	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	deaths	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	taken	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	blocked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	prevented	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	misses	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stagger	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stagger_ticked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	reduced	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	self_harm	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	friendly_fire	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_given_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_received_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	healed_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	self_healed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	effective	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	am_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	externals_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	externals_given_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	externals_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	externals_received_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	spans	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	taken10_0	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	absorb_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	absorb_wasted	
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	shields_unknown	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_hits	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_max	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_cells	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_auras	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	casts	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	cast_starts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	damage_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	heal_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	misses_dealt	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	dot_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	energize_gained	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	energize_wasted	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	heal_absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_stage1	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_stage2	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_stage3	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_stage4	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_cancelled	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	power_seconds	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	power_sum	60
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	power_max	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	role	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	damage	2600
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	overkill	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	petdamage	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	dps	65.00
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	combat_ms	40000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	pct	65.33
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	overheal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	absorbheal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	interrupts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	cc	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	dispels	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	deaths	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	taken	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	blocked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	prevented	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	misses	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	stagger	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	stagger_ticked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	reduced	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	self_harm	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	friendly_fire	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	support_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	support_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	support_given_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	support_received_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	healed_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	self_healed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	effective	2600
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	am_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	externals_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	externals_given_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	externals_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	externals_received_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	support_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	spans	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	taken10_0	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	absorb_applied	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	absorb_wasted	
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	shields_unknown	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	stack_hits	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	stack_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	stack_max	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	stack_cells	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	stack_auras	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	casts	3
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	cast_starts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	damage_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	heal_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	misses_dealt	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	dot_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	energize_gained	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	energize_wasted	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	heal_absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	empower_stage1	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	empower_stage2	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	empower_stage3	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	empower_stage4	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	empower_cancelled	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	power_seconds	3
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	power_sum	180
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	power_max	100
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	role	3
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	damage	700
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	overkill	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	petdamage	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	dps	17.50
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	combat_ms	40000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	pct	17.59
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	overheal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	absorbheal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	interrupts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	cc	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	dispels	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	deaths	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	taken	1820
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	blocked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	prevented	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	misses	1
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	stagger	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	stagger_ticked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	reduced	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	self_harm	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	friendly_fire	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	support_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	support_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	support_given_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	support_received_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	healed_received	400
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	self_healed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	effective	700
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	am_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	externals_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	externals_given_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	externals_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	externals_received_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	support_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	spans	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	taken10_0	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	absorb_applied	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	absorb_wasted	
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	shields_unknown	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	stack_hits	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	stack_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	stack_max	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	stack_cells	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	stack_auras	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	casts	3
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	cast_starts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	damage_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	heal_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	misses_dealt	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	dot_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	energize_gained	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	energize_wasted	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	heal_absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	empower_stage1	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	empower_stage2	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	empower_stage3	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	empower_stage4	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	empower_cancelled	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	power_seconds	4
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	power_sum	240
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	power_max	100
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	role	1
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	damage	600
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	overkill	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	petdamage	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	dps	15.00
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	combat_ms	40000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	pct	15.08
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	overheal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	absorbheal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	interrupts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	cc	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	dispels	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	deaths	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	taken	3155
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	absorbed	150
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	blocked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	prevented	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	misses	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	stagger	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	stagger_ticked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	reduced	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	self_harm	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	friendly_fire	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	support_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	support_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	support_given_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	support_received_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	healed_received	750
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	self_healed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	effective	600
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	am_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	externals_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	externals_given_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	externals_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	externals_received_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	support_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	spans	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	taken10_0	1650
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	absorb_applied	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	absorb_wasted	
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	shields_unknown	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	stack_hits	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	stack_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	stack_max	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	stack_cells	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	stack_auras	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	casts	3
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	cast_starts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	damage_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	heal_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	misses_dealt	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	dot_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	energize_gained	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	energize_wasted	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	heal_absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	empower_stage1	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	empower_stage2	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	empower_stage3	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	empower_stage4	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	empower_cancelled	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	power_seconds	5
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	power_sum	300
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	power_max	100
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	role	1
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	damage	80
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	overkill	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	petdamage	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	dps	2.00
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	combat_ms	40000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	pct	2.01
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	heal	1300
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	overheal	50
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	absorbheal	150
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	interrupts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	cc	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	dispels	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	deaths	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	taken	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	blocked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	prevented	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	misses	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	stagger	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	stagger_ticked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	reduced	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	self_harm	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	friendly_fire	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	support_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	support_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	support_given_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	support_received_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	healed_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	self_healed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	effective	80
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	am_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	externals_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	externals_given_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	externals_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	externals_received_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	support_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	spans	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	taken10_0	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	absorb_applied	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	absorb_wasted	
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	shields_unknown	1
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	stack_hits	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	stack_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	stack_max	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	stack_cells	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	stack_auras	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	casts	4
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	cast_starts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	damage_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	heal_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	misses_dealt	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	dot_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	energize_gained	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	energize_wasted	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	heal_absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	empower_stage1	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	empower_stage2	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	empower_stage3	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	empower_stage4	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	empower_cancelled	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	power_seconds	4
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	power_sum	240
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	power_max	100
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	role	2
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	damage	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	overkill	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	petdamage	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	dps	0.00
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	combat_ms	40000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	pct	0.00
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	overheal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	absorbheal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	interrupts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	cc	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	dispels	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	deaths	1
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	taken	3000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	blocked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	prevented	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	misses	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	stagger	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	stagger_ticked	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	reduced	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	self_harm	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	friendly_fire	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	support_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	support_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	support_given_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	support_received_heal	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	healed_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	self_healed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	effective	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	am_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	externals_given	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	externals_given_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	externals_received	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	externals_received_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	support_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	spans	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	taken10_0	3000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	absorb_applied	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	absorb_wasted	
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	shields_unknown	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	stack_hits	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	stack_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	stack_max	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	stack_cells	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	stack_auras	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	casts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	cast_starts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	damage_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	heal_periodic	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	misses_dealt	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	dot_uptime_ms	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	energize_gained	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	energize_wasted	0.0000
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	heal_absorbed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	empower_stage1	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	empower_stage2	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	empower_stage3	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	empower_stage4	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	empower_cancelled	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	power_seconds	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	power_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	power_max	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	role	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	damage	1100
+3	Trash	Trash		6000			Player-6101-0C1D2E08	overkill	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	petdamage	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	dps	183.33
+3	Trash	Trash		6000			Player-6101-0C1D2E08	combat_ms	6000
+3	Trash	Trash		6000			Player-6101-0C1D2E08	pct	100.00
+3	Trash	Trash		6000			Player-6101-0C1D2E08	heal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	overheal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	absorbheal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	interrupts	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	cc	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	dispels	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	deaths	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	taken	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	absorbed	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	blocked	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	prevented	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	misses	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	stagger	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	stagger_ticked	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	reduced	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	self_harm	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	friendly_fire	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	support_given	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	support_received	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	support_given_heal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	support_received_heal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	healed_received	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	self_healed	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	effective	1100
+3	Trash	Trash		6000			Player-6101-0C1D2E08	am_uptime_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	externals_given	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	externals_given_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	externals_received	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	externals_received_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	support_uptime_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	spans	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	taken10_0	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	absorb_applied	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	absorb_wasted	
+3	Trash	Trash		6000			Player-6101-0C1D2E08	shields_unknown	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	stack_hits	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	stack_sum	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	stack_max	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	stack_cells	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	stack_auras	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	casts	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	cast_starts	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	damage_periodic	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	heal_periodic	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	misses_dealt	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	dot_uptime_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	energize_gained	0.0000
+3	Trash	Trash		6000			Player-6101-0C1D2E08	energize_wasted	0.0000
+3	Trash	Trash		6000			Player-6101-0C1D2E08	heal_absorbed	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	empower_stage1	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	empower_stage2	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	empower_stage3	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	empower_stage4	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	empower_cancelled	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	power_seconds	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	power_sum	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	power_max	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	role	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	damage	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	overkill	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	petdamage	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	dps	0.00
+3	Trash	Trash		6000			Player-6101-0C1D2E01	combat_ms	6000
+3	Trash	Trash		6000			Player-6101-0C1D2E01	pct	0.00
+3	Trash	Trash		6000			Player-6101-0C1D2E01	heal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	overheal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	absorbheal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	interrupts	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	cc	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	dispels	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	deaths	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	taken	600
+3	Trash	Trash		6000			Player-6101-0C1D2E01	absorbed	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	blocked	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	prevented	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	misses	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	stagger	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	stagger_ticked	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	reduced	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	self_harm	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	friendly_fire	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	support_given	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	support_received	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	support_given_heal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	support_received_heal	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	healed_received	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	self_healed	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	effective	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	am_uptime_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	externals_given	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	externals_given_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	externals_received	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	externals_received_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	support_uptime_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	spans	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	taken10_0	600
+3	Trash	Trash		6000			Player-6101-0C1D2E01	absorb_applied	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	absorb_wasted	
+3	Trash	Trash		6000			Player-6101-0C1D2E01	shields_unknown	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	stack_hits	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	stack_sum	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	stack_max	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	stack_cells	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	stack_auras	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	casts	1
+3	Trash	Trash		6000			Player-6101-0C1D2E01	cast_starts	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	damage_periodic	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	heal_periodic	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	misses_dealt	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	dot_uptime_ms	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	energize_gained	0.0000
+3	Trash	Trash		6000			Player-6101-0C1D2E01	energize_wasted	0.0000
+3	Trash	Trash		6000			Player-6101-0C1D2E01	heal_absorbed	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	empower_stage1	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	empower_stage2	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	empower_stage3	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	empower_stage4	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	empower_cancelled	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	power_seconds	1
+3	Trash	Trash		6000			Player-6101-0C1D2E01	power_sum	60
+3	Trash	Trash		6000			Player-6101-0C1D2E01	power_max	100
+3	Trash	Trash		6000			Player-6101-0C1D2E01	role	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	damage	2750
+4	Trash	Trash		20000			Player-6101-0C1D2E05	overkill	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	petdamage	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	dps	137.50
+4	Trash	Trash		20000			Player-6101-0C1D2E05	combat_ms	20000
+4	Trash	Trash		20000			Player-6101-0C1D2E05	pct	44.35
+4	Trash	Trash		20000			Player-6101-0C1D2E05	heal	240
+4	Trash	Trash		20000			Player-6101-0C1D2E05	overheal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	absorbheal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	interrupts	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	cc	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	dispels	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	deaths	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	taken	465
+4	Trash	Trash		20000			Player-6101-0C1D2E05	absorbed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	blocked	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	prevented	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	misses	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	stagger	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	stagger_ticked	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	reduced	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	self_harm	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	friendly_fire	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	support_given	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	support_received	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	support_given_heal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	support_received_heal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	healed_received	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	self_healed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	effective	2750
+4	Trash	Trash		20000			Player-6101-0C1D2E05	am_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	externals_given	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	externals_given_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	externals_received	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	externals_received_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	support_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	spans	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	taken10_0	230
+4	Trash	Trash		20000			Player-6101-0C1D2E05	absorb_applied	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	absorb_wasted	
+4	Trash	Trash		20000			Player-6101-0C1D2E05	shields_unknown	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	stack_hits	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	stack_sum	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	stack_max	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	stack_cells	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	stack_auras	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	casts	5
+4	Trash	Trash		20000			Player-6101-0C1D2E05	cast_starts	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	damage_periodic	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	heal_periodic	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	misses_dealt	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	dot_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	energize_gained	0.0000
+4	Trash	Trash		20000			Player-6101-0C1D2E05	energize_wasted	0.0000
+4	Trash	Trash		20000			Player-6101-0C1D2E05	heal_absorbed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	empower_stage1	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	empower_stage2	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	empower_stage3	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	empower_stage4	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	empower_cancelled	0
+4	Trash	Trash		20000			Player-6101-0C1D2E05	power_seconds	5
+4	Trash	Trash		20000			Player-6101-0C1D2E05	power_sum	300
+4	Trash	Trash		20000			Player-6101-0C1D2E05	power_max	100
+4	Trash	Trash		20000			Player-6101-0C1D2E05	role	3
+4	Trash	Trash		20000			Player-6101-0C1D2E03	damage	1850
+4	Trash	Trash		20000			Player-6101-0C1D2E03	overkill	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	petdamage	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	dps	92.50
+4	Trash	Trash		20000			Player-6101-0C1D2E03	combat_ms	20000
+4	Trash	Trash		20000			Player-6101-0C1D2E03	pct	29.84
+4	Trash	Trash		20000			Player-6101-0C1D2E03	heal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	overheal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	absorbheal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	interrupts	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	cc	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	dispels	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	deaths	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	taken	765
+4	Trash	Trash		20000			Player-6101-0C1D2E03	absorbed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	blocked	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	prevented	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	misses	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	stagger	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	stagger_ticked	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	reduced	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	self_harm	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	friendly_fire	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	support_given	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	support_received	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	support_given_heal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	support_received_heal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	healed_received	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	self_healed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	effective	1850
+4	Trash	Trash		20000			Player-6101-0C1D2E03	am_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	externals_given	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	externals_given_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	externals_received	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	externals_received_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	support_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	spans	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	taken10_0	765
+4	Trash	Trash		20000			Player-6101-0C1D2E03	absorb_applied	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	absorb_wasted	
+4	Trash	Trash		20000			Player-6101-0C1D2E03	shields_unknown	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	stack_hits	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	stack_sum	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	stack_max	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	stack_cells	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	stack_auras	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	casts	1
+4	Trash	Trash		20000			Player-6101-0C1D2E03	cast_starts	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	damage_periodic	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	heal_periodic	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	misses_dealt	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	dot_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	energize_gained	0.0000
+4	Trash	Trash		20000			Player-6101-0C1D2E03	energize_wasted	0.0000
+4	Trash	Trash		20000			Player-6101-0C1D2E03	heal_absorbed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	empower_stage1	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	empower_stage2	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	empower_stage3	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	empower_stage4	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	empower_cancelled	0
+4	Trash	Trash		20000			Player-6101-0C1D2E03	power_seconds	1
+4	Trash	Trash		20000			Player-6101-0C1D2E03	power_sum	60
+4	Trash	Trash		20000			Player-6101-0C1D2E03	power_max	100
+4	Trash	Trash		20000			Player-6101-0C1D2E03	role	3
+4	Trash	Trash		20000			Player-6101-0C1D2E08	damage	1600
+4	Trash	Trash		20000			Player-6101-0C1D2E08	overkill	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	petdamage	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	dps	80.00
+4	Trash	Trash		20000			Player-6101-0C1D2E08	combat_ms	20000
+4	Trash	Trash		20000			Player-6101-0C1D2E08	pct	25.81
+4	Trash	Trash		20000			Player-6101-0C1D2E08	heal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	overheal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	absorbheal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	interrupts	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	cc	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	dispels	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	deaths	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	taken	485
+4	Trash	Trash		20000			Player-6101-0C1D2E08	absorbed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	blocked	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	prevented	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	misses	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	stagger	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	stagger_ticked	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	reduced	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	self_harm	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	friendly_fire	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	support_given	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	support_received	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	support_given_heal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	support_received_heal	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	healed_received	240
+4	Trash	Trash		20000			Player-6101-0C1D2E08	self_healed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	effective	1600
+4	Trash	Trash		20000			Player-6101-0C1D2E08	am_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	externals_given	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	externals_given_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	externals_received	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	externals_received_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	support_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	spans	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	taken10_0	240
+4	Trash	Trash		20000			Player-6101-0C1D2E08	absorb_applied	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	absorb_wasted	
+4	Trash	Trash		20000			Player-6101-0C1D2E08	shields_unknown	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	stack_hits	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	stack_sum	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	stack_max	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	stack_cells	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	stack_auras	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	casts	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	cast_starts	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	damage_periodic	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	heal_periodic	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	misses_dealt	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	dot_uptime_ms	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	energize_gained	0.0000
+4	Trash	Trash		20000			Player-6101-0C1D2E08	energize_wasted	0.0000
+4	Trash	Trash		20000			Player-6101-0C1D2E08	heal_absorbed	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	empower_stage1	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	empower_stage2	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	empower_stage3	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	empower_stage4	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	empower_cancelled	0
+4	Trash	Trash		20000			Player-6101-0C1D2E08	power_seconds	1
+4	Trash	Trash		20000			Player-6101-0C1D2E08	power_sum	60
+4	Trash	Trash		20000			Player-6101-0C1D2E08	power_max	100
+4	Trash	Trash		20000			Player-6101-0C1D2E08	role	3
+5	Trash	Trash		15000			Player-6101-0C1D2E02	damage	870
+5	Trash	Trash		15000			Player-6101-0C1D2E02	overkill	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	petdamage	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	dps	58.00
+5	Trash	Trash		15000			Player-6101-0C1D2E02	combat_ms	15000
+5	Trash	Trash		15000			Player-6101-0C1D2E02	pct	100.00
+5	Trash	Trash		15000			Player-6101-0C1D2E02	heal	600
+5	Trash	Trash		15000			Player-6101-0C1D2E02	overheal	50
+5	Trash	Trash		15000			Player-6101-0C1D2E02	absorbheal	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	interrupts	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	cc	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	dispels	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	deaths	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	taken	1020
+5	Trash	Trash		15000			Player-6101-0C1D2E02	absorbed	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	blocked	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	prevented	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	misses	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	stagger	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	stagger_ticked	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	reduced	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	self_harm	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	friendly_fire	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	support_given	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	support_received	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	support_given_heal	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	support_received_heal	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	healed_received	600
+5	Trash	Trash		15000			Player-6101-0C1D2E02	self_healed	600
+5	Trash	Trash		15000			Player-6101-0C1D2E02	effective	870
+5	Trash	Trash		15000			Player-6101-0C1D2E02	am_uptime_ms	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	externals_given	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	externals_given_ms	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	externals_received	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	externals_received_ms	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	support_uptime_ms	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	spans	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	taken10_0	805
+5	Trash	Trash		15000			Player-6101-0C1D2E02	absorb_applied	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	absorb_wasted	
+5	Trash	Trash		15000			Player-6101-0C1D2E02	shields_unknown	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	stack_hits	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	stack_sum	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	stack_max	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	stack_cells	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	stack_auras	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	casts	3
+5	Trash	Trash		15000			Player-6101-0C1D2E02	cast_starts	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	damage_periodic	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	heal_periodic	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	misses_dealt	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	dot_uptime_ms	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	energize_gained	0.0000
+5	Trash	Trash		15000			Player-6101-0C1D2E02	energize_wasted	0.0000
+5	Trash	Trash		15000			Player-6101-0C1D2E02	heal_absorbed	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	empower_stage1	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	empower_stage2	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	empower_stage3	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	empower_stage4	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	empower_cancelled	0
+5	Trash	Trash		15000			Player-6101-0C1D2E02	power_seconds	3
+5	Trash	Trash		15000			Player-6101-0C1D2E02	power_sum	180
+5	Trash	Trash		15000			Player-6101-0C1D2E02	power_max	100
+5	Trash	Trash		15000			Player-6101-0C1D2E02	role	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_units	7
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_posts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_absorb	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pools	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pool_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_floor	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_affixes	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_affix_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_hit	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_cast_start	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_cast_success	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pcast_start	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pcast_success	17
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pcast_failed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_interrupt	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_debuff_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_debuff_removed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_debuff_dose	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_death	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_npc_died	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_rez	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_boss_engaged	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_boss_killed	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_boss_wiped	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_buff_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_buff_removed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_buff_dose	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_placed_cast	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_placed_summon	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_placed_touch	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_placed_gone	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_markers	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_units	6
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_posts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_absorb	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pools	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pool_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_floor	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_affixes	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_affix_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_hit	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_cast_start	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_cast_success	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pcast_start	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pcast_success	13
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pcast_failed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_interrupt	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_debuff_applied	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_debuff_removed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_debuff_dose	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_death	1
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_npc_died	1
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_rez	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_boss_engaged	1
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_boss_killed	1
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_boss_wiped	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_buff_applied	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_buff_removed	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_buff_dose	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_placed_cast	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_placed_summon	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_placed_touch	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_placed_gone	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_markers	0

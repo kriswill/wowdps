@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
+use crate::roles::{RoleLedger, RoleScore, RoleSignal};
 use crate::tables::Tables;
 use wowdps_model::series::{
     SeriesCell, SeriesRow, SpellTallies, SpellTargets, TargetTally, target_rows, target_stack,
@@ -15,7 +16,7 @@ use wowdps_model::{AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, S
 use wowdps_model::{Empower, EnergizeRow, PowerSeries, StackBase, StackCell, StackingDebuff};
 use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
-    RaidDeath, RaidTimeline, Rez, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
+    RaidDeath, RaidTimeline, Rez, Role, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
 };
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
@@ -111,6 +112,15 @@ fn nil_guid(guid: &str) -> bool {
 /// its owner at read time, so an external on a pet is the owner's received).
 fn span_target(dst: &Unit) -> bool {
     dst.is_player() || dst.guid.starts_with("Pet-")
+}
+
+/// R30: an enemy's melee swing at a player — a hostile unit the group does
+/// not control by its guid (no player, no pet) swinging at a `Player-`.
+fn enemy_swing(src: &Unit, dst: &Unit) -> bool {
+    dst.guid.starts_with("Player-")
+        && !is_friendly_source(&src.guid)
+        && !nil_guid(&src.guid)
+        && src.flags & REACTION_HOSTILE != 0
 }
 
 /// Damage sources that count toward naming a pull: the group's own output.
@@ -1023,6 +1033,12 @@ pub struct Segment {
     /// onto owners at read time like `mitigation`. Capped per victim at
     /// `STACK_CELL_CAP` distinct cells, newest-dropped (`dropped` counts).
     stacks: HashMap<String, StackLedger>,
+    /// R30: what the role solver weighs — casts by signal, enemy swings,
+    /// healing on others, tanking-form time — written only for an edition
+    /// that infers roles (`Tables::infers_roles`). Segment-local: nothing in
+    /// it is seeded or carried forward, so lazy = full; an Overall merges
+    /// its members' (`absorb`).
+    roles: RoleLedger,
 }
 
 /// R21: one open hostile debuff on a friendly — its current level and the
@@ -1389,7 +1405,56 @@ impl Segment {
             shields: HashMap::new(),
             debuffs: HashMap::new(),
             stacks: HashMap::new(),
+            roles: RoleLedger::default(),
         }
+    }
+
+    /// R30: each friendly player's role evidence, scores and inferred role
+    /// in this fight, for an edition that infers roles (one whose log
+    /// carries no spec); empty for every other — Retail's role is its
+    /// spec's. The players are the friendly ones on the Damage, Healing,
+    /// Deaths and Taken rows (the card's roster), sorted by guid. Read from
+    /// this segment's lines alone (`RoleLedger`), so a live fight, a lazy
+    /// load and a full replay read the same; an Overall reads its members'
+    /// merged ledgers, on their summed clocks.
+    pub fn role_scores(&self) -> Vec<RoleScore> {
+        if !self.tables().infers_roles() {
+            return Vec::new();
+        }
+        let mut players: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+        for view in [View::Damage, View::Healing, View::Deaths, View::Taken] {
+            for r in self.rows(view) {
+                if r.enemy || !r.key.starts_with("Player-") {
+                    continue;
+                }
+                let slot = players.entry(r.key).or_default();
+                match view {
+                    View::Damage => slot.0 = r.amount,
+                    View::Healing => slot.1 = r.amount,
+                    _ => {}
+                }
+            }
+        }
+        let close = self.close_ms();
+        let span = match self.kind {
+            SegmentKind::Overall => self.roles.merged_span_ms(),
+            _ => (close - self.start_ms).max(0),
+        };
+        let evidence = self.roles.evidence(
+            players.iter().map(|(g, (d, h))| (g.as_str(), *d, *h)),
+            |g| self.resolve_owner(g).to_string(),
+            close,
+        );
+        crate::roles::solve(&evidence, self.combat_ms(close), span)
+    }
+
+    /// R30: the roles [`Segment::role_scores`] infers, by player guid; a
+    /// player it names no role is absent.
+    pub fn inferred_roles(&self) -> BTreeMap<String, Role> {
+        self.role_scores()
+            .into_iter()
+            .filter_map(|s| s.role.map(|r| (s.evidence.guid, r)))
+            .collect()
     }
 
     /// R18: the clock an aura still on at the end is closed against, at
@@ -1677,6 +1742,11 @@ impl Segment {
                 *dst.entry(spell.clone()).or_default() += n;
             }
         }
+        // R30: a member's role ledger sums; its forms and its span close on
+        // its own clock.
+        let close = other.close_ms();
+        self.roles
+            .absorb(&other.roles, close, (close - other.start_ms).max(0));
         // R27: a member's resources sum per player per power type.
         for (player, per_type) in &other.energize {
             let dst = self.energize.entry(player.clone()).or_default();
@@ -6106,6 +6176,12 @@ impl Meter {
                         s.seen_alive(&guid, ts);
                         s.note_mark(&guid, spell, ts, true);
                     }
+                    // R30: a player's own cast, with what it signals, for an
+                    // edition that infers roles. Passive, like the rest.
+                    if guid.starts_with("Player-") && s.tables().infers_roles() {
+                        let signal = s.tables().role_signal(spell.id);
+                        s.roles.cast(&guid, signal);
+                    }
                 }
             }
 
@@ -6237,6 +6313,16 @@ impl Meter {
                     },
                 );
                 self.name_trash(&guid, &dst_guid, &target);
+                // R30: an enemy's landed swing at a player, in the segment
+                // the hit was just filed in. The table first: on an edition
+                // that infers no role this is one test.
+                if spell.is_none()
+                    && let Some(s) = self.segments.last_mut()
+                    && s.tables().infers_roles()
+                    && enemy_swing(src, dst)
+                {
+                    s.roles.swing(&dst_guid);
+                }
                 // R13: the first friendly-flagged player to land a damage
                 // event names the home side (all friendlies share one, so
                 // which one resolves it cannot change the answer).
@@ -6352,6 +6438,15 @@ impl Meter {
                         .entry(label.clone())
                         .or_default() += eaten;
                 }
+                // R30: who it landed on, in the segment `record` chose — the
+                // solver reads the healing a player gave others; an enemy's
+                // healing (no unit the group controls) is never kept.
+                if let Some(s) = self.segments.last_mut()
+                    && s.tables().infers_roles()
+                    && s.controlled(&guid)
+                {
+                    s.roles.heal(&guid, &dst.guid, effective);
+                }
                 self.infer(src, spell);
                 // R2 amendment: the same effective amount lands on the
                 // VICTIM's side as healing received — from any source, an
@@ -6445,6 +6540,11 @@ impl Meter {
                 // above, into the segment `record` just chose.
                 if let Some(s) = self.segments.last_mut() {
                     *s.absorbed_credit.entry(guid.clone()).or_default() += amount;
+                    // R30: an absorb is healing landed on its target (an
+                    // enemy's never kept, as a heal).
+                    if s.tables().infers_roles() && s.controlled(&guid) {
+                        s.roles.heal(&guid, &dst.guid, *amount);
+                    }
                     // R20: the same segment the credit went to, AFTER
                     // `record` (an absorb is combat to the scanner and may
                     // have just opened the segment), so Σ rows.consumed =
@@ -6542,6 +6642,15 @@ impl Meter {
                 // R26 (step 3): a player's debuff on an enemy opens its
                 // ability's uptime there.
                 self.dot_aura(ts, src, dst, spell, *aura_type, true);
+                // R30: a tanking form or stance going on a player. Through
+                // the passive gate.
+                if *aura_type == AuraType::Buff
+                    && dst.guid.starts_with("Player-")
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.tables().role_signal(spell.id) == Some(RoleSignal::Form)
+                {
+                    s.roles.form_on(&dst.guid, spell.id, ts);
+                }
                 // R20: a Buff in the absorb-spell table from a caster the
                 // group controls (`controlled`) opens a shield on its target
                 // — through the passive gate, beside (never instead of) the
@@ -6690,6 +6799,16 @@ impl Meter {
                 self.learn(dst);
                 // R26 (step 3): the debuff off that enemy.
                 self.dot_aura(ts, src, dst, spell, *aura_type, false);
+                // R30: the form or stance coming off (from the fight's start
+                // when it went on before it).
+                if *aura_type == AuraType::Buff
+                    && dst.guid.starts_with("Player-")
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.tables().role_signal(spell.id) == Some(RoleSignal::Form)
+                {
+                    let start = s.start_ms;
+                    s.roles.form_off(&dst.guid, spell.id, ts, start);
+                }
                 // R20: the trailer is what remained — the waste.
                 if *aura_type == AuraType::Buff
                     && self.tables().is_absorb_spell(spell.id)
@@ -7073,6 +7192,16 @@ impl Meter {
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R30: an enemy's swing at a player that missed, was dodged,
+                // parried, blocked or absorbed is still one aimed at them.
+                // Through the passive gate, as R17's side of it.
+                if spell.is_none()
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.tables().infers_roles()
+                    && enemy_swing(src, dst)
+                {
+                    s.roles.swing(&dst.guid);
+                }
                 // R1: a hit a shield took WHOLE is a hit — amount 0, the
                 // `amountMissed` absorbed — filed wherever a partial absorb's
                 // absorbed part is: the attacker's Damage, a player's or an
@@ -12114,5 +12243,44 @@ mod tests {
             }
         );
         assert!(seg.empower(BOSS).is_empty());
+    }
+
+    /// R30: an enemy's healing is never kept in the role ledger: an NPC
+    /// healing the boss inside a Forever fight leaves no healer behind, the
+    /// shaman's healing stays, and nobody's role moves.
+    #[test]
+    fn an_enemys_healing_is_never_kept_for_the_roles() {
+        let text = include_str!("../fixtures/roles.txt");
+        let theirs = text
+            .lines()
+            .find(|l| l.contains("SPELL_HEAL,Player-6101-0C1D2E02"))
+            .unwrap()
+            .replace(
+                "Player-6101-0C1D2E02,\"Mirela-Nebula-US\",0x512",
+                "Creature-0-6101-48-2001-990016-0000C0D006,\"Twilight Acolyte\",0xa48",
+            )
+            .replace(
+                "Player-6101-0C1D2E01,\"Garrond-Nebula-US\",0x511",
+                "Creature-0-6101-48-2001-990011-0000C0D001,\"Twilight Lord Kelris\",0xa48",
+            );
+        assert!(theirs.contains("SPELL_HEAL,Creature-"));
+        let mut lines: Vec<&str> = text.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.contains("SPELL_HEAL,Player-6101-0C1D2E02"))
+            .unwrap();
+        lines.insert(at + 1, &theirs);
+        let with = meter_from_lines(lines.iter().copied());
+        let plain = meter_from_lines(text.lines());
+        let (seg, base) = (&with.segments()[0], &plain.segments()[0]);
+        assert_eq!(seg.roles.healers(), base.roles.healers());
+        assert!(seg.roles.healers().contains(&"Player-6101-0C1D2E02"));
+        assert!(
+            seg.roles
+                .healers()
+                .iter()
+                .all(|h| !h.starts_with("Creature-"))
+        );
+        assert_eq!(seg.inferred_roles(), base.inferred_roles());
     }
 }

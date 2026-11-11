@@ -4484,6 +4484,9 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         });
     }
     let mut loadouts: Vec<StoredLoadout> = Vec::new();
+    // R30: the roles the fight's own lines give, for an edition whose log
+    // carries no spec (empty for every other: Retail's role is its spec's).
+    let inferred = seg.inferred_roles();
     // R20: each friendly player's ledger rows, folded ONCE — the card's
     // `shields_unknown` and the rows tier's `shields[]` both read them.
     let mut shield_rows: HashMap<String, Vec<ShieldRow>> = HashMap::new();
@@ -4534,6 +4537,10 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         // externals_given_ms must hold on an arena lake too. Enemies store
         // five zeros.
         if !p.enemy {
+            // R30 (v49's stored role): a role only where no spec says one.
+            if p.spec.is_none() {
+                p.stored_role = inferred.get(guid).copied();
+            }
             p.am_uptime_ms = u64::try_from(seg.am_uptime_ms(guid)).unwrap_or(0);
             let (given, given_ms) = seg.externals_given(guid);
             let (received, received_ms) = seg.externals_received(guid);

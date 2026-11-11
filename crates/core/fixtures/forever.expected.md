@@ -41,7 +41,7 @@ header.
 
 ## The tables Forever has none of
 
-Forever has no role, absorb, proc or placed table, so `check.awk` reads its
+Forever has no role-span, absorb, proc or placed table, so `check.awk` reads its
 Retail copies (`ROLE`, `SHIELD`, `PLACE`, `TELL`) only while the version line
 names Retail (`edition_tables`):
 
@@ -69,3 +69,23 @@ names Retail (`edition_tables`):
 Healing: Elowyn 280 = 80 effective (110 − 30 overheal) + the 200 absorbed.
 Taken: Tharokk 290 = 90 + 200 absorbed (`reduced` 10: 300 unmitigated − 290).
 Velkris's Expose Armor stands on the boss 19 000 ms (`dot_uptime_ms`).
+
+## Roles (R30)
+
+Forever's log carries no spec, so each player's role is inferred from the
+pull's own lines (`roles.expected.md` has the rule). 21 000 ms of combat
+judges it; the group is all five (each dealt damage); nobody cast a spell
+inside the pull but the Rogue's Expose Armor; the boss's only hit on a player
+is a spell, so the group took no melee swing and the swing signal is 0 for
+everyone.
+
+| player | damage × 5 / 1 290 | low damage | other signals | tank | healer | role |
+|---|---:|---:|---|---:|---:|---|
+| Brindlewick | 2.597 | 0 | — | 0 | 0 | dps (3) |
+| Hollin | 0.795 | 0.205 | — | 0.020 | 0.051 | dps (3) |
+| Velkris | 0.698 | 0.302 | one cast, no signal | 0.030 | 0.076 | dps (3) |
+| Tharokk | 0.543 | 0.457 | Defensive Stance from 13.5 s to the end: form 17 500 / 21 000 = 0.833 | 0.2 × 0.833 + 0.1 × 0.457 = 0.212 | 0.114 | dps (3) |
+| Elowyn | 0.368 | 0.632 | all 280 of the healing on others: heal share 1; no cast | 0.063 | 0.4 + 0.25 × 0.632 = 0.558 | **healer (2)** |
+
+The Warrior's stance alone is not a tank's evidence: he took no swing and
+cast nothing of the kit, so his role is the one the lines show.
