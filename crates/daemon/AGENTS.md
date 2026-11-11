@@ -42,8 +42,9 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   timeline for `Window` and `Mcp` (`engine::wants_raid`), stacked series for
   `Window` (`engine::wants_series`).
 - **One durability primitive.** Every file the daemon writes goes through
-  `cache.rs`'s `write_atomic`. Index checkpoints are cached; parsed meters
-  never are. The lockfile is taken before a stale socket is unlinked.
+  `cache.rs`'s `write_atomic`. Index checkpoints are cached, the newest
+  eight logs' per edition (each entry wears its log's mtime, so scan order
+  never decides); parsed meters never are. The lockfile is taken before a stale socket is unlinked.
 
 ## The history store
 
@@ -104,6 +105,9 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   Lua's `SCHEMA` when the table's shape changes.
 - The TOC's interface number comes from the install's `.build.info`; never
   hardcode it.
+- One copy for now: the first source's product's (`DaemonOptions::production`'s
+  `addon_dir`). An edition followed beside it has its copy and SavedVariables
+  untouched until the addon per product lands.
 
 ## The mock
 

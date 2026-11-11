@@ -163,8 +163,14 @@ always follows the game that is running. The defaults find both games: the
 daemon's `game_process` (`wow.exe`) matches either client and names each by
 its product folder, and the overlay's `game_match` (`world of warcraft`)
 matches either window. With both games open at once the two windows look
-the same to the compositor, so the overlay shows and hides by whichever of
-them Hyprland lists first, not necessarily the one being played.
+the same to the compositor, so the overlay shows, hides and places itself
+(on that window's monitor) by whichever of them Hyprland lists first, not
+necessarily the one being played.
+
+The addon is one game's for now: the daemon keeps current and reads the copy
+in the product folder of the logs it is pointed at (`logs_dir`, else
+Retail's). With both games followed, the other game's fights get no guilds,
+no own-character mark from the addon and no creature classifications.
 
 ### Game data caches
 
