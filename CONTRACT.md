@@ -898,12 +898,16 @@ Editions (v49): every Watch the state sends names `ClientState::edition_ref()`
 which the TUI calls once, before its first Watch, for `--edition`, and the
 window's edition switch calls on a pick (the overlay never does: it follows
 the running game); it starts the state over on that edition's list, as a
-rotated log does. The window draws the switch only while it knows more than
-one edition — one the daemon follows a source of (`Status`'s `editions`) or
-the store holds a fight of (gui-logic `editions::Census`, a one-card
-`Fights` per edition) — and from then on every history question it asks
-names the edition it is in (Follow: the live one); with one edition known it
-asks every question as it did before the switch, for every edition.
+rotated log does. The window's switch lists games, not modes: picking the
+game the window would follow anyway (`Status`'s live source) is `Follow`,
+picking another is a pin, and a pin whose edition has since been the live
+one goes back to `Follow` once the live edition moves on. The window draws
+the switch once it knows more than one edition — one the daemon follows a
+source of (`Status`'s `editions`) or the store holds a fight of (gui-logic
+`editions::Census`, a one-card `Fights` per edition), known for the rest of
+the session — and from then on every history question it asks names the
+edition it is in; with one edition known it asks every question as it did
+before the switch, for every edition.
 `edition()` is the edition the daemon last answered in
 (kept through a frame that names none) and `segment_edition()` the watched
 segment's own (a stored pull's from its card). A frame naming ANOTHER edition

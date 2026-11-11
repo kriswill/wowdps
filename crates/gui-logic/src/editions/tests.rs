@@ -58,8 +58,11 @@ fn retail_goes_by_its_expansion_and_forever_by_its_name() {
     assert_eq!(name(Edition::Retail, Some((12, 1, 5))), "Midnight");
     assert_eq!(name(Edition::Unknown(0), Some((12, 0, 0))), "Midnight");
     assert_eq!(name(Edition::Retail, Some((13, 0, 0))), "Retail");
-    assert_eq!(name(Edition::Retail, Some((0, 0, 0))), "Retail");
-    assert_eq!(name(Edition::Retail, None), "Retail");
+    // No build known yet: the newest expansion, so the name does not
+    // change when the first fight is stored.
+    assert_eq!(newest_expansion(), "Midnight");
+    assert_eq!(name(Edition::Retail, Some((0, 0, 0))), "Midnight");
+    assert_eq!(name(Edition::Retail, None), "Midnight");
     assert_eq!(name(Edition::Forever, Some((1, 60, 1))), "Forever");
     assert_eq!(name(Edition::Classic(2), None), "Classic");
     assert_eq!(name(Edition::Unknown(7), None), "Unknown edition");
@@ -72,6 +75,13 @@ fn the_build_is_the_tooltip_s() {
         "Retail, build 12.1.5"
     );
     assert_eq!(tip(Edition::Retail, None), "Retail");
+    assert_eq!(
+        empty_stage("Forever"),
+        (
+            "No Forever fights yet".to_string(),
+            "Play a fight in Forever with combat logging on and it shows up here.".to_string()
+        )
+    );
     assert_eq!(tip(Edition::Retail, Some((13, 0, 2))), "Build 13.0.2");
     assert_eq!(tip(Edition::Forever, Some((1, 60, 1))), "Build 1.60.1");
     assert_eq!(tip(Edition::Forever, None), "Forever");
@@ -81,19 +91,35 @@ fn the_build_is_the_tooltip_s() {
 
 #[test]
 fn entry_ids_name_the_edition_by_its_key() {
-    assert_eq!(entry_id(EditionRef::Follow), "edition-follow");
-    assert_eq!(entry_id(EditionRef::Pin(Edition::Retail)), "edition-retail");
+    assert_eq!(entry_id(Edition::Retail), "edition-retail");
+    assert_eq!(entry_id(Edition::Unknown(0)), "edition-retail");
+    assert_eq!(entry_id(Edition::Forever), "edition-forever");
+    assert_eq!(entry_id(Edition::Classic(2)), "edition-classic-2");
+}
+
+/// Picking the game the window would follow anyway is following; any
+/// other is a pin. With nothing named live, every pick pins.
+#[test]
+fn a_pick_follows_the_game_being_followed_and_pins_any_other() {
     assert_eq!(
-        entry_id(EditionRef::Pin(Edition::Unknown(0))),
-        "edition-retail"
+        choice_for(Edition::Retail, Some(Edition::Retail)),
+        EditionRef::Follow
     );
     assert_eq!(
-        entry_id(EditionRef::Pin(Edition::Forever)),
-        "edition-forever"
+        choice_for(Edition::Unknown(0), Some(Edition::Retail)),
+        EditionRef::Follow
     );
     assert_eq!(
-        entry_id(EditionRef::Pin(Edition::Classic(2))),
-        "edition-classic-2"
+        choice_for(Edition::Forever, Some(Edition::Retail)),
+        EditionRef::Pin(Edition::Forever)
+    );
+    assert_eq!(
+        choice_for(Edition::Retail, Some(Edition::Forever)),
+        EditionRef::Pin(Edition::Retail)
+    );
+    assert_eq!(
+        choice_for(Edition::Forever, None),
+        EditionRef::Pin(Edition::Forever)
     );
 }
 
@@ -111,22 +137,29 @@ fn an_edition_without_logged_builds_says_so() {
     );
 }
 
-/// Following, the window is in the live edition (Retail before one is
-/// named); pinned, in the pin. History reads are scoped only once several
-/// editions are known.
+/// Following, the window is in the live edition — until one is named, the
+/// edition it was in, so a pick never passes through Retail on its way;
+/// pinned, in the pin. History reads are scoped only once several editions
+/// are known.
 #[test]
 fn the_window_s_edition_and_what_its_reads_ask_for() {
-    assert_eq!(window_edition(EditionRef::Follow, None), Edition::Retail);
+    let follow = |live, last| window_edition(EditionRef::Follow, live, last);
+    assert_eq!(follow(None, Edition::Retail), Edition::Retail);
+    assert_eq!(follow(None, Edition::Forever), Edition::Forever, "kept");
     assert_eq!(
-        window_edition(EditionRef::Follow, Some(Edition::Forever)),
+        follow(Some(Edition::Forever), Edition::Retail),
         Edition::Forever
     );
     assert_eq!(
-        window_edition(EditionRef::Follow, Some(Edition::Unknown(0))),
+        follow(Some(Edition::Unknown(0)), Edition::Forever),
         Edition::Retail
     );
     assert_eq!(
-        window_edition(EditionRef::Pin(Edition::Forever), Some(Edition::Retail)),
+        window_edition(
+            EditionRef::Pin(Edition::Forever),
+            Some(Edition::Retail),
+            Edition::Retail
+        ),
         Edition::Forever
     );
     assert_eq!(history_edition(false, Edition::Forever), None);
@@ -141,7 +174,8 @@ fn the_window_s_edition_and_what_its_reads_ask_for() {
 }
 
 /// A Forever fight names Forever wherever it is drawn (step 2's rule); a
-/// Retail fight names its expansion only in another edition's window.
+/// Retail fight names its expansion only in another edition's window; a
+/// stage with no fight names no edition.
 #[test]
 fn a_fight_header_names_its_edition_where_another_could_be_meant() {
     let heroic = || "Heroic, 20 players".to_string();
@@ -174,6 +208,11 @@ fn a_fight_header_names_its_edition_where_another_could_be_meant() {
     assert_eq!(
         header_meta(heroic(), Some(Edition::Forever), None, b),
         "Forever, Heroic, 20 players"
+    );
+    assert_eq!(
+        header_meta(String::new(), None, Some(Edition::Forever), b),
+        "",
+        "nothing on the stage, nothing said"
     );
 }
 
@@ -220,11 +259,13 @@ fn one_edition_known_draws_no_switch() {
         census.next_request(2, later).is_none(),
         "the store's answer"
     );
-    assert_eq!(entries(&census, EditionRef::Follow, None), None);
+    assert_eq!(entries(&census, Edition::Retail), None);
 }
 
 /// Both editions' fights in the store: both known, each named, and the
-/// switch lists Follow, then Midnight (Retail), then Forever.
+/// switch lists the games alone — Midnight, then Forever — the one shown
+/// lit, the one being played noted, the face its name with the live dot
+/// only while it is the game being played.
 #[test]
 fn two_editions_known_draw_the_switch() {
     let mut mock = store(true);
@@ -234,38 +275,37 @@ fn two_editions_known_draw_the_switch() {
     assert!(census.several());
     assert_eq!(census.name(Edition::Forever), "Forever");
     assert_eq!(census.tip(Edition::Forever), "Build 1.60.1");
-    let e = entries(&census, EditionRef::Follow, Some(Edition::Retail)).expect("a switch");
+    let e = entries(&census, Edition::Retail).expect("a switch");
     let names: Vec<&str> = e.iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(names, vec![FOLLOW, "Midnight", "Forever"]);
-    assert!(e[0].on && !e[1].on && !e[2].on);
     assert_eq!(
-        e[0].note.as_deref(),
-        Some("Midnight"),
-        "what Follow shows now"
+        names,
+        vec!["Midnight", "Forever"],
+        "the games, nothing else"
     );
-    assert_eq!(
-        e[1].note.as_deref(),
-        Some("Retail"),
-        "the edition behind the name"
+    assert!(e[0].on && !e[1].on);
+    assert_eq!((e[0].note, e[1].note), (None, None), "no game running");
+    assert_eq!(e[0].tip, "Retail, build 12.0.0");
+    assert_eq!(e[1].id, "edition-forever");
+    let shown = entries(&census, Edition::Forever).expect("a switch");
+    assert!(!shown[0].on && shown[1].on);
+    let f = face(&census, Edition::Retail);
+    assert_eq!((f.name.as_str(), f.playing), ("Midnight", false));
+
+    // Retail's game runs: its row says so, and its face wears the dot.
+    census.on_sources(&[EditionSource {
+        edition: Some(Edition::Retail),
+        live: true,
+        running: true,
+        ..EditionSource::default()
+    }]);
+    assert_eq!(census.live(), Some(Edition::Retail));
+    let e = entries(&census, Edition::Forever).expect("a switch");
+    assert_eq!((e[0].note, e[1].note), (Some(PLAYING_NOW), None));
+    assert!(face(&census, Edition::Retail).playing);
+    assert!(
+        !face(&census, Edition::Forever).playing,
+        "looking at another game: no dot"
     );
-    assert_eq!(e[2].note, None);
-    assert_eq!(e[2].id, "edition-forever");
-    let pinned = entries(
-        &census,
-        EditionRef::Pin(Edition::Forever),
-        Some(Edition::Retail),
-    )
-    .expect("a switch");
-    assert!(!pinned[0].on && pinned[2].on);
-    let f = face(&census, EditionRef::Follow, Some(Edition::Retail));
-    assert_eq!(f.name, "Midnight");
-    assert_eq!(f.tip, "Following the game you play: Retail, build 12.0.0");
-    let f = face(
-        &census,
-        EditionRef::Pin(Edition::Forever),
-        Some(Edition::Retail),
-    );
-    assert_eq!((f.name.as_str(), f.following), ("Forever", false));
 }
 
 /// An edition the daemon follows is known before it has a fight, and a
@@ -294,17 +334,22 @@ fn sources_and_cards_make_an_edition_known() {
         "the newest card's"
     );
     assert_eq!(census.name(Edition::Retail), "Midnight");
-    // A source gone (the daemon restarted following less) un-knows an
-    // edition known by it alone.
+    // A source gone (the daemon restarted following less) leaves an
+    // edition known by it alone known for the session: a switch once drawn
+    // never goes away under the reader.
     let mut census = Census::new();
-    census.on_sources(&[source(Some(Edition::Forever))]);
-    assert_eq!(census.known(), vec![Edition::Forever]);
-    assert!(census.on_sources(&[]));
-    assert!(census.known().is_empty());
+    census.on_sources(&[
+        source(Some(Edition::Retail)),
+        source(Some(Edition::Forever)),
+    ]);
+    assert!(census.several());
+    census.on_sources(&[source(Some(Edition::Retail))]);
+    assert_eq!(census.known(), vec![Edition::Retail, Edition::Forever]);
+    assert!(census.several(), "still drawn");
 }
 
-/// A store write asks again about the editions it held no fight of — at
-/// most every `REPROBE_EVERY` — and never about one it already knows.
+/// A store write asks again about the editions it held no fight of, and
+/// never about one it already knows.
 #[test]
 fn a_store_write_asks_again_about_an_edition_with_no_fights() {
     let mut mock = store(false);
@@ -335,7 +380,63 @@ fn a_store_write_asks_again_about_an_edition_with_no_fights() {
         },
     );
     assert!(census.several());
+}
+
+/// Two store writes within `REPROBE_EVERY` ask once: the second round
+/// waits out the interval, then asks.
+#[test]
+fn store_writes_ask_again_at_most_every_interval() {
+    let mut mock = store(false);
+    let mut census = Census::new();
+    let now = Instant::now();
+    settle(&mut census, &mut mock, now);
+    settle(&mut census, &mut mock, now + Duration::from_secs(1));
+    assert!(!census.several(), "Forever still has no fight");
+    let empty = HistoryAnswer::Fights {
+        cards: Vec::new(),
+        total: 0,
+    };
+    let t0 = now + Duration::from_secs(2);
     census.store_changed();
-    let soon = census.next_request(8, now + Duration::from_secs(3));
-    assert!(soon.is_none(), "not again within the interval: {soon:?}");
+    assert!(
+        census.next_request(20, t0).is_some(),
+        "the first round asks"
+    );
+    census.absorb(20, &empty);
+    census.store_changed();
+    let soon = t0 + Duration::from_secs(1);
+    // The first round's own retry (a pause after an empty answer) may be
+    // due; answer it, and the second round still waits.
+    while let Some(ClientMsg::GetHistory { req_id, .. }) = census.next_request(21, soon) {
+        census.absorb(req_id, &empty);
+    }
+    assert!(
+        census
+            .next_request(22, t0 + Duration::from_secs(4))
+            .is_none(),
+        "the second round waits out the interval"
+    );
+    assert!(
+        census
+            .next_request(23, t0 + REPROBE_EVERY + Duration::from_millis(1))
+            .is_some(),
+        "then asks"
+    );
+}
+
+/// A question lost with the connection is asked again.
+#[test]
+fn a_lost_question_is_asked_again() {
+    let mut census = Census::new();
+    let now = Instant::now();
+    let first = census.next_request(1, now);
+    assert!(first.is_some());
+    assert!(census.next_request(2, now).is_none(), "one in flight");
+    census.lost();
+    let again = census.next_request(3, now);
+    assert_eq!(
+        format!("{first:?}").replace("req_id: 1", "req_id: 3"),
+        format!("{again:?}"),
+        "the same question again"
+    );
 }

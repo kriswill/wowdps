@@ -133,15 +133,20 @@ stderr, and in the ⚙ menu) and skipped; the rest of the theme still applies.
 
 ### Editions
 
-When this machine has more than one edition of the game (a log followed or
-a fight stored of each), the window's top bar carries an edition switch
-beside Home and Fights: **Follow the game I'm playing**, the default at
-every launch, or one edition. Retail goes by its current expansion's name
-(Midnight) and Forever by its own; the build is in the tooltip. The choice
-scopes the live meter, the pull rail, Home and the command palette. Each
-edition keeps its own character, class and Home dates: Retail's are the
-top-level `character`, `character_class`, `season_start` and `season_end`,
-and another edition's sit in a table of their own:
+The window shows one game at a time, and by default the one you are
+playing. When this machine has more than one edition of the game (a log
+followed or a fight stored of each), the window's top bar carries an
+edition switch beside Home and Fights, named for the game shown: Retail by
+its current expansion's name (Midnight), Forever by its own, with the build
+in the tooltip and a live dot while it is the game being played. Its menu
+lists the games, "Playing now" beside the one running; pick another to look
+at it, and the window goes back to the game you play once you pick it again
+or that game moves on. The game shown scopes the live meter, the pull rail,
+Home and the command palette. Each edition keeps its own character, class
+and Home dates: Retail's are the top-level `character`, `character_class`,
+`season_start` and `season_end`, and another edition's sit in a table of
+their own (while you play only one game, its missing keys read the
+top-level ones):
 
 ```toml
 [editions.forever]

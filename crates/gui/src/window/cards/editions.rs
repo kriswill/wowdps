@@ -1,23 +1,21 @@
-//! The edition menu, opened from the top bar's edition switch: Follow the
-//! game, ruled off from one row per edition the window knows — its name
-//! ("Midnight", "Forever"), the edition behind a name that is not its own
-//! in quieter words, the build in its tooltip — the window's choice lit.
-//! Drawn at the window's root over a scrim that takes the press that
-//! closes it, hung under the switch, as the character menu hangs under the
-//! picker.
+//! The edition menu, opened from the top bar's edition switch: one row per
+//! game the window knows — its name ("Midnight", "Forever"), "Playing now"
+//! in quieter words beside the game being played, the build in its
+//! tooltip — the game shown lit. Nothing else: no mode to learn. Drawn at
+//! the window's root over a scrim that takes the press that closes it,
+//! hung under the switch, as the character menu hangs under the picker.
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, ElementId, MouseButton, SharedString, TestSupportExt as _, Window, div,
 };
 use wowdps_gui_logic::editions::Entry;
-use wowdps_proto::EditionRef;
 
 use super::super::Gui;
-use super::super::chrome::{hairline, tip};
+use super::super::chrome::tip;
 use super::super::w::Floating;
 use super::super::w::{REGULAR, SEMIBOLD, W};
-use super::menu::{GAP, PAD_Y, RADIUS, ROW_GAP, RULE_Y, SIDE, row};
+use super::menu::{GAP, PAD_Y, RADIUS, ROW_GAP, SIDE, row};
 use super::{BORDER, enter};
 use crate::images;
 
@@ -25,17 +23,9 @@ use crate::images;
 /// word or two.
 const MENU_W: f32 = 230.0;
 
-/// One entry's line: its emblem when one is cached, its name, its note.
+/// One game's line: its emblem when one is cached, its name, its note.
 fn line(e: &Entry, w: &W) -> gpui_kit::Div {
-    let emblem = match e.choice {
-        EditionRef::Pin(edition) => images::edition_emblem(edition, w.device(w.z(w.size.body))),
-        EditionRef::Follow => None,
-    };
-    let weight = if e.choice == EditionRef::Follow {
-        REGULAR
-    } else {
-        SEMIBOLD
-    };
+    let emblem = images::edition_emblem(e.edition, w.device(w.z(w.size.body)));
     div()
         .flex()
         .items_center()
@@ -50,18 +40,17 @@ fn line(e: &Entry, w: &W) -> gpui_kit::Div {
             e.name.clone(),
             w.size.body,
             w.c(|t| t.ink),
-            weight,
+            SEMIBOLD,
         )))
         .children(
             e.note
-                .clone()
                 .map(|note| w.text(note, w.size.small, w.c(|t| t.ink_3_text), REGULAR)),
         )
 }
 
 /// The menu over the window, under the switch.
 pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> AnyElement {
-    let Some(entries) = gui.edition_entries(cx) else {
+    let Some(entries) = gui.edition_entries() else {
         return div().into_any_element();
     };
     let mut list = div()
@@ -69,8 +58,8 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         .flex()
         .flex_col()
         .gap(w.z(ROW_GAP));
-    for (i, e) in entries.iter().enumerate() {
-        let choice = e.choice;
+    for e in &entries {
+        let edition = e.edition;
         let id = ElementId::Name(SharedString::from(e.id.clone()));
         let entry = tip(
             row(e.name.clone().into(), id, e.on, line(e, w), w),
@@ -80,15 +69,10 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                this.pick_edition(choice, cx);
+                this.pick_edition(edition, cx);
             }),
         );
         list = list.child(entry);
-        // Follow is ruled off from the editions, as the character menu's
-        // follow item is from the characters.
-        if i == 0 {
-            list = list.child(div().py(w.z(RULE_Y)).child(hairline(w)));
-        }
     }
     let card = div()
         .id("edition-menu")

@@ -184,15 +184,16 @@ pub struct Season {
 impl Season {
     /// Retail's dates, the top-level `season_start` and `season_end`.
     pub fn from_config(cfg: &Config) -> Self {
-        Self::for_edition(cfg, Edition::Retail)
+        Self::for_edition(cfg, crate::config::KeysOf::RETAIL)
     }
 
-    /// The dates Home counts from in `edition`: the config's for it
-    /// (`Config::season_in`), each date it leaves unset the edition's
-    /// default ([`Season::default_for`]).
-    pub fn for_edition(cfg: &Config, edition: Edition) -> Self {
-        let (start, end) = cfg.season_in(edition);
-        let standing = Self::default_for(edition);
+    /// The dates Home counts from in an edition: the config's for it
+    /// (`Config::season_in`, the top-level ones while it is the only
+    /// edition known), each date it leaves unset the edition's default
+    /// ([`Season::default_for`]).
+    pub fn for_edition(cfg: &Config, keys: crate::config::KeysOf) -> Self {
+        let (start, end) = cfg.season_in(keys);
+        let standing = Self::default_for(keys.edition);
         Self {
             start_utc_ms: start.and_then(parse_ymd).or(standing.start_utc_ms),
             end_utc_ms: end.and_then(parse_ymd).or(standing.end_utc_ms),
@@ -1084,20 +1085,29 @@ pub const EMPTY_CAP: &str = "Your week";
 /// Why the night card has no night: words for each reason, never an empty
 /// frame — a store off or not heard from yet in its own words (`settled`
 /// false: the screen's state line), before any "none". `scope` is the
-/// scoped character's name as drawn, `None` scoped to all of them.
+/// scoped character's name as drawn, `None` scoped to all of them. `game`
+/// names the game Home shows when it is not the one the addon reads (its
+/// own characters are named by `history_characters` alone).
 pub fn empty_night(
     settled: bool,
     state_line: Option<&str>,
     panels: &Panels,
     scope: Option<&str>,
+    game: Option<&str>,
 ) -> String {
     if !settled {
         return state_line.unwrap_or_default().to_string();
     }
     if panels.unowned {
-        return "The store has not named a character of yours yet: list them in \
-                history_characters, or install the wowdps addon."
-            .to_string();
+        return match game {
+            Some(game) => format!(
+                "The store has not named a character of yours in {game} yet: \
+                 list them in history_characters."
+            ),
+            None => "The store has not named a character of yours yet: list them in \
+                     history_characters, or install the wowdps addon."
+                .to_string(),
+        };
     }
     match scope {
         Some(name) => format!("No pulls on {name} this week."),

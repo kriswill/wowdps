@@ -52,7 +52,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
     // opens on.
     let selected = match (gui.place, gui.hist.store.home.as_ref()) {
         (super::super::Place::Home, Some(home)) => home.scope.clone(),
-        _ => gui.cfg.character_in(gui.hist.edition).map(str::to_string),
+        _ => gui.cfg.character_in(gui.keys()).map(str::to_string),
     };
     let tonight = gui.tonight();
     let hide_realms = gui.cfg.hide_realms;
@@ -64,7 +64,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
     // The follow item, only while a character is picked: the way back to
     // the character played. With nothing picked the picker names them
     // already, and the item had nothing to do.
-    if gui.cfg.character_in(gui.hist.edition).is_some() {
+    if gui.cfg.character_in(gui.keys()).is_some() {
         let follow = row(
             FOLLOW.into(),
             row_id(None),

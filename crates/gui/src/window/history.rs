@@ -219,18 +219,28 @@ impl Store {
 
     /// Read `edition`'s fights (`None`: every edition's), Home counting
     /// from `season`: the rail and Home start over on that edition's when
-    /// it is another. `true` when it was.
-    pub fn rescope(&mut self, edition: Option<Edition>, season: Season) -> bool {
-        let moved = self.earlier.scope(edition);
+    /// it is another, or (`moved`) when the window moved to another
+    /// edition, and Home when its dates moved. What Home derived — whose
+    /// window it is among it — goes with them, open or not, so another
+    /// game's owner never names this one's. `true` when the rail started
+    /// over.
+    pub fn rescope(&mut self, edition: Option<Edition>, season: Season, moved: bool) -> bool {
+        let rail = self.earlier.scope(edition);
+        let dates = self.season != season;
         self.season = season;
+        if rail || moved {
+            self.panels = Panels::default();
+        }
         if let Some(home) = self.home.as_mut()
-            && (moved || home.edition != edition)
+            && (rail || moved || dates || home.edition != edition)
         {
             home.reset();
+            // Another edition's week is on its way, not an empty store.
+            home.answered = false;
             home.edition = edition;
             self.panels = Panels::default();
         }
-        moved
+        rail
     }
 
     /// A `GetStatus` one-shot: `Status` carries the whole answer.
@@ -345,6 +355,17 @@ pub struct Hist {
     pub tonight_pin: Option<i64>,
     /// The store's state as `Status` last said it.
     status_seen: Option<HistoryStatus>,
+    /// `Status`'s sources as last seen, so an unchanged list costs nothing.
+    sources_seen: Option<Vec<wowdps_proto::EditionSource>>,
+    /// The link was up at the last word: a reconnect asks again what the
+    /// readers had out on the connection that went down.
+    linked_up: bool,
+    /// The pinned game has been the live one since the pin: the window
+    /// follows again once the live game moves on (`editions.rs`).
+    pub caught_up: bool,
+    /// A pin wants its game's newest stored pull on the stage while its
+    /// meter has none (`Gui::land_pinned`).
+    pub landing: bool,
     /// Home was offered at launch (once, after the first snapshot), and
     /// whether the log's pull was live at the last word from the session:
     /// a pull STARTING replaces Home with the meter.
@@ -398,6 +419,10 @@ impl Hist {
             log_view: None,
             tonight_pin: None,
             status_seen: None,
+            sources_seen: None,
+            linked_up: true,
+            caught_up: false,
+            landing: false,
             considered: false,
             was_live: false,
             _subscriptions: vec![replies, changes],
@@ -508,6 +533,7 @@ impl Gui {
             let cards: Vec<&FightCard> = self.hist.store.earlier.cards.iter().collect();
             let by = wowdps_gui_logic::home::characters_by_edition(&cards);
             self.hist.remember(by);
+            self.land_pinned(cx);
         }
         // Another edition known, or one named anew: the switch, and every
         // reader scoped to the edition the window is in.
@@ -535,9 +561,22 @@ impl Gui {
     fn history_observes(&mut self, cx: &mut Context<Self>) {
         let session = self.session.read(cx);
         let status = session.status().map(|s| s.history.clone());
-        let sources = session.status().map(|s| s.editions.clone());
+        let sources = session
+            .status()
+            .map(|s| &s.editions)
+            .filter(|e| self.hist.sources_seen.as_ref() != Some(*e))
+            .cloned();
         let snapshot = session.last_snapshot().is_some();
         let live = session.state().is_live();
+        let up = *session.linked() == crate::session::Linked::Up;
+        // Back from a daemon restart: the census's question went down with
+        // the old connection.
+        if up && !self.hist.linked_up {
+            self.hist.store.census.lost();
+            let sent = self.hist.store.requests(Instant::now());
+            self.send_history(sent, cx);
+        }
+        self.hist.linked_up = up;
         if let Some(h) = status
             && self.hist.status_seen.as_ref() != Some(&h)
         {
@@ -546,11 +585,13 @@ impl Gui {
                 cx.notify();
             }
         }
-        if let Some(sources) = sources
-            && self.hist.store.on_sources(&sources)
-        {
-            self.sync_edition(cx);
-            cx.notify();
+        if let Some(sources) = sources {
+            let moved = self.hist.store.on_sources(&sources);
+            self.hist.sources_seen = Some(sources);
+            if moved {
+                self.sync_edition(cx);
+                cx.notify();
+            }
         }
         if live && !self.hist.was_live && self.place == Place::Home {
             self.leave_home();

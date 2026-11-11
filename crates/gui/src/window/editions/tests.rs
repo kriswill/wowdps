@@ -1,23 +1,46 @@
 //! The edition switch, through the window: over a daemon of one edition
-//! nothing of it is drawn or asked; over two, it scopes the meter, the
-//! rail, Home and the picker, and remembers each edition's own keys.
+//! nothing of it is drawn or asked; over two, it lists the games, shows the
+//! one picked — the one being played by default — scopes the meter, the
+//! rail, Home and the picker, and remembers each game's own keys.
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{AppContext, ElementId, TestAppContext};
+use gpui_kit::{AppContext, ElementId, TestAppContext, px, size};
 use wowdps_daemon::mock::MockDaemon;
-use wowdps_gui_logic::config::Config;
-use wowdps_gui_logic::editions::FOLLOW;
+use wowdps_gui_logic::config::{Config, KeysOf};
+use wowdps_gui_logic::editions::PLAYING_NOW;
 use wowdps_model::{Edition, Screen};
 use wowdps_proto::{ClientMsg, EditionRef, HistoryQuery};
 
-use super::super::Place;
-use super::super::tests::{Rig, press, rig_on, settle};
-use crate::testkit::{EditionsLink, MockLink};
+use super::super::tests::{Rig, config, own_config, press, rig_on, settle};
+use super::super::{Gui, Place};
+use crate::session::Session;
+use crate::testkit::{self, EditionsLink, MockLink};
 
 /// The fixtures' characters: Retail's and Forever's, each the owner of its
 /// edition's stored fights.
 const RETAIL_ME: &str = "Thraxx-Nebula-US";
 const FOREVER_ME: &str = "Velkris-Nebula-US";
+
+type Sent = Rc<RefCell<Vec<ClientMsg>>>;
+
+/// What a test keeps of its link once the rig owns it: what was sent, and
+/// the live and running games it can move.
+struct Handles {
+    sent: Sent,
+    live: Rc<std::cell::Cell<Edition>>,
+    playing: Rc<std::cell::Cell<Option<Edition>>>,
+}
+
+fn handles(link: &EditionsLink) -> Handles {
+    Handles {
+        sent: Rc::clone(&link.sent),
+        live: Rc::clone(&link.live),
+        playing: Rc::clone(&link.playing),
+    }
+}
 
 fn shown(cx: &mut TestAppContext, rig: &Rig, id: impl Into<ElementId>) -> bool {
     let id = id.into();
@@ -28,11 +51,22 @@ fn shown(cx: &mut TestAppContext, rig: &Rig, id: impl Into<ElementId>) -> bool {
     .unwrap()
 }
 
-/// Press the switch, then one of its entries.
+/// Press the switch, then one of its games.
 fn pick(cx: &mut TestAppContext, rig: &Rig, entry: &str) {
     press(cx, rig, "top-edition");
     assert!(shown(cx, rig, "edition-menu"), "the menu opens");
     press(cx, rig, ElementId::Name(entry.to_string().into()));
+    settle(cx, &rig.session);
+}
+
+/// Ask for `Status` as the running session does every second, and let
+/// the window hear it.
+fn status(cx: &mut TestAppContext, rig: &Rig) {
+    rig.session
+        .update(cx, |s, _| s.request(ClientMsg::GetStatus { req_id: 0 }));
+    settle(cx, &rig.session);
+    cx.update_window(rig.window, |_, window, cx| window.render_frame(cx))
+        .unwrap();
     settle(cx, &rig.session);
 }
 
@@ -52,14 +86,25 @@ fn rail_editions(cx: &mut TestAppContext, rig: &Rig) -> Vec<Edition> {
     })
 }
 
-fn two(cx: &mut TestAppContext) -> (Rig, EditionsLink) {
-    let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]);
-    let sent = std::rc::Rc::clone(&link.sent);
+/// The pages the window asked for since `from`: each one's edition filter.
+fn pages_since(sent: &Sent, from: usize) -> Vec<Option<Edition>> {
+    sent.borrow()
+        .iter()
+        .skip(from)
+        .filter_map(|m| match m {
+            ClientMsg::GetHistory {
+                query: HistoryQuery::Fights { edition, limit, .. },
+                ..
+            } if *limit > 1 => Some(*edition),
+            _ => None,
+        })
+        .collect()
+}
+
+fn two(cx: &mut TestAppContext, link: EditionsLink) -> (Rig, Handles) {
+    let h = handles(&link);
     let rig = rig_on(cx, 1440., 900., link);
-    // The sent log, through a link of its own: the rig owns the real one.
-    let mut probe = EditionsLink::new();
-    probe.sent = sent;
-    (rig, probe)
+    (rig, h)
 }
 
 /// A daemon of one edition: no switch, and every history question the
@@ -67,8 +112,8 @@ fn two(cx: &mut TestAppContext) -> (Rig, EditionsLink) {
 /// census's own one-card probes.
 #[gpui_kit::test]
 fn one_edition_draws_no_switch_and_asks_as_before(cx: &mut TestAppContext) {
-    let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    struct Spy(MockLink, std::rc::Rc<std::cell::RefCell<Vec<ClientMsg>>>);
+    let sent: Sent = Rc::default();
+    struct Spy(MockLink, Sent);
     impl crate::session::Link for Spy {
         fn send(&mut self, msg: &ClientMsg) {
             self.1.borrow_mut().push(msg.clone());
@@ -83,7 +128,7 @@ fn one_edition_draws_no_switch_and_asks_as_before(cx: &mut TestAppContext) {
     }
     let link = Spy(
         MockLink::new(MockDaemon::fixture().with_history()),
-        std::rc::Rc::clone(&sent),
+        Rc::clone(&sent),
     );
     let rig = rig_on(cx, 1440., 900., link);
     press(cx, &rig, "place-home");
@@ -97,35 +142,35 @@ fn one_edition_draws_no_switch_and_asks_as_before(cx: &mut TestAppContext) {
         assert_eq!(g.hist.store.earlier.edition(), None);
         assert_eq!(g.hist.store.home.as_ref().and_then(|h| h.edition), None);
         assert_eq!(g.edition, EditionRef::Follow);
+        assert_eq!(g.keys(), KeysOf::new(Edition::Retail, true));
     });
+    assert!(
+        pages_since(&sent, 0).iter().all(Option::is_none),
+        "every page asks for every edition"
+    );
     for msg in sent.borrow().iter() {
-        if let ClientMsg::GetHistory {
-            query: HistoryQuery::Fights { edition, limit, .. },
-            ..
-        } = msg
-            && *limit > 1
-        {
-            assert_eq!(*edition, None, "a page asks for every edition: {msg:?}");
-        }
         if let ClientMsg::Watch { edition, .. } = msg {
             assert_eq!(*edition, EditionRef::Follow, "the meter follows");
         }
     }
 }
 
-/// Two editions' fights in the store: the switch stands beside the
-/// places, named by the live game ("Midnight"), and the rail lists the
-/// edition the window is in alone. Pinning Forever moves the meter, the
-/// rail and the switch's face; Follow brings Retail back.
+/// Two editions' fights in the store, Retail played: the switch stands
+/// beside the places named by the game shown, with the live dot while it
+/// is the game being played, and the rail lists that game alone. Picking
+/// Forever pins it — no Forever log is followed, so its newest stored pull
+/// takes the stage — and picking Midnight again follows the game played.
 #[gpui_kit::test]
-fn the_switch_scopes_the_meter_and_the_rail(cx: &mut TestAppContext) {
-    let (rig, sent) = two(cx);
+fn the_switch_shows_one_game_at_a_time(cx: &mut TestAppContext) {
+    let (rig, h) = two(cx, EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]));
+    h.playing.set(Some(Edition::Retail));
+    status(cx, &rig);
     assert!(shown(cx, &rig, "top-edition"), "the switch is drawn");
-    rig.gui.read_with(cx, |g, cx| {
+    rig.gui.read_with(cx, |g, _| {
         assert!(g.hist.store.census.several());
         assert_eq!(g.hist.store.earlier.edition(), Some(Edition::Retail));
-        assert_eq!(g.edition_face(cx).name, "Midnight");
-        assert!(g.edition_face(cx).following);
+        let face = g.edition_face();
+        assert_eq!((face.name.as_str(), face.playing), ("Midnight", true));
     });
     assert_eq!(rail_editions(cx, &rig), vec![Edition::Retail]);
 
@@ -136,16 +181,24 @@ fn the_switch_scopes_the_meter_and_the_rail(cx: &mut TestAppContext) {
         assert_eq!(g.hist.edition, Edition::Forever);
         let st = g.session.read(cx).state();
         assert_eq!(st.edition_ref(), EditionRef::Pin(Edition::Forever));
-        assert_eq!(st.edition(), Some(Edition::Forever));
-        // No source of Forever's is followed: its live meter is empty.
-        assert_eq!(st.segment_count(), 0);
-        assert_eq!(g.hist.store.earlier.edition(), Some(Edition::Forever));
-        assert_eq!(g.edition_face(cx).name, "Forever");
-        assert!(!g.edition_face(cx).following);
+        assert_eq!(st.segment_count(), 0, "no Forever log is followed");
+        let stored = g
+            .hist
+            .store
+            .stored
+            .as_ref()
+            .expect("a stored pull on stage");
+        assert_eq!(
+            stored.card.as_ref().map(|c| c.edition()),
+            Some(Edition::Forever),
+            "Forever's newest stored pull, not a blank"
+        );
+        let face = g.edition_face();
+        assert_eq!((face.name.as_str(), face.playing), ("Forever", false));
     });
     assert_eq!(rail_editions(cx, &rig), vec![Edition::Forever]);
     assert!(
-        sent.sent.borrow().iter().any(|m| matches!(
+        h.sent.borrow().iter().any(|m| matches!(
             m,
             ClientMsg::Watch {
                 edition: EditionRef::Pin(Edition::Forever),
@@ -155,10 +208,11 @@ fn the_switch_scopes_the_meter_and_the_rail(cx: &mut TestAppContext) {
         "the meter's Watch pins Forever"
     );
 
-    pick(cx, &rig, "edition-follow");
+    pick(cx, &rig, "edition-retail");
     rig.gui.read_with(cx, |g, cx| {
-        assert_eq!(g.edition, EditionRef::Follow);
+        assert_eq!(g.edition, EditionRef::Follow, "the game played is followed");
         assert_eq!(g.hist.edition, Edition::Retail);
+        assert!(g.hist.store.stored.is_none());
         let st = g.session.read(cx).state();
         assert_eq!(st.edition_ref(), EditionRef::Follow);
         assert_eq!(st.screen, Screen::Meter, "back on the log's newest pull");
@@ -166,20 +220,21 @@ fn the_switch_scopes_the_meter_and_the_rail(cx: &mut TestAppContext) {
     assert_eq!(rail_editions(cx, &rig), vec![Edition::Retail]);
 }
 
-/// The menu lists Follow, then each edition by its name, the choice lit;
-/// it is modal: any key closes it.
+/// The menu lists the games and nothing else — the one shown lit, the one
+/// being played noted — and it is modal: any key closes it.
 #[gpui_kit::test]
-fn the_edition_menu_lists_follow_and_each_edition(cx: &mut TestAppContext) {
-    let (rig, _) = two(cx);
+fn the_edition_menu_lists_the_games(cx: &mut TestAppContext) {
+    let (rig, h) = two(cx, EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]));
     press(cx, &rig, "top-edition");
-    for id in ["edition-follow", "edition-retail", "edition-forever"] {
-        assert!(shown(cx, &rig, id), "{id} is listed");
-    }
-    rig.gui.read_with(cx, |g, cx| {
-        let e = g.edition_entries(cx).expect("entries");
+    assert!(shown(cx, &rig, "edition-retail"));
+    assert!(shown(cx, &rig, "edition-forever"));
+    assert!(!shown(cx, &rig, "edition-follow"), "no mode to learn");
+    rig.gui.read_with(cx, |g, _| {
+        let e = g.edition_entries().expect("entries");
         let names: Vec<&str> = e.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, vec![FOLLOW, "Midnight", "Forever"]);
-        assert!(e[0].on, "Follow is the default");
+        assert_eq!(names, vec!["Midnight", "Forever"]);
+        assert!(e[0].on, "the game shown");
+        assert_eq!((e[0].note, e[1].note), (None, None), "no game running");
         assert!(g.modal(), "the menu holds the keys");
     });
     cx.update_window(rig.window, |_, window, cx| {
@@ -189,6 +244,12 @@ fn the_edition_menu_lists_follow_and_each_edition(cx: &mut TestAppContext) {
     .unwrap();
     rig.gui
         .read_with(cx, |g, _| assert!(!g.cards.edition, "any key closes it"));
+    h.playing.set(Some(Edition::Retail));
+    status(cx, &rig);
+    rig.gui.read_with(cx, |g, _| {
+        let e = g.edition_entries().expect("entries");
+        assert_eq!((e[0].note, e[1].note), (Some(PLAYING_NOW), None));
+    });
     // The scrim's press closes it too.
     press(cx, &rig, "top-edition");
     press(cx, &rig, "edition-scrim");
@@ -200,7 +261,7 @@ fn the_edition_menu_lists_follow_and_each_edition(cx: &mut TestAppContext) {
 /// `character` untouched, and Retail's pick back when the window is.
 #[gpui_kit::test]
 fn each_edition_keeps_its_own_character(cx: &mut TestAppContext) {
-    let (rig, _) = two(cx);
+    let (rig, _) = two(cx, EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]));
     press(cx, &rig, "place-home");
     settle(cx, &rig.session);
     let retail_chars = rig.gui.read_with(cx, |g, _| {
@@ -234,7 +295,10 @@ fn each_edition_keeps_its_own_character(cx: &mut TestAppContext) {
     settle(cx, &rig.session);
     // The test's own config file: `own_config`'s, which the rig set.
     let disk = Config::load();
-    assert_eq!(disk.character_in(Edition::Forever), Some(guid.as_str()));
+    assert_eq!(
+        disk.character_in(KeysOf::new(Edition::Forever, false)),
+        Some(guid.as_str())
+    );
     assert_eq!(disk.character, None, "Retail's key untouched");
     rig.gui.read_with(cx, |g, cx| {
         assert_eq!(
@@ -257,35 +321,138 @@ fn each_edition_keeps_its_own_character(cx: &mut TestAppContext) {
     });
 }
 
-/// A Retail fight on the stage of Forever's window says whose it is.
+/// Review 1: Home read in Retail and closed, then Forever picked: whose
+/// window it is comes from Forever's fights, never Home's Retail answer.
 #[gpui_kit::test]
-fn a_retail_fight_in_forever_s_window_names_its_expansion(cx: &mut TestAppContext) {
-    let (rig, _) = two(cx);
-    let retail_kill = rig.gui.read_with(cx, |g, _| {
-        g.hist
-            .store
-            .earlier
-            .cards
-            .iter()
-            .find(|c| c.edition() == Edition::Retail && c.success == Some(true))
-            .cloned()
-            .expect("a Retail kill on the rail")
-    });
-    pick(cx, &rig, "edition-forever");
-    rig.gui.update(cx, |g, cx| {
-        g.hist.store.earlier.adopt(retail_kill.clone());
-        let sent =
-            g.hist
-                .store
-                .open_stored(retail_kill.id.clone(), wowdps_model::View::Damage, None);
-        g.send_history(sent, cx);
-    });
+fn a_switch_with_home_closed_names_the_new_game_s_owner(cx: &mut TestAppContext) {
+    let (rig, _) = two(cx, EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]));
+    press(cx, &rig, "place-home");
     settle(cx, &rig.session);
-    let meta = rig.gui.read_with(cx, |g, cx| {
-        let w = super::super::w::W::new(1.0, 1440., cx);
-        super::super::fight_head::Head::of(g, &w, cx).meta
+    rig.gui.read_with(cx, |g, _| {
+        let owner = g.hist.store.panels.owner.as_ref().map(|o| o.name.clone());
+        assert_eq!(owner.as_deref(), Some(RETAIL_ME), "Home named Retail's");
     });
-    assert!(meta.starts_with("Midnight, "), "{meta}");
+    press(cx, &rig, "place-fights");
+    pick(cx, &rig, "edition-forever");
+    rig.gui.read_with(cx, |g, cx| {
+        assert!(g.hist.store.home.is_none(), "Home stayed shut");
+        assert!(g.hist.store.panels.owner.is_none(), "Retail's owner went");
+        assert_eq!(
+            g.picked(cx).map(|p| p.name).as_deref(),
+            Some(FOREVER_ME),
+            "the picker names Forever's character"
+        );
+    });
+}
+
+/// Review 2: Forever is the live game and Retail is shown; picking
+/// Forever follows it, and nothing on the way asks for Retail's fights.
+#[gpui_kit::test]
+fn a_pick_that_follows_never_passes_through_retail(cx: &mut TestAppContext) {
+    let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
+    link.live.set(Edition::Forever);
+    let (rig, h) = two(cx, link);
+    status(cx, &rig);
+    rig.gui.read_with(cx, |g, _| {
+        assert_eq!(g.hist.edition, Edition::Forever, "following the live game");
+    });
+    pick(cx, &rig, "edition-retail");
+    rig.gui.read_with(cx, |g, _| {
+        assert_eq!(g.edition, EditionRef::Pin(Edition::Retail));
+        assert_eq!(g.hist.edition, Edition::Retail);
+    });
+    let from = h.sent.borrow().len();
+    pick(cx, &rig, "edition-forever");
+    rig.gui.read_with(cx, |g, cx| {
+        assert_eq!(g.edition, EditionRef::Follow, "the game played is followed");
+        assert_eq!(g.hist.edition, Edition::Forever);
+        assert_eq!(g.session.read(cx).state().edition(), Some(Edition::Forever));
+    });
+    let pages = pages_since(&h.sent, from);
+    assert!(!pages.is_empty(), "Forever's pages were asked for");
+    assert!(
+        pages.iter().all(|e| *e == Some(Edition::Forever)),
+        "no page of Retail's on the way: {pages:?}"
+    );
+}
+
+/// A pin whose game becomes the live one follows again once the live game
+/// moves on: the window keeps showing what you play.
+#[gpui_kit::test]
+fn a_pin_that_catches_up_with_the_game_played_follows_it(cx: &mut TestAppContext) {
+    let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
+    let (rig, h) = two(cx, link);
+    pick(cx, &rig, "edition-forever");
+    rig.gui.read_with(cx, |g, _| {
+        assert_eq!(g.edition, EditionRef::Pin(Edition::Forever));
+    });
+    // Forever becomes the game played: nothing moves under the reader.
+    h.live.set(Edition::Forever);
+    h.playing.set(Some(Edition::Forever));
+    status(cx, &rig);
+    rig.gui.read_with(cx, |g, _| {
+        assert_eq!(g.hist.edition, Edition::Forever);
+        assert!(g.edition_face().playing, "the dot: this is the game played");
+    });
+    // Then Retail is: the window goes with it.
+    h.live.set(Edition::Retail);
+    h.playing.set(Some(Edition::Retail));
+    status(cx, &rig);
+    rig.gui.read_with(cx, |g, cx| {
+        assert_eq!(g.edition, EditionRef::Follow);
+        assert_eq!(g.hist.edition, Edition::Retail);
+        assert_eq!(g.session.read(cx).state().edition(), Some(Edition::Retail));
+        let face = g.edition_face();
+        assert_eq!((face.name.as_str(), face.playing), ("Midnight", true));
+    });
+    // A pin that never caught up stays: Forever picked while Retail is
+    // played stays Forever when Retail stops.
+    pick(cx, &rig, "edition-forever");
+    h.playing.set(None);
+    status(cx, &rig);
+    rig.gui.read_with(cx, |g, _| {
+        assert_eq!(g.edition, EditionRef::Pin(Edition::Forever));
+    });
+}
+
+/// A game with no fight to show — a Forever log followed with no pull in
+/// it, and none stored — says how to get one, and its header names no
+/// edition.
+#[gpui_kit::test]
+fn an_empty_game_says_how_to_get_a_fight(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!(
+        "wowdps-gui-empty-forever-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    let log = dir.join("WoWCombatLog-empty.txt");
+    let header = std::fs::read_to_string(EditionsLink::fixture("forever.txt"))
+        .ok()
+        .and_then(|t| t.lines().next().map(str::to_string))
+        .expect("the fixture's header");
+    std::fs::write(&log, format!("{header}\n")).expect("a log with no pull");
+    let link = EditionsLink::stored(&[RETAIL_ME], false).with_forever_log(&log);
+    let (rig, _) = two(cx, link);
+    assert!(
+        shown(cx, &rig, "top-edition"),
+        "Forever is known by its log"
+    );
+    pick(cx, &rig, "edition-forever");
+    assert!(shown(cx, &rig, "stage-empty"));
+    rig.gui.read_with(cx, |g, cx| {
+        assert_eq!(
+            g.empty_game(cx),
+            Some((
+                "No Forever fights yet".to_string(),
+                "Play a fight in Forever with combat logging on and it shows up here.".to_string()
+            ))
+        );
+        let w = super::super::w::W::new(1.0, 1440., cx);
+        let meta = super::super::fight_head::Head::of(g, &w, cx).meta;
+        assert!(!meta.contains("Midnight"), "{meta}");
+    });
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// In a fight of Forever's, whose log carries no builds, the talent viewer
@@ -293,7 +460,7 @@ fn a_retail_fight_in_forever_s_window_names_its_expansion(cx: &mut TestAppContex
 #[gpui_kit::test]
 fn the_talent_viewer_says_forever_logs_no_builds(cx: &mut TestAppContext) {
     let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
-    let rig = rig_on(cx, 1440., 900., link);
+    let (rig, _) = two(cx, link);
     open_talents(cx, &rig);
     assert_eq!(talents_gap(cx, &rig), None, "Retail logs its builds");
     close_talents(cx, &rig);
@@ -315,6 +482,51 @@ fn the_talent_viewer_says_forever_logs_no_builds(cx: &mut TestAppContext) {
         talents_gap(cx, &rig).as_deref(),
         Some("Forever's combat log does not carry talents or gear.")
     );
+}
+
+/// One game alone — Forever's, a config written before editions — reads
+/// the top-level keys its table lacks: Home opens on the configured
+/// character, and history questions stay every edition's.
+#[gpui_kit::test]
+fn one_game_alone_reads_the_top_level_keys(cx: &mut TestAppContext) {
+    own_config();
+    cx.update(crate::keys::bind);
+    let guid = "Player-6101-0A2B3C01".to_string();
+    let cfg = Config {
+        character: Some(guid.clone()),
+        ..config()
+    };
+    let mock = MockDaemon::fixture_at(&EditionsLink::fixture("forever.txt"))
+        .with_characters(&[FOREVER_ME.to_string()])
+        .with_history();
+    let (window, gui) = testkit::open(cx, size(px(1440.), px(900.)), |window, cx| {
+        let session = cx.new(|_| Session::new(MockLink::new(mock)));
+        cx.new(|cx| Gui::new(session, cfg, window, cx))
+    });
+    let session = gui.read_with(cx, |g, _| g.session().clone());
+    settle(cx, &session);
+    let rig = Rig {
+        window,
+        gui,
+        session,
+    };
+    assert!(!shown(cx, &rig, "top-edition"), "one game: no switch");
+    rig.gui.read_with(cx, |g, _| {
+        assert_eq!(g.hist.edition, Edition::Forever);
+        assert_eq!(g.keys(), KeysOf::new(Edition::Forever, true));
+        assert_eq!(g.cfg.character_in(g.keys()), Some(guid.as_str()));
+    });
+    press(cx, &rig, "place-home");
+    settle(cx, &rig.session);
+    rig.gui.read_with(cx, |g, _| {
+        let home = g.hist.store.home.as_ref().expect("Home is up");
+        assert_eq!(
+            home.scope.as_deref(),
+            Some(guid.as_str()),
+            "the configured pick"
+        );
+        assert_eq!(home.edition, None, "every edition's, as before");
+    });
 }
 
 fn open_talents(cx: &mut TestAppContext, rig: &Rig) {

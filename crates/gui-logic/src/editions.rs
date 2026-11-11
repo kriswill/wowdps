@@ -1,21 +1,29 @@
 //! The game's editions as the window shows them: what it calls each, which
 //! ones this machine has, the switch's entries, and the edition every
-//! scoped read asks for.
+//! scoped read asks for. One idea runs through it: **the window shows one
+//! game at a time, and by default the one you are playing.**
 //!
 //! - **Names.** Retail goes by its current expansion's name, looked up from
 //!   the major version of its newest build (12 is "Midnight"), and Forever
-//!   by "Forever"; the build is the tooltip's. In code, in filters and in
-//!   stored data the edition stays its key (`retail`).
+//!   by "Forever"; the build is the tooltip's. A name never changes on its
+//!   own: before any build is known Retail is the newest expansion this
+//!   build knows. In code, in filters and in stored data the edition stays
+//!   its key (`retail`).
 //! - **Which editions are known.** One is known when the daemon follows a
 //!   source of it (`Status`'s `editions`) or the history store holds a
-//!   fight of it ([`Census`]). With one known the window draws no switch
-//!   and asks every question as it always has: for every edition.
-//! - **The choice.** Follow (the default: the live edition, the running
-//!   game's) or one edition pinned. It scopes the live meter
+//!   fight of it ([`Census`]), and stays known for the session. With one
+//!   known the window draws no switch and asks every question as it always
+//!   has: for every edition.
+//! - **The choice.** The switch lists the games and nothing else. Picking
+//!   the game the window would follow anyway is following
+//!   (`EditionRef::Follow`), picking another pins it ([`choice_for`]); the
+//!   reader never sees the difference, only whether the game shown is the
+//!   one being played. It scopes the live meter
 //!   (`ClientState::set_edition`) and, once more than one edition is
 //!   known, every history read the window makes ([`history_edition`]).
 //! - **What an edition lacks is said.** A log that carries no builds
-//!   says so where the talents and gear would be ([`builds_gap`]).
+//!   says so where the talents and gear would be ([`builds_gap`]); a game
+//!   with no fights says how to get some ([`empty_stage`]).
 //!
 //! Logos are a later step: an entry is its name here, and the GUI draws an
 //! emblem beside it once one is cached.
@@ -50,6 +58,13 @@ const EXPANSIONS: [(u16, &str); 6] = [
     (12, "Midnight"),
 ];
 
+/// The newest expansion this build knows: what Retail is called before any
+/// build of it is known, so its name does not change when the first fight
+/// is stored.
+pub fn newest_expansion() -> &'static str {
+    EXPANSIONS.last().map_or("Retail", |(_, name)| *name)
+}
+
 /// The expansion a Retail build of this major version belongs to; `None`
 /// for one this build does not know (a newer expansion's).
 pub fn expansion(major: u16) -> Option<&'static str> {
@@ -67,15 +82,17 @@ pub fn build_words(build: Option<(u16, u16, u16)>) -> Option<String> {
 }
 
 /// What the window calls an edition: Retail by its expansion, looked up
-/// from `build` ("Midnight"), else "Retail"; Forever "Forever"; Classic
-/// "Classic"; a number this build does not know "Unknown edition".
+/// from `build` ("Midnight") — the newest one this build knows while no
+/// build is, "Retail" for a build of an expansion it does not know;
+/// Forever "Forever"; Classic "Classic"; a number this build does not know
+/// "Unknown edition".
 pub fn name(edition: Edition, build: Option<(u16, u16, u16)>) -> String {
     match edition.counts_as() {
-        Edition::Retail => build
-            .filter(|b| *b != (0, 0, 0))
-            .and_then(|(major, _, _)| expansion(major))
-            .unwrap_or("Retail")
-            .to_string(),
+        Edition::Retail => match build.filter(|b| *b != (0, 0, 0)) {
+            Some((major, _, _)) => expansion(major).unwrap_or("Retail"),
+            None => newest_expansion(),
+        }
+        .to_string(),
         Edition::Unknown(_) => "Unknown edition".to_string(),
         other => other.label().to_string(),
     }
@@ -101,15 +118,24 @@ pub fn tip(edition: Edition, build: Option<(u16, u16, u16)>) -> String {
 
 /// The element id of an edition's entry: `edition-retail`,
 /// `edition-forever`, a Classic client or an unknown number by its id
-/// (`edition-classic-2`); `edition-follow` for Follow.
-pub fn entry_id(choice: EditionRef) -> String {
-    match choice {
-        EditionRef::Follow => "edition-follow".to_string(),
-        EditionRef::Pin(e) => match e.counts_as() {
-            Edition::Retail | Edition::Forever => format!("edition-{}", e.counts_as().key()),
-            other => format!("edition-{}-{}", other.key(), other.project_id()),
-        },
+/// (`edition-classic-2`).
+pub fn entry_id(edition: Edition) -> String {
+    match edition.counts_as() {
+        e @ (Edition::Retail | Edition::Forever) => format!("edition-{}", e.key()),
+        other => format!("edition-{}-{}", other.key(), other.project_id()),
     }
+}
+
+/// The note beside the game being played right now, in the switch's menu.
+pub const PLAYING_NOW: &str = "Playing now";
+
+/// What the stage says in a game with no fight to show: a heading ("No
+/// Forever fights yet") and how to get one.
+pub fn empty_stage(name: &str) -> (String, String) {
+    (
+        format!("No {name} fights yet"),
+        format!("Play a fight in {name} with combat logging on and it shows up here."),
+    )
 }
 
 /// Whether an edition's combat log carries the players' builds (their
@@ -132,13 +158,28 @@ pub fn builds_gap(edition: Option<Edition>) -> Option<String> {
 }
 
 /// The edition the window is in: the pinned one, or, following, the live
-/// edition the daemon last answered in — Retail before it has named one,
-/// as a fight that names none is Retail's. What the per-edition keys
-/// (the character, its class, the dates Home counts from) are read by.
-pub fn window_edition(choice: EditionRef, live: Option<Edition>) -> Edition {
+/// edition (`live`: the edition the daemon last answered in, else the one
+/// `Status` names live) — and until either names one, `last`, the edition
+/// the window was in, so a pick never passes through another edition on
+/// its way. What the per-edition keys (the character, its class, the
+/// dates Home counts from) are read by.
+pub fn window_edition(choice: EditionRef, live: Option<Edition>, last: Edition) -> Edition {
     match choice.canonical() {
         EditionRef::Pin(e) => e.counts_as(),
-        EditionRef::Follow => live.unwrap_or(Edition::Retail).counts_as(),
+        EditionRef::Follow => live.unwrap_or(last).counts_as(),
+    }
+}
+
+/// What picking `pick` asks of the meter: following, when it is the game
+/// the window would follow anyway (`follows_to`: the live edition), else a
+/// pin to it. Looking at the game being played is never a state of its
+/// own.
+pub fn choice_for(pick: Edition, follows_to: Option<Edition>) -> EditionRef {
+    let pick = pick.counts_as();
+    if follows_to.map(Edition::counts_as) == Some(pick) {
+        EditionRef::Follow
+    } else {
+        EditionRef::Pin(pick)
     }
 }
 
@@ -153,9 +194,10 @@ pub fn history_edition(several: bool, window: Edition) -> Option<Edition> {
 /// reader could take it for another: a fight of any edition but Retail
 /// says which (`fight_head::edition_meta`), and while the window knows
 /// several editions a Retail fight in another edition's window says its
-/// name too — "Midnight, Heroic, 20 players". `window` is the edition the
-/// window is in, `None` while it knows one; `build` the fight's own (its
-/// stored card's), else Retail's newest.
+/// name too — "Midnight, Heroic, 20 players". A stage with no fight on it
+/// (`fight` `None`: nothing answered yet, an empty game) names no edition.
+/// `window` is the edition the window is in, `None` while it knows one;
+/// `build` the fight's own (its stored card's), else Retail's newest.
 pub fn header_meta(
     meta: String,
     fight: Option<Edition>,
@@ -163,7 +205,7 @@ pub fn header_meta(
     build: Option<(u16, u16, u16)>,
 ) -> String {
     let fight_e = fight.map(Edition::counts_as);
-    let retail_elsewhere = matches!(fight_e, None | Some(Edition::Retail))
+    let retail_elsewhere = fight_e == Some(Edition::Retail)
         && window.is_some_and(|w| w.counts_as() != Edition::Retail);
     if !retail_elsewhere {
         return crate::fight_head::edition_meta(meta, fight);
@@ -188,11 +230,19 @@ pub struct Seen {
     /// The newest build a card of it carried, and that card's start.
     pub build: Option<(u16, u16, u16)>,
     newest_ms: i64,
+    /// It was known once this session: it stays known, so a switch once
+    /// drawn never goes away under a reader (a source the daemon stopped
+    /// listing, say, while its edition is shown).
+    once: bool,
 }
 
 impl Seen {
     fn known(&self) -> bool {
-        self.source || self.stored > 0
+        self.once || self.source || self.stored > 0
+    }
+
+    fn mark(&mut self) {
+        self.once |= self.source || self.stored > 0;
     }
 }
 
@@ -206,6 +256,11 @@ impl Seen {
 #[derive(Debug)]
 pub struct Census {
     seen: BTreeMap<Edition, Seen>,
+    /// The live edition's source, as `Status` names it: what a following
+    /// window shows.
+    live: Option<Edition>,
+    /// The editions whose game runs now, as `Status` tells.
+    playing: Vec<Edition>,
     /// To ask about, in order.
     queue: Vec<Edition>,
     /// The question in flight.
@@ -235,6 +290,8 @@ impl Census {
     pub fn new() -> Self {
         Self {
             seen: BTreeMap::new(),
+            live: None,
+            playing: Vec::new(),
             queue: PROBED.to_vec(),
             pending: None,
             again: Vec::new(),
@@ -259,6 +316,18 @@ impl Census {
     /// is scoped.
     pub fn several(&self) -> bool {
         self.seen.values().filter(|s| s.known()).count() > 1
+    }
+
+    /// The live edition, as `Status` last named it: the edition a following
+    /// window shows. `None` before `Status`, or while no source the daemon
+    /// follows names an edition.
+    pub fn live(&self) -> Option<Edition> {
+        self.live
+    }
+
+    /// `edition`'s game runs now, as the daemon's watcher tells.
+    pub fn playing(&self, edition: Edition) -> bool {
+        self.playing.contains(&edition.counts_as())
     }
 
     /// What is known of `edition`.
@@ -292,33 +361,47 @@ impl Census {
         }
     }
 
-    /// `Status`'s sources: an edition the daemon follows is known. `true`
-    /// when that changed what is known.
+    /// `Status`'s sources: an edition the daemon follows is known, the live
+    /// one is what a following window shows, and a running one is being
+    /// played. `true` when any of that changed.
     pub fn on_sources(&mut self, sources: &[EditionSource]) -> bool {
         let named: Vec<Edition> = sources
             .iter()
             .filter_map(|s| s.edition)
             .map(Edition::counts_as)
             .collect();
-        let before = self.known();
+        let live = sources
+            .iter()
+            .find(|s| s.live)
+            .and_then(|s| s.edition)
+            .map(Edition::counts_as);
+        let mut playing: Vec<Edition> = sources
+            .iter()
+            .filter(|s| s.running)
+            .filter_map(|s| s.edition)
+            .map(Edition::counts_as)
+            .collect();
+        playing.sort();
+        playing.dedup();
+        let before = (self.known(), self.live, self.playing.clone());
+        self.live = live;
+        self.playing = playing;
+        let mut new = Vec::new();
+        for e in &named {
+            let s = self.seen.entry(*e).or_default();
+            if !s.known() {
+                new.push(*e);
+            }
+        }
         for (e, s) in self.seen.iter_mut() {
             s.source = named.contains(e);
-        }
-        let mut new = Vec::new();
-        for e in named {
-            if let std::collections::btree_map::Entry::Vacant(v) = self.seen.entry(e) {
-                v.insert(Seen {
-                    source: true,
-                    ..Seen::default()
-                });
-                new.push(e);
-            }
+            s.mark();
         }
         // Their fights and builds, unless the launch's round asks.
         for e in new.into_iter().filter(|e| !PROBED.contains(e)) {
             self.ask_about(e);
         }
-        self.known() != before
+        (self.known(), self.live, self.playing.clone()) != before
     }
 
     /// Cards the window read elsewhere (the rail's pages, Home's): an
@@ -331,6 +414,7 @@ impl Census {
             let s = self.seen.entry(e).or_default();
             if s.stored == 0 {
                 s.stored = 1;
+                s.mark();
                 changed = true;
             }
             changed |= s.note(c);
@@ -344,11 +428,13 @@ impl Census {
         self.reprobe = true;
     }
 
-    /// The connection the question in flight went out on is gone: it is
-    /// asked again.
+    /// The connection the question in flight went out on is gone (the
+    /// daemon restarted): nothing will answer it, so it is asked again,
+    /// first.
     pub fn lost(&mut self) {
         if let Some((_, e)) = self.pending.take() {
-            self.ask_about(e);
+            self.queue.retain(|q| *q != e);
+            self.queue.insert(0, e);
         }
     }
 
@@ -430,6 +516,7 @@ impl Census {
         }
         let s = self.seen.entry(edition).or_default();
         s.stored = (*total).max(1);
+        s.mark();
         for c in cards {
             s.note(c);
         }
@@ -454,88 +541,65 @@ impl Seen {
 
 // ---- the switch ------------------------------------------------------------------
 
-/// One of the switch's entries.
+/// One of the switch's entries: a game.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    pub choice: EditionRef,
-    /// "Follow the game I'm playing", "Midnight", "Forever".
+    pub edition: Edition,
+    /// "Midnight", "Forever".
     pub name: String,
-    /// Its quieter words: what Follow shows now ("Midnight"), and the
-    /// edition behind a name that is not its own ("Retail").
-    pub note: Option<String>,
+    /// [`PLAYING_NOW`] beside the game being played; nothing with no game
+    /// running.
+    pub note: Option<&'static str>,
     /// Its tooltip: the edition and its build.
     pub tip: String,
-    /// The choice the window is on.
+    /// The game the window shows.
     pub on: bool,
     /// Its element id ([`entry_id`]).
     pub id: String,
 }
 
-/// The switch's face: the edition the window shows and its tooltip.
+/// The switch's face: the game the window shows, by name, and whether it
+/// is the one being played (the live dot before the name).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Face {
     pub edition: Edition,
     pub name: String,
     pub tip: String,
-    pub following: bool,
+    pub playing: bool,
 }
 
-/// The Follow entry's words, as the character menu words its own.
-pub const FOLLOW: &str = "Follow the game I'm playing";
-
-/// The switch while more than one edition is known: Follow, then one entry
-/// per known edition; `None` with one or none, when the window draws no
-/// switch.
-pub fn entries(census: &Census, choice: EditionRef, live: Option<Edition>) -> Option<Vec<Entry>> {
+/// The switch while more than one edition is known: one entry per known
+/// game, the one `shown` lit; `None` with one or none, when the window
+/// draws no switch.
+pub fn entries(census: &Census, shown: Edition) -> Option<Vec<Entry>> {
     if !census.several() {
         return None;
     }
-    let choice = match choice.canonical() {
-        EditionRef::Pin(e) => EditionRef::Pin(e.counts_as()),
-        EditionRef::Follow => EditionRef::Follow,
-    };
-    let now = window_edition(EditionRef::Follow, live);
-    let mut out = vec![Entry {
-        choice: EditionRef::Follow,
-        name: FOLLOW.to_string(),
-        note: Some(census.name(now)),
-        tip: census.tip(now),
-        on: choice == EditionRef::Follow,
-        id: entry_id(EditionRef::Follow),
-    }];
-    for e in census.known() {
-        let shown = census.name(e);
-        let label = match e {
-            Edition::Unknown(n) => format!("{n}"),
-            other => other.label().to_string(),
-        };
-        out.push(Entry {
-            choice: EditionRef::Pin(e),
-            note: (shown != label).then_some(label),
-            name: shown,
-            tip: census.tip(e),
-            on: choice == EditionRef::Pin(e),
-            id: entry_id(EditionRef::Pin(e)),
-        });
-    }
-    Some(out)
+    let shown = shown.counts_as();
+    Some(
+        census
+            .known()
+            .into_iter()
+            .map(|e| Entry {
+                edition: e,
+                name: census.name(e),
+                note: census.playing(e).then_some(PLAYING_NOW),
+                tip: census.tip(e),
+                on: e == shown,
+                id: entry_id(e),
+            })
+            .collect(),
+    )
 }
 
-/// The switch's face: the edition the window is in, by name; following,
-/// the tooltip says so.
-pub fn face(census: &Census, choice: EditionRef, live: Option<Edition>) -> Face {
-    let edition = window_edition(choice, live);
-    let following = choice == EditionRef::Follow;
-    let tip = census.tip(edition);
+/// The switch's face for the game `shown`.
+pub fn face(census: &Census, shown: Edition) -> Face {
+    let edition = shown.counts_as();
     Face {
         edition,
         name: census.name(edition),
-        tip: if following {
-            format!("Following the game you play: {tip}")
-        } else {
-            tip
-        },
-        following,
+        tip: census.tip(edition),
+        playing: census.playing(edition),
     }
 }
 

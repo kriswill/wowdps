@@ -32,7 +32,7 @@ impl Gui {
     pub(crate) fn open_home(&mut self, cx: &mut Context<Self>) {
         self.place = Place::Home;
         if self.hist.store.home.is_none() {
-            let scope = self.cfg.character_in(self.hist.edition).map(str::to_string);
+            let scope = self.cfg.character_in(self.keys()).map(str::to_string);
             let sent = self.hist.store.open_home(scope);
             self.send_history(sent, cx);
         }
@@ -56,7 +56,7 @@ impl Gui {
         // The one key, over what is on disk: the launch-time copy would put
         // back an overlay drag or a zoom saved since.
         let edition = self.hist.edition;
-        if self.cfg.character_in(edition) != guid.as_deref() {
+        if self.cfg.character_in(self.keys()) != guid.as_deref() {
             self.cfg.set_character_in(edition, guid.clone());
             let stored = guid.clone();
             Config::store(move |c| c.set_character_in(edition, stored));
@@ -80,12 +80,13 @@ impl Gui {
         let state = self.session.read(cx).state();
         let log = log_instances(state.entries(), state.log_id());
         // `history_characters` names Retail's characters: another edition's
-        // chips are its own store's alone.
-        let configured = if self.hist.edition == Edition::Retail {
-            self.cfg.history_characters()
-        } else {
-            Vec::new()
-        };
+        // chips are its own store's alone, once the window knows several.
+        let configured =
+            if self.hist.edition == Edition::Retail || !self.hist.store.census.several() {
+                self.cfg.history_characters()
+            } else {
+                Vec::new()
+            };
         let panels = derive(
             &home.cards,
             home.scope.as_deref(),

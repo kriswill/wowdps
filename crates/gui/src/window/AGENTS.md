@@ -80,14 +80,18 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
 - **Config writes:** a gesture's key is written alone through
   `Config::store` (or `store_character`, `store_character_class`), never a
   launch-time copy. A key of one edition's (the character, its class,
-  Home's dates) goes through `Config::set_*_in(edition, …)` for the edition
-  the window is in (`Hist::edition`): Retail's are the top-level keys.
-- **Editions** (`editions.rs`, gui-logic's `editions`): the switch's
-  choice rides `ClientState::set_edition` for the meter and, only once the
-  census knows more than one edition, every history read
-  (`Store::rescope`). With one edition known nothing is drawn or asked
-  differently. Logos go through `images::edition_emblem`, `None` until
-  their cache exists.
+  Home's dates) is read through `Gui::keys()` (`config::KeysOf`: the
+  top-level key while one edition is known) and written through
+  `Config::set_*_in(edition, …)` for the edition the window is in
+  (`Hist::edition`): Retail's are the top-level keys.
+- **Editions** (`editions.rs`, gui-logic's `editions`): one game at a
+  time, by default the one played. The switch lists games, never modes: a
+  pick of the game followed anyway is `Follow`, any other a pin, which
+  follows again once its game has been live and moved on. It rides
+  `ClientState::set_edition` for the meter and, only once the census knows
+  more than one edition, every history read (`Store::rescope`). With one
+  edition known nothing is drawn or asked differently. Logos go through
+  `images::edition_emblem`, `None` until their cache exists.
 - **The chrome budget is a test.** At 1440×900 the first meter row starts
   under 290 px with 18 rows showing
   (`window::tests::the_chrome_leaves_a_raid_its_rows`, every `cargo test`).

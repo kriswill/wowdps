@@ -528,9 +528,12 @@ impl Gui {
         self.learned = true;
         let def = self.theme_def(cx);
         theme::apply(&def, Some(class_accent(class)), cx);
-        // Remembered as the edition's own: each game has its characters.
+        // Remembered as the edition's own (each game has its characters),
+        // and as the class played last, which the overlay reads.
         let edition = self.hist.edition;
-        if self.cfg.character_class_in(edition) != Some(class) {
+        if self.cfg.character_class_in(self.keys()) != Some(class)
+            || self.cfg.character_class() != Some(class)
+        {
             let name = class.name().to_string();
             self.cfg.set_character_class_in(edition, Some(name.clone()));
             Config::store(move |c| c.set_character_class_in(edition, Some(name)));
@@ -544,7 +547,7 @@ impl Gui {
     pub(crate) fn picked(&self, cx: &App) -> Option<CharPick> {
         let pick = self
             .cfg
-            .character_in(self.hist.edition)
+            .character_in(self.keys())
             .and_then(|guid| self.hist.known().iter().find(|c| c.guid == guid));
         match pick {
             Some(c) => Some(CharPick {
@@ -842,6 +845,27 @@ impl Gui {
             .h_full()
             .flex()
             .flex_col();
+        // A game with no fight to show says how to get one, never a blank
+        // meter under a header waiting for combat.
+        if let Some((head, line)) = self.empty_game(cx) {
+            return stage
+                .child(
+                    div()
+                        .id("stage-empty")
+                        .test_support()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap(w.z(6.))
+                        .px(w.z(24.))
+                        .child(w.text(head, w.size.body, w.c(|t| t.ink), w::SEMIBOLD))
+                        .child(w.text(line, w.size.small, w.c(|t| t.ink_2), REGULAR)),
+                )
+                .children(self.footer(w, cx))
+                .children(cards::toast(self, w, window, cx));
+        }
         let pushed = w.narrow() && self.fight(cx).inspecting();
         if pushed {
             stage = stage.child(self.inspector_seat(w, Seat::Pushed, window, cx));

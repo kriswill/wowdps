@@ -519,11 +519,13 @@ fn window_shots() {
 }
 
 /// v49: the window over a daemon of two editions (`testkit::EditionsLink`:
-/// the fixture's Retail log and Forever's, both followed, both stored), at
-/// the three frames: the edition switch beside the places (`editions`),
-/// its menu open (`editions-menu`), and Forever pinned — its own pull on
-/// the stage, its rail (`editions-forever`). Over the committed fixtures
-/// only, in the shots' theme.
+/// the fixture's Retail log and Forever's, both followed, both stored,
+/// Retail the game being played), at the three frames: the switch on the
+/// game played, with its live dot (`editions`), its menu (`editions-menu`),
+/// Forever shown — its own pull on the stage, its rail, no dot
+/// (`editions-forever`) — the menu while Forever is shown
+/// (`editions-forever-menu`) and Forever's Home (`editions-forever-home`).
+/// Over the committed fixtures only, in the shots' theme.
 #[test]
 #[ignore = "needs a wgpu adapter"]
 fn edition_shots() {
@@ -532,16 +534,24 @@ fn edition_shots() {
         std::fs::create_dir_all(dir).expect("the shots' directory");
     }
     type EditionPose = fn(&mut HeadlessAppContext, &Shot);
-    let poses: [(&str, EditionPose); 3] = [
+    fn forever(cx: &mut HeadlessAppContext, s: &Shot) {
+        cx.update_entity(&s.gui, |g, cx| {
+            g.pick_edition(wowdps_model::Edition::Forever, cx)
+        });
+        s.settle(cx);
+        let _ = cx.update_window(s.window, |_, window, cx| window.render_frame(cx));
+    }
+    let poses: [(&str, EditionPose); 5] = [
         ("editions", |_, _| {}),
         ("editions-menu", |cx, s| menu(cx, s, Menu::Edition)),
-        ("editions-forever", |cx, s| {
-            cx.update_entity(&s.gui, |g, cx| {
-                g.pick_edition(
-                    wowdps_proto::EditionRef::Pin(wowdps_model::Edition::Forever),
-                    cx,
-                )
-            });
+        ("editions-forever", forever),
+        ("editions-forever-menu", |cx, s| {
+            forever(cx, s);
+            menu(cx, s, Menu::Edition);
+        }),
+        ("editions-forever-home", |cx, s| {
+            forever(cx, s);
+            cx.update_entity(&s.gui, |g, cx| g.open_home(cx));
             s.settle(cx);
         }),
     ];
@@ -560,6 +570,7 @@ fn edition_shots() {
             let cfg = Config::load();
             let link = testkit::EditionsLink::owned(&["Thraxx-Nebula-US", "Velkris-Nebula-US"])
                 .with_forever_source();
+            link.playing.set(Some(wowdps_model::Edition::Retail));
             let mut held = None;
             let (window, gui) =
                 testkit::open_headless(&mut cx, size(px(w), px(h)), |window, cx| {

@@ -200,7 +200,7 @@ impl Gui {
         let class = self
             .played(cx)
             .and_then(|p| p.class)
-            .or_else(|| self.cfg.character_class_in(self.hist.edition));
+            .or_else(|| self.cfg.character_class_in(self.keys()));
         let accent = match chrome {
             Chrome::Class => class.map(class_accent),
             Chrome::Theme => None,
@@ -221,7 +221,7 @@ impl Gui {
     pub(crate) fn picker_follow(&mut self, cx: &mut Context<Self>) {
         self.cards.picker = false;
         let edition = self.hist.edition;
-        if self.cfg.character_in(edition).is_some() {
+        if self.cfg.character_in(self.keys()).is_some() {
             self.cfg.set_character_in(edition, None);
             wowdps_gui_logic::config::Config::store(|c| c.set_character_in(edition, None));
         }

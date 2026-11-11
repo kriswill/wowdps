@@ -21,7 +21,7 @@ frame mid-glide. Run each test by its name:
 | Test | What it renders | Writes |
 | --- | --- | --- |
 | `window::shots::window_shots` | the window's states at the prototype's three sizes | `<size>-<state>.png` |
-| `window::shots::edition_shots` | the window over two editions: the edition switch, its menu, Forever pinned | `<size>-editions*.png` |
+| `window::shots::edition_shots` | the window over two editions: the edition switch, its menu, Forever shown, its menu then, Forever's Home | `<size>-editions*.png` |
 | `window::shots::the_chrome_budget_holds_on_the_log` | (measures; no picture) the chrome budget over a real log | — |
 | `overlay::panel::tests::overlay_shots` | the overlay's states, with this machine's art caches | `overlay-<state>.png` |
 | `overlay::panel::tests::overlay_render_guard` | the same states, without the art, against the committed pictures | (checks) |
@@ -52,12 +52,14 @@ pictures are `navy`'s.
 ## Edition shots — `window::shots::edition_shots`
 
 The window over a daemon of two editions (`testkit::EditionsLink`: the
-committed `sample.txt` and `forever.txt`, both followed, both stored), at
-the three frames: `editions` (the switch beside the places, following the
-live game), `editions-menu` (its menu open) and `editions-forever` (Forever
-pinned: its own pull on the stage, its rail). Over the committed fixtures
-only, so they hold no real names. The window shots above are one edition's
-and draw no switch.
+committed `sample.txt` and `forever.txt`, both followed, both stored,
+Retail the game being played), at the three frames: `editions` (the switch
+beside the places on the game played, its live dot), `editions-menu` (its
+menu: the games, "Playing now" beside Retail), `editions-forever` (Forever
+shown: its own pull on the stage, its rail, no dot), `editions-forever-menu`
+(the menu while Forever is shown) and `editions-forever-home` (Forever's
+Home). Over the committed fixtures only, so they hold no real names. The
+window shots above are one edition's and draw no switch.
 
 ## Window shots — `window::shots::window_shots`
 

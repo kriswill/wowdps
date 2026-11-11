@@ -67,24 +67,30 @@ impl Link for MockLink {
 }
 
 /// v49: a daemon of two editions, as one following a source per edition
-/// is: Retail's `sample.txt` is followed, the store holds both its fights
-/// and Forever's `forever.txt`'s, and — `with_forever_source` — Forever's
-/// log is followed too. A Watch is answered by the edition's source (a pin
-/// to an edition no source carries by the empty answer, as the daemon
-/// gives it); following, by the live edition's. Every history question
-/// goes to the one store. What the window sent is kept for a test to read.
+/// is: Retail's `sample.txt` is followed, the store holds its fights and —
+/// unless built without — Forever's `forever.txt`'s, and with
+/// `with_forever_log` a Forever log is followed too. A Watch is answered by
+/// the edition's source (a pin to an edition no source carries by the
+/// empty answer, as the daemon gives it); following, by the live edition's,
+/// and a following session is moved (sent the new live source's list)
+/// when a test moves `live`. `playing` is the game the watcher sees
+/// running. What the window sent is kept for a test to read.
 pub struct EditionsLink {
     retail: MockDaemon,
     forever: Option<MockDaemon>,
     /// The live edition: what a following session is answered by.
-    pub live: wowdps_model::Edition,
+    pub live: std::rc::Rc<std::cell::Cell<wowdps_model::Edition>>,
+    /// The edition whose game runs, as `Status` says.
+    pub playing: std::rc::Rc<std::cell::Cell<Option<wowdps_model::Edition>>>,
+    /// The live edition a following session was last answered by.
+    answered: wowdps_model::Edition,
     edition: wowdps_proto::EditionRef,
     inbox: Vec<DaemonMsg>,
     pub sent: std::rc::Rc<std::cell::RefCell<Vec<ClientMsg>>>,
 }
 
 impl EditionsLink {
-    fn fixture(name: &str) -> std::path::PathBuf {
+    pub fn fixture(name: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../core/fixtures")
             .join(name)
@@ -98,36 +104,53 @@ impl EditionsLink {
     /// As `new`, the store naming `characters` the account's (the config's
     /// `history_characters`), so its cards have owners in both editions.
     pub fn owned(characters: &[&str]) -> Self {
+        Self::stored(characters, true)
+    }
+
+    /// Retail followed and stored, and Forever's fights stored with
+    /// `forever`.
+    pub fn stored(characters: &[&str], forever: bool) -> Self {
         let names: Vec<String> = characters.iter().map(|c| c.to_string()).collect();
-        let retail = MockDaemon::fixture()
-            .with_characters(&names)
-            .with_history()
-            .with_history_of(&Self::fixture("forever.txt"));
+        let mut retail = MockDaemon::fixture().with_characters(&names).with_history();
+        if forever {
+            retail = retail.with_history_of(&Self::fixture("forever.txt"));
+        }
         Self {
             retail,
             forever: None,
-            live: wowdps_model::Edition::Retail,
+            live: std::rc::Rc::new(std::cell::Cell::new(wowdps_model::Edition::Retail)),
+            playing: std::rc::Rc::default(),
+            answered: wowdps_model::Edition::Retail,
             edition: wowdps_proto::EditionRef::Follow,
             inbox: Vec::new(),
             sent: std::rc::Rc::default(),
         }
     }
 
-    /// Forever's log followed as well.
-    pub fn with_forever_source(mut self) -> Self {
-        self.forever = Some(MockDaemon::fixture_at(&Self::fixture("forever.txt")));
+    /// Forever's `forever.txt` followed as well.
+    pub fn with_forever_source(self) -> Self {
+        self.with_forever_log(&Self::fixture("forever.txt"))
+    }
+
+    /// A Forever log at `path` followed as well.
+    pub fn with_forever_log(mut self, path: &std::path::Path) -> Self {
+        self.forever = Some(MockDaemon::fixture_at(path));
         self
+    }
+
+    /// The edition answering the session now.
+    fn answering(&self) -> wowdps_model::Edition {
+        match self.edition {
+            wowdps_proto::EditionRef::Follow => self.live.get(),
+            wowdps_proto::EditionRef::Pin(e) => e.counts_as(),
+        }
     }
 
     /// The mock that answers the session's edition.
     fn source(&mut self) -> &mut MockDaemon {
-        use wowdps_model::Edition;
-        let edition = match self.edition {
-            wowdps_proto::EditionRef::Follow => self.live,
-            wowdps_proto::EditionRef::Pin(e) => e.counts_as(),
-        };
+        let edition = self.answering();
         match (&mut self.forever, edition) {
-            (Some(f), Edition::Forever) => f,
+            (Some(f), wowdps_model::Edition::Forever) => f,
             _ => &mut self.retail,
         }
     }
@@ -141,29 +164,33 @@ impl Default for EditionsLink {
 
 impl Link for EditionsLink {
     fn send(&mut self, msg: &ClientMsg) {
+        use wowdps_model::Edition;
         self.sent.borrow_mut().push(msg.clone());
         let replies = match msg {
             ClientMsg::Watch { edition, .. } => {
                 self.edition = *edition;
+                self.answered = self.live.get();
                 self.source().handle(msg.clone())
             }
             ClientMsg::GetLoadout { .. } => self.source().handle(msg.clone()),
             ClientMsg::GetStatus { .. } => {
-                let live = self.live;
+                let live = self.live.get();
+                let playing = self.playing.get();
                 let forever = self.forever.is_some();
                 let mut replies = self.retail.handle(msg.clone());
                 for r in &mut replies {
                     if let DaemonMsg::Status { editions, .. } = r {
                         for e in editions.iter_mut() {
-                            e.live = live == wowdps_model::Edition::Retail;
+                            e.live = live == Edition::Retail;
+                            e.running = playing == Some(Edition::Retail);
                         }
                         if forever {
                             editions.push(wowdps_proto::EditionSource {
-                                edition: Some(wowdps_model::Edition::Forever),
+                                edition: Some(Edition::Forever),
                                 source: Some("forever.txt".to_string()),
                                 log: Some("forever.txt".to_string()),
-                                live: live == wowdps_model::Edition::Forever,
-                                running: false,
+                                live: live == Edition::Forever,
+                                running: playing == Some(Edition::Forever),
                             });
                         }
                     }
@@ -176,6 +203,15 @@ impl Link for EditionsLink {
     }
 
     fn poll(&mut self) -> Vec<DaemonMsg> {
+        // The live edition moved under a following session: the daemon
+        // sends it the new live source's list, the frame that moves it.
+        if self.edition == wowdps_proto::EditionRef::Follow && self.live.get() != self.answered {
+            self.answered = self.live.get();
+            let list = self
+                .source()
+                .handle(ClientMsg::watch(wowdps_proto::Cursor::List));
+            self.inbox.extend(list);
+        }
         std::mem::take(&mut self.inbox)
     }
 

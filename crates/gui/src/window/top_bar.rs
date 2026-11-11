@@ -5,7 +5,8 @@
 //! picker, the gear and the help button, on the panel's surface over a
 //! hairline the active place's underline covers. At 820 px and under the
 //! wordmark goes, the jump box shrinks to its glyph, the pill keeps its dot
-//! and clock, the switch its shorter name and the picker its icon.
+//! and clock, the switch's name truncates sooner and the picker keeps its
+//! icon.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -170,10 +171,10 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
                 cx.listener(|this, _, window, cx| this.goto_fights(window, cx)),
             )),
     );
-    // The edition switch, only while more than one edition is known: a
+    // The edition switch, only once more than one edition is known: a
     // window of one edition is today's.
-    if gui.edition_entries(cx).is_some() {
-        let face = gui.edition_face(cx);
+    if gui.edition_entries().is_some() {
+        let face = gui.edition_face();
         line = line
             .child(div().w(w.z(SWITCH_GAP)).flex_none())
             .child(edition_switch(
@@ -261,11 +262,11 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         .child(div().absolute().inset_0().child(line))
 }
 
-/// The edition switch: the edition the window shows, by its name —
-/// following, the running game's — with its emblem once one is cached and
-/// the caret; the build in its tooltip, which says too when the window
-/// follows the game. A press opens the edition menu. Its bounds are kept
-/// for the menu to hang from.
+/// The edition switch: the game the window shows, by its name, after the
+/// live dot while it is the game being played — no dot while the window
+/// shows another — with its emblem once one is cached and the caret; the
+/// build in its tooltip. A press opens the edition menu. Its bounds are
+/// kept for the menu to hang from.
 fn edition_switch(
     w: &W,
     face: Face,
@@ -299,6 +300,9 @@ fn edition_switch(
         .text_color(w.c(|t| t.ink_2))
         .hover(|s| s.bg(w.c(|t| t.hover)).text_color(w.c(|t| t.ink)))
         .child(seat)
+        .when(face.playing, |d| {
+            d.child(dot(w.z(w.size.dot), w.c(|t| t.bad)))
+        })
         .children(emblem.map(|tile| img(tile).size(side).flex_none()))
         .child(
             div()
