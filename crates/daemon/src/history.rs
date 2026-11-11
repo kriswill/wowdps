@@ -3983,7 +3983,7 @@ impl<B: Backend> Store<B> {
                     am_uptime_pct: am_sum / nf,
                     overheal_pct: overheal_sum / nf,
                     absorb_efficiency: (known && total > 0)
-                        .then(|| absorbed_known as f64 / total as f64),
+                        .then_some(absorbed_known as f64 / total as f64),
                     externals_given,
                 }
             })
