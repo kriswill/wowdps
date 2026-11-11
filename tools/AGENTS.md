@@ -104,6 +104,7 @@ tools/gen-role-signals.sh      # Forever's forever/role_signals.rs (R30, curated
 tools/gen-icons.sh             # class-icons.bin (upscaled 4x; --no-upscale)
 tools/gen-spell-icons.sh       # spell-icons.bin (~58 MiB)
 tools/gen-talent-trees.sh      # talents.json (R14)
+tools/gen-talent-trees.sh --product wowf -o ~/.local/share/wowdps/forever/talents.json   # Forever's, where the talent tools read it
 tools/gen-talent-art.sh        # talent-art.bin (~60 MiB)
 tools/gen-spell-tips.sh        # spell-tips.bin (gui-logic's spell tips; ~7 s, 4 s when current)
 tools/seed-creatures.sh        # NPC classifications from Wowhead into the store's creatures.tsv, under the addon's

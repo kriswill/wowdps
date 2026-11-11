@@ -178,6 +178,18 @@ fn a_bad_argument_prints_the_error_and_the_usage_with_status_2() {
     assert!(err.contains("Usage:"), "{err}");
     assert!(stdout(&out).is_empty());
 
+    // An edition the TUI does not take is refused, naming those it does,
+    // before any daemon is reached.
+    let out = sb.run(&["--edition", "tbc"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(
+        err.contains("unknown edition \"tbc\": --edition takes retail or forever"),
+        "{err}"
+    );
+    assert!(err.contains("Usage:"), "{err}");
+    assert!(!sb.socket().exists(), "a refused argument spawns no daemon");
+
     // The retired flag-mode spelling points at its subcommand.
     let out = sb.run(&["--stop"]);
     assert_eq!(out.status.code(), Some(2));

@@ -48,7 +48,10 @@ const INSTRUCTIONS: &str = "Live and historical World of Warcraft combat meterin
      for per-player analysis. Amounts are raw totals with overkill left \
      out, as the game's own meter counts them; per_sec is the rate over the \
      fight's COMBAT time (combat_ms), and a keystone run's rows add \
-     run_per_sec, the rate over the key timer.";
+     run_per_sec, the rate over the key timer. Every fight names its game \
+     edition (retail, forever): the live tools follow the live edition \
+     unless `edition` pins one, the history tools answer every edition \
+     unless it names one, and nothing counts two editions together.";
 
 pub fn serve<R: BufRead, W: Write>(
     input: R,

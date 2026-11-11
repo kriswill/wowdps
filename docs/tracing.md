@@ -14,7 +14,8 @@ wowdps-gui --overlay                                       # auto-spawn via
 wowdps                                                     # `wowdps --file …`
 ```
 
-- `wowdps status` — what the daemon follows, client count, game detection,
+- `wowdps status` — what the daemon follows (each edition's source, the log
+  it follows and which edition is live), client count, game detection,
   overlay supervisor state (including retained stderr of a failed overlay
   spawn — the first thing to check when auto-launch "did nothing").
 - `wowdps stop` — clean shutdown; without `--linger` it also idle-exits
