@@ -1504,14 +1504,15 @@ fn history_tools_answer_over_the_store() {
                 "stored_fight",
                 &format!(r#"{{"fight_id":"{kill_id}","player":"{name}"}}"#),
             ),
-            &call_line(16, "stored_fight", r#"{"fight_id":"nope"}"#),
+            // Well shaped, and no fight's: the store's own miss.
+            &call_line(16, "stored_fight", r#"{"fight_id":"0000000000000000-1"}"#),
         ],
     );
     let drilled = tool_doc(&reply[0]);
     assert!(matches!(drilled.get("by_ability"), Some(Json::Arr(a)) if !a.is_empty()));
     assert!(drilled.get("timeline").is_some());
     assert!(
-        error_text(&reply[1]).contains("no stored fight nope"),
+        error_text(&reply[1]).contains("no stored fight 0000000000000000-1"),
         "{:?}",
         reply[1]
     );
@@ -1541,7 +1542,11 @@ fn history_tools_answer_over_the_store() {
         &[
             &call_line(17, "pin_fight", &format!(r#"{{"fight_id":"{kill_id}"}}"#)),
             &call_line(18, "history", r#"{"sort":"fastest","limit":1}"#),
-            &call_line(19, "pin_fight", r#"{"fight_id":"nope","pinned":true}"#),
+            &call_line(
+                19,
+                "pin_fight",
+                r#"{"fight_id":"0000000000000000-1","pinned":true}"#,
+            ),
         ],
     );
     assert_eq!(tool_doc(&reply[0]).get("pinned"), Some(&Json::Bool(true)));
@@ -1552,7 +1557,7 @@ fn history_tools_answer_over_the_store() {
     // Retest 35: a pin that did not take is an error naming why, never a
     // silent `pinned: false`.
     assert!(
-        error_text(&reply[2]).contains("no stored fight nope"),
+        error_text(&reply[2]).contains("no stored fight 0000000000000000-1"),
         "{:?}",
         reply[2]
     );
@@ -1570,8 +1575,8 @@ fn history_tools_answer_empty_without_a_store() {
             &call_line(2, "history", "{}"),
             &call_line(3, "progression", r#"{"encounter":1,"difficulty":1}"#),
             &call_line(4, "trend", r#"{"player":"Player-1-A"}"#),
-            &call_line(5, "stored_fight", r#"{"fight_id":"x"}"#),
-            &call_line(6, "pin_fight", r#"{"fight_id":"x"}"#),
+            &call_line(5, "stored_fight", r#"{"fight_id":"0000000000000000-1"}"#),
+            &call_line(6, "pin_fight", r#"{"fight_id":"0000000000000000-1"}"#),
         ],
     );
     let status = tool_doc(&reply[0]);
@@ -1589,12 +1594,12 @@ fn history_tools_answer_empty_without_a_store() {
     );
     assert!(matches!(tool_doc(&reply[3]).get("points"), Some(Json::Arr(p)) if p.is_empty()));
     assert!(
-        error_text(&reply[4]).contains("no stored fight x"),
+        error_text(&reply[4]).contains("no stored fight 0000000000000000-1"),
         "{:?}",
         reply[4]
     );
     assert!(
-        error_text(&reply[5]).contains("no stored fight x"),
+        error_text(&reply[5]).contains("no stored fight 0000000000000000-1"),
         "{:?}",
         reply[5]
     );
