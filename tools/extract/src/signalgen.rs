@@ -18,7 +18,24 @@
 //!   in); a shield cast a `SpellEquippedItems` row that requires a shield;
 //!   a form a MOD_SHAPESHIFT aura into the `SpellShapeshiftForm` of the
 //!   same name; a heal a HEAL effect or a PERIODIC_HEAL aura. Mitigation
-//!   (Revenge, Last Stand) has no mark of its own beyond the family.
+//!   (Revenge, Last Stand) has no mark of its own beyond the family, but an
+//!   entry may also name the forms it is cast in (`Curated::in_form`): a
+//!   bear's own attacks join only where their `SpellShapeshift` row requires
+//!   Bear Form or Dire Bear Form, which keeps the cat's Swipe, a creature
+//!   bear's and a hunter pet's out.
+//!
+//! The meter reads a CAST line's id, and for a heal or a taunt that is often
+//! not the id carrying the mark: an older heal is a parent cast whose effect
+//! is a dummy or a trigger, and the heal its child (Holy Shock's rank 20473
+//! heals as 25914; Penance's cast 402174 as 402289). So for those two kinds a
+//! same-named id in the family also joins when the client ties it to an id
+//! already in: one of its effects triggers that id (`EffectTriggerSpell`),
+//! or its own text names it (`Spell.Description_lang`, `$25914s1`), read to
+//! a fixpoint in id order. A rune's passive of the same name (an id with
+//! the OVERRIDE_ACTIONBAR_SPELLS aura, which puts the spell on the bar) is
+//! never cast and never joins this way. A cast whose client data names no such child (Earth Shield's,
+//! Prayer of Mending's) stays out: what a cast line writes for it is known
+//! only once a census holds one.
 //!
 //! An entry no id passes fails the build, naming it. The committed census
 //! of real logs (`tools/role-signals-census.csv`, from
@@ -34,16 +51,19 @@
 //! (`role_signals.expected.md`) listing every id with its proof and counts.
 
 use crate::rolegen::Census;
-use crate::table::{Tables, cell, int};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::spelltip::ids_in;
+use crate::table::{Tables, cell, int, text};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use wowdps_core::roles::RoleSignal;
 
 /// The tables the generator consumes (their FileDataIDs: `table::FILE_IDS`).
-pub const TABLES: [&str; 5] = [
+pub const TABLES: [&str; 7] = [
     "SpellName",
+    "Spell",
     "SpellEffect",
     "SpellEquippedItems",
+    "SpellShapeshift",
     "SpellShapeshiftForm",
     "SpellClassOptions",
 ];
@@ -61,6 +81,11 @@ const EFFECT_ATTACK_ME: i64 = 114;
 const AURA_PERIODIC_HEAL: i64 = 8;
 const AURA_MOD_TAUNT: i64 = 11;
 const AURA_MOD_SHAPESHIFT: i64 = 36;
+/// `SpellEffect.EffectAura` OVERRIDE_ACTIONBAR_SPELLS: what a rune's passive
+/// is, named after the spell it puts on the bar and never itself cast.
+const AURA_OVERRIDE_ACTIONBAR: i64 = 332;
+/// `SpellEffect.Effect` APPLY_AURA.
+const EFFECT_APPLY_AURA: i64 = 6;
 /// `SpellEquippedItems`: the armor item class, and the shield's bit in its
 /// subclass mask (armor subclass 6).
 const ITEM_CLASS_ARMOR: i64 = 4;
@@ -76,6 +101,9 @@ pub struct Curated {
     /// `Some(reason)` waives the census check (the client still proves
     /// every id); the reason lands in `role_signals.expected.md`.
     pub census_exempt: Option<&'static str>,
+    /// The forms (`SpellShapeshiftForm` names) one of which an id's
+    /// `SpellShapeshift` row must require; empty for none.
+    pub in_form: &'static [&'static str],
 }
 
 impl Curated {
@@ -85,6 +113,7 @@ impl Curated {
             name,
             kind,
             census_exempt: None,
+            in_form: &[],
         }
     }
 
@@ -94,13 +123,27 @@ impl Curated {
             name,
             kind,
             census_exempt: Some(reason),
+            in_form: &[],
+        }
+    }
+
+    /// The entry with its ids held to the casts made in one of `forms`.
+    pub const fn in_form(self, forms: &'static [&'static str]) -> Self {
+        Self {
+            in_form: forms,
+            ..self
         }
     }
 }
 
+/// A bear's forms: what the druid's own tanking attacks are cast in.
+const BEAR: &[&str] = &["Bear Form", "Dire Bear Form"];
+
 /// The waiver on a kit no committed log has a player of: the client proves
-/// it, and the first log of such a tank or healer joins the census.
-const UNSEEN: &str = "no committed log holds a player casting it; the client proves every id";
+/// its ids carry the name, the family and the kind (or tie to one that
+/// does), not that a cast line writes them; the first log of such a tank or
+/// healer joins the census and settles it.
+const UNSEEN: &str = "no committed log holds a player casting it: the client proves these ids, not which one a cast line writes";
 
 /// The table, by kind, then by class for review. Each name expands to
 /// every id the client proves for it (the module's three proofs).
@@ -130,12 +173,14 @@ const CURATED: &[Curated] = &[
     // -- Mitigation: a tank's mitigation or threat cast, no shield needed ---
     Curated::seen("Revenge", RoleSignal::Mitigation),
     Curated::seen("Last Stand", RoleSignal::Mitigation),
-    Curated::exempt("Frenzied Regeneration", RoleSignal::Mitigation, UNSEEN),
     Curated::seen("Righteous Fury", RoleSignal::Mitigation),
-    // A bear's own attacks: cast only in Bear Form.
-    Curated::seen("Maul", RoleSignal::Mitigation),
-    Curated::seen("Swipe", RoleSignal::Mitigation),
-    Curated::seen("Demoralizing Roar", RoleSignal::Mitigation),
+    // A bear's own: only the ranks cast in Bear Form (the rune's Frenzied
+    // Regeneration works in any form, the cat has a Swipe, a hunter's pet
+    // another, and a creature's bear form a third).
+    Curated::exempt("Frenzied Regeneration", RoleSignal::Mitigation, UNSEEN).in_form(BEAR),
+    Curated::seen("Maul", RoleSignal::Mitigation).in_form(BEAR),
+    Curated::seen("Swipe", RoleSignal::Mitigation).in_form(BEAR),
+    Curated::seen("Demoralizing Roar", RoleSignal::Mitigation).in_form(BEAR),
     // -- Form: a tanking form or stance, the aura on the player -------------
     Curated::seen("Defensive Stance", RoleSignal::Form),
     Curated::seen("Bear Form", RoleSignal::Form),
@@ -200,6 +245,16 @@ struct Client {
     heal: HashSet<u32>,
     /// id → the names of the forms it shapeshifts into.
     forms: HashMap<u32, Vec<String>>,
+    /// id → the ids its effects trigger (`EffectTriggerSpell`).
+    triggers: HashMap<u32, BTreeSet<u32>>,
+    /// id → the spell ids its own description names (`$25914s1`).
+    named: HashMap<u32, BTreeSet<u32>>,
+    /// id → the form ids its `SpellShapeshift` row requires.
+    cast_in: HashMap<u32, BTreeSet<i64>>,
+    /// The ids with a rune's OVERRIDE_ACTIONBAR_SPELLS aura: passives.
+    passive: HashSet<u32>,
+    /// Form name → its `SpellShapeshiftForm` id.
+    form_ids: HashMap<String, i64>,
 }
 
 impl Client {
@@ -236,20 +291,73 @@ impl Client {
                 cell(row, f_name, "SpellShapeshiftForm")?.into(),
             );
         }
+        let form_ids: HashMap<String, i64> =
+            form_names.iter().map(|(id, n)| (n.clone(), *id)).collect();
+
+        // A form id f is bit f − 1 of the two masks (1–32, then 33–64).
+        let ss = tables.get("SpellShapeshift")?;
+        let (h_spell, h_mask0, h_mask1) = (
+            ss.col("SpellID")?,
+            ss.col("ShapeshiftMask_0")?,
+            ss.col("ShapeshiftMask_1")?,
+        );
+        let mut cast_in: HashMap<u32, BTreeSet<i64>> = HashMap::new();
+        for row in &ss.rows {
+            if let Some(id) = reached(int(row, h_spell)) {
+                let (m0, m1) = (int(row, h_mask0), int(row, h_mask1));
+                let forms = cast_in.entry(id).or_default();
+                for bit in 0..32 {
+                    if m0 >> bit & 1 == 1 {
+                        forms.insert(bit + 1);
+                    }
+                    if m1 >> bit & 1 == 1 {
+                        forms.insert(bit + 33);
+                    }
+                }
+            }
+        }
+
+        let sp = tables.get("Spell")?;
+        let (s_id, s_desc) = (sp.col("ID")?, sp.col("Description_lang")?);
+        let mut named: HashMap<u32, BTreeSet<u32>> = HashMap::new();
+        for row in &sp.rows {
+            if let Some(id) = reached(int(row, s_id)) {
+                let mut refs = HashSet::new();
+                ids_in(text(row, s_desc), &mut refs);
+                refs.remove(&id);
+                if !refs.is_empty() {
+                    named.entry(id).or_default().extend(refs);
+                }
+            }
+        }
 
         let se = tables.get("SpellEffect")?;
-        let (e_spell, e_effect, e_aura, e_misc) = (
+        let (e_spell, e_effect, e_aura, e_misc, e_trigger) = (
             se.col("SpellID")?,
             se.col("Effect")?,
             se.col("EffectAura")?,
             se.col("EffectMiscValue_0")?,
+            se.col("EffectTriggerSpell")?,
         );
         let (mut taunt, mut heal) = (HashSet::new(), HashSet::new());
         let mut forms: HashMap<u32, Vec<String>> = HashMap::new();
+        let mut triggers: HashMap<u32, BTreeSet<u32>> = HashMap::new();
+        let mut passive = HashSet::new();
         for row in &se.rows {
             let Some(id) = reached(int(row, e_spell)) else {
                 continue;
             };
+            if int(row, e_effect) == EFFECT_APPLY_AURA
+                && int(row, e_aura) == AURA_OVERRIDE_ACTIONBAR
+            {
+                passive.insert(id);
+            }
+            if let Ok(t) = u32::try_from(int(row, e_trigger))
+                && t != 0
+                && t != id
+            {
+                triggers.entry(id).or_default().insert(t);
+            }
             let (effect, aura) = (int(row, e_effect), int(row, e_aura));
             if effect == EFFECT_ATTACK_ME || aura == AURA_MOD_TAUNT {
                 taunt.insert(id);
@@ -284,13 +392,77 @@ impl Client {
         c.heal = heal;
         c.forms = forms;
         c.shield = shield;
+        c.triggers = triggers;
+        c.named = named;
+        c.cast_in = cast_in;
+        c.form_ids = form_ids;
+        c.passive = passive;
         Ok(c)
+    }
+
+    /// Whether `id` is cast in one of `entry`'s forms (always, for an entry
+    /// that names none).
+    fn in_its_forms(&self, id: u32, entry: &Curated) -> bool {
+        entry.in_form.is_empty()
+            || self.cast_in.get(&id).is_some_and(|forms| {
+                entry
+                    .in_form
+                    .iter()
+                    .filter_map(|n| self.form_ids.get(*n))
+                    .any(|f| forms.contains(f))
+            })
+    }
+
+    /// `entry`'s ids and why each is in: the ones the kind's mark proves,
+    /// then, for a taunt or a heal, every same-named id in the family the
+    /// client ties to one already in (a trigger, else its text), to a
+    /// fixpoint. Each pass reads the set as it began, in id order, so the
+    /// answer is one.
+    fn ids_of(&self, entry: &Curated) -> BTreeMap<u32, Proof> {
+        let mut candidates: Vec<u32> = self
+            .names
+            .iter()
+            .filter(|(id, name)| {
+                name.as_str() == entry.name
+                    && self.family.contains(id)
+                    && self.in_its_forms(**id, entry)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        candidates.sort_unstable();
+        let mut ids: BTreeMap<u32, Proof> = candidates
+            .iter()
+            .filter(|id| self.proves(**id, entry))
+            .map(|id| (*id, Proof::Mark))
+            .collect();
+        if !matches!(entry.kind, RoleSignal::Taunt | RoleSignal::Heal) {
+            return ids;
+        }
+        loop {
+            let found: Vec<(u32, Proof)> = candidates
+                .iter()
+                .filter(|id| !ids.contains_key(id) && !self.passive.contains(id))
+                .filter_map(|id| {
+                    let hit = |set: Option<&BTreeSet<u32>>| {
+                        set.and_then(|s| s.iter().find(|c| ids.contains_key(c)).copied())
+                    };
+                    hit(self.triggers.get(id))
+                        .map(|c| (*id, Proof::Triggers(c)))
+                        .or_else(|| hit(self.named.get(id)).map(|c| (*id, Proof::Names(c))))
+                })
+                .collect();
+            if found.is_empty() {
+                return ids;
+            }
+            ids.extend(found);
+        }
     }
 
     /// Whether the client proves `id` of `entry`'s kind (the family and the
     /// kind's own mark; the name is already the entry's).
     fn proves(&self, id: u32, entry: &Curated) -> bool {
         self.family.contains(&id)
+            && self.in_its_forms(id, entry)
             && match entry.kind {
                 RoleSignal::Taunt => self.taunt.contains(&id),
                 RoleSignal::Shield => self.shield.contains(&id),
@@ -301,6 +473,27 @@ impl Client {
                     .is_some_and(|f| f.iter().any(|n| n == entry.name)),
                 RoleSignal::Mitigation => true,
             }
+    }
+}
+
+/// Why an id is in its entry: the kind's own mark, or a tie to an id that
+/// is in (one it triggers, or one its text names).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Proof {
+    Mark,
+    Triggers(u32),
+    Names(u32),
+}
+
+impl Proof {
+    /// The proof column of the review twin.
+    fn text(self, entry: &Curated) -> String {
+        match self {
+            Proof::Mark if entry.in_form.is_empty() => proof(entry.kind).to_string(),
+            Proof::Mark => format!("{}, in {}", proof(entry.kind), entry.in_form.join(" or ")),
+            Proof::Triggers(c) => format!("triggers {c}"),
+            Proof::Names(c) => format!("its text names {c}"),
+        }
     }
 }
 
@@ -336,17 +529,13 @@ pub fn generate_curated(
     }
     let client = Client::read(tables, &wanted)?;
 
-    // Each entry's ids, sorted, with the evidence printed beside them.
-    let mut entries: Vec<(&Curated, Vec<u32>, Evidence<'_>)> = Vec::new();
+    // Each entry's ids, sorted, with why each is in and the evidence printed
+    // beside them.
+    let mut entries: Vec<(&Curated, BTreeMap<u32, Proof>, Evidence<'_>)> = Vec::new();
     let mut table: BTreeMap<u32, RoleSignal> = BTreeMap::new();
     for entry in curated {
-        let mut ids: Vec<u32> = client
-            .names
-            .iter()
-            .filter(|(id, name)| name.as_str() == entry.name && client.proves(**id, entry))
-            .map(|(id, _)| *id)
-            .collect();
-        ids.sort_unstable();
+        let proofs = client.ids_of(entry);
+        let ids: Vec<u32> = proofs.keys().copied().collect();
         if ids.is_empty() {
             return Err(format!(
                 "role signal {:?} ({}): no id the client names so passes the class family \
@@ -390,7 +579,7 @@ pub fn generate_curated(
                 ));
             }
         }
-        entries.push((entry, ids, evidence));
+        entries.push((entry, proofs, evidence));
     }
 
     let rows: Vec<(u32, u8)> = table.iter().map(|(id, k)| (*id, k.code())).collect();
@@ -464,7 +653,7 @@ fn emit(table: &[(u32, u8)], build: &str) -> Result<String, String> {
 }
 
 fn emit_expected(
-    entries: &[(&Curated, Vec<u32>, Evidence<'_>)],
+    entries: &[(&Curated, BTreeMap<u32, Proof>, Evidence<'_>)],
     census: &Census,
     build: &str,
 ) -> Result<String, String> {
@@ -489,12 +678,28 @@ fn emit_expected(
          \x20 shows its kind's mark: a taunt an ATTACK_ME effect or a MOD_TAUNT aura, a shield\n\
          \x20 cast a `SpellEquippedItems` shield requirement, a form a MOD_SHAPESHIFT aura into\n\
          \x20 the form of the same name, a heal a HEAL effect or a PERIODIC_HEAL aura; a\n\
-         \x20 mitigation cast the family alone. A name no id passes fails the build.\n\
+         \x20 mitigation cast the family alone, and a bear's own attack only where its\n\
+         \x20 `SpellShapeshift` row requires Bear Form or Dire Bear Form (`in Bear Form or …`).\n\
+         \x20 A name no id passes fails the build.\n\
+         - A cast line writes the id the player cast, which for an older heal or taunt is\n\
+         \x20 often a parent whose effect is a dummy or a trigger, the mark sitting on its\n\
+         \x20 child. So a same-named id in the family also joins a taunt or a heal when the\n\
+         \x20 client ties it to an id already in: an effect of it triggers that id\n\
+         \x20 (`triggers N`), or its own description names it (`its text names N`), read to a\n\
+         \x20 fixpoint; never a rune's passive (an id with the OVERRIDE_ACTIONBAR_SPELLS aura),\n\
+         \x20 which carries the name and is never cast. A cast whose client data ties it to\n\
+         \x20 no such child (Earth Shield's, Prayer of Mending's) is not in: only its heal's\n\
+         \x20 id is, which a cast line never writes, so those casts count as no heal.\n\
          - The committed census `tools/role-signals-census.csv` (`tools/census-role-signals.sh\n\
          \x20 <log>...`: every `SPELL_CAST_SUCCESS` a `Player-` guid wrote, counted per (id,\n\
          \x20 name) per log) must show a player casting one of a name's ids, under that name,\n\
          \x20 unless the entry carries a `census_exempt` reason, printed below in place of the\n\
          \x20 counts (`exempt: …`).\n\
+         - What a WAIVED entry's ids are known to be: each carries the name, the class family\n\
+         \x20 and the kind's mark, or a tie the client records to an id that does. What they\n\
+         \x20 are NOT known to be: the id a cast line writes. No committed log holds a player\n\
+         \x20 casting one, so a cast the client ties to nothing would be missed, and the first\n\
+         \x20 census to hold one settles it.\n\
          - The meter (CONTRACT.md R30) counts a player's casts of each kind and, for a form,\n\
          \x20 the time its aura is on them, in each fight alone; the role solver weighs them\n\
          \x20 with the fight's swings, healing and damage.\n\
@@ -513,12 +718,12 @@ fn emit_expected(
             if entry.kind != kind {
                 continue;
             }
-            for id in ids {
+            for (id, why) in ids {
                 let mut line = format!(
                     "| {id} | {} | {} | {} |",
                     entry.name,
                     kind.name(),
-                    proof(kind)
+                    why.text(entry)
                 );
                 let counts = census.counts.get(id).map(|(_, c)| c.as_slice());
                 match (evidence, counts) {
@@ -590,21 +795,27 @@ mod tests {
         t.insert(
             "SpellEffect",
             parse_csv(
-                "ID,Effect,EffectAura,EffectMiscValue_0,SpellID\n\
-                 1,114,0,0,355\n\
-                 2,6,11,0,355\n\
-                 3,114,0,0,29060\n\
-                 4,2,0,0,8042\n\
-                 5,114,0,0,1219379\n\
-                 6,6,0,0,2565\n\
-                 7,10,0,0,331\n\
-                 8,10,0,0,332\n\
-                 9,6,36,5,5487\n\
-                 10,6,36,5,7090\n\
-                 11,2,0,0,6572\n\
-                 12,6,36,18,71\n",
+                "ID,Effect,EffectAura,EffectMiscValue_0,EffectTriggerSpell,SpellID\n\
+                 1,114,0,0,0,355\n\
+                 2,6,11,0,0,355\n\
+                 3,114,0,0,0,29060\n\
+                 4,2,0,0,0,8042\n\
+                 5,114,0,0,0,1219379\n\
+                 6,6,0,0,0,2565\n\
+                 7,10,0,0,0,331\n\
+                 8,10,0,0,0,332\n\
+                 9,6,36,5,0,5487\n\
+                 10,6,36,5,0,7090\n\
+                 11,2,0,0,0,6572\n\
+                 12,6,36,18,0,71\n",
             )
             .unwrap(),
+        );
+        // No text names anything here; `the_cast_a_heal_is_written_under` adds some.
+        t.insert(
+            "Spell",
+            parse_csv("ID,NameSubtext_lang,Description_lang,AuraDescription_lang\n331,,Heals.,\n")
+                .unwrap(),
         );
         t.insert(
             "SpellEquippedItems",
@@ -618,6 +829,10 @@ mod tests {
         t.insert(
             "SpellShapeshiftForm",
             parse_csv("ID,Name_lang\n5,Bear Form\n18,Defensive Stance\n").unwrap(),
+        );
+        t.insert(
+            "SpellShapeshift",
+            parse_csv("ID,SpellID,ShapeshiftMask_0,ShapeshiftMask_1\n1,6572,131072,0\n").unwrap(),
         );
         t
     }
@@ -679,6 +894,183 @@ mod tests {
         );
         // Kind order in the review twin: taunts before heals.
         assert!(g.expected.find("| 355 |").unwrap() < g.expected.find("| 331 |").unwrap());
+    }
+
+    /// The id a cast line writes joins a heal through the client's own ties:
+    /// Holy Shock's rank (a dummy) whose text names its heal, Penance's cast
+    /// whose text names its heal and the channel that triggers it, the
+    /// channel itself, and a second rank tied only to the first. An id tied
+    /// to nothing proven (Prayer of Mending's dummy cast), one of another
+    /// name naming a proven id, a tie outside the class family, and a
+    /// shield cast whose text names a heal stay out.
+    #[test]
+    fn the_cast_a_heal_is_written_under_joins_through_the_clients_ties() {
+        let mut t = Tables::default();
+        t.insert(
+            "SpellName",
+            parse_csv(
+                "ID,Name_lang\n\
+                 20473,Holy Shock\n25914,Holy Shock\n25912,Holy Shock\n20930,Holy Shock\n\
+                 30000,Holy Shock\n\
+                 402174,Penance\n402277,Penance\n402289,Penance\n402284,Penance\n\
+                 401859,Prayer of Mending\n401863,Prayer of Mending\n\
+                 2050,Lesser Heal\n2565,Shield Block\n402844,Penance\n",
+            )
+            .unwrap(),
+        );
+        t.insert(
+            "SpellClassOptions",
+            parse_csv(
+                "ID,SpellID,SpellClassSet\n\
+                 1,20473,10\n2,25914,10\n3,25912,10\n4,20930,10\n5,30000,0\n\
+                 6,402174,6\n7,402277,6\n8,402289,6\n9,402284,6\n\
+                 10,401859,6\n11,401863,6\n12,2050,6\n13,2565,4\n14,402844,6\n",
+            )
+            .unwrap(),
+        );
+        t.insert(
+            "SpellEffect",
+            parse_csv(
+                "ID,Effect,EffectAura,EffectMiscValue_0,EffectTriggerSpell,SpellID\n\
+                 1,3,0,0,0,20473\n2,10,0,0,0,25914\n3,2,0,0,0,25912\n4,3,0,0,0,20930\n\
+                 5,3,0,0,0,30000\n\
+                 6,3,0,0,0,402174\n7,6,23,0,402289,402277\n8,10,0,0,0,402289\n\
+                 9,2,0,0,0,402284\n\
+                 10,3,0,0,0,401859\n11,10,0,0,0,401863\n\
+                 12,10,0,0,0,2050\n13,6,0,0,0,2565\n14,6,332,0,0,402844\n15,6,107,0,0,402844\n",
+            )
+            .unwrap(),
+        );
+        t.insert(
+            "Spell",
+            parse_csv(
+                "ID,NameSubtext_lang,Description_lang,AuraDescription_lang\n\
+                 20473,,\"Causing $25912s1 damage, or $25914s1 healing.\",\n\
+                 20930,,Like $20473s1.,\n\
+                 30000,,Heals for $25914s1.,\n\
+                 402174,,\"$402284s1 damage, or $402289s1 healing, every $402261t2 sec.\",\n\
+                 401859,,Jumps within $401880a1 yards.,\n\
+                 2050,,Like $25914s1.,\n\
+                 2565,,Then $2050s1.,\n\
+                 402844,,Engraves $402174s1.,\n",
+            )
+            .unwrap(),
+        );
+        t.insert(
+            "SpellEquippedItems",
+            parse_csv(
+                "ID,SpellID,EquippedItemClass,EquippedItemInvTypes,EquippedItemSubclass\n\
+                 1,2565,4,0,64\n",
+            )
+            .unwrap(),
+        );
+        t.insert("SpellShapeshiftForm", parse_csv("ID,Name_lang\n").unwrap());
+        t.insert(
+            "SpellShapeshift",
+            parse_csv("ID,SpellID,ShapeshiftMask_0,ShapeshiftMask_1\n").unwrap(),
+        );
+        let list = [
+            Curated::exempt("Holy Shock", RoleSignal::Heal, "w"),
+            Curated::exempt("Penance", RoleSignal::Heal, "w"),
+            Curated::exempt("Prayer of Mending", RoleSignal::Heal, "w"),
+            Curated::exempt("Lesser Heal", RoleSignal::Heal, "w"),
+            Curated::exempt("Shield Block", RoleSignal::Shield, "w"),
+        ];
+        let census = Census::parse("id,name,a.txt\n1,\"x\",0\n").unwrap();
+        let g = generate_curated(&list, &t, &census, "b").unwrap();
+        let heals: Vec<u32> = [2050, 20473, 20930, 25914, 401863, 402174, 402277, 402289].into();
+        for id in &heals {
+            assert!(
+                g.content.contains(&format!("({id},4)")),
+                "{id}: {}",
+                g.content
+            );
+        }
+        // The damage children, Prayer of Mending's dummy cast, the namesake
+        // outside the family: none is in; the shield cast is a shield.
+        // The rune's passive that names the cast is out too.
+        for id in [25912, 402284, 401859, 30000, 402844] {
+            assert!(
+                !g.content.contains(&format!("({id},")),
+                "{id}: {}",
+                g.content
+            );
+        }
+        assert!(g.content.contains("(2565,2)"), "{}", g.content);
+        assert_eq!(g.spells, heals.len() + 1);
+        for line in [
+            "| 20473 | Holy Shock | heal | its text names 25914 |",
+            "| 20930 | Holy Shock | heal | its text names 20473 |",
+            "| 25914 | Holy Shock | heal | HEAL or PERIODIC_HEAL |",
+            "| 402174 | Penance | heal | its text names 402289 |",
+            "| 402277 | Penance | heal | triggers 402289 |",
+            "| 2565 | Shield Block | shield | needs a shield |",
+        ] {
+            assert!(g.expected.contains(line), "{line}\n{}", g.expected);
+        }
+        // Read again (another hash order inside), the same bytes.
+        let again = generate_curated(&list, &t, &census, "b").unwrap();
+        assert_eq!((g.content, g.expected), (again.content, again.expected));
+    }
+
+    /// A bear's attack joins only where its shapeshift row requires Bear
+    /// Form or Dire Bear Form: the bear's Swipe (mask 144: forms 5 and 8) is
+    /// in; the cat's (mask 1), a creature bear's (form 14) and a pet's (no
+    /// row) are out, and all four (each in a class's family) are in without
+    /// it.
+    #[test]
+    fn a_bear_attack_is_held_to_bear_form() {
+        let mut t = Tables::default();
+        t.insert(
+            "SpellName",
+            parse_csv("ID,Name_lang\n780,Swipe\n411128,Swipe\n27554,Swipe\n1264494,Swipe\n")
+                .unwrap(),
+        );
+        t.insert(
+            "SpellClassOptions",
+            parse_csv("ID,SpellID,SpellClassSet\n1,780,7\n2,411128,7\n3,27554,7\n4,1264494,9\n")
+                .unwrap(),
+        );
+        t.insert(
+            "SpellShapeshift",
+            parse_csv(
+                "ID,SpellID,ShapeshiftMask_0,ShapeshiftMask_1\n\
+                 1,780,144,0\n2,411128,1,0\n3,27554,8192,0\n",
+            )
+            .unwrap(),
+        );
+        t.insert(
+            "SpellShapeshiftForm",
+            parse_csv(
+                "ID,Name_lang\n1,Cat Form\n5,Bear Form\n8,Dire Bear Form\n14,Creature - Bear\n",
+            )
+            .unwrap(),
+        );
+        t.insert(
+            "SpellEffect",
+            parse_csv("ID,Effect,EffectAura,EffectMiscValue_0,EffectTriggerSpell,SpellID\n")
+                .unwrap(),
+        );
+        t.insert(
+            "Spell",
+            parse_csv("ID,NameSubtext_lang,Description_lang,AuraDescription_lang\n").unwrap(),
+        );
+        t.insert(
+            "SpellEquippedItems",
+            parse_csv("ID,SpellID,EquippedItemClass,EquippedItemInvTypes,EquippedItemSubclass\n")
+                .unwrap(),
+        );
+        let census = Census::parse("id,name,a.txt\n780,\"Swipe\",3\n").unwrap();
+        let bear = [Curated::seen("Swipe", RoleSignal::Mitigation).in_form(BEAR)];
+        let g = generate_curated(&bear, &t, &census, "b").unwrap();
+        assert_eq!(g.spells, 1);
+        assert!(g.content.contains("(780,1),"), "{}", g.content);
+        let line =
+            "| 780 | Swipe | mitigation | class family, in Bear Form or Dire Bear Form | 3 |";
+        assert!(g.expected.contains(line), "{}", g.expected);
+        // Hunter pets share family 9, a hunter's: in the family, so in too.
+        let any = [Curated::seen("Swipe", RoleSignal::Mitigation)];
+        assert_eq!(generate_curated(&any, &t, &census, "b").unwrap().spells, 4);
     }
 
     #[test]

@@ -505,7 +505,7 @@ impl Csv {
 /// generator lists the names it reads (`TABLES`). The replay's extractor
 /// (`wowdps-replay-extract`) loads its tables through `load` too, so its
 /// generators' tables are listed here beside this crate's.
-pub const FILE_IDS: [(&str, u32); 78] = [
+pub const FILE_IDS: [(&str, u32); 79] = [
     ("ChrClasses", 1361031),
     ("ChrCustomizationElement", 3512765),
     ("ChrCustomizationGeoset", 3456171),
@@ -557,6 +557,7 @@ pub const FILE_IDS: [(&str, u32); 78] = [
     ("SpellPower", 982806),
     ("SpellRadius", 1134584),
     ("SpellRange", 1146820),
+    ("SpellShapeshift", 1139929),
     ("SpellShapeshiftForm", 1280618),
     ("SpellXDescriptionVariables", 1724949),
     ("TextureFileData", 982459),
