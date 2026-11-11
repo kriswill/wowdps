@@ -19,11 +19,17 @@ use wowdps_proto::{
 const DEADLINE: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(10);
 
+/// What an offline bridge's every daemon call answers.
+pub const OFFLINE: &str = "offline bridge: this one never reaches a daemon";
+
 pub struct Bridge {
     /// `None` until the first call that needs the daemon: registering the
     /// MCP server in a harness must not spawn a daemon, and an unreachable
     /// daemon must surface as a tool-level error, not a dead transport.
     client: Option<DaemonClient>,
+    /// Never connect or spawn: every call that needs the daemon fails with
+    /// [`OFFLINE`] ([`Bridge::offline`], the unit tests').
+    offline: bool,
     next_req: u32,
     /// v49: the edition the live tools look in for this call — following
     /// the live edition, or pinned to the one its `edition` names.
@@ -93,10 +99,23 @@ impl Bridge {
     pub fn lazy() -> Bridge {
         Bridge {
             client: None,
+            offline: false,
             next_req: 1,
             scope: EditionRef::Follow,
             watched: None,
             log_ids: Vec::new(),
+        }
+    }
+
+    /// One that never connects, finds or spawns a daemon (unit tests): a
+    /// tool that asks it anything gets [`OFFLINE`] back, so a test of the
+    /// errors a tool raises before it asks cannot pass by reaching the
+    /// user's live daemon, nor fail for want of one.
+    #[cfg(test)]
+    pub(crate) fn offline() -> Bridge {
+        Bridge {
+            offline: true,
+            ..Bridge::lazy()
         }
     }
 
@@ -105,6 +124,7 @@ impl Bridge {
         let client = DaemonClient::over(stream, ClientKind::Mcp)?;
         Ok(Bridge {
             client: Some(client),
+            offline: false,
             next_req: 1,
             scope: EditionRef::Follow,
             watched: None,
@@ -118,6 +138,9 @@ impl Bridge {
     /// $PATH. A daemon that idle-exited between tool calls is respawned,
     /// not reported — the next answer is what the caller wants either way.
     fn client(&mut self) -> Result<&mut DaemonClient, String> {
+        if self.offline {
+            return Err(OFFLINE.to_string());
+        }
         if self.client.is_none() {
             let bin = std::env::current_exe()
                 .ok()
