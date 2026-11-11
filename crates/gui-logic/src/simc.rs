@@ -7,11 +7,13 @@
 //! the only hard failure is a paste with nothing we recognize in it.
 //!
 //! Stdlib only, no state — the GUI keeps the raw paste and re-parses at
-//! will (a paste is a few KB). A paste is persisted raw, per character
-//! ([`store_path`]), so the talent viewer reopened on that player's meter
-//! row restores their build.
+//! will (a paste is a few KB). A paste is persisted raw, per game and
+//! character ([`store_path_in`]), so the talent viewer reopened on that
+//! player's meter row restores their build, decoded by that game's trees.
 
 use std::path::PathBuf;
+
+use wowdps_model::Edition;
 
 /// A talent build named by the paste: the active one, or a saved loadout.
 #[derive(Debug, Clone, PartialEq)]
@@ -337,12 +339,22 @@ pub fn use_dir_on_this_thread(dir: Option<PathBuf>) {
     TEST_DIR.with(|d| *d.borrow_mut() = dir);
 }
 
-/// `$XDG_DATA_HOME/wowdps/simc/<character>.simc` — same per-machine home
-/// as the icon caches; personal data, never in the repo. The key keeps the
+/// Retail's paste for `player` ([`store_path_in`]).
+pub fn store_path(player: &str) -> Option<PathBuf> {
+    store_path_in(Edition::Retail, player)
+}
+
+/// `$XDG_DATA_HOME/wowdps/simc/<character>.simc` for Retail, and the same
+/// in a folder named for another game beside it (`forever/simc/…`), as its
+/// talent trees are kept — same per-machine home as the icon caches;
+/// personal data, never in the repo. One store per game: a paste is
+/// decoded by its game's trees, and a character's name and realm can be
+/// taken in two games. `None` for a game wowdps keeps no trees for (and
+/// a fight that named no edition counts as Retail). The key keeps the
 /// whole "Name-Realm" (the combat log's own spelling): a bare name would
 /// make same-named characters on different realms share one file, so the
 /// viewer could restore a stranger's build — or overwrite the user's.
-pub fn store_path(player: &str) -> Option<PathBuf> {
+pub fn store_path_in(edition: Edition, player: &str) -> Option<PathBuf> {
     let mut key: String = player
         .to_lowercase()
         .chars()
@@ -351,20 +363,37 @@ pub fn store_path(player: &str) -> Option<PathBuf> {
     if key.is_empty() {
         key.push('_');
     }
+    let rel = match edition.canonical().counts_as() {
+        Edition::Retail => format!("simc/{key}.simc"),
+        Edition::Forever => format!("{}/simc/{key}.simc", Edition::Forever.key()),
+        Edition::Classic(_) | Edition::Unknown(_) => return None,
+    };
     #[cfg(any(test, feature = "test-support"))]
     if let Some(dir) = TEST_DIR.with(|d| d.borrow().clone()) {
-        return Some(dir.join(format!("simc/{key}.simc")));
+        return Some(dir.join(rel));
     }
-    wowdps_proto::talents::data_path(&format!("simc/{key}.simc"))
+    wowdps_proto::talents::data_path(&rel)
 }
 
+/// Retail's stored paste for `player` ([`load_stored_in`]).
 pub fn load_stored(player: &str) -> Option<String> {
-    std::fs::read_to_string(store_path(player)?).ok()
+    load_stored_in(Edition::Retail, player)
 }
 
-/// Best-effort, like the config save: a failure costs recall, not data.
+/// `edition`'s stored paste for `player`.
+pub fn load_stored_in(edition: Edition, player: &str) -> Option<String> {
+    std::fs::read_to_string(store_path_in(edition, player)?).ok()
+}
+
+/// Save Retail's paste for `player` ([`save_stored_in`]).
 pub fn save_stored(player: &str, paste: &str) {
-    let Some(path) = store_path(player) else {
+    save_stored_in(Edition::Retail, player, paste);
+}
+
+/// Save `edition`'s paste for `player`. Best-effort, like the config save:
+/// a failure costs recall, not data.
+pub fn save_stored_in(edition: Edition, player: &str, paste: &str) {
+    let Some(path) = store_path_in(edition, player) else {
         return;
     };
     if let Some(dir) = path.parent()

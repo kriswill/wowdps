@@ -186,8 +186,9 @@ Press `t` in the meter window. Paste an in-game talent import string or a
 SimulationCraft addon export and the build is drawn the way the game draws
 it: class and spec panes, the chosen hero tree between them, gold paths and
 rank pills. A SimC export also brings its saved loadouts, gear, bags and
-currencies. Pastes are remembered per character, so opening the viewer on a
-player's meter row restores their build. Opening it on a player with
+currencies. The viewer reads the trees of the fight's game, and pastes are
+remembered per game and character, so opening the viewer on a player's meter
+row restores their build in that game. Opening it on a player with
 COMBATANT_INFO in the log shows their actual logged talents and gear instead.
 The pane artwork comes from `tools/gen-talent-art.sh`; without it the trees
 draw on plain panels.

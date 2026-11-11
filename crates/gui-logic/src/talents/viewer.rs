@@ -13,7 +13,7 @@ use wowdps_proto::talents as codec;
 use wowdps_model::Edition;
 
 use super::model::{Build, Node, Sel, build_model, decode_build_in};
-use crate::simc::{self, load_stored, save_stored, store_path};
+use crate::simc::{self, load_stored_in, save_stored_in, store_path_in};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -140,7 +140,7 @@ impl Viewer {
         ui.edition = edition;
         if let Some((name, spec_id)) = player {
             ui.player = Some(name.clone());
-            if let Some(text) = load_stored(&name) {
+            if let Some(text) = load_stored_in(edition, &name) {
                 ui.ingest(&text);
             } else if let Some(spec_id) = spec_id {
                 ui.spec_id = Some(spec_id as u64);
@@ -522,7 +522,7 @@ impl Viewer {
                             Some(server) => format!("{name}-{server}"),
                             None => name.to_string(),
                         };
-                        save_stored(&key, pasted);
+                        save_stored_in(self.edition, &key, pasted);
                         // The viewer may have been opened on a meter row
                         // whose realm spelling differs from the paste's
                         // `server` line; save under that name too, so the
@@ -532,9 +532,10 @@ impl Viewer {
                         if let Some(player) = &self.player
                             && player.split('-').next().unwrap_or(player).to_lowercase()
                                 == name.to_lowercase()
-                            && store_path(player) != store_path(&key)
+                            && store_path_in(self.edition, player)
+                                != store_path_in(self.edition, &key)
                         {
-                            save_stored(player, pasted);
+                            save_stored_in(self.edition, player, pasted);
                         }
                         // Adopt the paste's character as the viewed player
                         // unless the viewer was opened on someone specific.
