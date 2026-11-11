@@ -54,8 +54,8 @@ pkgs.writeShellScriptBin "wowdps-dev-contract" (
     # between the shells is a full rebuild: the pinned PKG_CONFIG_PATH (a
     # Linux pin: it lists the GUI's Linux libraries), and what devenv's
     # languages.rust adds, which the flake shell mirrors — its linker, the
-    # linker's response file, and the clang that sets CC and CXX. In devenv the linker check compares
-    # the mirror's path against devenv's own.
+    # linker's response file, and the clang that sets CC and CXX. In devenv
+    # the linker check compares the mirror's path against devenv's own.
     [ "''${PKG_CONFIG_PATH:-}" = ${lib.escapeShellArg pinned.PKG_CONFIG_PATH} ] || {
       echo "dev shell contract: PKG_CONFIG_PATH is not the pinned list (nix/dev/env.nix)" >&2
       exit 1
