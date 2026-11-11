@@ -105,7 +105,8 @@ pub const TANK_LOW_DAMAGE: f64 = 0.10;
 /// (two raid healers both read high). Not enough alone: in a group with no
 /// healer, whoever heals most leads it.
 pub const HEAL_SHARE: f64 = 0.40;
-/// Healer: healing casts as a share of all the player's casts.
+/// Healer: healing casts as a share of all the player's casts. A heal's
+/// cast at an enemy (Holy Shock's or Penance's damage) is no healing cast.
 pub const HEAL_CASTS: f64 = 0.35;
 /// Healer: dealing less than a fair share of the group's damage. Strong for
 /// a healer, who deals far less than the rest most of the time.
@@ -134,7 +135,7 @@ pub struct RoleEvidence {
     pub casts: u64,
     /// Casts of a taunt, a mitigation cast or a cast that needs a shield.
     pub kit: u64,
-    /// Healing casts.
+    /// Healing casts: at a friendly unit, at no unit or at themselves.
     pub heals: u64,
     /// Time under a tanking form or stance, inside the fight.
     pub form_ms: i64,
