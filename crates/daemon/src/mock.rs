@@ -367,11 +367,28 @@ impl MockDaemon {
     /// closed live — the mock's `over` indexes the closed prefix instead,
     /// which the real daemon imports through the loader pool.
     pub fn with_history(mut self) -> Self {
-        let text = std::fs::read_to_string(&self.path).unwrap_or_default();
+        let path = self.path.clone();
+        self.store_log(&path, self.log_facts);
+        self.pending.clear();
+        self
+    }
+
+    /// v49: the fights of another log as well — another edition's, as a
+    /// daemon following a source per edition stores both in its one store
+    /// — replayed as `with_history` replays the mock's own. The mock still
+    /// answers its own log's segments alone.
+    pub fn with_history_of(mut self, path: &Path) -> Self {
+        self.store_log(path, LogFacts::read(path));
+        self.pending.clear();
+        self
+    }
+
+    fn store_log(&mut self, path: &Path, facts: LogFacts) {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
         let mut engine = Engine::new();
         engine.game_running = true;
         let mut events = Vec::new();
-        engine.on_tail(TailEvent::Switched(self.path.clone()), &mut events);
+        engine.on_tail(TailEvent::Switched(path.to_path_buf()), &mut events);
         engine.on_tail(
             TailEvent::Lines(text.lines().map(str::to_string).collect()),
             &mut events,
@@ -381,11 +398,9 @@ impl MockDaemon {
             if let EngineEvent::Closed(id) = ev
                 && let Some(fight) = engine.take_closed(*id)
             {
-                self.history.store(&fight, self.log_facts);
+                self.history.store(&fight, facts);
             }
         }
-        self.pending.clear();
-        self
     }
 
     /// v45 (R29): what the history thread's rewrite queue does for a fight
