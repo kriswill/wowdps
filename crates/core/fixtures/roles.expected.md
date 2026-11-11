@@ -34,6 +34,7 @@ name and guid is invented.
 | `…2E07` | Ilsabet | Priest |
 | `…2E08` | Orrin | Mage |
 | `…2E09` | Quillan | Rogue |
+| `…2E0A` | Varsk | Rogue |
 
 ## The rule (CONTRACT.md R30)
 
@@ -53,6 +54,9 @@ a trash fight's first hit lands nowhere (the passive gate).
 
 Group 5, Σ damage 5 200; the boss swung 9 times at the group (6 landed and a dodge and
 a parry on Garrond, one on Ashvel); the most healing on others is Mirela's 1 200.
+Varsk only kicks the boss's Sleep (a cast and an interrupt): he is on the Interrupts
+view and on none of the rows the roster reads (Damage, Healing, Deaths, Taken), so he
+is named nothing and is no part of the group, whose fair share stays a fifth.
 
 | player | damage | casts (kit / heals) | swings | heal on others | form | TANK | HEALER | role |
 |---|---:|---|---:|---:|---|---:|---:|---|
@@ -61,6 +65,7 @@ a parry on Garrond, one on Ashvel); the most healing on others is Mirela's 1 200
 | Ashvel | 1 700 | 1 | 1 | 0 | — | 0.050 | 0 | dps (3) |
 | Corbin | 1 500 | 2 (0 / 1) | 0 | 100 | — | 0 | 0.033 + 0.175 = 0.208 | dps (3) |
 | Teskar | 1 400 | 3 (0 / 1) | 0 | 0 (his heal is on himself) | — | 0 | 0.117 | dps (3) |
+| Varsk | 0 | 1 | 0 | 0 | — | — | — | **none (0)**: off the roster |
 
 ## Fight 2 — Aku'mai (Encounter 2910, 40 000 ms, a kill)
 

@@ -1,21 +1,30 @@
 //! R30 over a real log of an edition whose log carries no spec: every boss
-//! fight's inferred roles, printed by class and score (never a name or a
-//! guid), each read twice — the full replay's and a lazy load of the fight
-//! alone — and required to agree. A five-player boss fight that is judged
-//! names exactly one tank and one healer, as the first Forever log's three
-//! do (one warrior tank, one shaman healer, three dealing damage). The
-//! trash between them is summarized by how many of its fights name one of
-//! each.
+//! fight's inferred roles, printed by class and score, and every closed
+//! fight, boss or trash, read twice — the full replay's and a lazy load of
+//! the fight alone — and required to agree. A five-player boss fight that is
+//! judged names exactly one tank and one healer, as the first Forever log's
+//! three do (one warrior tank, one shaman healer, three dealing damage). The
+//! trash is summarized by how many of its fights name one of each.
+//!
+//! A real log carries real names: nothing here prints a name or a guid, a
+//! failure included. Players are compared and shown by their place in the
+//! fight's roster (sorted by guid, the same order on both sides) and their
+//! class; a trash fight by its place in the log, never its name.
 //!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_roles -- --ignored --nocapture`
 
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use std::path::Path;
 
-use wowdps_core::index::{load_segment_text, scan};
-use wowdps_core::meter::{SegmentKind, View, meter_from_lines};
+use wowdps_core::index::{SegmentMeta, load_segment_text, scan};
+use wowdps_core::meter::{Segment, SegmentKind, View, meter_from_lines};
 use wowdps_core::parser::{Event, parse_line};
 use wowdps_core::roles::RoleScore;
 use wowdps_model::{Class, Edition, Role};
@@ -26,6 +35,65 @@ fn class_name(c: Option<Class>) -> &'static str {
 
 fn role_name(r: Option<Role>) -> &'static str {
     r.map_or("-", Role::name)
+}
+
+/// A fight's scores with every guid replaced by its place in the roster:
+/// what a comparison may print.
+fn anon(scores: &[RoleScore]) -> Vec<String> {
+    scores
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let e = &s.evidence;
+            format!(
+                "#{i} {} tank {:.6} healer {:.6} damage {} healing {} on-others {} swings {} \
+                 casts {} kit {} heals {} form {}",
+                role_name(s.role),
+                s.tank,
+                s.healer,
+                e.damage,
+                e.healing,
+                e.heal_others,
+                e.swings,
+                e.casts,
+                e.kit,
+                e.heals,
+                e.form_ms
+            )
+        })
+        .collect()
+}
+
+/// The fight a lazy load of `meta` holds, read as the full replay's `seg`
+/// is: the same roster in the same order and the same scores, shown on a
+/// failure by place alone.
+fn lazy_equals_full(path: &str, label: &str, seg: &Segment, meta: &SegmentMeta) {
+    let lazy = load_segment_text(Path::new(path), meta)
+        .expect("load the fight")
+        .meter();
+    let Some(mine) = lazy
+        .segments()
+        .iter()
+        .find(|s| s.kind == seg.kind && s.start_ms == seg.start_ms)
+    else {
+        panic!("{label}: the lazy load holds no fight at its start");
+    };
+    let (full, part) = (seg.role_scores(), mine.role_scores());
+    let same_roster = full
+        .iter()
+        .map(|s| &s.evidence.guid)
+        .eq(part.iter().map(|s| &s.evidence.guid));
+    assert!(
+        same_roster,
+        "{label}: the rosters differ ({} players full, {} lazy)",
+        full.len(),
+        part.len()
+    );
+    let (a, b) = (anon(&full), anon(&part));
+    assert!(
+        a == b,
+        "{label}: lazy and full differ\nfull: {a:#?}\nlazy: {b:#?}"
+    );
 }
 
 #[test]
@@ -75,15 +143,7 @@ fn real_log_roles() {
 
     for (seg, meta) in bosses.iter().zip(&metas) {
         let scores = seg.role_scores();
-        let lazy = load_segment_text(Path::new(&path), meta)
-            .expect("load the pull")
-            .meter();
-        let lazy_seg = lazy
-            .segments()
-            .iter()
-            .find(|s| s.kind == SegmentKind::Encounter && s.start_ms == seg.start_ms)
-            .expect("the lazy load holds the pull");
-        assert_eq!(scores, lazy_seg.role_scores(), "{}: lazy = full", seg.name);
+        lazy_equals_full(&path, &seg.name, seg, meta);
 
         print_fight(&seg.name, seg, &scores);
         let enc = seg.encounter.as_ref();
@@ -101,12 +161,28 @@ fn real_log_roles() {
     // The trash: how many judged fights name one tank and one healer, and
     // how many name none of either.
     let (mut judged, mut one_each, mut no_tank, mut no_healer, mut unjudged) = (0, 0, 0, 0, 0);
+    let (mut compared, mut unlisted) = (0, 0);
     let detail = std::env::var_os("WOWDPS_ROLES_TRASH").is_some();
     // A trash fight is labeled by its place in the log, never its name: one
     // fought in the open world can be named after anything.
     let trash = segments.iter().filter(|s| s.kind == SegmentKind::Trash);
     for (n, seg) in trash.enumerate() {
         let scores = seg.role_scores();
+        // Every closed one the scan lists reads the same loaded alone (the
+        // scan lists no fight R11 finds meaningless).
+        if seg.end_ms.is_some() && !scores.is_empty() {
+            match idx
+                .segments
+                .iter()
+                .find(|m| m.kind == SegmentKind::Trash && m.start_ms == seg.start_ms)
+            {
+                Some(meta) => {
+                    lazy_equals_full(&path, &format!("trash #{n}"), seg, meta);
+                    compared += 1;
+                }
+                None => unlisted += 1,
+            }
+        }
         if scores.len() < 3 {
             continue;
         }
@@ -133,10 +209,15 @@ fn real_log_roles() {
         "\ntrash of three or more players: {judged} judged ({one_each} with one tank and one \
          healer, {no_tank} with no tank, {no_healer} with no healer), {unjudged} too short to judge"
     );
+    println!(
+        "lazy = full on {} boss fights and {compared} closed trash fights ({unlisted} the scan \
+         does not list)",
+        bosses.len()
+    );
 }
 
 /// One fight's roles, by class and score: never a name or a guid.
-fn print_fight(label: &str, seg: &wowdps_core::meter::Segment, scores: &[RoleScore]) {
+fn print_fight(label: &str, seg: &Segment, scores: &[RoleScore]) {
     let classes: std::collections::HashMap<String, Option<Class>> = seg
         .rows(View::Damage)
         .into_iter()

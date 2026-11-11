@@ -319,6 +319,70 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	power_sum	360
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	power_max	100
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	role	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	damage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	overkill	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	petdamage	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	dps	0.00
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	combat_ms	30000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	pct	0.00
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	overheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	absorbheal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	interrupts	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	cc	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	dispels	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	deaths	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	taken	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	blocked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	prevented	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	misses	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stagger	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stagger_ticked	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	reduced	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	self_harm	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	friendly_fire	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_given_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_received_heal	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	healed_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	self_healed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	effective	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	am_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	externals_given	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	externals_given_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	externals_received	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	externals_received_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	support_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	spans	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	taken10_0	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	absorb_applied	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	absorb_wasted	
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	shields_unknown	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_hits	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_max	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_cells	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	stack_auras	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	casts	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	cast_starts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	damage_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	heal_periodic	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	misses_dealt	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	dot_uptime_ms	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	energize_gained	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	energize_wasted	0.0000
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	heal_absorbed	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_stage1	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_stage2	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_stage3	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_stage4	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	empower_cancelled	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	power_seconds	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	power_sum	60
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	power_max	100
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	role	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	damage	2600
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	overkill	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	petdamage	0
@@ -1023,7 +1087,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 5	Trash	Trash		15000			Player-6101-0C1D2E02	power_sum	180
 5	Trash	Trash		15000			Player-6101-0C1D2E02	power_max	100
 5	Trash	Trash		15000			Player-6101-0C1D2E02	role	3
-1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_units	6
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_units	7
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_posts	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_absorb	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pools	0
@@ -1035,9 +1099,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_cast_start	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_cast_success	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pcast_start	0
-1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pcast_success	16
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pcast_success	17
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pcast_failed	0
-1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_interrupt	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_interrupt	1
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_debuff_applied	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_debuff_removed	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_debuff_dose	0

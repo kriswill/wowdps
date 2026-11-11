@@ -6314,11 +6314,12 @@ impl Meter {
                 );
                 self.name_trash(&guid, &dst_guid, &target);
                 // R30: an enemy's landed swing at a player, in the segment
-                // the hit was just filed in.
+                // the hit was just filed in. The table first: on an edition
+                // that infers no role this is one test.
                 if spell.is_none()
-                    && enemy_swing(src, dst)
                     && let Some(s) = self.segments.last_mut()
                     && s.tables().infers_roles()
+                    && enemy_swing(src, dst)
                 {
                     s.roles.swing(&dst_guid);
                 }
@@ -6438,9 +6439,11 @@ impl Meter {
                         .or_default() += eaten;
                 }
                 // R30: who it landed on, in the segment `record` chose — the
-                // solver reads the healing a player gave others.
+                // solver reads the healing a player gave others; an enemy's
+                // healing (no unit the group controls) is never kept.
                 if let Some(s) = self.segments.last_mut()
                     && s.tables().infers_roles()
+                    && s.controlled(&guid)
                 {
                     s.roles.heal(&guid, &dst.guid, effective);
                 }
@@ -6537,8 +6540,9 @@ impl Meter {
                 // above, into the segment `record` just chose.
                 if let Some(s) = self.segments.last_mut() {
                     *s.absorbed_credit.entry(guid.clone()).or_default() += amount;
-                    // R30: an absorb is healing landed on its target.
-                    if s.tables().infers_roles() {
+                    // R30: an absorb is healing landed on its target (an
+                    // enemy's never kept, as a heal).
+                    if s.tables().infers_roles() && s.controlled(&guid) {
                         s.roles.heal(&guid, &dst.guid, *amount);
                     }
                     // R20: the same segment the credit went to, AFTER
@@ -7192,9 +7196,9 @@ impl Meter {
                 // parried, blocked or absorbed is still one aimed at them.
                 // Through the passive gate, as R17's side of it.
                 if spell.is_none()
-                    && enemy_swing(src, dst)
                     && let Some(s) = self.open_segment_for_passive(ts)
                     && s.tables().infers_roles()
+                    && enemy_swing(src, dst)
                 {
                     s.roles.swing(&dst.guid);
                 }
@@ -12239,5 +12243,44 @@ mod tests {
             }
         );
         assert!(seg.empower(BOSS).is_empty());
+    }
+
+    /// R30: an enemy's healing is never kept in the role ledger: an NPC
+    /// healing the boss inside a Forever fight leaves no healer behind, the
+    /// shaman's healing stays, and nobody's role moves.
+    #[test]
+    fn an_enemys_healing_is_never_kept_for_the_roles() {
+        let text = include_str!("../fixtures/roles.txt");
+        let theirs = text
+            .lines()
+            .find(|l| l.contains("SPELL_HEAL,Player-6101-0C1D2E02"))
+            .unwrap()
+            .replace(
+                "Player-6101-0C1D2E02,\"Mirela-Nebula-US\",0x512",
+                "Creature-0-6101-48-2001-990016-0000C0D006,\"Twilight Acolyte\",0xa48",
+            )
+            .replace(
+                "Player-6101-0C1D2E01,\"Garrond-Nebula-US\",0x511",
+                "Creature-0-6101-48-2001-990011-0000C0D001,\"Twilight Lord Kelris\",0xa48",
+            );
+        assert!(theirs.contains("SPELL_HEAL,Creature-"));
+        let mut lines: Vec<&str> = text.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.contains("SPELL_HEAL,Player-6101-0C1D2E02"))
+            .unwrap();
+        lines.insert(at + 1, &theirs);
+        let with = meter_from_lines(lines.iter().copied());
+        let plain = meter_from_lines(text.lines());
+        let (seg, base) = (&with.segments()[0], &plain.segments()[0]);
+        assert_eq!(seg.roles.healers(), base.roles.healers());
+        assert!(seg.roles.healers().contains(&"Player-6101-0C1D2E02"));
+        assert!(
+            seg.roles
+                .healers()
+                .iter()
+                .all(|h| !h.starts_with("Creature-"))
+        );
+        assert_eq!(seg.inferred_roles(), base.inferred_roles());
     }
 }

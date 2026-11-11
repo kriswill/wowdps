@@ -111,13 +111,21 @@ function role_form(ev,   sid, k) {
     if (k in fOpen) { fMs[cur SUBSEP $6] += now - fOpen[k]; delete fOpen[k] }
     else if (!(k in fRetro)) { fRetro[k] = 1; fMs[cur SUBSEP $6] += now - segStart[cur] }
 }
-# The scores over segment s's players plist[1..n] on its combat clock `comb`:
-# rRole[g] = 1 tank, 2 healer, 3 dps, 0 none (a fight under 10 s of combat, or
-# a player who neither dealt damage, healed nor cast).
-function role_solve(s, n, comb,   x, g, d, grp, totD, totS, topS, topH, span, swn, kit, form, low, hs, hc, T, H, act) {
+# The scores over segment s's ROSTER on its combat clock `comb`: of plist[1..n],
+# the players with a Damage, Healing, Deaths or Taken row, as the meter reads
+# them (`role_row`, noted by `note`) — never one who only interrupted,
+# dispelled or was healed.
+# rRole[g] = 1 tank, 2 healer, 3 dps, 0 none (a fight under 10 s of combat, a
+# player who neither dealt damage, healed nor cast, or one off the roster).
+function role_row(s, g) {
+    return (s SUBSEP g) in rowSeen
+}
+function role_solve(s, n, comb,   x, y, g, d, grp, totD, totS, topS, topH, span, swn, kit, form, low, hs, hc, T, H, act, ros, m) {
+    m = 0
+    for (x = 1; x <= n; x++) if (role_row(s, plist[x])) ros[++m] = plist[x]
     grp = 0; totD = 0; totS = 0; topS = 0; topH = 0
-    for (x = 1; x <= n; x++) {
-        g = plist[x]
+    for (x = 1; x <= m; x++) {
+        g = ros[x]
         act[g] = (val[s SUBSEP g SUBSEP "damage"] + 0 > 0 || val[s SUBSEP g SUBSEP "heal"] + 0 > 0 || rCast[s SUBSEP g] + 0 > 0)
         if (act[g]) { grp++; totD += val[s SUBSEP g SUBSEP "damage"] + 0 }
         totS += rSwing[s SUBSEP g] + 0
@@ -125,8 +133,8 @@ function role_solve(s, n, comb,   x, g, d, grp, totD, totS, topS, topH, span, sw
         if (rHeal[s SUBSEP g] + 0 > topH) topH = rHeal[s SUBSEP g] + 0
     }
     span = segClose(s) - segStart[s]
-    for (x = 1; x <= n; x++) {
-        g = plist[x]
+    for (x = 1; x <= m; x++) {
+        g = ros[x]
         d = val[s SUBSEP g SUBSEP "damage"] + 0
         swn = (totS >= 5 && topS > 0) ? (rSwing[s SUBSEP g] + 0) / topS : 0
         kit = rKit[s SUBSEP g] + 0; if (kit > 3) kit = 3; kit = kit / 3
@@ -150,6 +158,11 @@ function note(seg, guid, metric, v) {
     if (guid == "") return
     val[seg SUBSEP guid SUBSEP metric] += v
     seen[seg SUBSEP guid] = 1
+    # R30's roster: a Damage, Healing, Deaths or Taken row (a swing that only
+    # missed them is a Taken row of 0, R17), noted here because a read of
+    # val[] in END creates the key it reads.
+    if (metric == "damage" || metric == "heal" || metric == "deaths" ||
+        metric == "taken" || metric == "misses") rowSeen[seg SUBSEP guid] = 1
     if (!(guid in pname)) pname[guid] = guid
 }
 

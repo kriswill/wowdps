@@ -185,7 +185,7 @@ pub fn solve(players: &[RoleEvidence], combat_ms: i64, span_ms: i64) -> Vec<Role
             let low_damage = if total_damage == 0 {
                 1.0
             } else {
-                (1.0 - ratio(p.damage * group, total_damage)).clamp(0.0, 1.0)
+                (1.0 - ratio(p.damage.saturating_mul(group), total_damage)).clamp(0.0, 1.0)
             };
             let heal_share = ratio(p.heal_others, top_heal);
             let heal_casts = ratio(p.heals, p.casts);
@@ -242,56 +242,70 @@ pub(crate) struct RoleLedger {
     casts: HashMap<String, Casts>,
     /// Per raw player guid: enemy melee swings at them.
     swings: HashMap<String, u64>,
-    /// Per (raw healer, raw target): effective healing and absorbs.
-    healing: HashMap<(String, String), u64>,
+    /// Per raw healer, per raw target: effective healing and absorbs.
+    healing: HashMap<String, HashMap<String, u64>>,
     /// Per raw player guid: time under a tanking form or stance.
     forms: HashMap<String, Forms>,
     /// An Overall's: the wall time its members' ledgers covered.
     merged_span_ms: i64,
 }
 
+/// `f` on the value `key` holds in `map`, a default one made first when it
+/// has none: a hot path's lookup allocates no key it already has.
+fn with<V: Default>(map: &mut HashMap<String, V>, key: &str, f: impl FnOnce(&mut V)) {
+    if let Some(v) = map.get_mut(key) {
+        f(v);
+    } else {
+        let mut v = V::default();
+        f(&mut v);
+        map.insert(key.to_string(), v);
+    }
+}
+
 impl RoleLedger {
     /// A cast that went off, by a player, with what its spell signals.
     pub(crate) fn cast(&mut self, player: &str, signal: Option<RoleSignal>) {
-        let c = self.casts.entry(player.to_string()).or_default();
-        c.all += 1;
-        match signal {
-            Some(RoleSignal::Taunt | RoleSignal::Mitigation | RoleSignal::Shield) => c.kit += 1,
-            Some(RoleSignal::Heal) => c.heals += 1,
-            Some(RoleSignal::Form) | None => {}
-        }
+        with(&mut self.casts, player, |c| {
+            c.all += 1;
+            match signal {
+                Some(RoleSignal::Taunt | RoleSignal::Mitigation | RoleSignal::Shield) => {
+                    c.kit += 1;
+                }
+                Some(RoleSignal::Heal) => c.heals += 1,
+                Some(RoleSignal::Form) | None => {}
+            }
+        });
     }
 
     /// An enemy's melee swing at a player.
     pub(crate) fn swing(&mut self, player: &str) {
-        *self.swings.entry(player.to_string()).or_default() += 1;
+        with(&mut self.swings, player, |n| *n += 1);
     }
 
     /// Effective healing (or an absorb) from `healer` landing on `target`.
     pub(crate) fn heal(&mut self, healer: &str, target: &str, amount: u64) {
         if amount > 0 {
-            *self
-                .healing
-                .entry((healer.to_string(), target.to_string()))
-                .or_default() += amount;
+            with(&mut self.healing, healer, |targets| {
+                with(targets, target, |n| *n += amount);
+            });
         }
     }
 
     /// A tanking form's aura on `player` at `ts`; one already open stays.
     pub(crate) fn form_on(&mut self, player: &str, aura: u32, ts: i64) {
-        let f = self.forms.entry(player.to_string()).or_default();
-        f.open.entry(aura).or_insert(ts);
+        with(&mut self.forms, player, |f| {
+            f.open.entry(aura).or_insert(ts);
+        });
     }
 
     /// The aura off at `ts`. With none open it was on when the fight
     /// began: from `start_ms`, once per aura (R18's segment-start rule).
     pub(crate) fn form_off(&mut self, player: &str, aura: u32, ts: i64, start_ms: i64) {
-        let f = self.forms.entry(player.to_string()).or_default();
-        match f.open.remove(&aura) {
+        with(&mut self.forms, player, |f| match f.open.remove(&aura) {
             Some(since) => f.closed_ms += (ts - since).max(0),
             None if f.retro.insert(aura) => f.closed_ms += (ts - start_ms).max(0),
             None => {}
-        }
+        });
     }
 
     /// A player's form time, the open spans closed at `close_ms`.
@@ -317,8 +331,12 @@ impl RoleLedger {
         for (k, n) in &other.swings {
             *self.swings.entry(k.clone()).or_default() += n;
         }
-        for (k, n) in &other.healing {
-            *self.healing.entry(k.clone()).or_default() += n;
+        for (healer, targets) in &other.healing {
+            with(&mut self.healing, healer, |mine| {
+                for (target, n) in targets {
+                    with(mine, target, |m| *m += n);
+                }
+            });
         }
         for k in other.forms.keys() {
             self.forms.entry(k.clone()).or_default().closed_ms += other.form_ms(k, close_ms);
@@ -335,6 +353,14 @@ impl RoleLedger {
         self.merged_span_ms
     }
 
+    /// The raw healers the ledger holds, sorted.
+    #[cfg(test)]
+    pub(crate) fn healers(&self) -> Vec<&str> {
+        let mut v: Vec<&str> = self.healing.keys().map(String::as_str).collect();
+        v.sort_unstable();
+        v
+    }
+
     /// The evidence for each of `players` (folded owner guids, with their
     /// Damage and Healing rows), `fold` resolving a raw guid to its owner.
     pub(crate) fn evidence<'a>(
@@ -346,10 +372,13 @@ impl RoleLedger {
         // Healing to others, folded on both sides; a heal on oneself or
         // one's own pet is no one else's.
         let mut heal_others: HashMap<String, u64> = HashMap::new();
-        for ((healer, target), n) in &self.healing {
-            let (h, t) = (fold(healer), fold(target));
-            if h != t && t.starts_with("Player-") {
-                *heal_others.entry(h).or_default() += n;
+        for (healer, targets) in &self.healing {
+            let h = fold(healer);
+            for (target, n) in targets {
+                let t = fold(target);
+                if h != t && t.starts_with("Player-") {
+                    *heal_others.entry(h.clone()).or_default() += n;
+                }
             }
         }
         players
