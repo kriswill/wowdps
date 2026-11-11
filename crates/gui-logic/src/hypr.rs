@@ -1540,4 +1540,87 @@ Window 5f307a382400 -> Some Item - World of Warcraft - Browser:
         thread.join().unwrap();
         drop(live);
     }
+
+    /// Forever's client as the compositor lists it — a native Wayland
+    /// window of class `wow.exe` titled `World of Warcraft`, fullscreen — is
+    /// the game's under the default `game_match`, by its exact title, and
+    /// a browser tab naming the game never outranks it.
+    #[test]
+    fn the_default_match_finds_forevers_window() {
+        let forever = "\
+Window 7a1b2c3d4e50 -> World of Warcraft:
+	mapped: 1
+	hidden: 0
+	workspace: 7 (7)
+	floating: 0
+	monitor: 1
+	class: wow.exe
+	title: World of Warcraft
+	initialClass: wow.exe
+	initialTitle: World of Warcraft
+	fullscreen: 2
+	pid: 4242
+";
+        let default = crate::config::Config::default().game_match;
+        assert_eq!(game_workspace(forever, &default), Some(7));
+        let decoy = "\
+Window 5f307a382400 -> Some Item - World of Warcraft - Browser:
+	mapped: 1
+	workspace: 2 (2)
+	class: browser
+	title: Some Item - World of Warcraft - Browser
+	fullscreen: 0
+";
+        assert_eq!(
+            game_workspace(&format!("{decoy}{forever}"), &default),
+            Some(7)
+        );
+    }
+
+    /// Both games open at once, as the compositor lists them: two native
+    /// Wayland windows alike in all but their process — class `wow.exe`,
+    /// titled `World of Warcraft`, fullscreen — Forever's on workspace 9,
+    /// Retail's on 8, neither focused. The match alone cannot tell them
+    /// apart: with no live edition known (the overlay's spawn, before its
+    /// session names one) the window listed first wins. With one known, the
+    /// window whose process's product folder names it wins, whichever is
+    /// listed first, and the overlay shows, hides and places itself by it.
+    #[test]
+    fn two_games_windows_are_told_apart_by_the_live_editions_process() {
+        // Neither focused: some other window holds focus history 0.
+        let window = |addr: &str, ws: i32, pid: u32, focus: u32| {
+            format!(
+                "\
+Window {addr} -> World of Warcraft:
+	mapped: 1
+	workspace: {ws} ({ws})
+	class: wow.exe
+	title: World of Warcraft
+	initialClass: wow.exe
+	initialTitle: World of Warcraft
+	fullscreen: 2
+	pid: {pid}
+	focusHistoryID: {focus}
+"
+            )
+        };
+        let default = crate::config::Config::default().game_match;
+        let forever = window("7a1b2c3d4e50", 9, 4242, 1);
+        let retail = window("7a1b2c3d4e60", 8, 5100, 2);
+        assert_eq!(
+            game_workspace(&format!("{forever}{retail}"), &default),
+            Some(9)
+        );
+        assert_eq!(
+            game_workspace(&format!("{retail}{forever}"), &default),
+            Some(8)
+        );
+        let proc = fake::both_games(&fake::test_env().join("proc-order"));
+        for clients in [format!("{forever}{retail}"), format!("{retail}{forever}")] {
+            let ws = |live| game_window(&clients, &default, Some(live), &proc).map(|g| g.ws);
+            assert_eq!(ws(Edition::Forever), Some(9));
+            assert_eq!(ws(Edition::Retail), Some(8));
+        }
+        let _ = std::fs::remove_dir_all(&proc);
+    }
 }

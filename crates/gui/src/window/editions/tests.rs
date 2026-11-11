@@ -696,7 +696,9 @@ struct Measure {
 fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
     use super::super::cards::Menu;
     use super::super::shots::{Shot, app};
-    crate::images::without_art(emblem.is_none());
+    // No art but the stand-in in either run (it is read before the
+    // switch below), so the two differ by the emblem alone on any machine.
+    crate::images::without_art(true);
     crate::images::emblem_on_this_thread(emblem);
     let mut cx = app();
     let path = own_config();

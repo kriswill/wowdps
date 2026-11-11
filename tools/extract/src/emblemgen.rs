@@ -63,7 +63,11 @@ pub fn launcher_dirs(install: Option<&Path>) -> Vec<PathBuf> {
             }
         }
     };
-    if let Some(drive_c) = install.and_then(|i| i.ancestors().find(|p| p.ends_with("drive_c")))
+    // Absolute, so a relative install path still finds the prefix above it.
+    let install = install.map(|i| i.canonicalize().unwrap_or_else(|_| i.to_path_buf()));
+    if let Some(drive_c) = install
+        .as_deref()
+        .and_then(|i| i.ancestors().find(|p| p.ends_with("drive_c")))
         && let Ok(users) = std::fs::read_dir(drive_c.join("users"))
     {
         let mut users: Vec<PathBuf> = users.flatten().map(|e| e.path()).collect();

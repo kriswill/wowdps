@@ -26,9 +26,11 @@
 //! edition, so a log in one product's folder whose header names another
 //! edition makes that folder's engine that edition's while it follows that
 //! log (`Engine::edition`). Before its header is read a source is named by
-//! its folder (`Engine::set_source_edition`) — only while there is more
-//! than one: a daemon of one source names its log by its header alone and
-//! answers exactly as it did before there were several.
+//! its folder (`Engine::set_source_edition`) — only once more than one
+//! source has held a log: a daemon of one source, or of several whose
+//! other folders never held one (an install with no Forever log), names
+//! its log by its header alone and answers exactly as it did before there
+//! were several.
 
 use wowdps_core::model::SegmentId;
 use wowdps_core::tail::TailEvent;
@@ -52,6 +54,9 @@ pub struct Source {
     pub engine: Engine,
     pub spec: Option<String>,
     pub last_list: ListKey,
+    /// The edition the source's folder names, given to its engine once
+    /// more than one source has held a log ([`Sources::on_tail`]).
+    folder: Option<Edition>,
 }
 
 /// Every followed source, the first the one `--file`, `--logs` or the
@@ -65,24 +70,22 @@ pub struct Sources {
     ids: Ids,
     live: usize,
     running: Running,
+    /// Whether the sources are named by their folders: from when a second
+    /// source first held a log, for the daemon's life.
+    named: bool,
 }
 
 impl Sources {
-    /// One engine per setup (at least one), sharing one id counter. With
-    /// more than one, each is named by its folder until its header is read.
+    /// One engine per setup (at least one), sharing one id counter. Once
+    /// more than one has held a log, each is named by its folder until its
+    /// header is read ([`Sources::on_tail`]).
     pub fn new(setups: &[SourceSetup]) -> Self {
         let ids = Ids::default();
-        let several = setups.len() > 1;
-        let make = |setup: &SourceSetup| {
-            let mut engine = Engine::with_ids(ids.clone());
-            if several {
-                engine.set_source_edition(setup.edition);
-            }
-            Source {
-                engine,
-                spec: setup.spec.clone(),
-                last_list: ListKey::default(),
-            }
+        let make = |setup: &SourceSetup| Source {
+            engine: Engine::with_ids(ids.clone()),
+            spec: setup.spec.clone(),
+            last_list: ListKey::default(),
+            folder: setup.edition,
         };
         let primary = make(setups.first().unwrap_or(&SourceSetup::default()));
         let more = setups.iter().skip(1).map(make).collect();
@@ -92,6 +95,7 @@ impl Sources {
             ids,
             live: 0,
             running: Running::default(),
+            named: false,
         }
     }
 
@@ -222,12 +226,32 @@ impl Sources {
             .or_else(|| self.owner_of(id))
     }
 
-    /// Feed source `i` one tail event.
-    pub fn on_tail(&mut self, i: usize, ev: TailEvent, out: &mut Vec<EngineEvent>) {
+    /// Feed source `i` one tail event. `true` when it named the sources by
+    /// their folders: the event gave a second source its first log, so
+    /// another source's edition may have moved with no event of its own
+    /// (an unread log, a header naming none), and its list with it.
+    pub fn on_tail(&mut self, i: usize, ev: TailEvent, out: &mut Vec<EngineEvent>) -> bool {
         self.engine_mut(i).on_tail(ev, out);
+        let named = self.name_by_folder();
         // A source's edition may have just been named or changed: whether
         // a game runs for it may have too.
         self.apply_running();
+        named
+    }
+
+    /// Name every source by its folder once more than one has held a log;
+    /// `true` the one time it does. Before then the daemon answers as one
+    /// source did: a folder that never holds a log (an install with no
+    /// Forever log yet) changes no frame.
+    fn name_by_folder(&mut self) -> bool {
+        if self.named || (0..self.len()).filter(|i| self.started(*i)).count() < 2 {
+            return false;
+        }
+        self.named = true;
+        for src in std::iter::once(&mut self.primary).chain(self.more.iter_mut()) {
+            src.engine.set_source_edition(src.folder);
+        }
+        true
     }
 
     /// The watcher's word: each engine's game verdict follows it.

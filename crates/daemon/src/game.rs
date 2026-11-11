@@ -189,6 +189,67 @@ mod tests {
         assert!(!matches("", b"anything", b"anything"));
     }
 
+    /// Forever's client as it runs under wine, its command line ending in
+    /// the install's `_forever_\Wow.exe`: the default pattern finds it, as
+    /// a `World of Warcraft` pattern does, and the watcher names it
+    /// Forever — no pattern of its own is needed.
+    #[test]
+    fn forevers_client_is_found_and_named_by_its_product_folder() {
+        let cmdline = b"Z:\\games\\World of Warcraft\\_forever_\\Wow.exe\0";
+        #[cfg(not(target_os = "macos"))]
+        assert!(matches(
+            crate::config::default_game_process(),
+            b"Wow.exe",
+            cmdline
+        ));
+        assert!(matches("world of warcraft", b"Wow.exe", cmdline));
+        assert_eq!(product_of(cmdline), Some(Edition::Forever));
+        let root = fake_proc(
+            "forever",
+            &[
+                ("1", "systemd", "/sbin/init\0"),
+                (
+                    "700",
+                    "Wow.exe",
+                    "Z:\\games\\World of Warcraft\\_forever_\\Wow.exe\0",
+                ),
+            ],
+        );
+        for pattern in ["wow.exe", "world of warcraft"] {
+            assert_eq!(
+                scan_proc(&root, pattern),
+                Running::of(&[Edition::Forever]),
+                "{pattern}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        // Retail's beside it, spelled `WoW.exe`: the same pattern finds
+        // both, each named by its own product folder.
+        let both = fake_proc(
+            "both",
+            &[
+                (
+                    "700",
+                    "Wow.exe",
+                    "Z:\\games\\World of Warcraft\\_forever_\\Wow.exe\0",
+                ),
+                (
+                    "800",
+                    "WoW.exe",
+                    "Z:\\games\\World of Warcraft\\_retail_\\WoW.exe\0",
+                ),
+            ],
+        );
+        for pattern in ["wow.exe", "world of warcraft"] {
+            assert_eq!(
+                scan_proc(&both, pattern),
+                Running::of(&[Edition::Retail, Edition::Forever]),
+                "{pattern}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&both);
+    }
+
     fn fake_proc(tag: &str, procs: &[(&str, &str, &str)]) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("wowdps-proc-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
