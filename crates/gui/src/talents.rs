@@ -45,7 +45,7 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::talents::{self as logic, Build, Msg, PaneModel, Tab, Viewer};
 use wowdps_gui_logic::theme::{Def, TalentTokens};
-use wowdps_model::Loadout;
+use wowdps_model::{Edition, Loadout};
 use wowdps_proto::{ClientMsg, DaemonMsg, SegmentRef};
 
 use crate::session::{Reply, Session};
@@ -145,9 +145,15 @@ pub struct TalentViewer {
 impl EventEmitter<TalentEvent> for TalentViewer {}
 
 impl TalentViewer {
-    /// A viewer on `player` (or on nobody): a stored simc paste for that
-    /// name wins, else the spec's empty tree, else the paste prompt.
-    pub fn open(player: Option<Player>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// A viewer on `player` (or on nobody) over `edition`'s trees: a stored
+    /// simc paste for that name wins, else the spec's empty tree, else the
+    /// paste prompt.
+    pub fn open(
+        edition: Edition,
+        player: Option<Player>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let input =
             cx.new(|cx| InputState::new(window, cx).placeholder("paste an in-game talent string…"));
         let typed = cx.subscribe_in(&input, window, |this, state, event, _, cx| match event {
@@ -162,7 +168,7 @@ impl TalentViewer {
             }
             InputEvent::Focus | InputEvent::Blur => {}
         });
-        let ui = Viewer::open(player.map(|p| (p.name, p.spec_id)));
+        let ui = Viewer::open_in(edition, player.map(|p| (p.name, p.spec_id)));
         Self {
             ui,
             input,

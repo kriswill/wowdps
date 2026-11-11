@@ -17,7 +17,8 @@ what it does and how to run it.
 - **Extracted game art never lands in the repository.** The art
   generators write per-machine caches under `~/.local/share/wowdps/`
   (`class-icons.bin`, `spell-icons.bin`, `spell-tips.bin`, `talents.json`,
-  `talent-art.bin`), and every reader draws without them.
+  `talent-art.bin`, `edition-emblems.bin`), and every reader draws without
+  them.
 - **Generated files are never hand-edited.** The committed tables
   (`crates/core/src/*_spells.rs`, `keystone_timers.rs`,
   `open_world_maps.rs`, `crates/proto/src/placed/placed_spells.rs`, and
@@ -31,7 +32,9 @@ what it does and how to run it.
 - **Generators read the local install** (`$WOWDPS_WOW_DIR`, the config's
   `logs_dir`, or a Steam compatdata scan; or pass the folder holding
   `.build.info`). The network serves only WoWDBDefs schemas and TACT keys.
-  Output is deterministic per build.
+  Output is deterministic per build. `gen-emblems` reads the launcher's own
+  files instead, found beside the install (`--launcher DIR` names them):
+  its play selector's emblem of each game, as the launcher keeps it.
 - **One edition at a time, Retail's by default.** The product read is
   `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
   names another (Forever's `wowf`). Each committed table and review twin
@@ -44,6 +47,8 @@ what it does and how to run it.
   any product's output on another edition's committed file, Retail's
   included, however `-o` spells it (`cli/owners.rs`). The caches in the
   data home are Retail's alone: another product's needs `-o` elsewhere.
+  The games' emblems are the one cache of every game's: `gen-emblems`
+  reads no product's client and takes no `--product`.
   What a non-Retail run writes names the product beside the build.
 - **Curated tables need two proofs.** `role_spells`, `proc_spells`,
   `placed_spells` and Forever's `role_signals` are hand lists in
@@ -107,6 +112,7 @@ tools/gen-talent-trees.sh      # talents.json (R14)
 tools/gen-talent-trees.sh --product wowf -o ~/.local/share/wowdps/forever/talents.json   # Forever's, where the talent tools read it
 tools/gen-talent-art.sh        # talent-art.bin (~60 MiB)
 tools/gen-spell-tips.sh        # spell-tips.bin (gui-logic's spell tips; ~7 s, 4 s when current)
+tools/gen-emblems.sh           # edition-emblems.bin (each game's emblem, from the launcher's own files)
 tools/seed-creatures.sh        # NPC classifications from Wowhead into the store's creatures.tsv, under the addon's
 ```
 

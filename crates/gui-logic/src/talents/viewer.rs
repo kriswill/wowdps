@@ -10,7 +10,9 @@ use std::rc::Rc;
 use wowdps_proto::json::Json;
 use wowdps_proto::talents as codec;
 
-use super::model::{Build, Node, Sel, build_model, decode_build};
+use wowdps_model::Edition;
+
+use super::model::{Build, Node, Sel, build_model, decode_build_in};
 use crate::simc::{self, load_stored, save_stored, store_path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +60,8 @@ pub enum Msg {
 
 /// The talent viewer's whole state, framework-free.
 pub struct Viewer {
+    /// The game whose trees it reads (`load_dataset_in`): the fight's.
+    pub edition: Edition,
     pub input: String,
     /// The meter row this was opened from, if any.
     pub player: Option<String>,
@@ -101,6 +105,7 @@ impl Viewer {
     /// A viewer showing nothing, on nobody.
     pub fn empty() -> Self {
         Self {
+            edition: Edition::Retail,
             input: String::new(),
             player: None,
             profile: None,
@@ -122,10 +127,17 @@ impl Viewer {
         }
     }
 
-    /// Open, optionally on a player from the meter: a stored simc paste
-    /// wins, else the spec id from the wire draws the empty tree.
+    /// Open on Retail's trees ([`Viewer::open_in`]).
     pub fn open(player: Option<(String, Option<u32>)>) -> Self {
+        Self::open_in(Edition::Retail, player)
+    }
+
+    /// Open on `edition`'s trees, optionally on a player from the meter: a
+    /// stored simc paste wins, else the spec id from the wire draws the
+    /// empty tree.
+    pub fn open_in(edition: Edition, player: Option<(String, Option<u32>)>) -> Self {
         let mut ui = Self::empty();
+        ui.edition = edition;
         if let Some((name, spec_id)) = player {
             ui.player = Some(name.clone());
             if let Some(text) = load_stored(&name) {
@@ -145,7 +157,8 @@ impl Viewer {
             return;
         };
         if self.tree.as_ref().map(|(id, _)| *id) != Some(spec_id) {
-            match super::load_dataset().and_then(|ds| codec::tree_view(ds, spec_id)) {
+            match super::load_dataset_in(self.edition).and_then(|ds| codec::tree_view(ds, spec_id))
+            {
                 Ok(tv) => self.tree = Some((spec_id, tv)),
                 Err(e) => {
                     self.error = Some(e);
@@ -164,7 +177,7 @@ impl Viewer {
 
     /// Install a freshly decoded string as the editing state.
     fn adopt(&mut self, string: &str) {
-        match decode_build(string) {
+        match decode_build_in(self.edition, string) {
             Ok((spec_id, sels, hero, warnings)) => {
                 self.spec_id = Some(spec_id);
                 self.sels = sels;
@@ -189,7 +202,7 @@ impl Viewer {
         let Some(spec_id) = l.spec_id.map(u64::from).or(self.spec_id) else {
             return;
         };
-        let ds = match super::load_dataset() {
+        let ds = match super::load_dataset_in(self.edition) {
             Ok(ds) => ds,
             Err(e) => {
                 self.error = Some(e);
@@ -272,7 +285,7 @@ impl Viewer {
     /// The current (possibly edited) build as an import string.
     pub fn encode_current(&self) -> Option<String> {
         let spec_id = self.spec_id?;
-        let ds = super::load_dataset().ok()?;
+        let ds = super::load_dataset_in(self.edition).ok()?;
         let sels: Vec<Json> = self
             .sels
             .iter()
