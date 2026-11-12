@@ -994,11 +994,12 @@ pub struct Segment {
     /// after the list wrapped still credits `uptime`. Read-time close for
     /// whatever is still here at the end.
     open_spans: HashMap<SpanKey, OpenSpan>,
-    /// R18: the keys whose segment-start rule has fired — the rule opens at
-    /// most one span per key per segment, so a second orphaned refresh or
-    /// removal of the same key is dropped rather than growing another
-    /// `[start, ts]` span.
-    retro_fired: HashSet<SpanKey>,
+    /// R18: every key this segment has opened a span for, by an apply or
+    /// by the segment-start rule. The rule fires only for a key not here: a
+    /// refresh or a removal after the key's span closed (a repeat, or the
+    /// buff's own end logged twice) is dropped, never a second span from the
+    /// segment's start overlapping the real one.
+    opened: HashSet<SpanKey>,
     /// R18: the uncapped rollup — per raw target, per (spell, raw caster):
     /// count and total ms of CLOSED spans. Open ones join at read time
     /// (`rollup`), so lazy = full holds without a mutate-on-close.
@@ -1404,7 +1405,7 @@ impl Segment {
             death_spans: HashMap::new(),
             first_alive: HashMap::new(),
             open_spans: HashMap::new(),
-            retro_fired: HashSet::new(),
+            opened: HashSet::new(),
             uptime: HashMap::new(),
             am: HashMap::new(),
             taken_series: HashMap::new(),
@@ -4684,8 +4685,9 @@ impl Segment {
     /// same spell is its own span. `retro` (a refresh, or a removal, with
     /// no open span) opens at the SEGMENT'S START: the buff predated the
     /// segment and this line is the only evidence of it, so its caster is
-    /// the line's — and it fires at most ONCE per key per segment; a later
-    /// orphan of the same key is dropped, since a second `[start, ts]` span
+    /// the line's — and it fires only for a key the segment has opened no
+    /// span for (`opened`); a later orphan of a key opened before, by an
+    /// apply or by the rule, is dropped, since a second `[start, ts]` span
     /// could only be a fabrication. Bypasses every item dedupe rule
     /// (`USE_AURA_MS`, `PROC_GAP_MS` are trinket semantics); the capped
     /// list may drop it, the measures never do.
@@ -4702,7 +4704,8 @@ impl Segment {
         if self.open_spans.contains_key(&key) {
             return;
         }
-        if retro && !self.retro_fired.insert(key.clone()) {
+        let first = self.opened.insert(key.clone());
+        if retro && !first {
             return;
         }
         let at = if retro { self.start_ms } else { ts };
@@ -4739,7 +4742,8 @@ impl Segment {
     /// R18: the role buff came off `target`: close the open span of that
     /// (spell, caster), crediting the rollup and the AM interval. With none
     /// open the segment-start rule applies — opened at `start_ms` with this
-    /// line's caster, closed at once (once per key; a repeat is dropped).
+    /// line's caster, closed at once (only for a key the segment has opened
+    /// no span for; a removal after the key's span closed is dropped).
     /// The rollup cell is credited under the OPENING line's caster: the
     /// removal's `src` only selects which open span closes (the same guid
     /// by construction of the key) and never re-labels the cell.

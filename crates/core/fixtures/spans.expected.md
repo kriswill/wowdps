@@ -224,8 +224,8 @@ Nobody else has SupportBuff spans as caster.
 
 ## Segment 2 — Trash, 8.000 s (20:06:10 → 20:06:18)
 
-The dead zone first: **l.81 Shield Block APPLIED at 1:05** (20:06:05) comes after
-`ENCOUNTER_END` (l.79, 1:00) and before any combat line. No segment is open
+The dead zone first: **l.83 Shield Block APPLIED at 1:05** (20:06:05) comes after
+`ENCOUNTER_END` (l.81, 1:00) and before any combat line. No segment is open
 (the encounter closed exactly at `ENCOUNTER_END`, R4) and an aura is passive —
 it never opens one — so this line **lands nowhere**: not in the encounter (which
 would read a span starting past its end), not in the trash that has not begun.
@@ -233,14 +233,14 @@ The meter's every mark call site goes through `open_segment_for_passive`; a
 lazy load of the encounter's byte range could never see this line, and full
 replay must agree.
 
-Then: l.82 the boar swings on W at 1:10 for 1 500 (opens the Trash segment; **W
-taken 1 500, taken10_0 1 500**); l.84 W swings the boar for 6 000 at 1:13; **l.86
+Then: l.84 the boar swings on W at 1:10 for 1 500 (opens the Trash segment; **W
+taken 1 500, taken10_0 1 500**); l.86 W swings the boar for 6 000 at 1:13; **l.88
 Shield Block REMOVED at 1:15** — there is no open Shield Block span *in this
 segment* (the 1:05 apply landed nowhere; the encounter's open span #16 was that
 segment's, closed at ITS end), so the **segment-start rule** opens one at the
 trash segment's start, 1:10, and the removal closes it: span `(W, Shield Block,
-ActiveMitigation, W, 1:10 → 1:15, 5 000)`. l.87 M's Fireball kills the boar at
-1:18 (36 000, overkill 0), `UNIT_DIED` l.88.
+ActiveMitigation, W, 1:10 → 1:15, 5 000)`. l.89 M's Fireball kills the boar at
+1:18 (36 000, overkill 0), `UNIT_DIED` l.90.
 
 | player | damage | dps | pct | taken | am_uptime_ms | spans | taken10_0 |
 |---|---|---|---|---|---|---|---|
@@ -269,8 +269,10 @@ the segment).
 | a Cooldown and a Defensive on a DPS | 31/45, 55/65 | spans on M with their kinds; in no rollup metric here (`spans` counts them) |
 | a class buff not in the role table (Arcane Intellect) | 9 | nothing — no mark, no span |
 | a trinket proc on the tank | 50 / 66 | R12 `TrinketProc` mark dur 15 000; untouched by R18 |
-| an aura APPLIED after `ENCOUNTER_END`, before any combat | 81 | lands nowhere (passive gate) |
-| a REMOVED inside trash with no open span | 86 | segment-start rule inside trash: [1:10, 1:15] = 5 000 |
+| a second REMOVED of a key whose span already closed (Prescience on M, closed at l.37) | 79 | nothing: the segment-start rule fires only for a key the segment opened no span for, so no second `[0:00, 0:58]` span; M `spans` stays 7, E's `support_uptime_ms` 48 000 |
+| a REFRESH of a key whose span already closed (EM on W, closed at l.27) | 80 | nothing, for the same reason: no `[0:00, 1:00]` span; W `spans` stays 8 (the old rule read 9, and E's `support_uptime_ms` 166 000) |
+| an aura APPLIED after `ENCOUNTER_END`, before any combat | 83 | lands nowhere (passive gate) |
+| a REMOVED inside trash with no open span | 88 | segment-start rule inside trash: [1:10, 1:15] = 5 000 |
 | boss swings at known seconds | 16 … 72 | taken10 buckets [22 000, 8 000, 9 000, 11 000, 7 000, 13 000] |
 
 ## Ambiguities resolved here (assumptions, stated)
@@ -299,7 +301,7 @@ the segment).
    is a whole second; the meter computes it per millisecond, and the two agree
    on whole-second spans. The awk marks seconds `[floor((at − start)/1000),
    ceil((end − start)/1000))`.
-7. **The l.81 Shield Block is not remembered** when trash opens at 1:10: an
+7. **The l.83 Shield Block is not remembered** when trash opens at 1:10: an
    aura that landed nowhere leaves no state. The trash span therefore starts at
    the segment's start (1:10), not at 1:05 — the ruling's "opens one at the
    segment's start" is literal.

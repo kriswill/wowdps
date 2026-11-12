@@ -81,7 +81,8 @@ function newSeg(kind, name, ts, enc, diff) {
 # unit that is no player or pet), the healing and absorbs they landed on
 # another player (both sides folded through actor()), and the time a tanking
 # form or stance was on them (a removal with no open one began at the
-# segment's start, once per aura; one still on closes at segClose). Weighed at
+# segment's start, for an aura not yet on in the segment; one still on closes
+# at segClose). Weighed at
 # END by role_solve with the weights in CONTRACT.md R30.
 function role_swing(sg, sf, dg) {
     if (!segInfer[cur] || dg !~ /^Player-/) return
@@ -113,9 +114,9 @@ function role_form(ev,   sid, k) {
     sid = $10 + 0
     if (!(sid in SIG) || SIG[sid] != 3) return
     k = cur SUBSEP $6 SUBSEP sid
-    if (ev == "SPELL_AURA_APPLIED") { if (!(k in fOpen)) fOpen[k] = now; return }
+    if (ev == "SPELL_AURA_APPLIED") { if (!(k in fOpen)) fOpen[k] = now; fSeen[k] = 1; return }
     if (k in fOpen) { fMs[cur SUBSEP $6] += now - fOpen[k]; delete fOpen[k] }
-    else if (!(k in fRetro)) { fRetro[k] = 1; fMs[cur SUBSEP $6] += now - segStart[cur] }
+    else if (!(k in fSeen)) { fSeen[k] = 1; fMs[cur SUBSEP $6] += now - segStart[cur] }
 }
 # The scores over segment s's ROSTER on its combat clock `comb`: of plist[1..n],
 # the players with a Damage, Healing, Deaths or Taken row, as the meter reads
@@ -215,8 +216,9 @@ function taken(dguid, dflags, amt, absorbed, blocked, unmit, base,   t) {
 # are two spans, each closed by its own removal; a re-apply / refresh by the
 # SAME caster while its span is open is a no-op; SPELL_AURA_REMOVED closes that
 # key's open span. A refresh or removal with NO open span opens one at the
-# SEGMENT'S START (the buff predated the segment) — at most once per key per
-# segment, a later orphan is dropped. The ruling folds `Pet-` targets onto their
+# SEGMENT'S START (the buff predated the segment) — only for a key the segment
+# has opened no span for yet (`opened`, set on every open): an orphan of a key
+# opened before, by an apply or by the rule, is dropped. The ruling folds `Pet-` targets onto their
 # owners exactly like `taken`; this checker gates on the PLAYER flag (0x400)
 # only because no committed fixture lands a role buff on a pet — the folding
 # path is gated by tests/spans.rs, not here. Every aura line is passive:
@@ -233,6 +235,7 @@ function span_open(tgt, spell, src, at,   k) {
     spanSrc[nspan] = src; spanAt[nspan] = at; spanEnd[nspan] = ""
     spanKind[nspan] = ROLE[spell]
     openIdx[k] = nspan
+    opened[k] = 1
     # count metrics land now (and register the row); the ms are read at END
     note(cur, tgt, "spans", 1)
     if (ROLE[spell] == "External") { note(cur, src, "externals_given", 1); note(cur, tgt, "externals_received", 1) }
@@ -245,7 +248,7 @@ function aura_apply(refresh,   spell, tgt, k) {
     if (passive_stale()) return
     tgt = $6; k = cur SUBSEP tgt SUBSEP spell SUBSEP $2
     if (openIdx[k] + 0 > 0) return                      # re-apply / refresh while open: no-op
-    if (refresh) { if (retro[k]) return; retro[k] = 1 }  # segment-start rule: once per key
+    if (refresh && opened[k]) return                    # segment-start rule: a key never opened
     span_open(tgt, spell, $2, refresh ? segStart[cur] : now)
 }
 function aura_remove(   spell, tgt, k) {
@@ -255,9 +258,9 @@ function aura_remove(   spell, tgt, k) {
     if (!(spell in ROLE)) return
     if (passive_stale()) return
     tgt = $6; k = cur SUBSEP tgt SUBSEP spell SUBSEP $2
-    if (openIdx[k] + 0 == 0) {                          # segment-start rule: once per key
-        if (retro[k]) return
-        retro[k] = 1; span_open(tgt, spell, $2, segStart[cur])
+    if (openIdx[k] + 0 == 0) {                          # segment-start rule: a key never opened
+        if (opened[k]) return
+        span_open(tgt, spell, $2, segStart[cur])
     }
     spanEnd[openIdx[k]] = now
     openIdx[k] = 0

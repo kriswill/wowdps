@@ -56,6 +56,9 @@ no proc or placed table, so `check.awk` reads its Forever copies (`SHIELD_F`,
 - Shield Wall (871, a defensive in Forever's role table) opens an R18 span
   on Tharokk from 14.0 s (4 000 ms into the pull) to its removal at 26.0 s:
   `spans` 1; a defensive is no active mitigation, so `am_uptime_ms` stays 0.
+  Its removal is logged a second time at 30.5 s, after the span closed: the
+  segment-start rule fires only for a key the segment opened no span for,
+  so it opens nothing (no `[0, 20 500]` span; `spans` stays 1).
 - The cut keeps Shield Wall's two buff rows, a role buff going on and coming
   off a player (`replay_buff_applied` 1, `replay_buff_removed` 1); Tharokk is
   one of its units by his posts already (`replay_units` 6, "The replay cut"

@@ -225,12 +225,13 @@ struct Casts {
 }
 
 /// One player's tanking-form time: what closed, what is open (aura id →
-/// since), and the auras whose segment-start rule has fired.
+/// since), and every aura that has been on in the fight, by an apply or by
+/// the segment-start rule (which fires only for an aura not here).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Forms {
     closed_ms: i64,
     open: BTreeMap<u32, i64>,
-    retro: BTreeSet<u32>,
+    seen: BTreeSet<u32>,
 }
 
 /// R30's per-fight ledger: what the role solver reads, kept in the segment
@@ -296,15 +297,18 @@ impl RoleLedger {
     pub(crate) fn form_on(&mut self, player: &str, aura: u32, ts: i64) {
         with(&mut self.forms, player, |f| {
             f.open.entry(aura).or_insert(ts);
+            f.seen.insert(aura);
         });
     }
 
-    /// The aura off at `ts`. With none open it was on when the fight
-    /// began: from `start_ms`, once per aura (R18's segment-start rule).
+    /// The aura off at `ts`. With none open, and none on before in this
+    /// fight, it was on when the fight began: from `start_ms` (R18's
+    /// segment-start rule). A removal after the aura's own came off is a
+    /// repeat and adds nothing.
     pub(crate) fn form_off(&mut self, player: &str, aura: u32, ts: i64, start_ms: i64) {
         with(&mut self.forms, player, |f| match f.open.remove(&aura) {
             Some(since) => f.closed_ms += (ts - since).max(0),
-            None if f.retro.insert(aura) => f.closed_ms += (ts - start_ms).max(0),
+            None if f.seen.insert(aura) => f.closed_ms += (ts - start_ms).max(0),
             None => {}
         });
     }
@@ -569,6 +573,22 @@ mod tests {
         d[0].form_ms = 60_000;
         let s = solve(&d, 60_000, 60_000);
         assert_eq!(s[0].role, Some(Role::Tank), "{s:?}");
+    }
+
+    /// The segment-start rule fires only for a form not yet on in the
+    /// fight: a removal after the form's own removal is a repeat and adds
+    /// nothing, never the fight's start to it (a 12 s stance reads 12 s).
+    #[test]
+    fn a_form_removed_twice_is_on_once() {
+        let mut l = RoleLedger::default();
+        l.form_on("Player-1-t", 71, 4_000);
+        l.form_off("Player-1-t", 71, 16_000, 0);
+        l.form_off("Player-1-t", 71, 20_000, 0);
+        assert_eq!(l.form_ms("Player-1-t", 60_000), 12_000);
+        // A form first seen by its removal is the rule's, once.
+        l.form_off("Player-1-t", 5487, 9_000, 0);
+        l.form_off("Player-1-t", 5487, 30_000, 0);
+        assert_eq!(l.form_ms("Player-1-t", 60_000), 12_000 + 9_000);
     }
 
     /// The ledger: a form with no open aura began with the fight (once),
