@@ -310,14 +310,8 @@ fn handle(
             let awaiting = engine.awaiting_index();
             let mut events = Vec::new();
             let named = sources.on_tail(i, ev, &mut events);
-            // v49: the live edition may move — a source's first log, a pull
-            // opening while the live one has none, a log written last. A
-            // log growing moves it on the tick.
-            let opened = events
-                .iter()
-                .any(|e| matches!(e, EngineEvent::Opened(_)))
-                .then_some(i);
-            sources.choose_live(opened);
+            // The live edition is chosen on the tick (`tick`), the lines
+            // landed within it judged together; here it stands.
             for ev in events {
                 match ev {
                     // v49: to the sessions this source answers — a pin to
@@ -709,7 +703,7 @@ fn handle(
             // v49: which editions run: each source's liveness follows its
             // own game, and the live edition the running game's.
             sources.set_running(running);
-            sources.choose_live(None);
+            sources.choose_live();
             resync(sources, sessions);
             // The overlay is shown while any game runs, as it always was.
             let cmds = supervisor.on_game(sources.running().any());
@@ -732,13 +726,12 @@ fn handle(
     }
 }
 
-/// The tick: v49 the live edition chosen again — a pull, a log going
-/// quiet or another's log growing since the last tick (`Sources::tick`)
-/// moves it within a tick, not at the next event (one source is always
-/// live, and moves nothing) — then every session's cursor rebuilt and
-/// pushed when changed.
+/// The tick: the live edition chosen by its rule (`Sources::choose_live`)
+/// over every line landed since the last tick — one source is always live,
+/// and moves nothing — then every session's cursor rebuilt and pushed when
+/// changed.
 fn tick(sources: &mut Sources, sessions: &mut [Session], loader: &Sender<LoadReq>) {
-    if sources.tick() {
+    if sources.choose_live() {
         resync(sources, sessions);
     }
     for s in sessions.iter_mut() {
@@ -2160,12 +2153,13 @@ mod tests {
     }
 
     /// Both logs delivered and caught up: Retail's written an hour ago,
-    /// Forever's just now.
+    /// Forever's just now; then a tick, which chooses the live edition.
     fn deliver_both(hub: &mut Hub) {
         deliver_log_to(hub, 0, FIXTURE, 3_600_000);
         hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
         deliver_log_to(hub, 1, FOREVER, 0);
         hub.handle(HubMsg::Tail(1, TailEvent::CaughtUp));
+        hub.tick();
     }
 
     /// The last list in `msgs`: its rows' editions, the edition it names and
@@ -2743,12 +2737,12 @@ mod tests {
         }
     }
 
-    /// The live edition's transitions: the log written last with no game;
-    /// the running game's when one runs (a following session moved, its
-    /// frames naming the new edition); with both running, kept while it has
-    /// a pull open or until the other opens one while it has none — and a
+    /// The live edition's transitions: the newest line with no game; the
+    /// running game's when one runs (a following session moved, its frames
+    /// naming the new edition); with both running, held while it has a pull
+    /// open or for `HANDOFF_QUIET` after a move, else the newest line — and a
     /// pull opening in the edition not live draws no follower. With none
-    /// running again, the log written last.
+    /// running again, the newest line.
     #[test]
     fn the_live_edition_follows_the_running_game() {
         let mut hub = two_editions();
@@ -2780,56 +2774,70 @@ mod tests {
         );
         assert!(drain(&retail).is_empty(), "the pin did not move");
 
-        // Both run. A Forever pull opening while Retail has none moves the
-        // live edition there; the follower hears of it, the Retail pin not.
+        // Both run: the watcher's move holds it.
         hub.handle(HubMsg::Game(Running::of(&[
             Edition::Retail,
             Edition::Forever,
         ])));
-        assert_eq!(hub.sources.live(), 0, "both running: kept");
+        assert_eq!(hub.sources.live(), 0, "both running: the move holds it");
         assert!(drain(&follower).is_empty());
+        // The hold over, a Forever pull opening, its lines the newest, moves
+        // the live edition there on the tick: the follower is sent
+        // Forever's list, which moves it, and then Forever's live fight; the
+        // Retail pin hears nothing.
+        hub.sources.age_for_test(QUIET);
         hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_pull(10))));
+        assert_eq!(hub.sources.live(), 0, "the tick decides");
+        hub.tick();
         assert_eq!(hub.sources.live(), 1);
         let got = drain(&follower);
-        assert_eq!(opened(&got).len(), 1, "{got:?}");
         assert_eq!(last_list(&got).map(|l| l.1), Some(Some(Edition::Forever)));
-        assert!(opened(&drain(&retail)).is_empty());
-        hub.tick();
         assert!(matches!(
-            drain(&follower).last(),
+            got.last(),
             Some(DaemonMsg::Snapshot { edition: Some(Edition::Forever), info, .. }) if info.live
         ));
+        assert!(opened(&drain(&retail)).is_empty());
 
-        // A Retail pull opening while Forever's is open moves nothing: the
-        // Retail pin hears of it, the follower not.
+        // A Retail pull opening while Forever's is open moves nothing,
+        // though its lines are newer: the Retail pin hears of it, the
+        // follower not.
+        hub.sources.age_for_test(QUIET);
         hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull_at(30))));
+        hub.tick();
         assert_eq!(hub.sources.live(), 1, "Forever's pull is open");
         assert!(opened(&drain(&follower)).is_empty());
         assert_eq!(opened(&drain(&retail)).len(), 1);
 
-        // Forever's pull ends while Retail's is open: the open pull is
-        // Retail's, and so is the live edition.
+        // Forever's pull ends: Retail's log shows the newest line, and so
+        // Retail is live.
         hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_end(10))));
+        hub.tick();
         assert_eq!(hub.sources.live(), 0);
         assert_eq!(
             last_list(&drain(&follower)).map(|l| l.1),
             Some(Some(Edition::Retail))
         );
-        // Neither has a pull open: it stays, until the other opens one.
+        // Neither has a pull open: it stays while Retail's lines are the
+        // newest, until the other's are.
         hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_end_at(30))));
+        hub.tick();
         assert_eq!(hub.sources.live(), 0, "neither open: kept");
+        hub.sources.age_for_test(QUIET);
         hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_pull(40))));
+        hub.tick();
         assert_eq!(hub.sources.live(), 1);
+        hub.sources.age_for_test(QUIET);
         hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_end(40))));
         hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull_at(50))));
+        hub.tick();
         assert_eq!(hub.sources.live(), 0);
         assert_eq!(
             last_list(&drain(&follower)).map(|l| l.1),
             Some(Some(Edition::Retail))
         );
 
-        // Forever quits, then Retail: Retail stays — its log was written
-        // last.
+        // Forever quits, then Retail: Retail stays — its log shows the
+        // newest line.
         hub.handle(HubMsg::Game(Running::of(&[Edition::Retail])));
         hub.handle(HubMsg::Game(Running::default()));
         assert_eq!(hub.sources.live(), 0);
@@ -2928,24 +2936,25 @@ mod tests {
         );
     }
 
-    /// v49: with no game named, the live edition stays where it is while
-    /// its log is still being written, though the other is written later
-    /// within `HANDOFF_QUIET` of it — two clients the watcher cannot name,
-    /// out of combat, writing in turn move no follower — and gives way once
-    /// its log has gone quiet, on the next tick, no event needed.
+    /// v49: with no game named, a move holds the live edition for
+    /// `HANDOFF_QUIET` — the start-up pick of Forever's log, newest by its
+    /// lines, is one — though the other log shows newer lines within it:
+    /// two clients the watcher cannot name, writing in turn, move no
+    /// follower on every line. Then the newest line wins, on the next tick,
+    /// no event needed.
     #[test]
-    fn with_no_game_the_live_edition_stays_while_its_log_is_written() {
+    fn with_no_game_a_move_holds_then_the_newest_line_wins() {
         let mut hub = two_editions();
         let follower = hub.connect(1, ClientKind::Tui);
         hub.client(1, ClientMsg::watch(Cursor::List));
         deliver_both(&mut hub);
-        assert_eq!(hub.sources.live(), 1, "Forever's log was written last");
-        assert!(hub.sources.engine(1).being_written());
+        assert_eq!(hub.sources.live(), 1, "Forever's log shows the newest line");
+        assert!(hub.sources.engine(1).line_ms() > hub.sources.engine(0).line_ms());
         drain(&follower);
         for t in 0..3 {
             hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(t))));
             hub.tick();
-            assert_eq!(hub.sources.live(), 1, "Forever's log is still written");
+            assert_eq!(hub.sources.live(), 1, "the start-up move holds it");
         }
         let got = drain(&follower);
         assert!(
@@ -2955,7 +2964,8 @@ mod tests {
             )),
             "the follower was not moved: {got:?}"
         );
-        // Both go quiet, Retail's written last: the next tick moves it there.
+        // The hold lapses: Retail's log shows the newest line, and the next
+        // tick moves it there.
         hub.sources.age_for_test(Duration::from_secs(120));
         hub.tick();
         assert_eq!(hub.sources.live(), 0);
@@ -3074,11 +3084,9 @@ mod tests {
     }
 
     /// The player tabs from Forever to Retail with no pull open: Retail's
-    /// log growing with lines later than Forever's makes Retail live on the
-    /// next tick, once Forever's log has been quiet `HANDOFF_QUIET` — the
-    /// follower is moved, its frames naming Retail. A Retail line landing
-    /// sooner than that after Forever's last moves nothing, then or later on
-    /// its own.
+    /// log showing a line newer than Forever's makes Retail live on the next
+    /// tick — the follower is moved, its frames naming Retail — however
+    /// recently Forever's last line landed.
     #[test]
     fn tabbing_to_the_other_game_moves_the_live_edition_when_its_log_grows() {
         for both in [true, false] {
@@ -3086,17 +3094,9 @@ mod tests {
             hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_buff(0))));
             hub.sources.age_for_test(Duration::from_secs(5));
             hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(5))));
-            hub.tick();
-            assert_eq!(hub.sources.live(), 1, "both={both}: Forever's line 5 s ago");
-            hub.sources.age_for_test(QUIET);
-            hub.tick();
-            assert_eq!(hub.sources.live(), 1, "both={both}: no growth since");
-            assert!(!moved_to(&drain(&follower), Edition::Retail));
-
-            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(16))));
             assert_eq!(hub.sources.live(), 1, "both={both}: the tick decides");
             hub.tick();
-            assert_eq!(hub.sources.live(), 0, "both={both}: Retail is played");
+            assert_eq!(hub.sources.live(), 0, "both={both}: Retail's line is newer");
             let got = drain(&follower);
             assert!(moved_to(&got, Edition::Retail), "both={both}: {got:?}");
             assert!(matches!(
@@ -3106,13 +3106,16 @@ mod tests {
                     ..
                 })
             ));
+            hub.sources.age_for_test(QUIET);
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(16))));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: Retail is played");
         }
     }
 
-    /// An open pull in the live edition always wins: the other's log
-    /// growing never takes it, through minutes of the pull. Once the pull
-    /// has ended and its log has been quiet `HANDOFF_QUIET`, the other's
-    /// growing does.
+    /// An open pull in the live edition holds it: the other's log showing
+    /// newer lines never takes it, through minutes of the pull. Once the
+    /// pull has ended, the other's newer lines do.
     #[test]
     fn the_other_log_growing_never_takes_live_from_a_pull() {
         for both in [true, false] {
@@ -3148,40 +3151,44 @@ mod tests {
         }
     }
 
-    /// Both logs growing within one tick, no pull open in either, move
-    /// nothing, whichever's lines landed first — with the live one's quiet
-    /// past `HANDOFF_QUIET` before, and past the trash gap. The other's
-    /// alone then does.
+    /// Both logs growing within one tick, no pull open in either: the tick
+    /// picks the log whose line is newer, whichever's landed first; an equal
+    /// time keeps the live edition.
     #[test]
-    fn two_logs_growing_in_one_tick_move_nothing() {
+    fn two_logs_growing_in_one_tick_pick_the_newer_line() {
         for both in [true, false] {
-            let (mut hub, follower) = playing_forever(both);
-            let mut t = 0;
-            for quiet in [QUIET, Duration::from_secs(70)] {
-                hub.sources.age_for_test(quiet);
-                hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(t + 1))));
-                hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_buff(t))));
+            for (retail, forever, retail_first) in [
+                (101, 100, true),
+                (101, 100, false),
+                (100, 101, true),
+                (100, 101, false),
+                (100, 100, true),
+            ] {
+                let (mut hub, _follower) = playing_forever(both);
+                let lines = [
+                    HubMsg::Tail(0, TailEvent::Lines(retail_buff(retail))),
+                    HubMsg::Tail(1, TailEvent::Lines(forever_buff(forever))),
+                ];
+                let [r, f] = lines;
+                let order = if retail_first { [r, f] } else { [f, r] };
+                for msg in order {
+                    hub.handle(msg);
+                }
                 hub.tick();
-                assert_eq!(hub.sources.live(), 1, "both={both}: Retail's first");
-                hub.sources.age_for_test(quiet);
-                hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_buff(t + 2))));
-                hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(t + 3))));
-                hub.tick();
-                assert_eq!(hub.sources.live(), 1, "both={both}: Forever's first");
-                t += 100;
+                let newer = if retail > forever { 0 } else { 1 };
+                assert_eq!(
+                    hub.sources.live(),
+                    newer,
+                    "both={both} retail={retail} forever={forever} retail_first={retail_first}"
+                );
             }
-            assert!(!moved_to(&drain(&follower), Edition::Retail));
-            hub.sources.age_for_test(QUIET);
-            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(t))));
-            hub.tick();
-            assert_eq!(hub.sources.live(), 0, "both={both}: Retail's alone");
         }
     }
 
     /// Tabbed to Retail with no pull: Retail is live. A pull opening in
-    /// Forever while Retail has none takes it back at once — on the line,
-    /// no tick and no quiet needed — and Retail's log growing during that
-    /// pull moves nothing.
+    /// Forever, its lines newer, takes it back on the tick once the move to
+    /// Retail is `HANDOFF_QUIET` old — the follower is moved by Forever's
+    /// list — and Retail's log growing during that pull moves nothing.
     #[test]
     fn a_pull_opening_wins_the_live_edition_back() {
         for both in [true, false] {
@@ -3191,10 +3198,13 @@ mod tests {
             assert_eq!(hub.sources.live(), 0, "both={both}");
             drain(&follower);
             hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_pull(10))));
-            assert_eq!(hub.sources.live(), 1, "both={both}: Forever's pull opened");
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: the move holds it");
+            hub.sources.age_for_test(QUIET);
+            hub.tick();
+            assert_eq!(hub.sources.live(), 1, "both={both}: Forever's pull");
             let got = drain(&follower);
-            assert_eq!(opened(&got).len(), 1, "both={both}: {got:?}");
-            assert!(moved_to(&got, Edition::Forever));
+            assert!(moved_to(&got, Edition::Forever), "both={both}: {got:?}");
             hub.sources.age_for_test(QUIET);
             hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(700))));
             hub.tick();
@@ -3202,10 +3212,10 @@ mod tests {
         }
     }
 
-    /// A log the game creates in the other edition's folder is that log
-    /// growing: the live edition moves to it on the next tick. The same log
-    /// re-read (a truncation), a switch to an older log, and a log copied in
-    /// (new by its modified time, old by its lines) are not.
+    /// A log the game creates in the other edition's folder shows its
+    /// newer lines: the live edition moves to it on the next tick. The same
+    /// log re-read (a truncation), a switch to an older log, and a log
+    /// copied in (new by its modified time, old by its lines) show none.
     #[test]
     fn a_new_log_in_the_other_folder_moves_the_live_edition() {
         let sample = std::fs::read_to_string(FIXTURE).unwrap();
@@ -3240,10 +3250,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The first log a folder that held none gets is the game's new log:
-    /// with both games running the live edition moves to it on the next
-    /// tick. A source's first log at start is no growth: the live edition
-    /// stays where it is.
+    /// A folder's first log, whether the folder held none before (the
+    /// game's new log) or it is there at start: the newest line wins, so
+    /// with both games running the live edition moves to Forever's, its
+    /// lines newer than Retail's, on the next tick.
     #[test]
     fn a_first_log_in_an_empty_folder_moves_the_live_edition() {
         for waited in [true, false] {
@@ -3265,8 +3275,8 @@ mod tests {
             drain(&follower);
             deliver_log_to(&mut hub, 1, FOREVER, 0);
             hub.tick();
-            assert_eq!(hub.sources.live(), usize::from(waited), "waited={waited}");
-            assert_eq!(moved_to(&drain(&follower), Edition::Forever), waited);
+            assert_eq!(hub.sources.live(), 1, "waited={waited}");
+            assert!(moved_to(&drain(&follower), Edition::Forever));
         }
     }
 
@@ -3361,10 +3371,10 @@ mod tests {
         let legacy = "11/2 10:00:05.000  SPELL_AURA_APPLIED,Player-1168-0A1B2C02,\"Mirelle-Realm\",0x514,0x80000000,Player-1168-0A1B2C01,\"Ana-Realm\",0x511,0x80000000,17,\"Power Word: Shield\",0x2,BUFF,15600";
         for both in [true, false] {
             let (mut hub, follower) = playing_forever(both);
+            let before = hub.sources.engine(0).line_ms();
             for batch in [vec!["no time here".to_string()], vec![legacy.to_string()]] {
                 hub.handle(HubMsg::Tail(0, TailEvent::Lines(batch)));
-                assert!(hub.sources.engine(0).grew());
-                assert_eq!(hub.sources.engine(0).grew_ms(), None);
+                assert_eq!(hub.sources.engine(0).line_ms(), before, "no time shown");
                 hub.tick();
                 assert_eq!(hub.sources.live(), 1, "both={both}");
             }
@@ -3510,10 +3520,10 @@ mod tests {
     }
 
     /// RV-D: the live log's newest line is dated an hour past the daemon's
-    /// clock (a clock run fast, an offset kept across a daylight saving
-    /// change). It counts as a minute past the clock when it was shown, so
-    /// the other game's lines past that take the live edition, and do not
-    /// wait the hour.
+    /// clock (a clock run fast, a log from another host). It counts as a
+    /// minute past the clock when it was shown: within that minute the other
+    /// game's current lines do not pass it; once it has gone by they take
+    /// the live edition, and do not wait the hour.
     #[test]
     fn a_line_dated_ahead_of_the_clock_holds_the_live_edition_a_minute_at_most() {
         let ahead = now_ms() + 3_600_000;
@@ -3521,25 +3531,33 @@ mod tests {
             crate::engine::line_utc_ms(&format!("{}  ZONE_CHANGE,1,\"x\",0", utc_stamp(ahead))),
             Some(ahead)
         );
-        let buff = |edition: &str, ms: i64| -> Vec<String> {
-            let line = if edition == "forever" {
-                forever_buff(0)
-            } else {
-                retail_buff(0)
-            };
+        let at = |line: Vec<String>, ms: i64| -> Vec<String> {
             line.iter()
                 .map(|l| l.replacen(&stamp(0), &utc_stamp(ms), 1))
                 .collect()
         };
         for both in [true, false] {
             let (mut hub, follower) = playing_forever(both);
-            hub.handle(HubMsg::Tail(1, TailEvent::Lines(buff("forever", ahead))));
+            hub.handle(HubMsg::Tail(
+                1,
+                TailEvent::Lines(at(forever_buff(0), ahead)),
+            ));
             let shown = hub.sources.engine(1).line_ms().unwrap();
             assert!(shown < ahead && shown <= now_ms() + 60_000, "{shown}");
             hub.sources.age_for_test(QUIET);
             hub.handle(HubMsg::Tail(
                 0,
-                TailEvent::Lines(buff("retail", now_ms() + 90_000)),
+                TailEvent::Lines(at(retail_buff(0), now_ms())),
+            ));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 1, "both={both}: within the minute");
+            // The minute goes by.
+            hub.sources
+                .engine_mut(1)
+                .line_shown_for_test(Duration::from_secs(61));
+            hub.handle(HubMsg::Tail(
+                0,
+                TailEvent::Lines(at(retail_buff(0), now_ms())),
             ));
             hub.tick();
             assert_eq!(hub.sources.live(), 0, "both={both}: not held the hour");
@@ -3549,11 +3567,12 @@ mod tests {
 
     /// The bound: lines alone, no pull opening — two logs written in turn,
     /// however they alternate — never move the live edition twice within
-    /// `HANDOFF_QUIET`. Strict turns 9 s apart never move it; 11 s apart,
-    /// every turn to the other log does, 11 s apart. A pseudo-random walk of
-    /// lines and gaps (fixed seeds), each line timed when it lands, holds
-    /// the bound too. Every move is counted, on a line or on the tick. With
-    /// both games running and with none seen.
+    /// `HANDOFF_QUIET`, the move's hold. Strict turns 9 s apart move it every
+    /// third turn, 27 s apart: the turn after a move is held, the next is
+    /// the live log's own; 11 s apart, every turn to the other log does, 11 s
+    /// apart. A pseudo-random walk of lines and gaps (fixed seeds), each
+    /// line timed when it lands, holds the bound too. Every move is counted,
+    /// on a line or on the tick. With both games running and with none seen.
     #[test]
     fn lines_alone_move_the_live_edition_at_most_once_per_handoff_quiet() {
         // Each step: `gap` passes, then lines land in Retail's log and in
@@ -3594,7 +3613,13 @@ mod tests {
                 .collect()
         };
         for both in [true, false] {
-            assert_eq!(walk(both, &turns(9)), Vec::new(), "both={both}");
+            let moves = walk(both, &turns(9));
+            assert_eq!(moves.len(), 13, "both={both}: every third turn");
+            assert!(
+                moves
+                    .windows(2)
+                    .all(|w| w[1] - w[0] == Duration::from_secs(27))
+            );
             let moves = walk(both, &turns(11));
             assert_eq!(moves.len(), 39, "both={both}: every turn but the first");
             assert!(

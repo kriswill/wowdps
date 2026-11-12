@@ -1575,29 +1575,19 @@ fn a_source_named_zero_is_named_nothing() {
     );
 }
 
-// ---- the live edition moves to the game being played ----------------------------
+// ---- the live edition is the log showing the newest line ----------------------
 
 /// Every event the tailer has now, fed to `engine` poll after poll until a
-/// poll has none (the backlog read, then caught up): whether any of them
-/// grew the source's log (`Engine::grew`).
-fn settle(tailer: &mut Tailer, engine: &mut Engine) -> bool {
-    settle_ms(tailer, engine).0
-}
-
-/// [`settle`], with the newest line time of the growth those events
-/// carried (`Engine::grew_ms`, the latest of each event's, as the hub
-/// gathers them).
-fn settle_ms(tailer: &mut Tailer, engine: &mut Engine) -> (bool, Option<i64>) {
-    let (mut grew, mut ms) = (false, None);
+/// poll has none (the backlog read, then caught up); the source's newest
+/// line time after them (`Engine::line_ms`).
+fn settle(tailer: &mut Tailer, engine: &mut Engine) -> Option<i64> {
     for _ in 0..64 {
         let events = tailer.poll();
         if events.is_empty() {
-            return (grew, ms);
+            return engine.line_ms();
         }
         for ev in events {
             engine.on_tail(ev, &mut Vec::new());
-            grew |= engine.grew();
-            ms = ms.max(engine.grew_ms());
         }
     }
     panic!("the tailer never settled");
@@ -1611,24 +1601,22 @@ fn append(path: &Path, text: &str) {
 
 const BUFF: &str = "11/1/2026 20:50:00.000-8  SPELL_AURA_APPLIED,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,71,\"Defensive Stance\",0x1,BUFF";
 
-/// What grows a source's log for the live edition's choice, through a real
-/// tailer over a logs folder: complete lines the game appends after the
-/// backlog, and a log it creates while the daemon watches — a newer file
-/// beside the one followed, or the first in a folder that held none. Not
-/// the backlog, index or seeds of the log a source opens at start, a line
-/// still half written, the same log re-read after a truncation, nor a
-/// switch back to an older log.
+/// The newest line time a source's logs show, what the live edition is
+/// ranked by, through a real tailer over a logs folder: the log's last
+/// line when it is opened, at start or as the folder's first; then each
+/// complete line appended, a half-written one not until it is complete;
+/// and kept through every switch — the same log re-read after a
+/// truncation, a newer log whose lines are older, a switch back to an
+/// older log — never lowered by one.
 #[test]
-fn only_the_game_writing_now_grows_a_log() {
-    let tmp = Temp::new("grew");
+fn a_source_shows_its_newest_line_time_through_a_real_tailer() {
+    let tmp = Temp::new("lines");
     let dir = tmp.0.join("Logs");
     std::fs::create_dir_all(&dir).unwrap();
     let first = dir.join("WoWCombatLog-110126_200000.txt");
     std::fs::copy(FOREVER_LOG, &first).unwrap();
     let mut tailer = Tailer::new(SourceSpec::Dir(dir.clone()));
     let mut engine = Engine::new();
-    assert!(!settle(&mut tailer, &mut engine), "the log opened at start");
-    assert!(engine.source_path.is_some());
     // How far the log had reached: its last line, read when its index
     // landed (the scan leaves no line for the tail when nothing is open).
     let last = std::fs::read_to_string(FOREVER_LOG)
@@ -1637,39 +1625,43 @@ fn only_the_game_writing_now_grows_a_log() {
         .last()
         .and_then(line_utc_ms);
     assert!(last.is_some());
-    assert_eq!(engine.line_ms(), last);
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        last,
+        "the log opened at start"
+    );
+    assert!(engine.source_path.is_some());
 
     append(&first, BUFF);
-    assert!(!settle(&mut tailer, &mut engine), "half a line");
+    assert_eq!(settle(&mut tailer, &mut engine), last, "half a line");
     append(&first, "\n");
-    assert_eq!(
-        settle_ms(&mut tailer, &mut engine),
-        (true, line_utc_ms(BUFF)),
-        "the line completed, the growth's own time"
-    );
-    assert_eq!(engine.line_ms(), line_utc_ms(BUFF));
-    assert!(!settle(&mut tailer, &mut engine), "nothing since");
+    let buff = line_utc_ms(BUFF);
+    assert!(buff > last);
+    assert_eq!(settle(&mut tailer, &mut engine), buff, "the line completed");
 
     let text = std::fs::read_to_string(FOREVER_LOG).unwrap();
     let half: String = text.lines().take(4).map(|l| format!("{l}\n")).collect();
     std::fs::write(&first, half).unwrap();
-    assert!(!settle(&mut tailer, &mut engine), "the same log re-read");
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        buff,
+        "the same log re-read"
+    );
     append(&first, &format!("{BUFF}\n"));
-    assert!(settle(&mut tailer, &mut engine), "a line after the re-read");
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        buff,
+        "a line after the re-read"
+    );
 
     let second = dir.join("WoWCombatLog-110126_210000.txt");
     std::fs::copy(FOREVER_LOG, &second).unwrap();
     assert_eq!(
-        settle_ms(&mut tailer, &mut engine),
-        (true, last),
-        "a new log, grown as far as its own last line"
+        settle(&mut tailer, &mut engine),
+        buff,
+        "a newer log whose last line is older"
     );
     assert_eq!(engine.source_path.as_deref(), Some(second.as_path()));
-    assert_eq!(
-        engine.line_ms(),
-        line_utc_ms(BUFF),
-        "the source's newest stays: the new log's last line is older"
-    );
 
     std::fs::remove_file(&second).unwrap();
     let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
@@ -1678,22 +1670,25 @@ fn only_the_game_writing_now_grows_a_log() {
         .open(&first)
         .and_then(|f| f.set_modified(hour_ago))
         .unwrap();
-    assert!(!settle(&mut tailer, &mut engine), "back to an older log");
-    assert_eq!(engine.source_path.as_deref(), Some(first.as_path()));
     assert_eq!(
-        engine.line_ms(),
-        line_utc_ms(BUFF),
-        "kept through the switches"
+        settle(&mut tailer, &mut engine),
+        buff,
+        "back to an older log"
     );
+    assert_eq!(engine.source_path.as_deref(), Some(first.as_path()));
 
     let empty = tmp.0.join("Empty");
     std::fs::create_dir_all(&empty).unwrap();
     let mut tailer = Tailer::new(SourceSpec::Dir(empty.clone()));
     let mut engine = Engine::new();
-    assert!(!settle(&mut tailer, &mut engine), "no log yet");
+    assert_eq!(settle(&mut tailer, &mut engine), None, "no log yet");
     assert!(engine.source_path.is_none());
     std::fs::copy(FOREVER_LOG, empty.join("WoWCombatLog-110126_220000.txt")).unwrap();
-    assert!(settle(&mut tailer, &mut engine), "the folder's first log");
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        last,
+        "the folder's first log"
+    );
 }
 
 /// A line's time for comparing two logs: its date and time less the offset

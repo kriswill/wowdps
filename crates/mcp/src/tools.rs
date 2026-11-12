@@ -103,9 +103,8 @@ pub fn catalog() -> Vec<Tool> {
         edition_of(
             "Look in this edition: its list and its live fight. Absent: follow the \
              live edition (status's live_edition: the game being played: the running \
-             one; with both running, the one in a pull, else the one writing the \
-             newest lines; with neither, the one whose log was written last). A segment_id \
-             names one fight of one \
+             one, else the one whose log shows the newest line, held by its open \
+             pull). A segment_id names one fight of one \
              edition either way; one of another edition than this names is an error.",
         )
     };

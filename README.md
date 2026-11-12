@@ -139,14 +139,17 @@ stderr, and in the ⚙ menu) and skipped; the rest of the theme still applies.
 ### Editions
 
 The window shows one game at a time, and by default the one you are
-playing: the one running, or with both running the one in a pull, else the
-one writing its combat log. Tab from one game to the other and, once the
-first has logged nothing for ten seconds, the next lines the other writes
-to its log move the window and the overlay to it. The game writes its log
-in bursts, so that can come a few minutes after you tab. A pull keeps them
-where they are until it ends, and lines the first game writes late, from
-before you left it, move nothing. A second client in the world at the same
-time (another account) moves them each time it writes its log.
+playing: the one running, or with both running (or none seen), the one
+whose combat log shows the newest line. Tab from one game to the other and the next lines
+the other writes to its log move the window and the overlay to it. The
+game writes its log in bursts, so that can come a few minutes after you
+tab. A pull in the game shown keeps them where they are until it ends, and
+after a move they stay at least ten seconds. This rests on two things: a
+game writes nothing to its log after you log out of it, so lines it writes
+late, from before you left, move nothing; and both games' logs keep time by
+one clock. A second client in the world at the same time (another account)
+moves them each time it writes its log, and a game whose log keeps time
+behind the other's is not followed until its lines catch up.
 
 When this machine has more than one edition of the game (a log
 followed or a fight stored of each), the window's top bar carries an
@@ -179,8 +182,7 @@ the same to the compositor, so under Hyprland the overlay tells them apart
 by their processes' product folders: it shows, hides and places itself (on
 that window's monitor) by the live game's window. The live game is the one
 being played, as above, so the overlay moves to the other game when that
-game's log starts growing or its first pull opens, not at a workspace
-switch.
+game's log shows newer lines, not at a workspace switch.
 
 The addon is one game's for now: the daemon keeps current and reads the copy
 in the product folder of the logs it is pointed at (`logs_dir`, else

@@ -27,15 +27,14 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   editions paragraph). Every answer goes through `Sources`: an id to the
   engine holding it, `Live` and the list to the session's edition's, the
   live edition by its rule there. A session no source serves acts on
-  nothing. A log growing (`Engine::grew`) moves the live edition only on
-  the tick (`Sources::tick`), so two logs growing in one tick move
-  nothing. Every move on another edition's lines (a pull opened or held
-  open, growth, a log written last) passes one test, `Sources::may_take`:
-  their own time (`engine::line_utc_ms`) later than the live log's newest
-  (`Engine::line_ms`, kept through a rotation), so a game left flushing
-  late takes nothing. A new path that moves the live edition on lines goes
-  through it too. Tests stand in for the clock with `Sources::age_for_test`
-  and time their lines on one clock.
+  nothing. The live edition is one rule, `Sources::choose_live` (its
+  words are in `sources.rs` and CONTRACT.md): the started source whose log
+  shows the newest line time (`Engine::line_ms`), held by its open pull or
+  a move under `HANDOFF_QUIET`, the watcher naming one game overriding,
+  modified time for a source with no timed line. It is chosen on the tick
+  and on game reports, never on a tail event. Keep it one argmax: a new
+  reason to move belongs in the rule's words first. Tests stand in for the
+  clock with `Sources::age_for_test` and time their lines on one clock.
   Over the hub's one-source scenario a daemon of one source queues the
   wire bytes it queued before editions were followed:
   `one_source_frames_are_the_daemon_s_before_editions` holds them to
