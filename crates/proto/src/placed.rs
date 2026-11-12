@@ -191,4 +191,26 @@ mod tests {
             assert!(table.windows(2).all(|w| w[0].spell < w[1].spell), "{e:?}");
         }
     }
+
+    /// Retail's placed table was made from a client no older than the
+    /// patch `Edition::tables_patch` names for Retail (core holds that patch
+    /// to its own tables, the oldest of them): this table, regenerated
+    /// alone from an older client, would make the patch claim too much.
+    #[test]
+    fn the_table_is_no_older_than_its_editions_tables_patch() {
+        let text = include_str!("placed/placed_spells.rs");
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("//! Source:"))
+            .expect("a Source line");
+        let build = line.split("build ").nth(1).expect("a build");
+        let n: Vec<u16> = build
+            .split(|c: char| !c.is_ascii_digit())
+            .take(3)
+            .map(|p| p.parse().expect("a number"))
+            .collect();
+        let patch = (n[0], n[1], n[2]);
+        let tables = Edition::Retail.tables_patch().expect("Retail has tables");
+        assert!(patch >= tables, "{patch:?} is older than {tables:?}");
+    }
 }

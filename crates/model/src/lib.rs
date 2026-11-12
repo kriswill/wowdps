@@ -307,6 +307,31 @@ impl Edition {
             Edition::Classic(_) | Edition::Unknown(_) => None,
         }
     }
+
+    /// The game patch, as a log's BUILD_VERSION spells it (major, minor,
+    /// patch), that this build's generated tables of the edition (as it
+    /// [`Edition::counts_as`]) were made from: the oldest of its tables'
+    /// client builds, which core's `tables.rs` holds to the generated files'
+    /// headers. `None` for an edition with no tables of its own. A log of a
+    /// later patch may name spells, items and maps those tables never saw
+    /// ([`Edition::newer_than_tables`]).
+    pub fn tables_patch(self) -> Option<(u16, u16, u16)> {
+        match self.counts_as() {
+            Edition::Retail => Some((12, 1, 0)),
+            Edition::Forever => Some((1, 60, 1)),
+            Edition::Classic(_) | Edition::Unknown(_) => None,
+        }
+    }
+
+    /// A log whose BUILD_VERSION is `build` is of a later patch than this
+    /// edition's tables ([`Edition::tables_patch`]): its newer spells may
+    /// go without a name or a class until wowdps's tables are made again.
+    /// `false` for a build of `(0, 0, 0)` (a log that named none) and for an
+    /// edition with no tables. The log names its patch and no build number,
+    /// so a later build of the same patch is not newer.
+    pub fn newer_than_tables(self, build: (u16, u16, u16)) -> bool {
+        build != (0, 0, 0) && self.tables_patch().is_some_and(|tables| build > tables)
+    }
 }
 
 /// The editions whose product folder an install is known to keep them in
@@ -2721,6 +2746,30 @@ mod tests {
                 !key.is_empty() && key.bytes().all(|b| b.is_ascii_lowercase()),
                 "{key:?}"
             );
+        }
+    }
+
+    /// A log is newer than its edition's tables only by a later patch: the
+    /// same patch, an older one and a log that names none are not, an
+    /// edition with no tables never is, and a card that names no edition
+    /// reads Retail's.
+    #[test]
+    fn a_log_is_newer_than_its_tables_by_a_later_patch() {
+        let retail = Edition::Retail.tables_patch().unwrap();
+        let forever = Edition::Forever.tables_patch().unwrap();
+        let later = |(a, b, c): (u16, u16, u16)| (a, b, c + 1);
+        assert!(Edition::Retail.newer_than_tables(later(retail)));
+        assert!(Edition::Retail.newer_than_tables((retail.0 + 1, 0, 0)));
+        assert!(!Edition::Retail.newer_than_tables(retail));
+        assert!(!Edition::Retail.newer_than_tables((retail.0 - 1, 9, 9)));
+        assert!(!Edition::Retail.newer_than_tables((0, 0, 0)));
+        assert!(Edition::Forever.newer_than_tables(later(forever)));
+        assert!(!Edition::Forever.newer_than_tables(forever));
+        assert_eq!(Edition::Unknown(0).tables_patch(), Some(retail));
+        assert!(Edition::Unknown(0).newer_than_tables(later(retail)));
+        for none in [Edition::Classic(2), Edition::Unknown(7)] {
+            assert_eq!(none.tables_patch(), None);
+            assert!(!none.newer_than_tables((99, 0, 0)));
         }
     }
 

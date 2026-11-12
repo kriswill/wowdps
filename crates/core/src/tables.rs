@@ -404,4 +404,73 @@ mod tests {
         assert!(Tables::of(Edition::Classic(2)).open_world(1));
         assert!(!Tables::of(Edition::Classic(2)).open_world(409));
     }
+
+    /// The patch a generated file's header says its client build was:
+    /// `Source: … build 12.1.0.69587.` (a product after it on another
+    /// edition's), as (major, minor, patch).
+    fn header_patch(file: &str, text: &str) -> (u16, u16, u16) {
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("//! Source:"))
+            .unwrap_or_else(|| panic!("{file}: no Source line"));
+        let build = line
+            .split("build ")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{file}: no build in {line:?}"));
+        let n: Vec<u16> = build
+            .split(|c: char| !c.is_ascii_digit())
+            .take(3)
+            .map(|p| p.parse().unwrap_or_else(|_| panic!("{file}: {line:?}")))
+            .collect();
+        (n[0], n[1], n[2])
+    }
+
+    /// `Edition::tables_patch`, the patch the window and the status hold a
+    /// log's against, is the oldest patch any of the edition's generated
+    /// tables was made from: a table regenerated from a later client moves
+    /// it only once every other table has moved too.
+    #[test]
+    fn each_editions_tables_patch_is_its_oldest_tables_build() {
+        let retail = [
+            ("class_spells.rs", include_str!("class_spells.rs")),
+            ("item_spells.rs", include_str!("item_spells.rs")),
+            ("keystone_timers.rs", include_str!("keystone_timers.rs")),
+            ("open_world_maps.rs", include_str!("open_world_maps.rs")),
+            ("role_spells.rs", include_str!("role_spells.rs")),
+            ("absorb_spells.rs", include_str!("absorb_spells.rs")),
+            ("proc_spells.rs", include_str!("proc_spells.rs")),
+        ];
+        let forever = [
+            (
+                "forever/class_spells.rs",
+                include_str!("forever/class_spells.rs"),
+            ),
+            (
+                "forever/item_spells.rs",
+                include_str!("forever/item_spells.rs"),
+            ),
+            (
+                "forever/keystone_timers.rs",
+                include_str!("forever/keystone_timers.rs"),
+            ),
+            (
+                "forever/open_world_maps.rs",
+                include_str!("forever/open_world_maps.rs"),
+            ),
+            (
+                "forever/role_signals.rs",
+                include_str!("forever/role_signals.rs"),
+            ),
+        ];
+        for (edition, files) in [
+            (Edition::Retail, &retail[..]),
+            (Edition::Forever, &forever[..]),
+        ] {
+            let oldest = files.iter().map(|(f, t)| header_patch(f, t)).min();
+            assert_eq!(oldest, edition.tables_patch(), "{edition:?}");
+        }
+        for e in TABLELESS {
+            assert_eq!(e.tables_patch(), None, "{e:?}");
+        }
+    }
 }

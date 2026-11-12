@@ -431,6 +431,21 @@ pub fn builds_gap(edition: Option<Edition>) -> Option<String> {
     })
 }
 
+/// The one quiet line Home shows while the game it shows is of a later
+/// patch than wowdps's tables of it (`build`, the newest stored fight's:
+/// [`Census::build`]): what that means for the player, in their words;
+/// `None` while it is not, or no fight of it is stored yet. It is the
+/// census's, so it says so once, never per fight.
+pub fn newer_notice(edition: Edition, build: Option<(u16, u16, u16)>) -> Option<String> {
+    let b = build.filter(|b| edition.newer_than_tables(*b))?;
+    Some(format!(
+        "{} {} is newer than this wowdps: some newer spells may be missing or unnamed \
+         until wowdps updates.",
+        name(edition, Some(b)),
+        build_words(Some(b))?
+    ))
+}
+
 /// The edition the window is in: the pinned one, or, following, the live
 /// edition (`live`: the edition the daemon last answered in, else the one
 /// `Status` names live) — and until either names one, `last`, the edition

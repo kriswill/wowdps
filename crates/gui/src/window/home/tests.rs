@@ -203,6 +203,32 @@ fn a_store_that_is_off_says_so_and_draws_no_panels(cx: &mut TestAppContext) {
     );
 }
 
+/// A game newer than this wowdps says so on Home in one quiet line, by the
+/// newest stored fight's patch, and says nothing while the fights are of
+/// the tables' patch or older (the fixture's are).
+#[gpui_kit::test]
+fn home_says_once_when_the_game_is_newer_than_this_wowdps(cx: &mut TestAppContext) {
+    let rig = home(cx);
+    assert!(shown(cx, &rig, "home-night"));
+    assert!(
+        !shown(cx, &rig, "home-newer"),
+        "the fixture's fights are older"
+    );
+    let tables = wowdps_model::Edition::Retail.tables_patch().unwrap();
+    let newer = wowdps_proto::history::FightCard {
+        id: "newer".to_string(),
+        project_id: 1,
+        build: (tables.0, tables.1, tables.2 + 5),
+        start_utc_ms: i64::MAX / 2,
+        ..wowdps_proto::history::FightCard::default()
+    };
+    rig.gui.update(cx, |g, cx| {
+        g.hist.store.census.learn([&newer]);
+        cx.notify();
+    });
+    assert!(shown(cx, &rig, "home-newer"), "the newer game is said");
+}
+
 #[gpui_kit::test]
 fn home_lays_its_panels_out_in_one_column_narrow(cx: &mut TestAppContext) {
     let rig = rig_over(cx, MockLink::new(stored_mock()), 460., 860.);

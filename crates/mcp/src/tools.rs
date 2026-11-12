@@ -121,7 +121,12 @@ pub fn catalog() -> Vec<Tool> {
                           running, and whether a fight is happening right now. `editions` \
                           lists each game edition's source (v49): its edition (null before \
                           the log names one), what is followed, the log, and which is live; \
-                          `live_edition` names the live one, which the live tools follow.",
+                          `live_edition` names the live one, which the live tools follow. Each \
+                          edition also says the game patch wowdps's tables of it were made \
+                          from (`tables_build`) and the patch of its newest stored fight's log \
+                          (`log_build`); `newer_than_tables` and `notice` say when the game is \
+                          newer, so some of its newer spells may be missing or unnamed until \
+                          wowdps updates (known once a fight of the new patch is stored).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {},
@@ -1074,6 +1079,22 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
 fn status(bridge: &mut Bridge) -> Result<Json, String> {
     let s = bridge.status()?;
     let active = bridge.segments()?.active;
+    // Each edition's newest stored fight, asked once per edition a source
+    // names, and only here: its log's patch against the edition's tables.
+    let mut asked: Vec<(Edition, Option<Patch>)> = Vec::new();
+    let builds: Vec<Option<Patch>> = s
+        .editions
+        .iter()
+        .map(|e| {
+            let edition = e.edition?.counts_as();
+            if let Some((_, build)) = asked.iter().find(|(a, _)| *a == edition) {
+                return *build;
+            }
+            let build = newest_build(bridge, edition);
+            asked.push((edition, build));
+            build
+        })
+        .collect();
     Ok(obj! {
         "daemon": Json::str("running"),
         // The wire version this build speaks — the socket it found the
@@ -1085,7 +1106,13 @@ fn status(bridge: &mut Bridge) -> Result<Json, String> {
         "fight_active": Json::Bool(active),
         // v49: each game edition's source and which is live: the one the
         // live tools follow when no `edition` pins one.
-        "editions": Json::Arr(s.editions.iter().map(edition_source_json).collect()),
+        "editions": Json::Arr(
+            s.editions
+                .iter()
+                .zip(&builds)
+                .map(|(e, build)| edition_source_json(e, *build))
+                .collect()
+        ),
         "live_edition": s
             .editions
             .iter()
@@ -1121,8 +1148,19 @@ fn status(bridge: &mut Bridge) -> Result<Json, String> {
 }
 
 /// v49: one edition's source in `status`: its edition by key and name (null
-/// before the log names one), what is followed, the log, live and running.
-fn edition_source_json(e: &wowdps_proto::EditionSource) -> Json {
+/// before the log names one), what is followed, the log, live and running;
+/// then the patch its tables were made from, `log_build` the patch of its
+/// newest stored fight's log (null with none), and whether that is newer,
+/// with the notice a player reads when it is.
+fn edition_source_json(
+    e: &wowdps_proto::EditionSource,
+    log_build: Option<(u16, u16, u16)>,
+) -> Json {
+    let tables = e.edition.and_then(Edition::tables_patch);
+    let newer = e
+        .edition
+        .zip(log_build)
+        .is_some_and(|(edition, build)| edition.newer_than_tables(build));
     obj! {
         "edition": e.edition.map_or(Json::Null, |e| Json::str(e.key())),
         "edition_name": e.edition.map_or(Json::Null, |e| Json::str(e.label())),
@@ -1131,6 +1169,58 @@ fn edition_source_json(e: &wowdps_proto::EditionSource) -> Json {
         "log": opt_str(e.log.clone()),
         "live": Json::Bool(e.live),
         "game_running": Json::Bool(e.running),
+        "tables_build": tables.map_or(Json::Null, |b| Json::str(patch_words(b))),
+        "log_build": log_build.map_or(Json::Null, |b| Json::str(patch_words(b))),
+        "newer_than_tables": Json::Bool(newer),
+        "notice": match (newer, e.edition, log_build) {
+            (true, Some(edition), Some(build)) => Json::str(newer_notice(edition, build)),
+            _ => Json::Null,
+        },
+    }
+}
+
+/// A game patch as a log's BUILD_VERSION names it: (major, minor, patch).
+type Patch = (u16, u16, u16);
+
+/// A patch as the game writes it: `12.1.5`.
+fn patch_words((major, minor, patch): Patch) -> String {
+    format!("{major}.{minor}.{patch}")
+}
+
+/// What `status` tells a player whose game is newer than wowdps's tables
+/// of it, in their terms: what may be missing, and until when.
+fn newer_notice(edition: Edition, build: (u16, u16, u16)) -> String {
+    format!(
+        "{} {} is newer than this wowdps: some newer spells may be missing or unnamed \
+         until wowdps updates.",
+        edition.label(),
+        patch_words(build)
+    )
+}
+
+/// The build of `edition`'s newest fight stored from this machine's logs,
+/// one card asked of the store; `None` with no such fight, a fight whose
+/// log named no build, or a store that cannot answer, so `status` still
+/// answers.
+fn newest_build(bridge: &mut Bridge, edition: Edition) -> Option<(u16, u16, u16)> {
+    let query = HistoryQuery::Fights {
+        encounter: None,
+        difficulty: None,
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: FightSort::Newest,
+        limit: 1,
+        after_id: None,
+        role: None,
+        origin: OriginFilter::Local,
+        edition: Some(edition),
+    };
+    match bridge.history(query) {
+        Ok(HistoryAnswer::Fights { cards, .. }) => {
+            cards.first().map(|c| c.build).filter(|b| *b != (0, 0, 0))
+        }
+        _ => None,
     }
 }
 
@@ -5010,6 +5100,61 @@ mod tests {
             Json::Obj(o) => o.iter().map(|(k, _)| k.as_str()).collect(),
             other => panic!("not an object: {other:?}"),
         }
+    }
+
+    /// `status` holds each edition's newest stored fight's patch against
+    /// the patch its tables were made from: a later patch is newer and
+    /// carries the notice a player reads, the same patch or no stored fight
+    /// is not, and a source whose log names no edition yet says nothing of
+    /// either.
+    #[test]
+    fn status_says_when_an_editions_game_is_newer_than_its_tables() {
+        let source = |edition| wowdps_proto::EditionSource {
+            edition,
+            source: Some("dir:/logs".to_string()),
+            log: None,
+            live: true,
+            running: false,
+        };
+        let tables = Edition::Retail.tables_patch().unwrap();
+        let later = (tables.0, tables.1, tables.2 + 5);
+        let j = edition_source_json(&source(Some(Edition::Retail)), Some(later));
+        assert_eq!(
+            j.get("tables_build").and_then(Json::as_str),
+            Some(patch_words(tables).as_str())
+        );
+        assert_eq!(
+            j.get("log_build").and_then(Json::as_str),
+            Some(patch_words(later).as_str())
+        );
+        assert_eq!(j.get("newer_than_tables"), Some(&Json::Bool(true)));
+        let notice = j.get("notice").and_then(Json::as_str).unwrap();
+        assert!(
+            notice.starts_with(&format!("Retail {}", patch_words(later))),
+            "{notice}"
+        );
+        assert!(notice.contains("may be missing or unnamed until wowdps updates"));
+        assert!(!notice.contains("table"), "{notice}");
+
+        for build in [Some(tables), None] {
+            let j = edition_source_json(&source(Some(Edition::Retail)), build);
+            assert_eq!(
+                j.get("newer_than_tables"),
+                Some(&Json::Bool(false)),
+                "{build:?}"
+            );
+            assert_eq!(j.get("notice"), Some(&Json::Null), "{build:?}");
+        }
+        let forever = Edition::Forever.tables_patch().unwrap();
+        let j = edition_source_json(&source(Some(Edition::Forever)), Some(forever));
+        assert_eq!(
+            j.get("tables_build").and_then(Json::as_str),
+            Some(patch_words(forever).as_str())
+        );
+        assert_eq!(j.get("newer_than_tables"), Some(&Json::Bool(false)));
+        let j = edition_source_json(&source(None), Some(later));
+        assert_eq!(j.get("tables_build"), Some(&Json::Null));
+        assert_eq!(j.get("newer_than_tables"), Some(&Json::Bool(false)));
     }
 
     /// v49: the history tools' `edition` filter: the two editions by name

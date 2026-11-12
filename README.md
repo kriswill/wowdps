@@ -84,7 +84,8 @@ wowdps --edition forever     # one edition's logs (retail or forever) when
                              # followed), else an empty list under its name;
                              # without it, the live edition's
 wowdps status                # daemon state: each edition's source, its log
-                             # and which is live
+                             # and which is live, and whether the game is
+                             # newer than this wowdps knows
 wowdps stop                  # stop the daemon
 wowdps addon install         # put the wowdps addon in the game's AddOns
                              # folder: it records your raid's guilds, which
@@ -255,6 +256,14 @@ row restores their build in that game. Opening it on a player with
 COMBATANT_INFO in the log shows their actual logged talents and gear instead.
 The pane artwork comes from `tools/gen-talent-art.sh`; without it the trees
 draw on plain panels.
+
+### A game newer than wowdps
+
+wowdps names spells, classes and items from tables made from one patch of
+each game. When your game is on a later patch, Home says so in one line, and
+`wowdps status` and the MCP `status` tool say it per game: some newer spells
+may be missing or unnamed until wowdps updates. Every amount is still
+counted. It is known once a fight of the newer patch has been stored.
 
 ## Development
 
