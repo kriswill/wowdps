@@ -47,9 +47,9 @@ pub enum SegmentRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum EditionRef {
     /// The live edition, the game being played: the running one; with both
-    /// running, the one in a pull, else the one whose log grew last; with
-    /// neither, the one whose log was written last (CONTRACT.md has the
-    /// rule). A following client is moved when it changes, as it is
+    /// running, the one in a pull, else the one writing the newest lines;
+    /// with neither, the one whose log was written last (CONTRACT.md has
+    /// the rule). A following client is moved when it changes, as it is
     /// when the log file changes.
     #[default]
     Follow,

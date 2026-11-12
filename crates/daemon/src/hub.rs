@@ -2104,19 +2104,44 @@ mod tests {
         )]
     }
 
-    /// A boss pull opening on Forever's clock after `forever.txt`'s end.
+    /// The same pull at `min` minutes past 10:00 on 11/2/2026, UTC−8: on
+    /// the clock both logs' timed lines share in the live edition's tests
+    /// ([`stamp`]), where lines must be later than the live log's to take it.
+    fn retail_pull_at(min: u32) -> Vec<String> {
+        retail_pull(min)
+            .iter()
+            .map(|l| {
+                l.replacen("7/27/2026 20:", "11/2/2026 10:", 1)
+                    .replacen("-4 ", "-8 ", 1)
+            })
+            .collect()
+    }
+
+    fn retail_end_at(min: u32) -> Vec<String> {
+        retail_end(min)
+            .iter()
+            .map(|l| {
+                l.replacen("7/27/2026 20:", "11/2/2026 10:", 1)
+                    .replacen("-4 ", "-8 ", 1)
+            })
+            .collect()
+    }
+
+    /// A boss pull opening in Forever's log at `min` minutes past 10:00 on
+    /// 11/2/2026, UTC−8 ([`retail_pull_at`]'s clock), after `forever.txt`'s
+    /// end.
     fn forever_pull(min: u32) -> Vec<String> {
         vec![
-            format!("11/1/2026 20:{min:02}:00.000-8  ENCOUNTER_START,2914,\"Geilhast\",1,5,48"),
+            format!("11/2/2026 10:{min:02}:00.000-8  ENCOUNTER_START,2914,\"Geilhast\",1,5,48"),
             format!(
-                "11/1/2026 20:{min:02}:01.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990001-0000A0B001,\"Geilhast\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990001-0000A0B001,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST"
+                "11/2/2026 10:{min:02}:01.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990001-0000A0B001,\"Geilhast\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990001-0000A0B001,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST"
             ),
         ]
     }
 
     fn forever_end(min: u32) -> Vec<String> {
         vec![format!(
-            "11/1/2026 20:{min:02}:31.000-8  ENCOUNTER_END,2914,\"Geilhast\",1,5,1,21000"
+            "11/2/2026 10:{min:02}:31.000-8  ENCOUNTER_END,2914,\"Geilhast\",1,5,1,21000"
         )]
     }
 
@@ -2777,7 +2802,7 @@ mod tests {
 
         // A Retail pull opening while Forever's is open moves nothing: the
         // Retail pin hears of it, the follower not.
-        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull(30))));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull_at(30))));
         assert_eq!(hub.sources.live(), 1, "Forever's pull is open");
         assert!(opened(&drain(&follower)).is_empty());
         assert_eq!(opened(&drain(&retail)).len(), 1);
@@ -2791,12 +2816,12 @@ mod tests {
             Some(Some(Edition::Retail))
         );
         // Neither has a pull open: it stays, until the other opens one.
-        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_end(30))));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_end_at(30))));
         assert_eq!(hub.sources.live(), 0, "neither open: kept");
-        hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_pull(20))));
+        hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_pull(40))));
         assert_eq!(hub.sources.live(), 1);
-        hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_end(20))));
-        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull(40))));
+        hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_end(40))));
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_pull_at(50))));
         assert_eq!(hub.sources.live(), 0);
         assert_eq!(
             last_list(&drain(&follower)).map(|l| l.1),
@@ -2968,6 +2993,45 @@ mod tests {
         )]
     }
 
+    /// A hit on a creature in Forever's log at `t` ([`stamp`]): out of an
+    /// encounter, a trash pull opened or kept open.
+    fn forever_hit(t: u32) -> Vec<String> {
+        vec![format!(
+            "{}  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990002-0000A0B002,\"Murloc\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990002-0000A0B002,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST",
+            stamp(t)
+        )]
+    }
+
+    /// `ms` (UTC, since the epoch) as a line's stamp written at UTC+0.
+    fn utc_stamp(ms: i64) -> String {
+        let (days, rem) = (ms.div_euclid(86_400_000), ms.rem_euclid(86_400_000));
+        // Days since 1970-01-01 to the civil date.
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = yoe + era * 400 + i64::from(m <= 2);
+        format!(
+            "{m}/{d}/{y} {:02}:{:02}:{:02}.{:03}+0",
+            rem / 3_600_000,
+            rem / 60_000 % 60,
+            rem / 1000 % 60,
+            rem % 1000
+        )
+    }
+
+    /// The daemon's clock now, in UTC milliseconds since the epoch.
+    fn now_ms() -> i64 {
+        let d = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        i64::try_from(d.as_millis()).unwrap()
+    }
+
     /// A second past `HANDOFF_QUIET`.
     const QUIET: Duration = Duration::from_secs(HANDOFF_QUIET.as_secs() + 1);
 
@@ -3057,14 +3121,14 @@ mod tests {
             assert!(hub.sources.engine(1).pull_open());
             for k in 0..6 {
                 hub.sources.age_for_test(Duration::from_secs(30));
-                hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(30 * k))));
+                hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(602 + 30 * k))));
                 hub.tick();
                 assert_eq!(hub.sources.live(), 1, "both={both}: Forever's pull is open");
             }
             assert!(!moved_to(&drain(&follower), Edition::Retail));
             hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_end(10))));
             hub.sources.age_for_test(QUIET);
-            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(200))));
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(900))));
             hub.tick();
             assert_eq!(hub.sources.live(), 0, "both={both}: the pull is over");
         }
@@ -3132,7 +3196,7 @@ mod tests {
             assert_eq!(opened(&got).len(), 1, "both={both}: {got:?}");
             assert!(moved_to(&got, Edition::Forever));
             hub.sources.age_for_test(QUIET);
-            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(20))));
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(700))));
             hub.tick();
             assert_eq!(hub.sources.live(), 1, "both={both}: its pull holds it");
         }
@@ -3352,6 +3416,135 @@ mod tests {
             assert!(!moved_to(&drain(&follower), Edition::Retail), "both={both}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RV-A: Forever fought trash and the player tabbed to Retail, which is
+    /// live. Forever's late flush lands in its log's open trailing trash
+    /// pull, holding it open by arrival — but its lines are older than
+    /// Retail's newest: they take nothing, on the line, on the tick or later
+    /// with no game seen. The player going back to Forever does.
+    #[test]
+    fn a_late_flush_into_an_open_trash_pull_takes_nothing() {
+        for both in [true, false] {
+            let (mut hub, follower) = playing_forever(both);
+            hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_hit(0))));
+            hub.sources.age_for_test(Duration::from_secs(70));
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(70))));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: tabbed to Retail");
+            drain(&follower);
+            hub.sources.age_for_test(Duration::from_secs(20));
+            hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_buff(30))));
+            assert!(hub.sources.engine(1).pull_open(), "held open by arrival");
+            assert_eq!(hub.sources.live(), 0, "both={both}: on the line");
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: on the tick");
+            for _ in 0..3 {
+                hub.sources.age_for_test(Duration::from_secs(60));
+                hub.tick();
+                assert_eq!(hub.sources.live(), 0, "both={both}: later");
+            }
+            assert!(!moved_to(&drain(&follower), Edition::Forever));
+            hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_buff(400))));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 1, "both={both}: back in Forever");
+        }
+    }
+
+    /// RV-B: Retail is live; Forever's late flush opens a trash pull of its
+    /// own, with lines older than Retail's newest. The pull it opens takes
+    /// nothing, then or while it is held open.
+    #[test]
+    fn a_late_flush_that_opens_a_pull_takes_nothing() {
+        for both in [true, false] {
+            let (mut hub, follower) = playing_forever(both);
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(200))));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: tabbed to Retail");
+            drain(&follower);
+            let mut flush = forever_hit(100);
+            flush.extend(forever_buff(150));
+            hub.handle(HubMsg::Tail(1, TailEvent::Lines(flush)));
+            assert!(hub.sources.engine(1).pull_open(), "a pull opened");
+            assert_eq!(hub.sources.live(), 0, "both={both}: on the line");
+            for wait in [30, 35] {
+                hub.sources.age_for_test(Duration::from_secs(wait));
+                hub.tick();
+                assert_eq!(hub.sources.live(), 0, "both={both}");
+            }
+            assert!(!moved_to(&drain(&follower), Edition::Forever));
+        }
+    }
+
+    /// RV-C: Retail is live, and its log rotates to a new file still empty.
+    /// Retail's newest line time stays what its last log showed, so the
+    /// exit flush of the game left, older than that, takes nothing.
+    #[test]
+    fn a_rotation_to_an_empty_log_keeps_the_newest_line_time() {
+        let (dir, empty) = scratch_log("empty", "WoWCombatLog-110226_101000.txt", "");
+        for both in [true, false] {
+            let (mut hub, follower) = playing_forever(both);
+            hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(600))));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: tabbed to Retail");
+            let newest = hub.sources.engine(0).line_ms();
+            assert!(newest.is_some());
+            drain(&follower);
+            deliver_log_to(&mut hub, 0, &empty, 0);
+            hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: after the rotation");
+            assert_eq!(hub.sources.engine(0).line_ms(), newest, "kept");
+            hub.sources.age_for_test(Duration::from_secs(20));
+            hub.handle(HubMsg::Tail(1, TailEvent::Lines(forever_buff(590))));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: the old game's flush");
+            for _ in 0..3 {
+                hub.sources.age_for_test(Duration::from_secs(60));
+                hub.tick();
+                assert_eq!(hub.sources.live(), 0, "both={both}: later");
+            }
+            assert!(!moved_to(&drain(&follower), Edition::Forever));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RV-D: the live log's newest line is dated an hour past the daemon's
+    /// clock (a clock run fast, an offset kept across a daylight saving
+    /// change). It counts as a minute past the clock when it was shown, so
+    /// the other game's lines past that take the live edition, and do not
+    /// wait the hour.
+    #[test]
+    fn a_line_dated_ahead_of_the_clock_holds_the_live_edition_a_minute_at_most() {
+        let ahead = now_ms() + 3_600_000;
+        assert_eq!(
+            crate::engine::line_utc_ms(&format!("{}  ZONE_CHANGE,1,\"x\",0", utc_stamp(ahead))),
+            Some(ahead)
+        );
+        let buff = |edition: &str, ms: i64| -> Vec<String> {
+            let line = if edition == "forever" {
+                forever_buff(0)
+            } else {
+                retail_buff(0)
+            };
+            line.iter()
+                .map(|l| l.replacen(&stamp(0), &utc_stamp(ms), 1))
+                .collect()
+        };
+        for both in [true, false] {
+            let (mut hub, follower) = playing_forever(both);
+            hub.handle(HubMsg::Tail(1, TailEvent::Lines(buff("forever", ahead))));
+            let shown = hub.sources.engine(1).line_ms().unwrap();
+            assert!(shown < ahead && shown <= now_ms() + 60_000, "{shown}");
+            hub.sources.age_for_test(QUIET);
+            hub.handle(HubMsg::Tail(
+                0,
+                TailEvent::Lines(buff("retail", now_ms() + 90_000)),
+            ));
+            hub.tick();
+            assert_eq!(hub.sources.live(), 0, "both={both}: not held the hour");
+            assert!(moved_to(&drain(&follower), Edition::Retail));
+        }
     }
 
     /// The bound: lines alone, no pull opening — two logs written in turn,

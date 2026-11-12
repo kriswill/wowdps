@@ -29,10 +29,13 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   live edition by its rule there. A session no source serves acts on
   nothing. A log growing (`Engine::grew`) moves the live edition only on
   the tick (`Sources::tick`), so two logs growing in one tick move
-  nothing, and only with a newest line later by its own time
-  (`engine::line_utc_ms`) than the live log's (`Engine::line_ms`), so a
-  game left flushing late moves nothing. Tests stand in for the clock with
-  `Sources::age_for_test` and time their lines on one clock.
+  nothing. Every move on another edition's lines (a pull opened or held
+  open, growth, a log written last) passes one test, `Sources::may_take`:
+  their own time (`engine::line_utc_ms`) later than the live log's newest
+  (`Engine::line_ms`, kept through a rotation), so a game left flushing
+  late takes nothing. A new path that moves the live edition on lines goes
+  through it too. Tests stand in for the clock with `Sources::age_for_test`
+  and time their lines on one clock.
   Over the hub's one-source scenario a daemon of one source queues the
   wire bytes it queued before editions were followed:
   `one_source_frames_are_the_daemon_s_before_editions` holds them to

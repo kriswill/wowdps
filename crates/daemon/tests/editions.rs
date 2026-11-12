@@ -1581,15 +1581,23 @@ fn a_source_named_zero_is_named_nothing() {
 /// poll has none (the backlog read, then caught up): whether any of them
 /// grew the source's log (`Engine::grew`).
 fn settle(tailer: &mut Tailer, engine: &mut Engine) -> bool {
-    let mut grew = false;
+    settle_ms(tailer, engine).0
+}
+
+/// [`settle`], with the newest line time of the growth those events
+/// carried (`Engine::grew_ms`, the latest of each event's, as the hub
+/// gathers them).
+fn settle_ms(tailer: &mut Tailer, engine: &mut Engine) -> (bool, Option<i64>) {
+    let (mut grew, mut ms) = (false, None);
     for _ in 0..64 {
         let events = tailer.poll();
         if events.is_empty() {
-            return grew;
+            return (grew, ms);
         }
         for ev in events {
             engine.on_tail(ev, &mut Vec::new());
             grew |= engine.grew();
+            ms = ms.max(engine.grew_ms());
         }
     }
     panic!("the tailer never settled");
@@ -1634,8 +1642,11 @@ fn only_the_game_writing_now_grows_a_log() {
     append(&first, BUFF);
     assert!(!settle(&mut tailer, &mut engine), "half a line");
     append(&first, "\n");
-    assert!(settle(&mut tailer, &mut engine), "the line completed");
-    assert_eq!(engine.grew_ms(), line_utc_ms(BUFF), "the growth's own time");
+    assert_eq!(
+        settle_ms(&mut tailer, &mut engine),
+        (true, line_utc_ms(BUFF)),
+        "the line completed, the growth's own time"
+    );
     assert_eq!(engine.line_ms(), line_utc_ms(BUFF));
     assert!(!settle(&mut tailer, &mut engine), "nothing since");
 
@@ -1648,9 +1659,17 @@ fn only_the_game_writing_now_grows_a_log() {
 
     let second = dir.join("WoWCombatLog-110126_210000.txt");
     std::fs::copy(FOREVER_LOG, &second).unwrap();
-    assert!(settle(&mut tailer, &mut engine), "a new log");
+    assert_eq!(
+        settle_ms(&mut tailer, &mut engine),
+        (true, last),
+        "a new log, grown as far as its own last line"
+    );
     assert_eq!(engine.source_path.as_deref(), Some(second.as_path()));
-    assert_eq!(engine.line_ms(), last, "the new log's last line");
+    assert_eq!(
+        engine.line_ms(),
+        line_utc_ms(BUFF),
+        "the source's newest stays: the new log's last line is older"
+    );
 
     std::fs::remove_file(&second).unwrap();
     let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
@@ -1661,6 +1680,11 @@ fn only_the_game_writing_now_grows_a_log() {
         .unwrap();
     assert!(!settle(&mut tailer, &mut engine), "back to an older log");
     assert_eq!(engine.source_path.as_deref(), Some(first.as_path()));
+    assert_eq!(
+        engine.line_ms(),
+        line_utc_ms(BUFF),
+        "kept through the switches"
+    );
 
     let empty = tmp.0.join("Empty");
     std::fs::create_dir_all(&empty).unwrap();

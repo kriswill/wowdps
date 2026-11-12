@@ -220,8 +220,11 @@ pub struct Engine {
     /// start, nor the same file re-read after a truncation. Its index says
     /// whether the game created it just now ([`Engine::grew`]).
     new_log: bool,
-    /// The newest line time this source's log has shown ([`Engine::line_ms`]).
+    /// The newest line time this source's logs have shown ([`Engine::line_ms`]).
     line_ms: Option<i64>,
+    /// The newest line time of the lines that arrived after the backlog of
+    /// the log followed now ([`Engine::fresh_ms`]).
+    fresh_ms: Option<i64>,
     /// The newest line time of the growth the tail event last fed, `None`
     /// when it grew none or its lines carry no comparable time
     /// ([`Engine::grew_ms`]).
@@ -278,6 +281,27 @@ const TAIL_WINDOW: u64 = 64 * 1024;
 pub fn line_utc_ms(line: &str) -> Option<i64> {
     let parsed = parse_line(line)?;
     utc_ms(parsed.ts_ms, line)
+}
+
+/// How far past the daemon's own clock a line's time is believed as the
+/// newest a log has shown ([`Engine::line_ms`]): a line dated later (a
+/// clock run fast, a log from another host, an offset the game kept across
+/// a daylight saving change) counts as this far ahead of when it was shown,
+/// so it cannot keep another edition's current lines from taking the live
+/// edition for longer than this.
+pub const LINE_AHEAD: Duration = Duration::from_secs(60);
+
+/// `t` as a log's newest line time ([`Engine::line_ms`]): at most
+/// [`LINE_AHEAD`] past the daemon's clock now.
+fn shown(t: Option<i64>) -> Option<i64> {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from((d + LINE_AHEAD).as_millis()).ok());
+    match now {
+        Some(cap) => t.map(|t| t.min(cap)),
+        None => t,
+    }
 }
 
 /// [`line_utc_ms`] for a line already parsed to `ts_ms`.
@@ -355,6 +379,7 @@ impl Engine {
             waiting: false,
             new_log: false,
             line_ms: None,
+            fresh_ms: None,
             grew_ms: None,
             mine: Arc::default(),
             source_edition: None,
@@ -422,13 +447,30 @@ impl Engine {
         self.grew
     }
 
-    /// The newest line time this source's log has shown ([`line_utc_ms`]):
-    /// its last complete line when its index landed, then each line read
-    /// since. `None` before any, or for lines that carry no comparable time.
-    /// What another log's growth must be later than to move the live
-    /// edition (`sources::Sources::tick`).
+    /// The newest line time this source's logs have shown ([`line_utc_ms`]):
+    /// a log's last complete line when its index lands, then each line read
+    /// — kept through a rotation, so a new log still empty, or older, never
+    /// lowers it — each as at most a minute past the daemon's own clock when
+    /// it was shown ([`LINE_AHEAD`]). `None` before any, or for lines that
+    /// carry no comparable time. What another edition's lines must be later
+    /// than to take the live edition from this source (`sources::Sources::
+    /// may_take`).
     pub fn line_ms(&self) -> Option<i64> {
         self.line_ms
+    }
+
+    /// The newest line time of the lines that arrived after the backlog of
+    /// the log followed now: how far the game's writing has reached while
+    /// the daemon watched, and so the time of the pull those lines open or
+    /// hold open. `None` before any, or when none carried a time.
+    pub fn fresh_ms(&self) -> Option<i64> {
+        self.fresh_ms
+    }
+
+    /// Whether lines of the log followed now arrived after its backlog: its
+    /// `written` time is then theirs, not its modified time.
+    pub fn wrote_fresh(&self) -> bool {
+        self.last_fresh.is_some()
     }
 
     /// The newest line time of the growth the tail event last fed: its
@@ -528,9 +570,10 @@ impl Engine {
                     }
                 }
                 let batch_ms = newest.and_then(|(ts, line)| utc_ms(ts, line));
-                self.line_ms = self.line_ms.max(batch_ms);
+                self.line_ms = self.line_ms.max(shown(batch_ms));
                 if self.grew {
                     self.grew_ms = batch_ms;
+                    self.fresh_ms = self.fresh_ms.max(batch_ms);
                 }
                 while self.live_ids.len() < self.meter.segments().len() {
                     let id = self.fresh_id();
@@ -589,7 +632,9 @@ impl Engine {
                     None => self.waiting,
                 };
                 self.waiting = false;
-                self.line_ms = None;
+                // The source's newest line time stays: a new log, still
+                // empty or older, has shown nothing later.
+                self.fresh_ms = None;
                 // A different log file is a different session: reset all
                 // per-file state. Ids keep counting — that is the whole
                 // point of daemon-lifetime monotonicity.
@@ -630,19 +675,20 @@ impl Engine {
                 self.written = file_age_ms
                     .and_then(|age| SystemTime::now().checked_sub(Duration::from_millis(age)));
                 // How far the log had reached when it was scanned: its last
-                // complete line's time.
-                self.line_ms = self
+                // complete line's time, raising the source's newest.
+                let last = self
                     .source_path
                     .as_deref()
                     .and_then(|path| last_line_ms(path, index.scanned));
+                self.line_ms = self.line_ms.max(shown(last));
                 // A new log modified just now is the game writing it: its
-                // source grew, as far as its last line. One switched back
-                // to, older, is not.
+                // source grew, as far as its own last line. One switched
+                // back to, older, is not.
                 if std::mem::take(&mut self.new_log)
                     && file_age_ms.is_some_and(|age| Duration::from_millis(age) < FRESH_WINDOW)
                 {
                     self.grew = true;
-                    self.grew_ms = self.line_ms;
+                    self.grew_ms = last;
                 }
                 // v49: the scan read the header; the log's edition is
                 // known now, not only once the seed lines replay it.

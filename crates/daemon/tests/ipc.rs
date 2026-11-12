@@ -850,8 +850,8 @@ fn an_idle_edition_costs_close_to_nothing() {
 /// pinned to Retail is answered Retail's log whichever is live; a
 /// following one is answered the live edition's — with no game running,
 /// the log written last — and is moved, its frames naming the other
-/// edition, when the other log is written later while the live one has no
-/// pull open.
+/// edition, when the other log is written later, with lines later than the
+/// live log's, while the live one has no pull open.
 #[test]
 fn a_daemon_follows_one_source_per_edition_and_moves_its_followers() {
     use wowdps_model::Edition;
@@ -932,8 +932,9 @@ fn a_daemon_follows_one_source_per_edition_and_moves_its_followers() {
         other => panic!("{other:?}"),
     }
 
-    // Retail's log is written now: once its lines land after the backlog,
-    // its log is the one written last and the follower is moved.
+    // Retail's log is written now, with lines later than Forever's newest
+    // (its fixture ends on 11/1/2026): once they land after the backlog,
+    // they open a pull and the follower is moved.
     let mut seen = Vec::new();
     let deadline = Instant::now() + DEADLINE;
     let mut sec = 0;
@@ -945,7 +946,7 @@ fn a_daemon_follows_one_source_per_edition_and_moves_its_followers() {
         append(
             &retail_log,
             &format!(
-                "7/27/2026 20:30:{sec:02}.000-4  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n"
+                "11/2/2026 10:30:{sec:02}.000-8  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n"
             ),
         );
         sec += 1;
