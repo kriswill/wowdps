@@ -20,9 +20,11 @@
 # before the log began counts as nobody's. One pass of grep + awk per log
 # (the logs are large; never cat them). The pairs come from the generator
 # itself (`wowdps-extract proc-pairs`), so the census and the table cannot
-# disagree on what is curated. Output is a CSV, one row per (pair, log),
-# sorted; the committed copy is tools/proc-spells-census.csv, which
-# `wowdps-extract gen-proc-spells --census` reads.
+# disagree on what is curated. Output is a CSV, one row per (pair, log), the
+# log labeled `log 1`, `log 2`, … in the order given (never the file's name,
+# which says when it was played), sorted by pair, then log; the committed
+# copy is tools/proc-spells-census.csv, which `wowdps-extract gen-proc-spells
+# --census` reads.
 #
 # usage: tools/census-proc-spells.sh [-o out.csv] <WoWCombatLog-*.txt>...
 set -euo pipefail
@@ -49,7 +51,7 @@ for log in "$@"; do
     # the spell id and quoted name (a name holding a comma shifts them and
     # the line is skipped — a handful per log). The log is CRLF.
     LC_ALL=C grep -F '  SPELL_' "$log" \
-        | LC_ALL=C awk -F, -v LOG="$(basename "$log")" -v PAIRS="$work/pairs.tsv" '
+        | LC_ALL=C awk -F, -v LOG="log $i" -v PAIRS="$work/pairs.tsv" '
             function ms(ts,   a, t) {
                 split(ts, a, " "); split(a[2], t, ":")
                 return (t[1] * 3600 + t[2] * 60 + t[3]) * 1000
@@ -120,5 +122,5 @@ done
 
 {
     echo 'proc_id,proc_name,driver,log,onsets,f50,f250,f1500,lands,on'
-    LC_ALL=C sort -t, -k1,1n -k3,3 -k4,4 "$work"/*.csv
+    LC_ALL=C sort -t, -k1,1n -k3,3 -k4.5,4n "$work"/*.csv
 } > "$out"

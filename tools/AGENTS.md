@@ -57,7 +57,8 @@ what it does and how to run it.
   client proves) that the generator checks against the client's own data,
   plus a committed real-log census (`tools/*-census.csv` from
   `census-*.sh`). Rerun the census when curating, and commit counts,
-  never names. A new `placed` entry changes the replay cut: the stored
+  never names: a census labels its logs `log 1`, `log 2`, … in the order
+  given, since a log's file name says when it was played. A new `placed` entry changes the replay cut: the stored
   replays take it when they are cut again (a replay format bump sends
   every one through the daemon's rewrite queue).
 - **Real names stay on the machine.** The history store,

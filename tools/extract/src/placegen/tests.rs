@@ -69,7 +69,7 @@ const EARTHBIND: Curated = entry(
 );
 
 fn census(rows: &str) -> Census {
-    Census::parse(&format!("event,id,name,a.txt,b.txt\n{rows}")).unwrap()
+    Census::parse(&format!("event,id,name,log 1,log 2\n{rows}")).unwrap()
 }
 
 #[test]

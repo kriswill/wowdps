@@ -243,7 +243,7 @@ impl Counts {
 /// name the log wrote the proc under and its counts.
 #[derive(Debug, Default)]
 pub struct Census {
-    /// Log basenames, first-seen order.
+    /// The logs' labels (`log 1`, `log 2`, …), first-seen order.
     pub logs: Vec<String>,
     /// (proc id, driver) → (proc names seen, counts per log in `logs` order).
     pub pairs: HashMap<(u32, String), (BTreeSet<String>, Vec<Counts>)>,
@@ -765,10 +765,10 @@ mod tests {
 
     fn good_census() -> Census {
         census(
-            "383346,Expurgation,Blade of Justice,a.txt,100,80,99,100,400,0\n\
-             403695,Truth's Wake,Wake of Ashes,a.txt,10,10,10,10,60,0\n\
-             1241167,Virulent Plague (Erupt),Virulent Plague,a.txt,50,1,2,5,50,49\n\
-             1241167,Virulent Plague (Erupt),Virulent Plague,b.txt,0,0,0,0,0,0\n",
+            "383346,Expurgation,Blade of Justice,log 1,100,80,99,100,400,0\n\
+             403695,Truth's Wake,Wake of Ashes,log 1,10,10,10,10,60,0\n\
+             1241167,Virulent Plague (Erupt),Virulent Plague,log 1,50,1,2,5,50,49\n\
+             1241167,Virulent Plague (Erupt),Virulent Plague,log 2,0,0,0,0,0,0\n",
         )
     }
 
@@ -811,7 +811,7 @@ mod tests {
             "Blade of Justice",
             "Retribution",
         )];
-        let c = census("403695,Truth's Wake,Blade of Justice,a.txt,10,10,10,10,60,0\n");
+        let c = census("403695,Truth's Wake,Blade of Justice,log 1,10,10,10,10,60,0\n");
         let err = generate_curated(&guess, &tables(), &c, "x").unwrap_err();
         assert!(err.contains("a guess, not a curation"), "{err}");
     }
@@ -819,9 +819,9 @@ mod tests {
     #[test]
     fn a_pair_the_logs_do_not_show_is_refused_unless_exempt() {
         let c = census(
-            "383346,Expurgation,Blade of Justice,a.txt,100,1,2,30,400,0\n\
-             403695,Truth's Wake,Wake of Ashes,a.txt,10,10,10,10,60,0\n\
-             1241167,Virulent Plague (Erupt),Virulent Plague,a.txt,50,1,2,5,50,49\n",
+            "383346,Expurgation,Blade of Justice,log 1,100,1,2,30,400,0\n\
+             403695,Truth's Wake,Wake of Ashes,log 1,10,10,10,10,60,0\n\
+             1241167,Virulent Plague (Erupt),Virulent Plague,log 1,50,1,2,5,50,49\n",
         );
         let err = generate_curated(GOOD, &tables(), &c, "x").unwrap_err();
         assert!(err.contains("30.0% within 1.5 s"), "{err}");
@@ -840,7 +840,7 @@ mod tests {
         renamed[1].driver = "Wake of Light";
         let err = generate_curated(&renamed, &tables(), &good_census(), "x").unwrap_err();
         assert!(err.contains("curated as \"Wake of Light\""), "{err}");
-        let c = census("403695,Truth's Wake,Wake of Ashes,a.txt,10,10,10,10,60,0\n");
+        let c = census("403695,Truth's Wake,Wake of Ashes,log 1,10,10,10,10,60,0\n");
         let err = generate_curated(GOOD, &tables(), &c, "x").unwrap_err();
         assert!(err.contains("the census never saw it"), "{err}");
     }
@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn the_census_parses_pairs_across_logs() {
         let c = good_census();
-        assert_eq!(c.logs, ["a.txt", "b.txt"]);
+        assert_eq!(c.logs, ["log 1", "log 2"]);
         let (names, per_log) = &c.pairs[&(1241167, "Virulent Plague".to_string())];
         assert_eq!(names.len(), 1);
         assert_eq!(per_log.len(), 2);
