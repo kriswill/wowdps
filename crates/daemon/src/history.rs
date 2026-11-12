@@ -56,6 +56,7 @@ use crate::hub::HubMsg;
 use crate::loader::{LoadReply, LoadReq};
 use crate::mine::Mine;
 use crate::roles::Roles;
+use crate::swept::{self, Manifest, Stat};
 
 /// Bound of the hub → history channel. A night's worth of pulls is a few
 /// dozen; 64 in flight means the thread is wedged, and dropping (counted)
@@ -99,7 +100,9 @@ pub struct HistoryOptions {
     /// "Name-Realm" strings that are "me" (spec §9); empty = infer.
     pub characters: Vec<String>,
     /// The index-checkpoint cache, so the start-up sweep of old logs costs
-    /// a tail rescan, not a full one.
+    /// a tail rescan, not a full one — and where the sweep's manifest
+    /// (`swept`) lives, so a log read whole is not read again. `None`:
+    /// every start reads every log.
     pub cache_dir: Option<PathBuf>,
     /// The game's product directory (`<install>/_retail_`) the tailed logs
     /// belong to — where the wowdps addon lives and where its
@@ -526,7 +529,16 @@ pub fn spawn(
     let reply = link.clone();
     thread::spawn(move || {
         let cache = opts.cache_dir.clone().map(IndexCache::new);
-        let store = Store::open(DirBackend::new(opts.dir.clone()), Retention::from(&opts));
+        let retention = Retention::from(&opts);
+        let rules = swept::rules(&retention);
+        let mut store = Store::open(DirBackend::new(opts.dir.clone()), retention);
+        // The logs read whole before, beside the checkpoints: a start reads
+        // only what is new (`swept`), for this store alone. No cache, no
+        // manifest: every start reads every log, as before there was one.
+        let manifest = opts
+            .cache_dir
+            .as_deref()
+            .map(|dir| Manifest::load(dir, rules, store.identity()));
         let mut worker = Worker {
             store,
             loader,
@@ -537,6 +549,9 @@ pub fn spawn(
             queued: HashSet::new(),
             inflight: false,
             logs: HashMap::new(),
+            manifest,
+            reading: HashMap::new(),
+            load_failures: 0,
             sources,
             scans: VecDeque::new(),
             backfill: VecDeque::new(),
@@ -558,8 +573,9 @@ pub fn spawn(
         // store older than the tier, a progression wipe): cut alone.
         worker.backfill.extend(worker.store.recuts());
         for root in &sweep_roots {
-            worker.sweep(root);
+            worker.sweep(root, true);
         }
+        worker.flush_manifest();
         if !sweep_roots.is_empty() {
             worker.publish(&status);
         }
@@ -575,9 +591,12 @@ pub fn spawn(
 fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<HistoryStatus>>) {
     loop {
         let req = if w.scans.is_empty() && w.backfill.is_empty() {
-            // Idle: wake now and then to notice a SavedVariables write —
-            // the addon's guild data lands on logout, when no fight is
-            // closing and no client need be asking.
+            // Idle: what the manifest learned since its last write (a
+            // fight retention evicted) is written before the wait.
+            w.flush_manifest();
+            // Wake now and then to notice a SavedVariables write — the
+            // addon's guild data lands on logout, when no fight is closing
+            // and no client need be asking.
             match rx.recv_timeout(SAVED_VARIABLES_POLL) {
                 Ok(req) => Some(req),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
@@ -597,6 +616,7 @@ fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<Hi
                     } else {
                         w.scan_next();
                     }
+                    w.settle();
                     w.publish(&status);
                     continue;
                 }
@@ -608,6 +628,7 @@ fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<Hi
             w.reply.read_done();
         }
         w.handle(req);
+        w.settle();
         w.publish(&status);
     }
 }
@@ -630,6 +651,15 @@ struct Worker<B: Backend> {
     inflight: bool,
     /// Per-log identity, resolved once.
     logs: HashMap<PathBuf, LogFacts>,
+    /// The logs read whole on an earlier start (`swept`): the start-up
+    /// sweep passes over those unchanged since. `None` without a cache.
+    manifest: Option<Manifest>,
+    /// Older logs read this run whose imports are not all back yet, by the
+    /// path scanned: each becomes a manifest entry once they are.
+    reading: HashMap<PathBuf, Reading>,
+    /// Import loads that failed, since start: a read during which one
+    /// failed is not recorded, so the next start reads it again.
+    load_failures: u64,
     /// The daemon's own sources (v49: one per edition it follows): the log
     /// each tails is live, and only those logs' open tails and open visits
     /// are left to the engines; every one's folder is searched when a
@@ -805,7 +835,8 @@ impl<B: Backend> Worker<B> {
                 // any is read: a directory of gigabytes must not hold the
                 // client (and every other mailbox message) for its whole scan.
                 let before = self.scans.len();
-                self.sweep(&path);
+                // Asked for by name: read whatever the manifest says.
+                self.sweep(&path, false);
                 let queued = self.scans.len().saturating_sub(before);
                 self.reply_to(
                     session,
@@ -863,11 +894,11 @@ impl<B: Backend> Worker<B> {
                 segments,
                 overalls,
             } => {
-                self.enqueue_metas(&log, segments, overalls, Vec::new());
+                let _ = self.enqueue_metas(&log, segments, overalls, Vec::new());
                 self.dispatch();
             }
             HistoryReq::Sweep(root) => {
-                self.sweep(&root);
+                self.sweep(&root, true);
             }
             HistoryReq::Retire(path) => {
                 // Never live: the tailer has already left it. A pending
@@ -939,7 +970,10 @@ impl<B: Backend> Worker<B> {
                             self.changed(id);
                         }
                     }
-                    Err(e) => self.store.last_error = Some(e),
+                    Err(e) => {
+                        self.load_failures += 1;
+                        self.store.last_error = Some(e);
+                    }
                 }
                 self.dispatch();
             }
@@ -1020,14 +1054,16 @@ impl<B: Backend> Worker<B> {
 
     /// Every closed meta of a log that the store lacks becomes an import
     /// job; `open` (a segment still open at the end of a finished log) an
-    /// aborted one.
+    /// aborted one. Returns every fight of them the store would keep
+    /// (`Store::wants_meta`), held, queued or queued now, by `fight_id`'s
+    /// parts: what a read of the log waits on before it is recorded.
     fn enqueue_metas(
         &mut self,
         log: &LogRef,
         segments: Vec<SegmentMeta>,
         overalls: Vec<SegmentMeta>,
         open: Vec<SegmentMeta>,
-    ) {
+    ) -> Vec<(i64, bool)> {
         let facts = self.facts(&log.path);
         // Keyed visits: their Overall carries the par timers or a "+N"
         // display name (`Visit::display_name`) — an aborted one (open, no
@@ -1043,11 +1079,14 @@ impl<B: Backend> Worker<B> {
             .chain(overalls)
             .map(|m| (m, false))
             .chain(open.into_iter().map(|m| (m, true)));
+        let mut wanted = Vec::new();
         for (meta, aborted) in closed {
             if !self.store.wants_meta(&meta, &keyed) {
                 continue;
             }
-            let id = fight_id(facts.id, meta.start_ms, meta.kind == SegmentKind::Overall);
+            let sigma = meta.kind == SegmentKind::Overall;
+            wanted.push((meta.start_ms, sigma));
+            let id = fight_id(facts.id, meta.start_ms, sigma);
             if self.store.has(&id) || self.queued.contains(&id) {
                 continue;
             }
@@ -1068,6 +1107,7 @@ impl<B: Backend> Worker<B> {
                 cut,
             });
         }
+        wanted
     }
 
     fn dispatch(&mut self) {
@@ -1302,10 +1342,16 @@ impl<B: Backend> Worker<B> {
         Some((path, idx))
     }
 
-    /// The file whose header hashes to `log`: the daemon's own sources (v49:
-    /// every edition's — a file, or every log in its directory), plus any
-    /// path already seen.
+    /// The file whose header hashes to `log`: a log the sweep's manifest
+    /// holds, else the daemon's own sources (v49: every edition's — a file,
+    /// or every log in its directory), plus any path already seen.
     fn path_of_log(&mut self, log: u64) -> Option<PathBuf> {
+        // A log read whole before, still the file it was: no header read,
+        // and found whichever folder it came from (an import's too).
+        if let Some((path, facts)) = self.manifest.as_ref().and_then(|m| m.path_of(log)) {
+            self.logs.entry(path.clone()).or_insert(facts);
+            return Some(path);
+        }
         let mut candidates: Vec<PathBuf> = self.logs.keys().cloned().collect();
         for source in &self.sources {
             match source {
@@ -1324,8 +1370,12 @@ impl<B: Backend> Worker<B> {
         candidates.into_iter().find(|p| self.facts(p).id == log)
     }
     /// Scan one log, or every `WoWCombatLog*.txt` in a directory newest
-    /// first, and queue what the store lacks.
-    fn sweep(&mut self, root: &Path) {
+    /// first, and queue what the store lacks. With `skip_unchanged` (the
+    /// start-up sweep), an older log the manifest says was read whole, and
+    /// that is unchanged since with every fight it held still stored, is
+    /// not listed: a start reads only what is new. An import names its
+    /// files and reads them all.
+    fn sweep(&mut self, root: &Path, skip_unchanged: bool) {
         let files: Vec<PathBuf> = if root.is_dir() {
             let mut all: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(root)
                 .ok()
@@ -1368,8 +1418,29 @@ impl<B: Backend> Worker<B> {
                 })
                 .collect()
         };
-        for path in files {
-            let live = tailed.iter().any(|n| same_file(n, &path));
+        let cards: HashSet<&str> = if skip_unchanged && self.manifest.is_some() {
+            self.store.cards().iter().map(|c| c.id.as_str()).collect()
+        } else {
+            HashSet::new()
+        };
+        let listed: Vec<(PathBuf, bool)> = files
+            .into_iter()
+            .map(|path| {
+                let live = tailed.iter().any(|n| same_file(n, &path));
+                (path, live)
+            })
+            // The tailed logs are always read: their open tails are live,
+            // and the engine indexes them anyway.
+            .filter(|(path, live)| {
+                *live
+                    || !skip_unchanged
+                    || self
+                        .manifest
+                        .as_ref()
+                        .is_none_or(|m| m.unchanged(&swept::key_of(path), &cards).is_none())
+            })
+            .collect();
+        for (path, live) in listed {
             // Listed only: `run` scans one file at a time between messages.
             if !self.scans.iter().any(|(p, _)| p == &path) {
                 self.scans.push_back((path, live));
@@ -1425,9 +1496,20 @@ impl<B: Backend> Worker<B> {
         let Some((path, live)) = self.scans.pop_front() else {
             return;
         };
+        // An older log's read is recorded once its imports land, as what
+        // the file was BEFORE the read: a line written during it leaves the
+        // file differing, so the next start reads it again.
+        let before = (!live && self.manifest.is_some())
+            .then(|| Stat::of(&path))
+            .flatten();
         let Some(idx) = self.scan(&path) else {
             return;
         };
+        // Only a read that reached the file's end is a whole read: one cut
+        // short (a read error, a last line not yet ended) is not recorded,
+        // and the next start reads the log again.
+        let before = before.filter(|stat| idx.scanned == stat.len);
+        let project_id = idx.checkpoint.project_id;
         // The tailed log's open tail is live, not aborted. Anything still
         // open in an older log never closes — including its last VISIT:
         // zoning out only suspends a visit (R10), so the raid itself is
@@ -1452,9 +1534,106 @@ impl<B: Backend> Worker<B> {
             }
             (open, overalls)
         };
-        self.enqueue_metas(&LogRef { path }, idx.segments, overalls, open);
+        let wanted =
+            self.enqueue_metas(&LogRef { path: path.clone() }, idx.segments, overalls, open);
+        if let Some(stat) = before {
+            let facts = self.facts(&path);
+            if facts.complete {
+                self.reading.insert(
+                    path.clone(),
+                    Reading {
+                        key: swept::key_of(&path),
+                        stat,
+                        facts,
+                        project_id,
+                        wanted,
+                        failures: self.failures(),
+                    },
+                );
+            }
+        }
         self.dispatch();
     }
+
+    /// Import loads and store writes that failed, since start.
+    fn failures(&self) -> u64 {
+        self.load_failures + self.store.write_failures()
+    }
+
+    /// After every turn: each fight retention evicted leaves its log's
+    /// manifest entry, and each older log read this run whose imports have
+    /// all landed is recorded — what the store holds of it now — unless a
+    /// load or a write failed meanwhile (then the next start reads it
+    /// again).
+    fn settle(&mut self) {
+        let evicted = self.store.take_evicted();
+        let failures = self.failures();
+        let Some(manifest) = self.manifest.as_mut() else {
+            self.reading.clear();
+            return;
+        };
+        for (log, id) in &evicted {
+            manifest.forget(*log, id);
+        }
+        let done: Vec<PathBuf> = self
+            .reading
+            .iter()
+            .filter(|(_, r)| {
+                r.wanted.iter().all(|(start, sigma)| {
+                    !self.queued.contains(&fight_id(r.facts.id, *start, *sigma))
+                })
+            })
+            .map(|(path, _)| path.clone())
+            .collect();
+        if done.is_empty() {
+            return;
+        }
+        for path in done {
+            let Some(r) = self.reading.remove(&path) else {
+                continue;
+            };
+            if r.failures != failures {
+                continue;
+            }
+            let held = r
+                .wanted
+                .into_iter()
+                .filter(|(start, sigma)| self.store.has(&fight_id(r.facts.id, *start, *sigma)))
+                .collect();
+            manifest.record(
+                r.key,
+                swept::Entry {
+                    stat: r.stat,
+                    log: r.facts.id,
+                    tz_min: r.facts.tz_min,
+                    project_id: r.project_id,
+                    held,
+                },
+            );
+        }
+        // Each finished read is written at once: a restart mid-sweep (a
+        // build restarts the dev unit) keeps what was read.
+        manifest.flush();
+    }
+
+    /// Write what the manifest learned, if anything.
+    fn flush_manifest(&mut self) {
+        if let Some(m) = self.manifest.as_mut() {
+            m.flush();
+        }
+    }
+}
+
+/// An older log read this run, waiting on its imports (`Worker::settle`).
+struct Reading {
+    key: PathBuf,
+    stat: Stat,
+    facts: LogFacts,
+    project_id: u8,
+    /// Every fight of the read the store would keep, by `fight_id`'s parts.
+    wanted: Vec<(i64, bool)>,
+    /// [`Worker::failures`] when the read was made.
+    failures: u64,
 }
 
 /// The same file under two spellings (a symlinked `logs_dir`, a relative
@@ -1984,7 +2163,21 @@ pub struct Store<B: Backend> {
     /// editions may share an encounter id, and one's kill ends no
     /// progression of the other's. Rebuilt whenever the cards change.
     killed: HashSet<(Edition, u32, u32)>,
+    /// The fights retention evicted since the last [`Store::take_evicted`],
+    /// each with its log's identity: what the sweep's manifest stops
+    /// counting as held.
+    evicted: Vec<(u64, String)>,
+    /// Fight writes that failed since open ([`Store::write_failures`]).
+    write_failures: u64,
+    /// The store's identity ([`Store::identity`]), once read or made.
+    identity: Option<u64>,
 }
+
+/// The file at the store's root that names it: a random 64-bit id in hex,
+/// written the first time [`Store::identity`] is asked. The sweep's
+/// manifest records it, so a manifest left by another store (a
+/// `history_dir` moved, a store deleted and begun again) is discarded.
+pub const STORE_ID_FILE: &str = "store.id";
 
 impl<B: Backend> Store<B> {
     /// Rebuild the index from `fights/`. Unreadable cards are skipped and
@@ -2101,6 +2294,9 @@ impl<B: Backend> Store<B> {
             series,
             replays,
             killed: HashSet::new(),
+            evicted: Vec::new(),
+            write_failures: 0,
+            identity: None,
         };
         store.refresh_killed();
         // Cards stamped with the store-wide owner before ownership was
@@ -2867,6 +3063,49 @@ impl<B: Backend> Store<B> {
         self.cards.iter().any(|c| c.id == id)
     }
 
+    /// The fights retention evicted since the last call, each with its
+    /// log's identity (`FightCard::log`).
+    pub fn take_evicted(&mut self) -> Vec<(u64, String)> {
+        std::mem::take(&mut self.evicted)
+    }
+
+    /// How many fight writes failed since the store was opened.
+    pub fn write_failures(&self) -> u64 {
+        self.write_failures
+    }
+
+    /// The store's identity: [`STORE_ID_FILE`]'s id, or a fresh random one
+    /// written there when the file is missing or unreadable. One that
+    /// cannot be written is this run's alone, so every start makes another
+    /// and the sweep reads every log (the safe direction).
+    pub fn identity(&mut self) -> u64 {
+        if let Some(id) = self.identity {
+            return id;
+        }
+        let read = self
+            .backend
+            .read("", STORE_ID_FILE)
+            .and_then(|b| String::from_utf8(b).ok())
+            .and_then(|t| u64::from_str_radix(t.trim(), 16).ok());
+        let id = read.unwrap_or_else(|| {
+            use std::hash::{BuildHasher, Hasher};
+            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+            h.write_u128(
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos()),
+            );
+            h.write_u32(std::process::id());
+            let id = h.finish();
+            let _ = self
+                .backend
+                .write("", STORE_ID_FILE, format!("{id:016x}\n").as_bytes());
+            id
+        });
+        self.identity = Some(id);
+        id
+    }
+
     pub fn card(&self, id: &str) -> Option<&FightCard> {
         self.cards.iter().find(|c| c.id == id)
     }
@@ -3141,6 +3380,7 @@ impl<B: Backend> Store<B> {
         }
         if let Err(e) = result {
             self.last_error = Some(format!("history write failed: {e}"));
+            self.write_failures += 1;
             return None;
         }
         self.cards.retain(|c| c.id != id);
@@ -3452,6 +3692,7 @@ impl<B: Backend> Store<B> {
                 }
                 self.drop_series(&card.id);
                 self.drop_replay(&card.id);
+                self.evicted.push((card.log, card.id));
             }
         }
         // v45: an evicted kill (`history_keep_kills_whole` off) can reopen

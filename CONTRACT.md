@@ -1079,7 +1079,37 @@ edition (`ScanState::project_id`, a u8 after `arena_over`), which a resumed scan
 tables by, and retired every checkpoint scanned before the tables were per edition.
 It keeps the eight newest entries of each edition (v49: the checkpoint's edition,
 reckoned as `counts_as`; an entry it cannot decode whole — another magic, a short
-or torn file — counts as Retail's), not eight in all. And the **history store** (roadmap
+or torn file — counts as Retail's), not eight in all. Beside the checkpoints the cache
+keeps the history sweep's manifest (`<cache>/swept`, `daemon::swept`, magic `WDPSSWP\x01`,
+the wire primitives): each log the history thread read whole as an older log (never a
+tailed one, whose open tail is live), recorded once every import the read queued has
+landed — its canonical path; its inode, length and modified time (to the nanosecond) as
+they were before the read; its identity, timezone and edition; and the fights of it the
+store then held. A read that stopped short of the file's end (a read error, a last line
+not yet ended) is not recorded, nor one during which an import load or a fight write
+failed. The start-up sweep passes over a log whose file still has that inode, length and
+modified time and whose held fights are all still cards, so a start reads only what is new:
+a log that grew, was truncated, rewritten with its modified time moved, or replaced, or one
+a held fight is missing for (a card removed by hand), is read again. A rewrite in place
+that keeps the length and the modified time is passed over (the game only appends). A
+fight retention evicts leaves its entry: it stays out while its log, the store and the
+rules below are unchanged, even when what retention keeps moves since (a pin, an owner
+learned, a newer fight deleted); `wowdps history import` of its log, which reads what it
+names whatever the manifest says, offers it to retention again. The manifest describes one
+store: it records the store's identity (`store.id` at the store's root, a random 64-bit id
+in hex written the first time the daemon opens the store), and a manifest of another (a
+`history_dir` moved, a store deleted and begun again) is discarded whole, so every log is
+read again. And it answers to one fingerprint (`swept::rules`): the daemon's build hashes
+every Rust source that decides which fights a read yields and the store keeps — all of
+model and core, proto's history codec, and the daemon's history store, loader, index cache
+and manifest (`crates/daemon/build.rs`, `swept::SOURCES`) — and the fingerprint adds the
+keys that decide what a read stores and keeps: `history_store_trash`,
+`history_keep_per_encounter`, `history_keep_kills_whole`, `history_keep_progression_whole`,
+`history_characters`. A build that changed any of those sources, or a change to any of
+those keys, voids every entry, and its first start reads every log once; a build that
+changed none (the hub, the engine, a client) reads nothing again. An entry whose file is
+gone or changed drops out at the next load or write, and at most 4096 are kept. Deleting
+the cache costs one read of every log. And the **history store** (roadmap
 item 1, the history store's spec): per-fight JSON documents under
 `$XDG_DATA_HOME/wowdps/history/v1/` (`fights/<id>.json` card — per player the
 damage / healing totals and rates, deaths, since v22 the R17 tank measures
@@ -1099,7 +1129,8 @@ supporter or supported player the given / received shares split damage /
 healing and their per-target table; `details/<id>.json` breakdowns + timelines
 for kills / bests / pins (v48: and an import's curves, the imported fights
 paragraph below), `loadouts/<hash>.json` content-addressed,
-`annotations/<id>.ndjson` reserved), each written `.tmp` + rename through
+`annotations/<id>.ndjson` reserved, and `store.id` the store's identity, which only
+the sweep's manifest reads (the persistence paragraph above)), each written `.tmp` + rename through
 `proto::history`. The boundary: a stored record is a *derivable fight summary*
 — nothing `Meter` cannot recompute from the log, nothing keyed per event, and
 the files are the truth (the in-memory index is rebuilt from the cards on
@@ -1107,8 +1138,8 @@ start; any file may be deleted). A fight is stored when it closes on the live
 meter after `CaughtUp` (one `Segment` clone on the hub thread, then a bounded
 `try_send` — a full queue drops and counts, never stalls the meter), and by
 import for everything closed before that (the tailed log's index, plus a
-start-up sweep of every log in `logs_dir`, one loader job outstanding at a
-time). Fight identity is `fnv64(first complete line)-start_ms`, so restarts,
+start-up sweep of every log in `logs_dir` the sweep's manifest does not pass over,
+one loader job outstanding at a time). Fight identity is `fnv64(first complete line)-start_ms`, so restarts,
 rescans and replays write nothing twice; a record still open at the end of an
 older log is stored `aborted` and is replaced if its END ever arrives. Stored:
 raid bosses, arena matches, keyed runs' Σ (their member bosses — any boss at keystone difficulty 8, START seen or not — only under `history_store_trash`) and
@@ -1236,11 +1267,12 @@ edition whose log carries no spec, set at extraction for each friendly player wi
 (`Row::inferred_role`; the wire paragraph on `mine`), so a fight names one role per player live,
 loaded lazily and stored. A
 card stored before gains it only by a regrade, and a regrade finds a card's log only in a
-followed source's folder (an install's Retail and Forever folders alike) or among the logs this
-daemon has read since it started (an import reads them; a restart forgets them): a card whose
-log sits in no followed folder (a daemon on `--logs` or `--file`, a log moved away) is found by
-`wowdps history import` of it and a `wowdps history regrade` once that import's scan is done, in
-the same daemon run (the import stores nothing it already holds). The role night reads `role()` too: a player is rostered under
+followed source's folder (an install's Retail and Forever folders alike), among the logs this
+daemon has read since it started, or among the logs the sweep's manifest holds, still the files
+they were (an import reads them; the manifest remembers one read whole across restarts while the
+cache and the store last): a card whose log sits in no followed folder and in no entry (a daemon on `--logs`
+or `--file`, a log moved away) is found by `wowdps history import` of it and a `wowdps history
+regrade` once that import's scan is done (the import stores nothing it already holds). The role night reads `role()` too: a player is rostered under
 their most-played spec's role, else, with no spec on any of the night's pulls, the role their
 pulls stored most often (a tie: tank, healer, dps), and each fold counts only the pulls of that
 role; an import may name one for a specless player. The lake's `fights` and `players` views

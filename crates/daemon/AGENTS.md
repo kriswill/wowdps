@@ -60,6 +60,18 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
 
 - `Store<B: Backend>`: `DirBackend` in production, `MemBackend` for the
   mock and tests. Write store tests against `MemBackend`.
+- **A start reads only what is new** (`swept.rs`; CONTRACT.md, the
+  persistence paragraph). The manifest beside the index checkpoints
+  records each older log read to its end, once every import it queued has
+  landed with no load or write failing; the start-up sweep passes over it
+  while its inode, length and mtime hold, every fight it held is still a
+  card, and the store's `store.id` and the rules are the manifest's.
+  Never record a tailed log (its open tail is live). The rules fingerprint
+  the sources that decide what a read stores (`build.rs`'s `SOURCES`, so
+  no version needs bumping by hand): code that decides it moving into a
+  file the list does not cover joins the list. `tests/sweep.rs` holds the
+  rule; its ignored `measured` test prints what three starts over forty
+  logs cost.
 - **Retention runs after every write.** The protected set is kept whole:
   boss kills, timed keys, pinned fights and progression wipes until the
   first kill in that edition at that difficulty. The caps count the
