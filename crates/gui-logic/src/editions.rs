@@ -25,14 +25,26 @@
 //!   says so where the talents and gear would be ([`builds_gap`]); a game
 //!   with no fights says how to get some ([`empty_stage`]).
 //!
-//! An entry is its name here; the GUI draws the game's emblem beside it
-//! when the per-machine cache holds one ([`crate::emblems`]).
+//! - **One mark and one color per game** ([`Mark`], [`Tone`]), ours and
+//!   the same wherever the game is named: Midnight's crescent in violet,
+//!   Forever's loop in teal, Classic's hourglass and an unknown game's
+//!   ring in the muted ink. Shape and color say the same thing, so
+//!   neither has to be read alone. Retail's mark is its expansion's,
+//!   looked up with its name. The GUI draws the game's emblem in the
+//!   mark's place when the per-machine cache holds one
+//!   ([`crate::emblems`]); the color stays ours either way.
+//! - **The switch is a row of chips** while it fits ([`chips`]): every
+//!   game in sight, the one shown filled with its color, one press to
+//!   change. A dropdown stands in for it where the bar is narrow.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use wowdps_model::Edition;
 use wowdps_proto::history::FightCard;
+
+use crate::glyph::Glyph;
+use crate::theme::{AA_CONTRAST, Color, WindowTokens, contrast, difference};
 use wowdps_proto::{
     ClientMsg, EditionRef, EditionSource, FightSort, HistoryAnswer, HistoryQuery, OriginFilter,
 };
@@ -49,20 +61,22 @@ pub const REPROBE_EVERY: Duration = Duration::from_secs(5);
 
 /// The current game's expansions by the major version of its build: what
 /// Retail is called.
-const EXPANSIONS: [(u16, &str); 6] = [
-    (7, "Legion"),
-    (8, "Battle for Azeroth"),
-    (9, "Shadowlands"),
-    (10, "Dragonflight"),
-    (11, "The War Within"),
-    (12, "Midnight"),
+/// Each expansion: the major version of its builds, its name, and the
+/// mark it wears where we drew one.
+const EXPANSIONS: [(u16, &str, Option<Mark>); 6] = [
+    (7, "Legion", None),
+    (8, "Battle for Azeroth", None),
+    (9, "Shadowlands", None),
+    (10, "Dragonflight", None),
+    (11, "The War Within", None),
+    (12, "Midnight", Some(MIDNIGHT)),
 ];
 
 /// The newest expansion this build knows: what Retail is called before any
 /// build of it is known, so its name does not change when the first fight
 /// is stored.
 pub fn newest_expansion() -> &'static str {
-    EXPANSIONS.last().map_or("Retail", |(_, name)| *name)
+    EXPANSIONS.last().map_or("Retail", |(_, name, _)| *name)
 }
 
 /// The expansion a Retail build of this major version belongs to; `None`
@@ -70,8 +84,268 @@ pub fn newest_expansion() -> &'static str {
 pub fn expansion(major: u16) -> Option<&'static str> {
     EXPANSIONS
         .iter()
-        .find(|(m, _)| *m == major)
-        .map(|(_, name)| *name)
+        .find(|(m, _, _)| *m == major)
+        .map(|(_, name, _)| *name)
+}
+
+// ---- marks and colors -------------------------------------------------------
+
+/// What a game's color is, by role: Midnight's and Forever's are theme
+/// tokens of their own; every other game wears the muted ink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Tone {
+    Midnight,
+    Forever,
+    Muted,
+}
+
+/// A game's mark: our own glyph (the window's line-icon table, never a
+/// game's logo) and the color it wears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Mark {
+    pub glyph: Glyph,
+    pub tone: Tone,
+}
+
+/// Midnight's crescent, in violet.
+pub const MIDNIGHT: Mark = Mark {
+    glyph: Glyph::Moon,
+    tone: Tone::Midnight,
+};
+/// Forever's loop, in teal.
+pub const FOREVER: Mark = Mark {
+    glyph: Glyph::Infinity,
+    tone: Tone::Forever,
+};
+/// Classic's hourglass, in the muted ink.
+pub const CLASSIC: Mark = Mark {
+    glyph: Glyph::Hourglass,
+    tone: Tone::Muted,
+};
+/// A ring in the muted ink: a game this build does not know, and Retail
+/// under an expansion with no mark of ours, so a new expansion never wears
+/// another's under its own name.
+pub const NEUTRAL: Mark = Mark {
+    glyph: Glyph::Ring,
+    tone: Tone::Muted,
+};
+
+impl Mark {
+    /// A game's own mark, not the neutral stand-in: where the GUI may show
+    /// that game's emblem from the cache instead. An expansion we drew no
+    /// mark for shows no emblem either, so an emblem cached in one
+    /// expansion never stands under the next one's name.
+    pub fn own(self) -> bool {
+        self != NEUTRAL
+    }
+}
+
+/// The mark the window draws for `edition`: Retail's by the expansion of
+/// `build`, the one its name is looked up with ([`name`]).
+pub fn mark(edition: Edition, build: Option<(u16, u16, u16)>) -> Mark {
+    match edition.counts_as() {
+        Edition::Retail => {
+            let row = match build.filter(|b| *b != (0, 0, 0)) {
+                Some((major, _, _)) => EXPANSIONS.iter().find(|(m, _, _)| *m == major),
+                None => EXPANSIONS.last(),
+            };
+            row.and_then(|(_, _, mark)| *mark).unwrap_or(NEUTRAL)
+        }
+        Edition::Forever => FOREVER,
+        Edition::Classic(_) => CLASSIC,
+        Edition::Unknown(_) => NEUTRAL,
+    }
+}
+
+/// How unlike the chrome a game's color must look for its mark to keep
+/// it: a distance in OKLab. A class chrome nearer than this (a Warlock's
+/// lavender beside Midnight's violet, a Mage's cyan beside Forever's teal)
+/// would read as the same color.
+pub const NEAR: f32 = 0.085;
+
+/// What a game's mark owes the bar it sits on.
+pub const MARK_CONTRAST: f32 = 3.0;
+
+impl Tone {
+    /// The game's color on theme `t`: its token, moved toward black or
+    /// white only as far as it must go to clear [`MARK_CONTRAST`] on every
+    /// surface a mark sits on (the bar, a menu's lit row, the stage) — as
+    /// a class color is lifted to read as text — so a theme of the user's
+    /// own with a light bar still shows its games' marks. The built-in
+    /// themes' game colors clear it as they are; Onyx's muted ink is lifted
+    /// a touch for its lit row.
+    pub fn color(self, t: &WindowTokens) -> Color {
+        let own = match self {
+            Tone::Midnight => t.midnight,
+            Tone::Forever => t.forever,
+            Tone::Muted => t.ink_3,
+        };
+        readable(own, t.surface, &[t.surface, t.raise, t.ground])
+    }
+
+    /// The fill of the game shown's chip: its color, or for a game with
+    /// none the secondary ink, which words on it can clear AA on.
+    pub fn fill(self, t: &WindowTokens) -> Color {
+        match self {
+            Tone::Muted => t.ink_2,
+            own => own.color(t),
+        }
+    }
+
+    /// The mark's color where it sits on the bar or a menu (a quiet chip,
+    /// a menu row, a fight's tag, an empty stage): the game's, unless the
+    /// chrome looks too like it ([`NEAR`]), when the mark wears the bar's
+    /// own ink and its shape alone tells the game.
+    pub fn mark_color(self, t: &WindowTokens, chrome: Color) -> Color {
+        let own = self.color(t);
+        if self != Tone::Muted && difference(own, chrome) < NEAR {
+            t.ink_2
+        } else {
+            own
+        }
+    }
+}
+
+/// `c`, darkened (where `bar` is light) or lightened (where it is dark)
+/// 2 % at a time until it clears [`MARK_CONTRAST`] on each of `unders`; as
+/// it is where it does.
+fn readable(c: Color, bar: Color, unders: &[Color]) -> Color {
+    let reads = |x: Color| unders.iter().all(|u| contrast(x, *u) >= MARK_CONTRAST);
+    if reads(c) {
+        return c;
+    }
+    let darken = bar.luminance() > crate::theme::LIGHT_THRESHOLD;
+    (1..=50)
+        .map(|step| {
+            let t = step as f32 * 0.02;
+            if darken { c.darken(t) } else { c.lighten(t) }
+        })
+        .find(|x| reads(*x))
+        .unwrap_or(if darken { Color::BLACK } else { Color::WHITE })
+}
+
+/// The words and mark on a chip filled with `fill`: the theme's ground or
+/// its ink, whichever reads better there.
+pub fn ink_on(fill: Color, t: &WindowTokens) -> Color {
+    if contrast(t.ground, fill) >= contrast(t.ink, fill) {
+        t.ground
+    } else {
+        t.ink
+    }
+}
+
+/// Whether the words on a fill reach AA: what [`ink_on`] owes every fill.
+pub fn reads_on(fill: Color, t: &WindowTokens) -> bool {
+    contrast(ink_on(fill, t), fill) >= AA_CONTRAST
+}
+
+/// The most games the switch shows side by side; more fold into the
+/// dropdown.
+pub const CHIPS_MAX: usize = 3;
+
+/// Whether the switch may be a row of chips at all: `games` at most
+/// [`CHIPS_MAX`] and a bar that is not narrow. Whether the row fits is
+/// [`switch_form`]'s.
+pub fn chips(games: usize, narrow: bool) -> bool {
+    !narrow && games <= CHIPS_MAX
+}
+
+/// The forms the switch takes, richest first: the named chips beside the
+/// whole search box, the named chips beside the search glyph, the compact
+/// chips (the game shown named, every other its badge alone) beside the
+/// glyph, the dropdown with the game's name, and the dropdown with its
+/// badge alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Form {
+    Chips,
+    ChipsGlyph,
+    ChipsCompact,
+    Dropdown,
+    DropdownBadge,
+}
+
+impl Form {
+    /// Every form, richest first: the order [`switch_form`] reads its
+    /// needs in.
+    pub const ALL: [Form; 5] = [
+        Form::Chips,
+        Form::ChipsGlyph,
+        Form::ChipsCompact,
+        Form::Dropdown,
+        Form::DropdownBadge,
+    ];
+
+    /// How many of [`Form::ALL`] are chips: the richest, before the
+    /// dropdown's.
+    pub const CHIPS: usize = 3;
+
+    /// The games side by side.
+    pub fn chips(self) -> bool {
+        matches!(self, Form::Chips | Form::ChipsGlyph | Form::ChipsCompact)
+    }
+
+    /// The games side by side, the game shown alone named.
+    pub fn compact(self) -> bool {
+        self == Form::ChipsCompact
+    }
+}
+
+/// The room a richer form must have to spare, in zoom-1 pixels, before the
+/// switch takes it over the form drawn last.
+pub const UNFOLD_SPARE: f32 = 24.0;
+
+/// The switch's form: the richest whose bar fits `width`, `needs` the
+/// bar's whole width in each form (in [`Form::ALL`]'s order, zoom-1
+/// pixels), the chips only where `chips_allowed`. A form richer than the
+/// one drawn last (`last`) must fit with [`UNFOLD_SPARE`] to spare; the
+/// last and every poorer one need only fit. So the switch folds the moment
+/// its row no longer fits, unfolds only once it fits with room, and a
+/// width at the threshold — or a name a pixel longer one frame than the
+/// next — never flips it back and forth. The poorest form when none fits.
+pub fn switch_form(needs: [f32; 5], width: f32, last: Option<Form>, chips_allowed: bool) -> Form {
+    let skip = if chips_allowed { 0 } else { Form::CHIPS };
+    let rest = needs.get(skip..).unwrap_or(&[]);
+    let last = last.and_then(|l| (l as usize).checked_sub(skip));
+    Form::ALL
+        .get(skip + richest_fit(rest, width, last))
+        .copied()
+        .unwrap_or(Form::DropdownBadge)
+}
+
+/// The richest of several ways to lay a thing out, `needs` its width in
+/// each, richest first: the first that fits `width`, where one richer than
+/// the one drawn last (`last`, an index into `needs`) must fit with
+/// [`UNFOLD_SPARE`] to spare and the last and poorer ones need only fit.
+/// The poorest when none fits. What [`switch_form`] and the bar's folds
+/// (the pill's clock, the help button, the jump glyph at the least widths)
+/// both choose by, so neither flips back and forth at a threshold.
+pub fn richest_fit(needs: &[f32], width: f32, last: Option<usize>) -> usize {
+    needs
+        .iter()
+        .enumerate()
+        .find(|(i, need)| {
+            let spare = match last {
+                Some(last) if *i < last => UNFOLD_SPARE,
+                _ => 0.0,
+            };
+            *need + spare <= width
+        })
+        .map_or(needs.len().saturating_sub(1), |(i, _)| i)
+}
+
+/// A chip's tooltip: the game's build, and that it is the game being
+/// played.
+pub fn chip_tip(e: &Entry) -> String {
+    match e.note {
+        Some(note) => format!("{}, {}", e.tip, note.to_lowercase()),
+        None => e.tip.clone(),
+    }
+}
+
+/// A compact chip's tooltip, its badge drawn without its name: the name,
+/// then [`chip_tip`]'s words.
+pub fn compact_tip(e: &Entry) -> String {
+    format!("{}: {}", e.name, chip_tip(e))
 }
 
 /// A build as the game words it: "12.1.5". `None` for no build (0.0.0:
@@ -218,6 +492,41 @@ pub fn header_meta(
     }
 }
 
+/// A fight header's edition tag: the game a fight is of, by its mark and
+/// name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tag {
+    pub edition: Edition,
+    pub name: String,
+    pub mark: Mark,
+}
+
+/// The fight header's edition and meta words. With one game known (`window`
+/// `None`), no tag and [`header_meta`]'s line, as ever. With several, the
+/// game [`header_meta`] would lead its line with is a tag of its own — its
+/// mark and name — and the words are the meta alone.
+pub fn header_parts(
+    meta: String,
+    fight: Option<Edition>,
+    window: Option<Edition>,
+    build: Option<(u16, u16, u16)>,
+) -> (Option<Tag>, String) {
+    let line = header_meta(meta.clone(), fight, window, build);
+    let (Some(_), Some(fight)) = (window, fight) else {
+        return (None, line);
+    };
+    if line == meta {
+        return (None, meta);
+    }
+    let edition = fight.counts_as();
+    let tag = Tag {
+        edition,
+        name: name(edition, build),
+        mark: mark(edition, build),
+    };
+    (Some(tag), meta)
+}
+
 // ---- the census --------------------------------------------------------------
 
 /// What the window knows of one edition.
@@ -346,6 +655,11 @@ impl Census {
     /// What the window calls `edition`, by its newest build.
     pub fn name(&self, edition: Edition) -> String {
         name(edition, self.build(edition))
+    }
+
+    /// Its mark, by its newest build.
+    pub fn mark(&self, edition: Edition) -> Mark {
+        mark(edition, self.build(edition))
     }
 
     /// Its tooltip, by its newest build.
@@ -549,6 +863,8 @@ pub struct Entry {
     pub edition: Edition,
     /// "Midnight", "Forever".
     pub name: String,
+    /// Its mark, by the same build as its name.
+    pub mark: Mark,
     /// [`PLAYING_NOW`] beside the game being played; nothing with no game
     /// running.
     pub note: Option<&'static str>,
@@ -566,6 +882,7 @@ pub struct Entry {
 pub struct Face {
     pub edition: Edition,
     pub name: String,
+    pub mark: Mark,
     pub tip: String,
     pub playing: bool,
 }
@@ -584,7 +901,8 @@ pub fn entries(census: &Census, shown: Edition) -> Option<Vec<Entry>> {
             .into_iter()
             .map(|e| Entry {
                 edition: e,
-                name: census.name(e),
+                name: switch_name(census, e),
+                mark: census.mark(e),
                 note: census.playing(e).then_some(PLAYING_NOW),
                 tip: census.tip(e),
                 on: e == shown,
@@ -594,12 +912,32 @@ pub fn entries(census: &Census, shown: Edition) -> Option<Vec<Entry>> {
     )
 }
 
+/// What the switch calls `edition`: its [`name`], and where another game
+/// it lists goes by the same name (two Classic clients), that name with
+/// its build beside it — else its client's number — so no two of the
+/// switch's games read alike.
+pub fn switch_name(census: &Census, edition: Edition) -> String {
+    let edition = edition.counts_as();
+    let name = census.name(edition);
+    let twin = census
+        .known()
+        .into_iter()
+        .any(|other| other != edition && census.name(other) == name);
+    if !twin {
+        return name;
+    }
+    let tell =
+        build_words(census.build(edition)).unwrap_or_else(|| edition.project_id().to_string());
+    format!("{name} {tell}")
+}
+
 /// The switch's face for the game `shown`.
 pub fn face(census: &Census, shown: Edition) -> Face {
     let edition = shown.counts_as();
     Face {
         edition,
-        name: census.name(edition),
+        name: switch_name(census, edition),
+        mark: census.mark(edition),
         tip: census.tip(edition),
         playing: census.playing(edition),
     }

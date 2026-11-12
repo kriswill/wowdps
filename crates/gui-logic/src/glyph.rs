@@ -26,6 +26,13 @@ pub enum Shape {
     RoundRect { at: P, size: P, radius: f32 },
     /// A path of segments.
     Path(Vec<Seg>),
+    /// One continuous stroke through its segments, closed back to its
+    /// start: the stroker joins every segment, so a curve that runs
+    /// through its own start (the infinity loop) has no seam or notch.
+    Loop(Vec<Seg>),
+    /// A region filled, bounded by its segments: a shape whose points are
+    /// sharp, which a stroke would round or spike (the crescent's horns).
+    Solid(Vec<Seg>),
 }
 
 /// A path segment.
@@ -37,7 +44,8 @@ pub enum Seg {
     Cubic(P, P, P),
     /// A circular arc in centre form: centre, radius, start and end angle
     /// in radians (y down, so increasing angles turn clockwise on screen),
-    /// drawn from the start angle's point to the end's.
+    /// drawn from the start angle's point to the end's — clockwise when the
+    /// end angle is the larger, counter-clockwise when it is the smaller.
     Arc {
         center: P,
         radius: f32,
@@ -85,11 +93,18 @@ pub enum Glyph {
     // meter.
     Expand,
     Collapse,
+    // The games' marks (`editions::Mark`): ours, drawn in this table's
+    // language, never a game's logo. Midnight's crescent, Forever's loop,
+    // Classic's hourglass, and a ring for a game this build does not know.
+    Moon,
+    Infinity,
+    Hourglass,
+    Ring,
 }
 
 impl Glyph {
     /// Every glyph, for the tests that draw them all.
-    pub const ALL: [Glyph; 24] = [
+    pub const ALL: [Glyph; 28] = [
         Glyph::Sword,
         Glyph::Cross,
         Glyph::Shield,
@@ -114,6 +129,10 @@ impl Glyph {
         Glyph::Check,
         Glyph::Expand,
         Glyph::Collapse,
+        Glyph::Moon,
+        Glyph::Infinity,
+        Glyph::Hourglass,
+        Glyph::Ring,
     ];
 
     /// The glyph a view's tab wears — the prototype's `VIEWS` table.
@@ -293,6 +312,58 @@ impl Glyph {
                 poly(&[(6.8, 12.4), (6.8, 9.2), (3.6, 9.2)], false),
                 line((6.8, 9.2), (3.2, 12.8)),
             ],
+            // A crescent filled between two arcs that meet in two sharp
+            // points, its horns to the upper right: the circle r5.5 round
+            // (8, 8), less the circle r4.6 round its center moved 2.5
+            // toward 320°. M13.28 9.53A5.5 5.5 0 1 1 7.42 2.53A4.6 4.6 0 1 0
+            // 13.28 9.53z — the outer arc clockwise round the left, the
+            // inner one back counter-clockwise through the side that faces
+            // the center.
+            Glyph::Moon => vec![Shape::Solid(vec![
+                Seg::Arc {
+                    center: (8.0, 8.0),
+                    radius: 5.5,
+                    start: 0.2809,
+                    end: 4.6060,
+                },
+                Seg::Arc {
+                    center: (9.9151, 6.3930),
+                    radius: 4.6,
+                    start: 4.1381,
+                    end: 0.7489,
+                },
+                Close,
+            ])],
+            // One smooth loop through the center, a single closed stroke:
+            // M8 8C9.8 5.3 13.7 4.6 13.7 8S9.8 10.7 8 8S2.3 4.6 2.3 8S6.2
+            // 10.7 8 8z — four cubics, each tangent to the next.
+            Glyph::Infinity => vec![Shape::Loop(vec![
+                Move((8.0, 8.0)),
+                Cubic((9.8, 5.3), (13.7, 4.6), (13.7, 8.0)),
+                Cubic((13.7, 11.4), (9.8, 10.7), (8.0, 8.0)),
+                Cubic((6.2, 5.3), (2.3, 4.6), (2.3, 8.0)),
+                Cubic((2.3, 11.4), (6.2, 10.7), (8.0, 8.0)),
+                Close,
+            ])],
+            // M4 2.5h8 M4 13.5h8 M5.2 2.5h5.6L8 8l2.8 5.5H5.2L8 8z: two
+            // glasses meeting at the waist, between their caps
+            Glyph::Hourglass => vec![
+                line((4.0, 2.5), (12.0, 2.5)),
+                line((4.0, 13.5), (12.0, 13.5)),
+                poly(
+                    &[
+                        (5.2, 2.5),
+                        (10.8, 2.5),
+                        (8.0, 8.0),
+                        (10.8, 13.5),
+                        (5.2, 13.5),
+                        (8.0, 8.0),
+                    ],
+                    true,
+                ),
+            ],
+            // circle 8,8 r3.8: no game's, a game this build does not know
+            Glyph::Ring => vec![circle(8.0, 8.0, 3.8)],
             // circle r2.2 and eight spokes
             Glyph::Gear => vec![
                 circle(8.0, 8.0, 2.2),
@@ -390,14 +461,16 @@ mod tests {
                     Shape::RoundRect { at, size, .. } => {
                         inside(at) && inside((at.0 + size.0, at.1 + size.1))
                     }
-                    Shape::Path(segs) => segs.into_iter().all(|seg| match seg {
-                        Seg::Move(p) | Seg::Line(p) => inside(p),
-                        Seg::Cubic(a, b, c) => inside(a) && inside(b) && inside(c),
-                        Seg::Arc { .. } => seg
-                            .arc_ends()
-                            .is_some_and(|(a, b, _)| inside(a) && inside(b)),
-                        Seg::Close => true,
-                    }),
+                    Shape::Path(segs) | Shape::Loop(segs) | Shape::Solid(segs) => {
+                        segs.into_iter().all(|seg| match seg {
+                            Seg::Move(p) | Seg::Line(p) => inside(p),
+                            Seg::Cubic(a, b, c) => inside(a) && inside(b) && inside(c),
+                            Seg::Arc { .. } => seg
+                                .arc_ends()
+                                .is_some_and(|(a, b, _)| inside(a) && inside(b)),
+                            Seg::Close => true,
+                        })
+                    }
                 };
                 assert!(ok, "{g:?} leaves its box");
             }

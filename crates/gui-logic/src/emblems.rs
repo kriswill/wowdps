@@ -3,7 +3,7 @@
 //! `$XDG_DATA_HOME/wowdps/edition-emblems.bin` (written by
 //! `tools/gen-emblems.sh` from the launcher's own files). Entirely
 //! optional: no file, or a file from a future format version, means every
-//! lookup answers `None` and the edition switch names each game alone.
+//! lookup answers `None` and each game wears our own mark instead.
 //! The emblems are Blizzard's art and never live in the repository.
 //!
 //! Each emblem is the SVG document the launcher keeps, as it is: the GUI

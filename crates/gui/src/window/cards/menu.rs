@@ -139,7 +139,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
             div()
                 .absolute()
                 .top(w.z(w.pitch.top_bar))
-                .right(w.z(picker_end(w)))
+                .right(w.z(picker_end(w, gui.bar_fold.get().unwrap_or(0) < 2)))
                 .ml(w.z(SIDE))
                 .child(enter("picker-enter", card, w, window, cx)),
         )

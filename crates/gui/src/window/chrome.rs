@@ -79,6 +79,9 @@ pub fn tip<E: StatefulInteractiveElement>(el: E, words: impl Into<SharedString>)
     el.tooltip(move |window, cx| Tooltip::new(words.clone()).build(window, cx))
 }
 
+/// A top-bar place's sides (`.place{padding-inline:11px}`).
+pub const PLACE_PAD: f32 = 11.0;
+
 /// A top-bar place (`.place`): 15 px at 500, 42 tall with its 2 px
 /// underline, the active one's in the accent; parchment when active or
 /// under the pointer, else secondary.
@@ -108,7 +111,7 @@ pub fn place(
                 .flex_1()
                 .flex()
                 .items_center()
-                .px(w.z(11.))
+                .px(w.z(PLACE_PAD))
                 .child(w.words(label, w.size.place, MEDIUM)),
         )
         .child(div().h(w.z(2.)).w_full().when(active, |d| d.bg(w.accent())))

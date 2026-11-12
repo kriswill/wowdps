@@ -445,3 +445,362 @@ fn a_lost_question_is_asked_again() {
         "the same question again"
     );
 }
+
+// ---- marks and colors ---------------------------------------------------------
+
+/// Each game has one mark: Midnight's crescent (Retail by its expansion,
+/// the newest one before any build is known), Forever's loop, Classic's
+/// hourglass, and the neutral ring for a game this build does not know —
+/// and for Retail under an expansion with no mark of ours, so a new
+/// expansion never wears Midnight's crescent under its own name.
+#[test]
+fn each_game_has_one_mark_and_retail_s_is_its_expansion_s() {
+    assert_eq!(mark(Edition::Retail, Some((12, 1, 5))), MIDNIGHT);
+    assert_eq!(mark(Edition::Retail, None), MIDNIGHT, "the newest's");
+    assert_eq!(mark(Edition::Retail, Some((0, 0, 0))), MIDNIGHT);
+    assert_eq!(
+        mark(Edition::Unknown(0), None),
+        MIDNIGHT,
+        "counts as Retail"
+    );
+    assert_eq!(mark(Edition::Retail, Some((13, 0, 2))), NEUTRAL);
+    assert_eq!(name(Edition::Retail, Some((13, 0, 2))), "Retail");
+    assert_eq!(
+        mark(Edition::Retail, Some((11, 2, 7))),
+        NEUTRAL,
+        "drawn for none"
+    );
+    assert_eq!(mark(Edition::Forever, Some((1, 60, 1))), FOREVER);
+    assert_eq!(mark(Edition::Classic(2), None), CLASSIC);
+    assert_eq!(mark(Edition::Unknown(40), None), NEUTRAL);
+    let glyphs: std::collections::HashSet<_> = [MIDNIGHT, FOREVER, CLASSIC, NEUTRAL]
+        .iter()
+        .map(|m| m.glyph)
+        .collect();
+    assert_eq!(glyphs.len(), 4, "every mark its own shape");
+    assert!(MIDNIGHT.own() && FOREVER.own() && CLASSIC.own());
+    assert!(!NEUTRAL.own(), "no emblem stands for the neutral ring");
+    assert_eq!(MIDNIGHT.tone, Tone::Midnight);
+    assert_eq!(FOREVER.tone, Tone::Forever);
+    assert_eq!(CLASSIC.tone, Tone::Muted);
+}
+
+fn themes() -> [(&'static str, &'static crate::theme::Def); 3] {
+    [
+        ("navy", &crate::theme::NAVY),
+        ("onyx", &crate::theme::ONYX),
+        ("frost", &crate::theme::FROST),
+    ]
+}
+
+/// On every built-in theme the games' colors read at a glance on the bar
+/// and on a menu (3:1 and more), are siblings of a like weight that differ
+/// in lightness as well as hue, keep clear of what the window's colors
+/// already mean
+/// (the chrome, a kill, a wipe, a best), and carry words on a chip's fill
+/// at AA — the muted fill of a game with no color too.
+#[test]
+fn the_games_colors_read_on_every_theme() {
+    use crate::theme::{AA_CONTRAST, contrast, difference, oklab};
+    for (name, def) in themes() {
+        let t = &def.window;
+        let menu = t.glass.over(t.ground);
+        for tone in [Tone::Midnight, Tone::Forever] {
+            let c = tone.color(t);
+            for (on, under) in [("bar", t.surface), ("menu", menu)] {
+                let ratio = contrast(c, under);
+                assert!(ratio >= 3.0, "{name} {tone:?} on the {on}: {ratio}");
+            }
+            for (what, meaning) in [
+                ("the chrome", t.accent),
+                ("a kill", t.good),
+                ("a wipe", t.bad),
+                ("a best", t.legendary),
+            ] {
+                let d = difference(c, meaning);
+                assert!(d >= NEAR, "{name} {tone:?} too like {what}: {d}");
+            }
+        }
+        // Siblings: the teal a step lighter than the violet, of a like
+        // weight, and their hues well apart.
+        let (m, f) = (oklab(t.midnight).0, oklab(t.forever).0);
+        assert!(
+            (0.04..=0.12).contains(&(f - m)),
+            "{name}: lightness {m} and {f}"
+        );
+        assert!(difference(t.midnight, t.forever) >= 0.2, "{name}");
+        for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
+            let fill = tone.fill(t);
+            assert!(reads_on(fill, t), "{name} {tone:?}'s fill");
+            assert!(contrast(ink_on(fill, t), fill) >= AA_CONTRAST);
+        }
+        let muted = contrast(Tone::Muted.color(t), t.surface);
+        assert!(muted >= 3.0, "{name} muted: {muted}");
+        // A mark on the menu's lit row and on the stage under a fight's
+        // header, and the bar's ink a mark yields to.
+        for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
+            let c = tone.color(t);
+            for (on, under) in [("a lit row", t.raise), ("the stage", t.ground)] {
+                let ratio = contrast(c, under);
+                assert!(ratio >= 3.0, "{name} {tone:?} on {on}: {ratio}");
+            }
+        }
+        let yielded = contrast(t.ink_2, t.surface);
+        assert!(yielded >= 3.0, "{name} ink_2: {yielded}");
+        // The built-in themes' tokens are drawn as they are.
+        assert_eq!(Tone::Midnight.color(t), t.midnight, "{name}");
+        assert_eq!(Tone::Forever.color(t), t.forever, "{name}");
+    }
+}
+
+/// A class chrome that looks like a game's color would read as that game
+/// (a Warlock's lavender beside Midnight's violet, a Mage's cyan beside
+/// Forever's teal): the mark then wears the bar's ink and its shape tells
+/// the game. On the built-in themes those two pairs are all; a theme's own
+/// chrome never takes a mark's color away, and the muted ink is never
+/// swapped.
+#[test]
+fn a_chrome_too_like_a_game_s_color_takes_its_mark_to_ink() {
+    use crate::theme::{CLASSES, chrome_base, difference};
+    use wowdps_model::Class;
+    for (name, def) in themes() {
+        let t = &def.window;
+        for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
+            assert_eq!(tone.mark_color(t, t.accent), tone.color(t), "{name}");
+        }
+        let near: Vec<(Class, Tone)> = CLASSES
+            .into_iter()
+            .flat_map(|class| {
+                [Tone::Midnight, Tone::Forever]
+                    .into_iter()
+                    .filter(move |tone| tone.mark_color(t, chrome_base(class)) != tone.color(t))
+                    .map(move |tone| (class, tone))
+            })
+            .collect();
+        assert_eq!(
+            near,
+            vec![
+                (Class::Mage, Tone::Forever),
+                (Class::Warlock, Tone::Midnight)
+            ],
+            "{name}"
+        );
+        let warlock = chrome_base(Class::Warlock);
+        assert!(difference(warlock, t.midnight) < NEAR);
+        assert_eq!(Tone::Midnight.mark_color(t, warlock), t.ink_2);
+        assert_eq!(Tone::Forever.mark_color(t, warlock), t.forever);
+        assert_eq!(
+            Tone::Muted.mark_color(t, t.ink_3),
+            Tone::Muted.color(t),
+            "{name}: the muted ink is never swapped"
+        );
+    }
+}
+
+/// The switch is a row of chips while it fits — up to three games on a
+/// bar that is not narrow — and the dropdown otherwise. A chip's tooltip
+/// is its game's build, and says so of the game being played.
+#[test]
+fn the_switch_is_chips_while_they_fit() {
+    assert!(chips(2, false) && chips(3, false));
+    assert!(!chips(4, false), "more than three fold into the dropdown");
+    assert!(!chips(2, true), "a narrow bar has no room for them");
+    let mut census = Census::new();
+    let source = |e: Option<Edition>| EditionSource {
+        edition: e,
+        ..EditionSource::default()
+    };
+    census.on_sources(&[
+        source(Some(Edition::Retail)),
+        source(Some(Edition::Forever)),
+    ]);
+    let entries = entries(&census, Edition::Retail);
+    let entry = |e: Edition| {
+        entries
+            .iter()
+            .flatten()
+            .find(|x| x.edition == e)
+            .cloned()
+            .expect("the entry")
+    };
+    let mut retail = entry(Edition::Retail);
+    assert_eq!(retail.mark, MIDNIGHT);
+    assert_eq!(entry(Edition::Forever).mark, FOREVER);
+    retail.note = None;
+    assert_eq!(chip_tip(&retail), retail.tip);
+    retail.note = Some(PLAYING_NOW);
+    assert_eq!(chip_tip(&retail), format!("{}, playing now", retail.tip));
+    // A compact chip, drawn without its name, says it first.
+    assert_eq!(
+        compact_tip(&retail),
+        format!("Midnight: {}, playing now", retail.tip)
+    );
+}
+
+/// With several games known, the game a header would lead its words with
+/// is a tag of its own — the mark and the name — and the words are the
+/// meta alone; with one game known the line is as it always was, and a
+/// fight that names no other game has no tag.
+#[test]
+fn a_fight_header_tags_its_game_once_several_are_known() {
+    let heroic = || "Heroic, 20 players".to_string();
+    let b = Some((12, 0, 0));
+    assert_eq!(
+        header_parts(heroic(), Some(Edition::Forever), None, b),
+        (None, "Forever, Heroic, 20 players".to_string()),
+        "one game known: the words as ever"
+    );
+    let (tag, words) = header_parts(heroic(), Some(Edition::Forever), Some(Edition::Forever), b);
+    assert_eq!(words, heroic());
+    assert_eq!(
+        tag,
+        Some(Tag {
+            edition: Edition::Forever,
+            name: "Forever".to_string(),
+            mark: FOREVER
+        })
+    );
+    let (tag, words) = header_parts(heroic(), Some(Edition::Retail), Some(Edition::Forever), b);
+    assert_eq!(words, heroic());
+    assert_eq!(
+        tag.map(|t| (t.name, t.mark)),
+        Some(("Midnight".to_string(), MIDNIGHT))
+    );
+    assert_eq!(
+        header_parts(heroic(), Some(Edition::Retail), Some(Edition::Retail), b),
+        (None, heroic())
+    );
+    assert_eq!(
+        header_parts(String::new(), None, Some(Edition::Forever), b),
+        (None, String::new())
+    );
+}
+
+/// The switch takes the richest form whose bar fits, the chips only where
+/// they are allowed; it folds as soon as a form no longer fits, unfolds
+/// only with room to spare, and so never flips at a threshold, however the
+/// width or a name's length wavers there.
+#[test]
+fn the_switch_folds_when_it_must_and_unfolds_with_room() {
+    let needs = [1100.0, 900.0, 860.0, 820.0, 700.0];
+    let pick = |width, last| switch_form(needs, width, last, true);
+    assert_eq!(pick(1440.0, None), Form::Chips);
+    assert_eq!(pick(1100.0, None), Form::Chips, "fits exactly");
+    assert_eq!(pick(1099.0, None), Form::ChipsGlyph);
+    assert_eq!(pick(880.0, None), Form::ChipsCompact);
+    assert_eq!(pick(850.0, None), Form::Dropdown);
+    assert_eq!(pick(760.0, None), Form::DropdownBadge);
+    assert_eq!(
+        pick(320.0, None),
+        Form::DropdownBadge,
+        "the poorest when none fits"
+    );
+    assert_eq!(
+        switch_form(needs, 1440.0, None, false),
+        Form::Dropdown,
+        "no chips where they are not allowed"
+    );
+    // Folding needs no margin; unfolding does.
+    assert_eq!(pick(1099.0, Some(Form::Chips)), Form::ChipsGlyph);
+    assert_eq!(pick(1100.0, Some(Form::ChipsGlyph)), Form::ChipsGlyph);
+    assert_eq!(
+        pick(1100.0 + UNFOLD_SPARE, Some(Form::ChipsGlyph)),
+        Form::Chips
+    );
+    assert_eq!(pick(900.0, Some(Form::ChipsCompact)), Form::ChipsCompact);
+    assert_eq!(
+        pick(900.0 + UNFOLD_SPARE, Some(Form::ChipsCompact)),
+        Form::ChipsGlyph
+    );
+    // A width wavering at a threshold settles and stays.
+    let mut last = None;
+    let mut seen = Vec::new();
+    for width in [861.0, 859.0, 861.0, 859.5, 860.5, 859.0, 861.0] {
+        let form = pick(width, last);
+        seen.push(form);
+        last = Some(form);
+    }
+    let flips = seen.windows(2).filter(|w| w[0] != w[1]).count();
+    assert!(flips <= 1, "{seen:?}");
+    assert!(Form::Chips.chips() && Form::ChipsGlyph.chips() && Form::ChipsCompact.chips());
+    assert!(!Form::Dropdown.chips() && !Form::DropdownBadge.chips());
+    assert!(Form::ChipsCompact.compact() && !Form::ChipsGlyph.compact());
+    assert_eq!(Form::ALL.iter().filter(|f| f.chips()).count(), Form::CHIPS);
+    // Without the chips, the dropdown's two forms by the same rule.
+    assert_eq!(
+        switch_form(needs, 760.0, Some(Form::DropdownBadge), false),
+        Form::DropdownBadge,
+        "the badge unfolds to the name only with room to spare"
+    );
+    assert_eq!(
+        switch_form(
+            needs,
+            820.0 + UNFOLD_SPARE,
+            Some(Form::DropdownBadge),
+            false
+        ),
+        Form::Dropdown
+    );
+    // The rule itself, over any list.
+    assert_eq!(richest_fit(&[300.0, 200.0, 100.0], 250.0, None), 1);
+    assert_eq!(
+        richest_fit(&[300.0, 200.0, 100.0], 50.0, None),
+        2,
+        "the poorest"
+    );
+    assert_eq!(richest_fit(&[300.0, 200.0], 310.0, Some(1)), 1);
+    assert_eq!(richest_fit(&[], 310.0, None), 0);
+}
+
+/// A theme of the user's own with a light bar keeps its games' marks
+/// readable: a color that does not clear 3:1 there is darkened until it
+/// does, and the words on its fill still reach AA.
+#[test]
+fn a_light_bar_darkens_a_game_s_color_until_it_reads() {
+    use crate::theme::{AA_CONTRAST, Color, contrast};
+    let mut t = crate::theme::NAVY.window;
+    t.surface = Color::hex(0xF4F4F6);
+    t.ground = Color::hex(0xFFFFFF);
+    t.ink = Color::hex(0x15171C);
+    for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
+        let c = tone.color(&t);
+        let ratio = contrast(c, t.surface);
+        assert!(ratio >= MARK_CONTRAST, "{tone:?}: {ratio}");
+        let fill = tone.fill(&t);
+        assert!(
+            contrast(ink_on(fill, &t), fill) >= AA_CONTRAST,
+            "{tone:?}'s fill"
+        );
+    }
+    assert_ne!(Tone::Forever.color(&t), t.forever, "the teal darkened");
+}
+
+/// Two games of one name — two Classic clients — read apart in the
+/// switch: each with its build beside its name, or its client's number
+/// while no build is known. A name of its own is left alone.
+#[test]
+fn two_games_of_one_name_read_apart() {
+    let mut census = Census::new();
+    census.learn(&[
+        card(Edition::Retail, (12, 1, 5), 3),
+        card(Edition::Classic(2), (1, 15, 7), 1),
+        card(Edition::Classic(5), (2, 5, 4), 2),
+    ]);
+    let names: Vec<String> = entries(&census, Edition::Retail)
+        .expect("a switch")
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+    assert_eq!(names, vec!["Midnight", "Classic 1.15.7", "Classic 2.5.4"]);
+    assert_eq!(face(&census, Edition::Classic(5)).name, "Classic 2.5.4");
+    let mut bare = Census::new();
+    let source = |e: Option<Edition>| EditionSource {
+        edition: e,
+        ..EditionSource::default()
+    };
+    bare.on_sources(&[
+        source(Some(Edition::Classic(2))),
+        source(Some(Edition::Classic(11))),
+    ]);
+    assert_eq!(switch_name(&bare, Edition::Classic(11)), "Classic 11");
+}

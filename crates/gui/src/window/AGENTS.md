@@ -54,7 +54,10 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   degraded store apart, and shows nothing no card carries (no season score,
   no boss denominator, no ladder percentile).
 - **Colors.** The accent is the interface, class colors are people, green
-  and red are outcomes, and no color is semantic yellow. The accent is an
+  and red are outcomes, the games' colors (`midnight`, `forever`) are the
+  games, and no color is semantic yellow. A game's color is worn by its
+  mark and by the shown game's chip in the edition switch, nowhere else:
+  no tinted bar, rail, border or ground. The accent is an
   underline or an edge, never a fill. Class color as text is lifted until it
   clears WCAG AA (`theme::class_text_on`); a bar keeps `Class::rgb`
   exactly. Bars sit under the row's text; no text sits on a class color.
@@ -90,12 +93,46 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   follows again once its game has been live and moved on. It rides
   `ClientState::set_edition` for the meter and, only once the census knows
   more than one edition, every history read (`Store::rescope`). With one
-  edition known nothing is drawn or asked differently. Emblems go through
-  `images::edition_emblem`: the launcher's own for each game, from the
-  per-machine `edition-emblems.bin` (`tools/gen-emblems.sh`), rasterized by
-  GPUI's SVG renderer at the device pixels drawn, once per game and size.
-  Without one a game is its name alone, with no gap
-  (`editions::tests::an_emblem_keeps_the_bar_s_rhythm`). The talent viewer
+  edition known nothing is asked differently and no switch is drawn; its
+  bar is main's wherever main's fit, and folds (below) only where it would
+  run past the window
+  (`editions::tests::one_game_folds_only_where_its_bar_would_run_past`).
+  The switch takes the richest form whose bar, at its widest for either
+  game (the pill and the picker at their caps: `top_bar::Parts::widest`),
+  fits the window (`editions::switch_form`): a row of named chips after
+  the places beside the whole jump box, the named chips beside its glyph,
+  the compact chips (the game shown named in the room of the longest
+  name, every other game a round chip of its badge, its name in the
+  tooltip) beside the glyph, the dropdown, the dropdown's badge alone.
+  So the width alone sets the form,
+  never a pick or a pull going live. The chips need up to three games and
+  a bar that is not narrow; a form richer than the last must fit with
+  room to spare (`UNFOLD_SPARE`), so the switch never flips at a
+  threshold. Where even the badge leaves the bar too wide, the bar folds
+  the same way, by its real widths: the pill's clock, the help button,
+  the jump glyph. No width from the window's least runs a bar with the
+  switch past it
+  (`editions::tests::the_bar_never_runs_past_the_window_with_the_switch`). The shown
+  game's chip is filled with its color, the live dot is a pip on the
+  played game's badge, and `Gui::edition_chips` keeps the menu shut (and
+  out of `modal`) while the chips are drawn. A named chip's geometry is
+  the same in every state, the compact row and the dropdown keep room for
+  the longest name, and beside the chips the jump box starts right after
+  them, so a pick, the game played or a pull going live moves nothing
+  outside the switch's row
+  (`editions::tests::the_switch_holds_still_whatever_is_shown_or_played`).
+  Two games of one name (two Classic clients) read apart by their builds
+  (`editions::switch_name`). Each game has one mark and one color (gui-logic's
+  `editions::Mark` and `Tone`, the marks glyphs of the `glyph` table),
+  worn in one round badge (`marks.rs`) wherever the game is named: a
+  chip, the dropdown and its menu, a fight's tag (`head-edition`, once
+  several games are known) and an empty game's stage. The badge holds the
+  game's emblem where the per-machine `edition-emblems.bin`
+  (`tools/gen-emblems.sh`) has one, else our mark, the same size either
+  way (`editions::tests::a_badge_keeps_the_switch_s_rhythm`). A mark's
+  color yields to the bar's ink where the chrome looks too like it
+  (`Tone::mark_color`). The marks' pictures are committed and guarded
+  (`shots::marks_render_guard`, drawn without the art). The talent viewer
   reads the fight's game's trees (`Viewer::edition`).
 - **The chrome budget is a test.** At 1440×900 the first meter row starts
   under 290 px with 18 rows showing
