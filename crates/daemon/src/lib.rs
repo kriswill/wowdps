@@ -21,6 +21,7 @@ pub mod roles;
 pub mod server;
 pub mod session;
 pub mod sources;
+pub mod swept;
 
 use std::io::{self, Seek, SeekFrom};
 use std::os::unix::net::{UnixListener, UnixStream};

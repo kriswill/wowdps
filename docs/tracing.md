@@ -22,8 +22,10 @@ wowdps                                                     # `wowdps --file …`
   ~10 s after the last watching client disconnects.
 - `$XDG_STATE_HOME/wowdps/daemon.log` — startup/shutdown/failure trail of
   daemons running with null stdio (self-spawned or systemd).
-- Index checkpoints cache under `$XDG_CACHE_HOME/wowdps/index/`; delete the
-  directory to force cold full scans.
+- Index checkpoints cache under `$XDG_CACHE_HOME/wowdps/index/`, beside
+  `swept`, the history's list of the older logs it has read whole (a start
+  passes over each while the file and its stored fights are unchanged).
+  Delete the directory to force cold full scans and one read of every log.
 - The history store lives under `$XDG_DATA_HOME/wowdps/history/v1/` (one JSON
   document per fight in `fights/`, `rows/`, `details/`, `loadouts/`).
   `wowdps status` prints its line — fight count, imports in flight, dropped
