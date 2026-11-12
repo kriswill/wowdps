@@ -201,8 +201,8 @@ mod tests {
         let committed = tablegen::committed();
         assert_eq!(
             committed.len(),
-            18,
-            "Retail's 8 tables and 4 review twins, Forever's 5 tables and the role signals' twin"
+            20,
+            "Retail's 8 tables and 4 review twins, Forever's 6 tables and 2 review twins"
         );
         for (_, rel) in &committed {
             assert!(root.join(rel).is_file(), "{}", rel.display());

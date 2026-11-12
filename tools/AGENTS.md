@@ -39,11 +39,15 @@ what it does and how to run it.
   `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
   names another (Forever's `wowf`). Each committed table and review twin
   is one edition's (`tablegen::committed`): Retail's beside the code,
-  Forever's class, item, keystone, open-world and role-signal tables under
-  `crates/core/src/forever/` (the role signals are Forever's alone: a run
-  of another product needs `-o`). A table script passes `--checkout "$root"`,
-  so a run with no `-o` writes its own edition's committed table, and one
-  whose edition has none of that table needs `-o`. The extractor refuses
+  Forever's class, item, keystone, open-world, absorb and role-signal
+  tables under `crates/core/src/forever/` (the role signals are Forever's
+  alone: a run of another product needs `-o`). A table script passes
+  `--checkout "$root"`, so a run with no `-o` writes its own edition's
+  committed table, and one whose edition has none of that table needs
+  `-o`; a census-backed table's run reads its own edition's committed
+  census under it (Retail's `tools/*-census.csv`, Forever's
+  `tools/forever/*-census.csv`, but the role signals' Forever-only
+  `tools/role-signals-census.csv`), unless `--census` names another. The extractor refuses
   any product's output on another edition's committed file, Retail's
   included, however `-o` spells it (`cli/owners.rs`). The caches in the
   data home are Retail's by default: another product's needs `-o`, and
@@ -109,7 +113,7 @@ tools/gen-open-world-maps.sh   # open_world_maps.rs (R10)
 tools/gen-item-spells.sh       # item_spells.rs (R12; SpellEffect is big, be patient)
 tools/gen-class-spells.sh --product wowf   # and the other three: Forever's, crates/core/src/forever/
 tools/gen-role-spells.sh       # role_spells.rs (R18, curated)
-tools/gen-absorb-spells.sh     # absorb_spells.rs (R20)
+tools/gen-absorb-spells.sh     # absorb_spells.rs (R20; --product wowf: Forever's, over tools/forever/'s census)
 tools/gen-proc-spells.sh       # proc_spells.rs (R26, curated)
 tools/gen-placed-spells.sh     # proto's placed_spells.rs (what the replay cut keeps of placed things, curated)
 tools/gen-role-signals.sh      # Forever's forever/role_signals.rs (R30, curated by name; Retail has none)

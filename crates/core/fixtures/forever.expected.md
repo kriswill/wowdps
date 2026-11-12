@@ -41,19 +41,19 @@ Under a header naming an edition with no table (a Classic client's id, an
 unlisted one) nobody has a class, and the amounts are the same under every
 header.
 
-## The tables Forever has none of
+## Forever's own tables, and the ones it has none of
 
-Forever has no role-span, absorb, proc or placed table, so `check.awk` reads its
-Retail copies (`ROLE`, `SHIELD`, `PLACE`, `TELL`) only while the version line
-names Retail (`edition_tables`):
+Forever has its own absorb table (`crates/core/src/forever/absorb_spells.rs`,
+R20), and no role-span, proc or placed table, so `check.awk` reads its Forever
+copy (`SHIELD_F`) for a Forever log and its Retail copies (`ROLE`, `SHIELD`,
+`PLACE`, `TELL`) only while the version line names Retail (`edition_tables`):
 
+- Power Word: Shield (17, in Forever's absorb table) opens an R20 shield of
+  known size on Elowyn's ledger: applied 250 at 16.0 s, 200 of it absorbed at
+  17.0 s (her healing, `absorbheal` 200, R2), and the 50 left at its removal at
+  25.0 s wasted: `absorb_applied` 250, `absorb_wasted` 50, `shields_unknown` 0.
 - Shield Wall (871, a defensive in Retail's role table) opens no R18 span:
   `spans` and `am_uptime_ms` are 0 for Tharokk.
-- Power Word: Shield (17, in Retail's absorb table) opens no R20 shield, so
-  its applied 250 and its removal's 50 are never seen; the 200 it absorbed
-  still credits Elowyn's healing (`absorbheal` 200, R2) and opens an
-  unknown-size shield on her ledger, open at the pull's end:
-  `shields_unknown` 1, `absorb_applied` 0, `absorb_wasted` blank.
 - The cut keeps no buff row for either (neither is a role buff here, and
   both casters are the group's).
 

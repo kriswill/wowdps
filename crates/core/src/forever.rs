@@ -3,6 +3,7 @@
 //! against that edition's client (`tools/gen-*.sh --product wowf`), never
 //! edited by hand. `crate::tables` picks them for a Forever fight.
 
+pub(crate) mod absorb_spells;
 pub(crate) mod class_spells;
 pub(crate) mod item_spells;
 pub(crate) mod keystone_timers;

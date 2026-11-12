@@ -169,20 +169,20 @@ fn an_id_no_table_knows_is_counted() {
     assert!(tree.groups.is_empty(), "{:?}", tree.groups);
 }
 
-/// The tables Forever has none of add nothing, and take nothing away: the
-/// Warrior's Shield Wall (a defensive in Retail's role table) opens no
-/// span, and the Priest's Power Word: Shield (Retail's absorb table) opens
-/// no shield, yet the 200 it absorbed is her healing and on her shield
-/// ledger, whose size it never learned.
+/// Forever's own shield table (R20) opens the Priest's Power Word: Shield
+/// as a shield of known size: 250 applied, the 200 it absorbed her healing,
+/// the 50 left at its removal wasted. A table Forever has none of adds
+/// nothing and takes nothing away: the Warrior's Shield Wall (a defensive
+/// in Retail's role table) opens no span.
 #[test]
-fn a_table_forever_lacks_adds_nothing_and_takes_nothing() {
+fn forevers_shields_ledger_and_a_table_it_lacks_adds_nothing() {
     let meter = meter_from_lines(text().lines());
     let seg = boss_pull(&meter);
     assert!(seg.spans(WARRIOR).is_empty());
     assert_eq!(seg.am_uptime_ms(WARRIOR), 0);
     assert_eq!(seg.absorbed_healing(PRIEST), 200);
-    assert_eq!(seg.absorb_wasted(PRIEST), None);
-    assert_eq!(seg.shields_unknown(PRIEST), 1);
+    assert_eq!(seg.absorb_wasted(PRIEST), Some(50));
+    assert_eq!(seg.shields_unknown(PRIEST), 0);
     let shields = seg.shields(PRIEST);
     assert_eq!(shields.len(), 1);
     assert_eq!((shields[0].spell_id, shields[0].consumed), (17, 200));

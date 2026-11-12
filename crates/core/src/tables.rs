@@ -100,16 +100,17 @@ static RETAIL: Tables = Tables {
 
 /// Forever's: its classes (by the client's class masks, no spec), its
 /// items, its keystones (none: it has no Mythic+), its open-world maps and
-/// its role signals (R30: its log carries no spec, so roles are inferred).
-/// Its shields, role spans and procs have no table yet. Its log names no
-/// UiMap inside a dungeon or a raid (R29: a UiMap 0 there is a place).
+/// its role signals (R30: its log carries no spec, so roles are inferred),
+/// and its shields (R20). Its role spans and procs have no table yet. Its
+/// log names no UiMap inside a dungeon or a raid (R29: a UiMap 0 there is a
+/// place).
 static FOREVER: Tables = Tables {
     class: Some(crate::forever::class_spells::resolve),
     items: Some(Items {
         kind: crate::forever::item_spells::item_kind,
         trinket: crate::forever::item_spells::trinket_of,
     }),
-    absorb: None,
+    absorb: Some(crate::forever::absorb_spells::is_absorb_spell),
     role: None,
     procs: None,
     keystones: Some(Keystones {
@@ -333,9 +334,16 @@ mod tests {
                 assert!(!Tables::of(e).is_absorb_spell(id), "{e:?} {id}");
             }
         }
-        // Power Word: Shield is Retail's shield; Forever has no table.
-        assert!(Tables::of(Edition::Retail).is_absorb_spell(17));
-        assert!(!Tables::of(Edition::Forever).is_absorb_spell(17));
+        // Power Word: Shield is a shield in both editions' tables; Blood
+        // Shield is Retail's alone, Light's Fury Forever's alone; an edition
+        // with no table has none.
+        for e in [Edition::Retail, Edition::Forever] {
+            assert!(Tables::of(e).is_absorb_spell(17), "{e:?}");
+        }
+        assert!(Tables::of(Edition::Retail).is_absorb_spell(77535));
+        assert!(!Tables::of(Edition::Forever).is_absorb_spell(77535));
+        assert!(Tables::of(Edition::Forever).is_absorb_spell(1_310_927));
+        assert!(!Tables::of(Edition::Retail).is_absorb_spell(1_310_927));
         assert!(!Tables::of(Edition::Classic(2)).is_absorb_spell(17));
     }
 

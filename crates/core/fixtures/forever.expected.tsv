@@ -293,9 +293,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	support_uptime_ms	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	spans	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	taken10_0	0
-1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	absorb_applied	0
-1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	absorb_wasted	
-1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	shields_unknown	1
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	absorb_applied	250
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	absorb_wasted	50
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	shields_unknown	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	stack_hits	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	stack_sum	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C04	stack_max	0

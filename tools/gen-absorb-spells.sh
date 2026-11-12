@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate crates/core/src/absorb_spells.rs (+ absorb_spells.expected.md) from
-# the LOCAL game install.
+# the LOCAL game install, or with --product wowf Forever's
+# crates/core/src/forever/absorb_spells.rs from its client.
 #
 # Twin of gen-item-spells.sh, for CONTRACT.md R20: which aura ids are a damage
 # SHIELD, so the meter's shield ledger admits their APPLIED / REFRESH / REMOVED
@@ -18,14 +19,17 @@
 # Note SpellEffect is a large table (~30 MB compressed in CASC); this takes
 # noticeably longer than the class-spell generator.
 #
-# usage: tools/gen-absorb-spells.sh [wow-dir] [--product ROW -o FILE]
+# Each edition's run reads its own committed census (Retail's
+# tools/absorb-spells-census.csv, Forever's tools/forever/absorb-spells-census.csv,
+# both from tools/census-absorb-spells.sh) unless --census names another.
+#
+# usage: tools/gen-absorb-spells.sh [wow-dir] [--product ROW [-o FILE]]
 #   wow-dir: folder holding .build.info and Data/. When omitted the tool
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
 #   logs_dir, or a scan of the install roots (Steam compatdata on
 #   Linux, /Applications and ~/Applications on macOS).
-#   --product ROW: another edition of the game (tools/lib.sh); no edition
-#   but Retail has this table yet, so its table and review twin go only
-#   where -o FILE names, never over a committed one.
+#   --product ROW: another edition of the game (tools/lib.sh): Forever's
+#   (wowf) writes its committed table; one with none needs -o FILE.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,5 +46,4 @@ fetch_keys "$work/tactkeys.txt"
 # table goes to its edition's committed file in this checkout.
 "$extract" gen-absorb-spells \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" \
-    --census "$root/tools/absorb-spells-census.csv" \
     --checkout "$root" "$@"

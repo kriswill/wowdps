@@ -137,6 +137,7 @@ mod tests {
             "gen-item-spells",
             "gen-keystone-timers",
             "gen-open-world-maps",
+            "gen-absorb-spells",
             "gen-role-signals",
         ];
         for c in gens {
