@@ -41,9 +41,9 @@ No addon, no injection, no screen reading.
   under a second. A segment is parsed only when opened. Index checkpoints
   persist across restarts, so only the tail is rescanned, and the history
   reads an older log again only when it changed. A new build whose parser,
-  meter, tables or history store changed reads every log once on its first
-  start (minutes for a large folder, on one core); a build that changed
-  none of them does not.
+  meter, tables or history store changed (their code, not their tests)
+  reads every log once on its first start (minutes for a large folder, on
+  one core); a build that changed none of them does not.
 - **History.** Every past pull in the log is browsable in the same UI.
 
 ## Install

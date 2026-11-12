@@ -107,13 +107,14 @@ impl Entry {
     }
 }
 
-/// `build.rs`'s hash of every Rust source that decides which fights a read
-/// of a log yields and the store keeps: all of model and core (the parser,
-/// the scanner, the meter, the generated tables), proto's history codec
-/// (`HISTORY_SCHEMA`, the ids), and the daemon's history store, loader,
-/// index cache and this module. A build that changes any of them reads
-/// every log once; one that changes none (the hub, a client) reads nothing
-/// again.
+/// `build.rs`'s hash of the Rust source that decides which fights a read
+/// of a log yields and the store keeps: model and core (the parser, the
+/// scanner, the meter, the generated tables) but core's dispatcher, live
+/// tailing and test kit; proto's history module (`HISTORY_SCHEMA`, the
+/// ids); and the daemon's history store, loader, index cache and this
+/// module — test code left out. A build that changes any of it reads every
+/// log once; one that changes none (the hub, a client, a test) reads
+/// nothing again.
 pub const SOURCES: &str = env!("WOWDPS_SWEEP_SOURCES");
 
 /// The fingerprint every entry answers to: [`SOURCES`] and the history

@@ -67,11 +67,15 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   while its inode, length and mtime hold, every fight it held is still a
   card, and the store's `store.id` and the rules are the manifest's.
   Never record a tailed log (its open tail is live). The rules fingerprint
-  the sources that decide what a read stores (`build.rs`'s `SOURCES`, so
-  no version needs bumping by hand): code that decides it moving into a
-  file the list does not cover joins the list. `tests/sweep.rs` holds the
-  rule; its ignored `measured` test prints what three starts over forty
-  logs cost.
+  the sources that decide what a read stores, so no version needs bumping
+  by hand: `build.rs` lists them by module (a split stays covered), leaves
+  out what decides nothing (`LEFT_OUT`, test code), and fails the build
+  when a listed unit or exclusion names nothing or a definition in
+  `DECIDING` is outside the hashed set. A new function that decides what
+  a read yields or keeps joins `DECIDING`; code moving into a module the
+  list does not cover joins `SOURCES`. `tests/sweep.rs` holds the rule,
+  `tests/fingerprint.rs` the fingerprint; the ignored `measured` test
+  prints what three starts over forty logs cost.
 - **Retention runs after every write.** The protected set is kept whole:
   boss kills, timed keys, pinned fights and progression wipes until the
   first kill in that edition at that difficulty. The caps count the
