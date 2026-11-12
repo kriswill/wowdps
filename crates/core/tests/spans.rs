@@ -252,8 +252,8 @@ fn the_spans_fixture_reproduces_its_span_table() {
     );
     assert_eq!(sb[0].label, "Shield Block");
     assert_eq!(sb[0].kind, MarkKind::ActiveMitigation);
-    // The trash tail: one span from the segment's start (the l.86 removal),
-    // the l.81 apply nowhere.
+    // The trash tail: one span from the segment's start (the l.88 removal),
+    // the l.83 apply nowhere.
     let trash = &meter.segments()[1];
     assert_eq!(trash.kind, SegmentKind::Trash);
     assert_eq!(
@@ -420,6 +420,53 @@ fn a_removal_with_no_apply_spans_start_to_removal() {
     assert_eq!(seg.externals_received(W), (1, 9_000));
 }
 
+/// The segment-start rule fires only for a key the segment has opened no
+/// span for: a removal or a refresh after that key's span closed (the
+/// buff's end logged twice, a refresh written after the removal) opens no
+/// second span back at the segment's start. A 12 s Shield Wall reads 12 s,
+/// never 12 + 20 or 12 + 60; an 8 s Pain Suppression counts once, 8 s, on
+/// both sides. A removal after the rule's own span closed is dropped too.
+#[test]
+fn an_orphan_after_the_keys_span_closed_opens_nothing() {
+    let m = meter_of(&[
+        start(0),
+        swing_on(1_000, W_UNIT, 10_000),
+        apply(4_000, W_UNIT, W_UNIT, SHIELD_WALL, "Shield Wall"),
+        remove(16_000, W_UNIT, W_UNIT, SHIELD_WALL, "Shield Wall"),
+        remove(20_000, W_UNIT, W_UNIT, SHIELD_WALL, "Shield Wall"),
+        refresh(25_000, W_UNIT, W_UNIT, SHIELD_WALL, "Shield Wall"),
+        apply(30_000, H_UNIT, W_UNIT, PAIN_SUPPRESSION, "Pain Suppression"),
+        remove(38_000, H_UNIT, W_UNIT, PAIN_SUPPRESSION, "Pain Suppression"),
+        refresh(40_000, H_UNIT, W_UNIT, PAIN_SUPPRESSION, "Pain Suppression"),
+        remove(42_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        remove(45_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        end(60_000),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(
+        flat_spans(&seg.spans(W)),
+        vec![
+            (0, SHIELD_BLOCK, 42_000, W.into()),
+            (4_000, SHIELD_WALL, 12_000, W.into()),
+            (30_000, PAIN_SUPPRESSION, 8_000, H.into()),
+        ]
+    );
+    let total = |spell: u32| -> (u32, i64) {
+        seg.uptime(W)
+            .iter()
+            .filter(|u| u.spell_id == spell)
+            .fold((0, 0), |(n, ms), u| (n + u.count, ms + u.total_ms))
+    };
+    assert_eq!(total(SHIELD_WALL), (1, 12_000));
+    assert_eq!(total(PAIN_SUPPRESSION), (1, 8_000));
+    // The rule's own span, from the start to its removal; its second
+    // removal is dropped.
+    assert_eq!(total(SHIELD_BLOCK), (1, 42_000));
+    assert_eq!(seg.am_uptime_ms(W), 42_000);
+    assert_eq!(seg.externals_given(H), (1, 8_000));
+    assert_eq!(seg.externals_received(W), (1, 8_000));
+}
+
 // ---- the read-time close ---------------------------------------------------
 
 /// A role span still open at the kill reads `end − at`; an item mark still
@@ -520,7 +567,7 @@ fn an_aura_after_a_segments_end_lands_nowhere() {
     assert_eq!(seg.am_uptime_ms(W), 0);
     assert!(seg.uptime(W).is_empty());
 
-    // The fixture's own dead-zone apply (l.81): the encounter has no span at
+    // The fixture's own dead-zone apply (l.83): the encounter has no span at
     // 65 s and the trash's only span starts at ITS start.
     let f = replay(&fixtures()[6].1);
     assert!(f.segments()[0].spans(W).iter().all(|s| s.at_ms < 60_000));

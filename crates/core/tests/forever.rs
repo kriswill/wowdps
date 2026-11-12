@@ -173,7 +173,9 @@ fn an_id_no_table_knows_is_counted() {
 /// Shield as a shield of known size, 250 applied, the 200 it absorbed her
 /// healing, the 50 left at its removal wasted; its role spans (R18) open the
 /// Warrior's Shield Wall as a defensive from 4 s into the pull to its
-/// removal 12 s later, which is no active mitigation.
+/// removal 12 s later, which is no active mitigation; its removal logged
+/// again at 30.5 s opens no second span from the pull's start (R18's
+/// segment-start rule is for a key the segment never opened).
 #[test]
 fn forevers_shields_and_role_spans_read_its_own_tables() {
     let meter = meter_from_lines(text().lines());

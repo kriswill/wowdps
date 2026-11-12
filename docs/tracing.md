@@ -194,6 +194,13 @@ WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt cargo test --
 They print no player's name or guid, a failure included. Set both variables
 and filter on `real` to check a log of each edition in one run.
 
+The daemon's own Retail gates (`-p wowdps-daemon -- --ignored real_log`: the
+import sweep, the first snapshot, the stored windows and kills against the
+live meter, the Taken lists' bytes) read `WOWDPS_REAL_LOG` through the same
+helper (`crates/core/tests/real_log/mod.rs`), so a Forever log there is
+passed over, and name a fight by its kind and place and a player by their
+place in the fight's roster, a failure included.
+
 ## Combat-log flush latency (context for "is it frozen?")
 
 The game buffers combat-log writes and flushes in large bursts — measured on

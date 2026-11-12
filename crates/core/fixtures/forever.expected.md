@@ -44,10 +44,12 @@ header.
 ## Forever's own tables, and the ones it has none of
 
 Forever has its own absorb table (`crates/core/src/forever/absorb_spells.rs`,
-R20) and role-span table (`crates/core/src/forever/role_spells.rs`, R18), and
-no proc or placed table, so `check.awk` reads its Forever copies (`SHIELD_F`,
-`ROLE_F`) for a Forever log and its Retail copies (`ROLE`, `SHIELD`, `PLACE`,
-`TELL`) only while the version line names Retail (`edition_tables`):
+R20), role-span table (`crates/core/src/forever/role_spells.rs`, R18) and
+placed table (proto's `placed/forever_placed_spells.rs`, R29: totems and
+traps, none of which this log casts), and no proc table, so `check.awk` reads
+its Forever copies (`SHIELD_F`, `ROLE_F`) for a Forever log and its Retail
+copies (`ROLE`, `SHIELD`, `PLACE`, `TELL`) only while the version line names
+Retail (`edition_tables`):
 
 - Power Word: Shield (17, in Forever's absorb table) opens an R20 shield of
   known size on Elowyn's ledger: applied 250 at 16.0 s, 200 of it absorbed at
@@ -56,6 +58,9 @@ no proc or placed table, so `check.awk` reads its Forever copies (`SHIELD_F`,
 - Shield Wall (871, a defensive in Forever's role table) opens an R18 span
   on Tharokk from 14.0 s (4 000 ms into the pull) to its removal at 26.0 s:
   `spans` 1; a defensive is no active mitigation, so `am_uptime_ms` stays 0.
+  Its removal is logged a second time at 30.5 s, after the span closed: the
+  segment-start rule fires only for a key the segment opened no span for,
+  so it opens nothing (no `[0, 20 500]` span; `spans` stays 1).
 - The cut keeps Shield Wall's two buff rows, a role buff going on and coming
   off a player (`replay_buff_applied` 1, `replay_buff_removed` 1); Tharokk is
   one of its units by his posts already (`replay_units` 6, "The replay cut"

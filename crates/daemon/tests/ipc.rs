@@ -2,6 +2,9 @@
 //! protocol frames. Every test drives `wowdps_daemon::run` the way a client
 //! binary would.
 
+#[path = "../../core/tests/real_log/mod.rs"]
+mod real_log;
+
 use std::io::Write as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -701,12 +704,16 @@ fn an_overlay_session_is_supervised_over_the_wire() {
     }
 }
 
-/// Manual perf gate. Run with:
+/// Manual perf gate, a Retail one (which log it reads: core's
+/// `tests/real_log/mod.rs`); it prints times, never a name. Run with:
 /// `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-daemon -- --ignored real_log --nocapture`
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn real_log_first_snapshot_is_fast_cold_and_faster_warm() {
-    let path = PathBuf::from(std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG"));
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
+    let path = PathBuf::from(path);
     let tmp = Temp::new("perf");
     let cache = tmp.join("cache");
 
