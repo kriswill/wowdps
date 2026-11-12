@@ -39,7 +39,7 @@ Build 1.60.1.70888 (product wowf), 289 role signals from 55 curated names.
 
 ## Entries
 
-| id | name | kind | proof | observed (WoWCombatLog-110926_175605.txt) | observed (WoWCombatLog-111026_163741.txt) |
+| id | name | kind | proof | observed (log 1) | observed (log 2) |
 | ---: | --- | --- | --- | ---: | ---: |
 | 355 | Taunt | taunt | ATTACK_ME or MOD_TAUNT | 33 | 67 |
 | 29060 | Taunt | taunt | ATTACK_ME or MOD_TAUNT | 0 | 0 |

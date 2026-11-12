@@ -349,7 +349,7 @@ const CURATED: &[Curated] = &[
 /// player, the name the log wrote and one count per log.
 #[derive(Debug, Default)]
 pub struct Census {
-    /// Log basenames, in column order.
+    /// The logs' labels (`log 1`, `log 2`, …), in column order.
     pub logs: Vec<String>,
     /// id → (name, count per log).
     pub counts: HashMap<u32, (String, Vec<u64>)>,
@@ -704,7 +704,7 @@ mod tests {
 
     fn census() -> Census {
         Census::parse(
-            "id,name,raid.txt,dummy.txt\n\
+            "id,name,log 1,log 2\n\
              871,\"Shield Wall\",56,0\n\
              10060,\"Power Infusion\",147,14\n\
              132404,\"Shield Block\",371,0\n\
@@ -729,7 +729,7 @@ mod tests {
         assert!(g.content.contains("pub(crate) fn role_kind"));
         assert!(
             g.expected
-                .contains("| observed (raid.txt) | observed (dummy.txt) |")
+                .contains("| observed (log 1) | observed (log 2) |")
         );
         assert!(
             g.expected
@@ -805,7 +805,7 @@ mod tests {
         let err = generate_curated(&list, &t, &census(), "b").unwrap_err();
         assert!(err.contains("8000") && err.contains("census"), "{err}");
 
-        let zero = Census::parse("id,name,a.txt\n8000,\"Ghost\",0\n").unwrap();
+        let zero = Census::parse("id,name,log 1\n8000,\"Ghost\",0\n").unwrap();
         let err = generate_curated(&list, &t, &zero, "b").unwrap_err();
         assert!(err.contains("8000") && err.contains("zero"), "{err}");
     }
@@ -843,7 +843,7 @@ mod tests {
             "{}",
             g.expected
         );
-        let zero = Census::parse("id,name,a.txt\n8000,\"Ghost\",0\n").unwrap();
+        let zero = Census::parse("id,name,log 1\n8000,\"Ghost\",0\n").unwrap();
         let g = generate_curated(&list, &t, &zero, "b").unwrap();
         assert!(
             g.expected.contains("| exempt: a waiver |"),
@@ -851,11 +851,11 @@ mod tests {
             g.expected
         );
         // A census row that exists still has to agree on the name …
-        let renamed = Census::parse("id,name,a.txt\n8000,\"Spectre\",3\n").unwrap();
+        let renamed = Census::parse("id,name,log 1\n8000,\"Spectre\",3\n").unwrap();
         let err = generate_curated(&list, &t, &renamed, "b").unwrap_err();
         assert!(err.contains("8000") && err.contains("Spectre"), "{err}");
         // … and its counts are what gets printed, not the waiver.
-        let seen = Census::parse("id,name,a.txt\n8000,\"Ghost\",3\n").unwrap();
+        let seen = Census::parse("id,name,log 1\n8000,\"Ghost\",3\n").unwrap();
         let g = generate_curated(&list, &t, &seen, "b").unwrap();
         assert!(
             g.expected.contains("| 8000 | Ghost | external | 3 |"),

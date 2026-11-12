@@ -6,7 +6,8 @@
 # a `Player-` guid and whose aura type is `BUFF`, keyed by (spell id, name as
 # the log wrote it). One pass of grep + awk per log (the logs are large; never
 # cat them). Output is a CSV, one row per (id, name), one count column per
-# log named by the log's basename, sorted by id: the generator reads it via
+# log labeled `log 1`, `log 2`, … in the order given (never the file's name,
+# which says when it was played), sorted by id: the generator reads it via
 # `wowdps-extract gen-role-spells --census` and writes the counts into
 # crates/core/src/role_spells.expected.md, so a curated id nobody has ever
 # seen applied to a player is visible in review. The committed copy is
@@ -29,7 +30,7 @@ header='id,name'
 i=0
 for log in "$@"; do
     i=$((i + 1))
-    header="$header,$(basename "$log")"
+    header="$header,log $i"
     # $1 is "<ts>  SPELL_AURA_APPLIED", $6 the target guid, $10/$11 the aura
     # id and quoted name, $13 BUFF/DEBUFF (13 fields; trailing optionals are
     # ignored; the log is CRLF, so the CR comes off first). A spell name

@@ -22,13 +22,13 @@ Build 12.1.0.69587, 1702 absorb spells; 71 seen in the census, 1 census ids outs
 
 ## Census ids outside the table
 
-| id | name (from the log) | observed (WoWCombatLog-090226_172412.txt) | observed (WoWCombatLog-080126_225759.txt) |
+| id | name (from the log) | observed (log 1) | observed (log 2) |
 | ---: | --- | ---: | ---: |
 | 47788 | Guardian Spirit | 1 | 0 |
 
 ## Entries
 
-| id | name | observed (WoWCombatLog-090226_172412.txt) | observed (WoWCombatLog-080126_225759.txt) |
+| id | name | observed (log 1) | observed (log 2) |
 | ---: | --- | ---: | ---: |
 | 17 | Power Word: Shield | 419 | 7 |
 | 740 | Tranquility | 0 | 0 |

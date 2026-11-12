@@ -10,7 +10,8 @@
 # SPELL_SUMMON or SPELL_CREATE; `aura`, a SPELL_AURA_APPLIED on anyone;
 # `heal`, a SPELL_HEAL or SPELL_PERIODIC_HEAL. One pass of grep + awk per log
 # (the logs are large; never cat them). Output is a CSV, one row per
-# (event, id, name), one count column per log named by the log's basename,
+# (event, id, name), one count column per log labeled `log 1`, `log 2`, … in
+# the order given (never the file's name, which says when it was played),
 # sorted by id: the generator reads it via `wowdps-extract gen-placed-spells
 # --census` and requires each entry's spells in it, writing the counts into
 # crates/proto/src/placed/placed_spells.expected.md. The committed copy is
@@ -37,7 +38,7 @@ header='event,id,name'
 i=0
 for log in "$@"; do
     i=$((i + 1))
-    header="$header,$(basename "$log")"
+    header="$header,log $i"
     # $1 is "<ts>  EVENT", $2 the source guid, $10/$11 the spell id and
     # quoted name (the log is CRLF, so the CR comes off first).
     LC_ALL=C grep -E '  (SPELL_CAST_SUCCESS|SPELL_SUMMON|SPELL_CREATE|SPELL_AURA_APPLIED|SPELL_HEAL|SPELL_PERIODIC_HEAL),' "$log" \

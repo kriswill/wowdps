@@ -338,7 +338,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 power: Vec::new(),
             }),
             segment_count: 12,
-            source: Some("WoWCombatLog-080226_190155.txt".to_string()),
+            source: Some("WoWCombatLog-010126_200000.txt".to_string()),
             status: None,
             // v35 (R25): the raid timeline, so the mutator reaches its deaths.
             raid: Some(RaidTimeline {

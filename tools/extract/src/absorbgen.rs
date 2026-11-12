@@ -312,7 +312,7 @@ mod tests {
 
     fn census() -> Census {
         Census::parse(
-            "id,name,raid.txt,dummy.txt\n\
+            "id,name,log 1,log 2\n\
              17,\"Power Word: Shield\",159,10\n\
              77535,\"Blood Shield\",371,0\n\
              5000,\"Feast of Souls\",9,9\n\
@@ -335,7 +335,7 @@ mod tests {
         assert!(g.content.contains("pub(crate) fn is_absorb_spell"));
         assert!(
             g.expected
-                .contains("| id | name | observed (raid.txt) | observed (dummy.txt) |")
+                .contains("| id | name | observed (log 1) | observed (log 2) |")
         );
         assert!(
             g.expected
@@ -400,7 +400,7 @@ mod tests {
         let b = generate(&tables(), &census(), "b").unwrap();
         assert_eq!(a.content, b.content);
         assert_eq!(a.expected, b.expected);
-        let empty = Census::parse("id,name,a.txt\n").unwrap();
+        let empty = Census::parse("id,name,log 1\n").unwrap();
         let g = generate(&tables(), &empty, "b").unwrap();
         assert!(g.unknown.is_empty());
         assert!(

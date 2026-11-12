@@ -5,7 +5,8 @@
 # For every log given, counts each `SPELL_ABSORBED` line by the absorb spell
 # it names — (spell id, name as the log wrote it). One pass of grep + awk per
 # log (the logs are large; never cat them). Output is a CSV, one row per (id,
-# name), one count column per log named by the log's basename, sorted by id:
+# name), one count column per log labeled `log 1`, `log 2`, … in the order
+# given (never the file's name, which says when it was played), sorted by id:
 # the generator reads it via `wowdps-extract gen-absorb-spells --census` and
 # writes the counts into crates/core/src/absorb_spells.expected.md, listing
 # every census id the client tables do NOT mark as SCHOOL_ABSORB — the shields
@@ -29,7 +30,7 @@ header='id,name'
 i=0
 for log in "$@"; do
     i=$((i + 1))
-    header="$header,$(basename "$log")"
+    header="$header,log $i"
     # SPELL_ABSORBED is 19 or 22 fields after the "<ts>  event" head (the
     # 22-field shape carries the damage spell block), so the absorb spell
     # block is addressed from the END: its quoted name ends at field n-4 and

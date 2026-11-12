@@ -31,7 +31,7 @@ Build 12.1.0.69875, 138 role spells.
 
 ## Entries
 
-| id | name | kind | observed (WoWCombatLog-090226_172412.txt) | observed (WoWCombatLog-080126_225759.txt) | observed (WoWCombatLog-090726_185257.txt) | observed (WoWCombatLog-091426_172259.txt) | observed (WoWCombatLog-092026_142939.txt) | observed (WoWCombatLog-090626_142343.txt) | observed (WoWCombatLog-090926_174710.txt) | observed (WoWCombatLog-091626_172855.txt) |
+| id | name | kind | observed (log 1) | observed (log 2) | observed (log 3) | observed (log 4) | observed (log 5) | observed (log 6) | observed (log 7) | observed (log 8) |
 | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 77535 | Blood Shield | active_mitigation | 3 | 4 | 343 | 437 | 323 | 502 | 0 | 6 |
 | 132403 | Shield of the Righteous | active_mitigation | 77 | 1 | 14 | 0 | 29 | 37 | 147 | 88 |

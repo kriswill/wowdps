@@ -839,7 +839,7 @@ mod tests {
 
     fn census() -> Census {
         Census::parse(
-            "id,name,a.txt,b.txt\n\
+            "id,name,log 1,log 2\n\
              355,\"Taunt\",33,67\n\
              331,\"Healing Wave\",114,0\n\
              2565,\"Shield Block\",82,277\n\
@@ -976,7 +976,7 @@ mod tests {
             Curated::exempt("Lesser Heal", RoleSignal::Heal, "w"),
             Curated::exempt("Shield Block", RoleSignal::Shield, "w"),
         ];
-        let census = Census::parse("id,name,a.txt\n1,\"x\",0\n").unwrap();
+        let census = Census::parse("id,name,log 1\n1,\"x\",0\n").unwrap();
         let g = generate_curated(&list, &t, &census, "b").unwrap();
         let heals: Vec<u32> = [2050, 20473, 20930, 25914, 401863, 402174, 402277, 402289].into();
         for id in &heals {
@@ -1060,7 +1060,7 @@ mod tests {
             parse_csv("ID,SpellID,EquippedItemClass,EquippedItemInvTypes,EquippedItemSubclass\n")
                 .unwrap(),
         );
-        let census = Census::parse("id,name,a.txt\n780,\"Swipe\",3\n").unwrap();
+        let census = Census::parse("id,name,log 1\n780,\"Swipe\",3\n").unwrap();
         let bear = [Curated::seen("Swipe", RoleSignal::Mitigation).in_form(BEAR)];
         let g = generate_curated(&bear, &t, &census, "b").unwrap();
         assert_eq!(g.spells, 1);
@@ -1095,11 +1095,11 @@ mod tests {
         let list = [Curated::seen("Bear Form", RoleSignal::Form)];
         let err = generate_curated(&list, &tables(), &census(), "b").unwrap_err();
         assert!(err.contains("Bear Form") && err.contains("census"), "{err}");
-        let renamed = Census::parse("id,name,a.txt\n355,\"Provoke\",3\n").unwrap();
+        let renamed = Census::parse("id,name,log 1\n355,\"Provoke\",3\n").unwrap();
         let list = [Curated::seen("Taunt", RoleSignal::Taunt)];
         let err = generate_curated(&list, &tables(), &renamed, "b").unwrap_err();
         assert!(err.contains("355") && err.contains("Provoke"), "{err}");
-        let zero = Census::parse("id,name,a.txt\n355,\"Taunt\",0\n").unwrap();
+        let zero = Census::parse("id,name,log 1\n355,\"Taunt\",0\n").unwrap();
         assert!(generate_curated(&list, &tables(), &zero, "b").is_err());
     }
 

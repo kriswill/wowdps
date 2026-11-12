@@ -7,8 +7,9 @@
 # a `Player-` guid, keyed by (spell id, name as the log wrote it). A form is
 # cast before its aura goes on, so its cast is what is counted. One pass of
 # grep + awk per log (the logs are large; never cat them). Output is a CSV,
-# one row per (id, name), one count column per log named by the log's
-# basename, sorted by id: the generator reads it via `wowdps-extract
+# one row per (id, name), one count column per log labeled `log 1`, `log 2`,
+# … in the order given (never the file's name, which says when it was
+# played), sorted by id: the generator reads it via `wowdps-extract
 # gen-role-signals --census` and writes the counts into
 # crates/core/src/forever/role_signals.expected.md, so a curated name nobody
 # has ever cast is visible in review. The committed copy is
@@ -32,7 +33,7 @@ header='id,name'
 i=0
 for log in "$@"; do
     i=$((i + 1))
-    header="$header,$(basename "$log")"
+    header="$header,log $i"
     # $1 is "<ts>  SPELL_CAST_SUCCESS", $2 the source guid, $10/$11 the spell
     # id and quoted name (the log is CRLF, so the CR comes off first). A
     # name holding a comma shifts nothing before $11 and is counted under
