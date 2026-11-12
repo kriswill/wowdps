@@ -17,6 +17,9 @@
     clippy::string_slice
 )]
 
+#[path = "../../core/tests/real_log/mod.rs"]
+mod real_log;
+
 use std::path::Path;
 
 use wowdps_core::tail::TailEvent;
@@ -1720,15 +1723,19 @@ fn a_measure_of_zero_protects_nothing_and_an_aborted_fight_is_never_a_best() {
 /// Taken lists (`taken_spells`, capped at 16, and the uncapped
 /// `taken_sources`) take, per stored fight of a REAL log — the numbers
 /// behind the step 2b plan's "Rows-tier measurement" section. Imports the
-/// log into a `MemBackend` store, never the user's own. Run with:
+/// log into a `MemBackend` store, never the user's own. A Retail gate
+/// (which log it reads: core's `tests/real_log/mod.rs`): a fight is named
+/// by its kind and place among those stored, never its name. Run with:
 /// `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-daemon --test taken -- --ignored real_log --nocapture`
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn real_log_rows_tier_taken_lists_measured() {
     use std::io::BufRead;
 
-    let path =
-        std::path::PathBuf::from(std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG"));
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
     let facts = LogFacts::read(&path);
     let mut store = Store::open(MemBackend::new(), Retention::default());
 
@@ -1762,11 +1769,11 @@ fn real_log_rows_tier_taken_lists_measured() {
     close(&engine, &mut events, &mut stored);
 
     println!(
-        "{:<10} {:>4} {:>9} {:>9} {:>9} {:>5} {:>5} {:>5} {:>5} {:>7}  name",
+        "{:<10} {:>4} {:>9} {:>9} {:>9} {:>5} {:>5} {:>5} {:>5} {:>7}  fight",
         "kind", "N", "rows B", "spells B", "srcs B", "Σsp", "Σoth", "Σsrc", "Σoth2", "max"
     );
     let mut worst_growth = (0u64, String::new());
-    for id in &stored {
+    for (n, id) in stored.iter().enumerate() {
         let card = store.card(id).unwrap();
         let bytes = store.backend().read("rows", &format!("{id}.json")).unwrap();
         let rows = store.rows(id).unwrap();
@@ -1802,10 +1809,10 @@ fn real_log_rows_tier_taken_lists_measured() {
             .unwrap_or(0);
         let growth = (spells_bytes + sources_bytes) as u64;
         if growth > worst_growth.0 {
-            worst_growth = (growth, format!("{:?} {}", card.kind, card.name));
+            worst_growth = (growth, format!("{:?} #{n}", card.kind));
         }
         println!(
-            "{:<10} {:>4} {:>9} {:>9} {:>9} {:>5} {:>5} {:>5} {:>5} {:>3}/{:<3}  {}",
+            "{:<10} {:>4} {:>9} {:>9} {:>9} {:>5} {:>5} {:>5} {:>5} {:>3}/{:<3}  #{n}",
             format!("{:?}", card.kind),
             rows.mitigation.len(),
             bytes.len(),
@@ -1817,7 +1824,6 @@ fn real_log_rows_tier_taken_lists_measured() {
             sum_other_sources,
             max_spells,
             max_sources,
-            card.name
         );
     }
     println!(

@@ -12,6 +12,9 @@
     clippy::string_slice
 )]
 
+#[path = "../../core/tests/real_log/mod.rs"]
+mod real_log;
+
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -2045,11 +2048,15 @@ fn an_import_over_the_socket_lands_in_the_store() {
 }
 
 /// Perf gate over a real log: how many fights a night holds, how long the
-/// import sweep takes, and the bytes per fight the lake costs.
+/// import sweep takes, and the bytes per fight the lake costs. A Retail
+/// gate (which log it reads: core's `tests/real_log/mod.rs`); it prints
+/// counts, times and sizes, never a name.
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn real_log_import_reports_fights_wall_time_and_bytes() {
-    let real = std::env::var("WOWDPS_REAL_LOG").expect("WOWDPS_REAL_LOG");
+    let Some(real) = real_log::retail_log() else {
+        return;
+    };
     let tmp = Temp::new("real");
     let hist = tmp.join("history");
     let started = Instant::now();

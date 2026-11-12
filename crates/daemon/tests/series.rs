@@ -11,6 +11,9 @@
     clippy::string_slice
 )]
 
+#[path = "../../core/tests/real_log/mod.rs"]
+mod real_log;
+
 use std::path::Path;
 
 use wowdps_core::tail::TailEvent;
@@ -356,14 +359,18 @@ fn a_stored_window_answers_what_the_live_one_did() {
 /// v39 over a real log (`WOWDPS_REAL_LOG`): every kill or key it holds
 /// stored in a scratch directory, every player's stored window equal to
 /// the live meter's over the same seconds, and the tier's size on disk
-/// beside the details tier's, printed.
+/// beside the details tier's, printed. A Retail gate (which log it reads:
+/// core's `tests/real_log/mod.rs`): a fight is named by its kind and place,
+/// a player by their place in the fight's roster, a failure included.
 ///
 /// `WOWDPS_REAL_LOG=… cargo test --release -p wowdps-daemon --test series -- --ignored --nocapture`
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn real_log_stored_windows_match_the_live_meter() {
     use wowdps_daemon::history::DirBackend;
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
     let path = Path::new(&path);
     let tmp = TempDir::new("wowdps-series");
     let dir = tmp.0.clone();
@@ -374,7 +381,7 @@ fn real_log_stored_windows_match_the_live_meter() {
         std::fs::metadata(dir.join(sub).join(format!("{id}.{ext}"))).map_or(0, |m| m.len())
     };
     let (mut checked, mut series_bytes, mut details_bytes) = (0usize, 0u64, 0u64);
-    for fight in &fights {
+    for (n, fight) in fights.iter().enumerate() {
         let Some(id) = store.store(fight, facts) else {
             continue;
         };
@@ -387,14 +394,11 @@ fn real_log_stored_windows_match_the_live_meter() {
         let (s, d) = (size("series", &id, "bin"), size("details", &id, "json"));
         series_bytes += s;
         details_bytes += d;
-        eprintln!(
-            "{:>32} {:>4}s series {:>7} B details {:>7} B",
-            seg.name.chars().take(32).collect::<String>(),
-            secs,
-            s,
-            d
-        );
+        let label = real_log::fight(n, seg);
+        eprintln!("{label:>40} {secs:>4}s series {s:>7} B details {d:>7} B");
+        let roster = roster(&card);
         for p in card.players.iter().filter(|p| !p.enemy) {
+            let who = format!("{label} player {}", real_log::place(&roster, &p.guid));
             for view in [View::Damage, View::Healing] {
                 for (lo, hi) in [(0, secs / 3), (secs / 3, secs / 2), (secs / 2, secs)] {
                     let range = (lo * 1000, hi * 1000 + 1);
@@ -411,20 +415,18 @@ fn real_log_stored_windows_match_the_live_meter() {
                         .stored_fight_ranged(&id, view, Some(&p.guid), None, Some(range))
                         .expect("stored");
                     let Some(b) = f.breakdown else {
-                        assert!(spells.is_empty(), "{} {view:?}", p.name);
+                        assert!(spells.is_empty(), "{who} {view:?}");
                         continue;
                     };
-                    assert_eq!(
-                        words(&b.by_spell),
-                        words(&spells),
-                        "{} {view:?} {range:?}",
-                        p.name
+                    // `assert!`, not `assert_eq!`: the rows' labels name
+                    // their targets, which can be players.
+                    assert!(
+                        words(&b.by_spell) == words(&spells),
+                        "{who} {view:?} {range:?}: the spells"
                     );
-                    assert_eq!(
-                        words(&b.by_target),
-                        words(&targets),
-                        "{} {view:?} {range:?}",
-                        p.name
+                    assert!(
+                        words(&b.by_target) == words(&targets),
+                        "{who} {view:?} {range:?}: the targets"
                     );
                     checked += 1;
                 }
@@ -764,7 +766,8 @@ fn a_store_rewrites_what_it_promised_and_lost() {
 /// stored in a scratch directory; for every player, the stored drill's
 /// stack, its largest abilities opened (curve, targets whole and windowed,
 /// their stack) and the 1 s damage taken equal the live meter's — and the
-/// series file's size in format 2 beside what format 1 kept, printed.
+/// series file's size in format 2 beside what format 1 kept, printed. A
+/// Retail gate, name-free as the one above.
 ///
 /// `WOWDPS_REAL_LOG=… cargo test --release -p wowdps-daemon --test series -- --ignored real_log_stored_kills --nocapture`
 #[test]
@@ -772,7 +775,9 @@ fn a_store_rewrites_what_it_promised_and_lost() {
 fn real_log_stored_kills_stack_and_open_as_the_live_meter() {
     use wowdps_daemon::history::{Ask, DirBackend};
     use wowdps_proto::series::FightSeries;
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
     let path = Path::new(&path);
     let tmp = TempDir::new("wowdps-series-v42");
     let dir = tmp.0.clone();
@@ -781,7 +786,7 @@ fn real_log_stored_kills_stack_and_open_as_the_live_meter() {
     let mut store = Store::open(DirBackend::new(dir.clone()), old_rules());
     let mine = store.mine();
     let (mut checked, mut v2_bytes, mut v1_bytes) = (0usize, 0u64, 0u64);
-    for fight in &fights {
+    for (n, fight) in fights.iter().enumerate() {
         let Some(id) = store.store(fight, facts) else {
             continue;
         };
@@ -794,17 +799,18 @@ fn real_log_stored_kills_stack_and_open_as_the_live_meter() {
         v2_bytes += bytes.len() as u64;
         v1_bytes += v1;
         let card = store.card(&id).cloned().expect("the card");
+        let label = real_log::fight(n, seg);
         eprintln!(
-            "{:>32} {:>5}s series {:>8} B (format 1: {:>8} B)",
-            seg.name.chars().take(32).collect::<String>(),
+            "{label:>40} {:>5}s series {:>8} B (format 1: {v1:>8} B)",
             card.duration_ms / 1000,
             bytes.len(),
-            v1
         );
         let secs = (card.duration_ms / 1000).max(2) as u32;
         let window = (secs / 3 * 1000, secs / 2 * 1000 + 1);
+        let roster = roster(&card);
         for p in card.players.iter().filter(|p| !p.enemy) {
             let g = p.guid.as_str();
+            let who = format!("{label} player {}", real_log::place(&roster, g));
             let ask = |view, spell: Option<&str>, range| Ask {
                 range,
                 spell: spell.map(str::to_string),
@@ -818,40 +824,46 @@ fn real_log_stored_kills_stack_and_open_as_the_live_meter() {
                     .stored_fight_in(&mine, &id, &ask(view, None, None))
                     .unwrap();
                 let b = f.breakdown.unwrap_or_default();
-                assert_eq!(
-                    b.ability_series,
-                    seg.ability_series(g, view, &rows, &tree, 6),
-                    "{} {view:?}: the stack",
-                    p.name
+                // `assert!`, not `assert_eq!`, throughout: a failure prints
+                // no row, whose label can name a player.
+                assert!(
+                    b.ability_series == seg.ability_series(g, view, &rows, &tree, 6),
+                    "{who} {view:?}: the stack"
                 );
-                for r in rows.iter().take(if view == View::Damage { 8 } else { 3 }) {
-                    let what = format!("{} {view:?} {}", p.name, r.label);
+                for (k, r) in rows
+                    .iter()
+                    .take(if view == View::Damage { 8 } else { 3 })
+                    .enumerate()
+                {
+                    let what = format!("{who} {view:?} ability #{k}");
                     let b = store
                         .stored_fight_in(&mine, &id, &ask(view, Some(&r.key), None))
                         .unwrap()
                         .breakdown
                         .unwrap();
-                    assert_eq!(
-                        b.spell_targets.as_deref().map(words),
-                        Some(words(&seg.spell_targets(g, &r.key, view))),
+                    assert!(
+                        b.spell_targets.as_deref().map(words)
+                            == Some(words(&seg.spell_targets(g, &r.key, view))),
                         "{what}: targets"
                     );
                     if view == View::Damage {
-                        assert_eq!(
-                            b.spell_timeline,
-                            Some(seg.spell_timeline(g, &r.key)),
+                        assert!(
+                            b.spell_timeline == Some(seg.spell_timeline(g, &r.key)),
                             "{what}: curve"
                         );
-                        assert_eq!(b.target_series, seg.target_series(g, &r.key, 6), "{what}");
+                        assert!(
+                            b.target_series == seg.target_series(g, &r.key, 6),
+                            "{what}: the targets' stack"
+                        );
                         let w = (i64::from(window.0), i64::from(window.1));
                         let b = store
                             .stored_fight_in(&mine, &id, &ask(view, Some(&r.key), Some(window)))
                             .unwrap()
                             .breakdown
                             .unwrap();
-                        assert_eq!(
-                            b.spell_targets.as_deref().map(words),
-                            Some(words(&seg.spell_targets_ranged(g, &r.key, view, Some(w)))),
+                        assert!(
+                            b.spell_targets.as_deref().map(words)
+                                == Some(words(&seg.spell_targets_ranged(g, &r.key, view, Some(w)))),
                             "{what}: a window's targets"
                         );
                     }
@@ -864,7 +876,7 @@ fn real_log_stored_kills_stack_and_open_as_the_live_meter() {
                 .breakdown
                 .and_then(|b| b.timeline);
             if let Some(t) = taken.filter(|t| t.bucket_ms == 1_000) {
-                assert_eq!(t, seg.taken_timeline(g), "{}: the 1 s taken", p.name);
+                assert!(t == seg.taken_timeline(g), "{who}: the 1 s taken");
             }
         }
     }
@@ -875,6 +887,14 @@ fn real_log_stored_kills_stack_and_open_as_the_live_meter() {
         (v2_bytes as f64 / v1_bytes.max(1) as f64 - 1.0) * 100.0
     );
     assert!(checked > 0, "the log holds a kill or a key");
+}
+
+/// A stored fight's roster as the real-log gates number it: its players'
+/// guids, sorted (`real_log::place`).
+fn roster(card: &wowdps_proto::history::FightCard) -> Vec<&String> {
+    let mut guids: Vec<&String> = card.players.iter().map(|p| &p.guid).collect();
+    guids.sort();
+    guids
 }
 
 /// A scratch directory under the system's temp dir, removed when dropped —
