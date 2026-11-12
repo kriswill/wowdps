@@ -44,18 +44,22 @@ header.
 ## Forever's own tables, and the ones it has none of
 
 Forever has its own absorb table (`crates/core/src/forever/absorb_spells.rs`,
-R20), and no role-span, proc or placed table, so `check.awk` reads its Forever
-copy (`SHIELD_F`) for a Forever log and its Retail copies (`ROLE`, `SHIELD`,
-`PLACE`, `TELL`) only while the version line names Retail (`edition_tables`):
+R20) and role-span table (`crates/core/src/forever/role_spells.rs`, R18), and
+no proc or placed table, so `check.awk` reads its Forever copies (`SHIELD_F`,
+`ROLE_F`) for a Forever log and its Retail copies (`ROLE`, `SHIELD`, `PLACE`,
+`TELL`) only while the version line names Retail (`edition_tables`):
 
 - Power Word: Shield (17, in Forever's absorb table) opens an R20 shield of
   known size on Elowyn's ledger: applied 250 at 16.0 s, 200 of it absorbed at
   17.0 s (her healing, `absorbheal` 200, R2), and the 50 left at its removal at
   25.0 s wasted: `absorb_applied` 250, `absorb_wasted` 50, `shields_unknown` 0.
-- Shield Wall (871, a defensive in Retail's role table) opens no R18 span:
-  `spans` and `am_uptime_ms` are 0 for Tharokk.
-- The cut keeps no buff row for either (neither is a role buff here, and
-  both casters are the group's).
+- Shield Wall (871, a defensive in Forever's role table) opens an R18 span
+  on Tharokk from 14.0 s (4 000 ms into the pull) to its removal at 26.0 s:
+  `spans` 1; a defensive is no active mitigation, so `am_uptime_ms` stays 0.
+- The cut keeps Shield Wall's two buff rows, a role buff going on and coming
+  off a player (`replay_buff_applied` 1, `replay_buff_removed` 1), which
+  numbers Tharokk among its units (`replay_units` 3); Power Word: Shield is
+  no role buff, so it keeps none.
 
 ## Totals (segment 1, the pull, 21 000 ms of combat)
 

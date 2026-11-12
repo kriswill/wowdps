@@ -23,6 +23,7 @@ use wowdps_extract::game::default_product;
 use wowdps_extract::table::Tables;
 use wowdps_extract::{
     absorbgen, classgen, itemgen, keystonegen, mapgen, placegen, procgen, rolegen, signalgen,
+    spangen,
 };
 
 /// This module's commands, as the usage lists them.
@@ -202,11 +203,25 @@ const OPEN_WORLD_MAPS: Table = Table {
 const ROLE_SPELLS: Table = Table {
     command: "gen-role-spells",
     out: Some("crates/core/src/role_spells.rs"),
-    editions: &[],
-    tables: &rolegen::TABLES,
-    reads: None,
-    census: &[(Edition::Retail, "tools/role-spells-census.csv")],
+    editions: &[(Edition::Forever, "crates/core/src/forever/role_spells.rs")],
+    tables: &spangen::TABLES,
+    reads: Some(role_tables),
+    census: &[
+        (Edition::Retail, "tools/role-spells-census.csv"),
+        (Edition::Forever, "tools/forever/role-spells-census.csv"),
+    ],
 };
+
+/// The tables a product's role-span run reads: Retail's list is by id
+/// (`rolegen`), Forever's by name, expanded through the class families and
+/// the casts' ties (`spangen`).
+fn role_tables(product: &str) -> &'static [&'static str] {
+    if product == "wowf" {
+        &spangen::TABLES
+    } else {
+        &rolegen::TABLES
+    }
+}
 
 const ABSORB_SPELLS: Table = Table {
     command: "gen-absorb-spells",
@@ -500,10 +515,16 @@ pub fn open_world_maps(a: Args) -> Result<(), String> {
 }
 
 pub fn role_spells(a: Args) -> Result<(), String> {
-    generate(a, ROLE_SPELLS, |text, _| {
+    generate(a, ROLE_SPELLS, |text, product| {
         let census = rolegen::Census::parse(text)?;
+        // Forever's list is curated by name (its ranks are ids of their own).
+        let by_name = product == "wowf";
         Ok(move |tables: &Tables, build: &str| {
-            let g = rolegen::generate(tables, &census, build)?;
+            let g = if by_name {
+                spangen::generate(tables, &census, build)?
+            } else {
+                rolegen::generate(tables, &census, build)?
+            };
             Ok(Made {
                 summary: format!(
                     "{} role spells, census over {} log(s)",
@@ -652,7 +673,8 @@ mod tests {
                 | "gen-item-spells"
                 | "gen-keystone-timers"
                 | "gen-open-world-maps"
-                | "gen-absorb-spells" => {
+                | "gen-absorb-spells"
+                | "gen-role-spells" => {
                     let rel = out.replace("crates/core/src/", "crates/core/src/forever/");
                     assert_eq!(forever, Some(rel.as_str()), "{}", t.command);
                 }
@@ -701,8 +723,8 @@ mod tests {
             assert_eq!(twins.count(), 0, "{} twice", path.display());
         }
         let of = |e: Edition| committed.iter().filter(|(o, _)| *o == e).count();
-        assert_eq!((of(Edition::Retail), of(Edition::Forever)), (12, 8));
-        assert_eq!(committed.len(), 20);
+        assert_eq!((of(Edition::Retail), of(Edition::Forever)), (12, 10));
+        assert_eq!(committed.len(), 22);
     }
 
     /// Retail's class run reads the tables it always did, in their order;
@@ -715,6 +737,10 @@ mod tests {
             reads("wowf"),
             ["SkillLine", "SkillLineAbility", "ChrClasses"]
         );
-        assert!(TABLES.iter().filter(|t| t.reads.is_some()).count() == 1);
+        assert!(TABLES.iter().filter(|t| t.reads.is_some()).count() == 2);
+        let roles = ROLE_SPELLS.reads.unwrap();
+        assert_eq!(roles("wow"), rolegen::TABLES);
+        assert_eq!(roles("wowf"), spangen::TABLES);
+        assert!(roles("wow").iter().all(|t| ROLE_SPELLS.tables.contains(t)));
     }
 }

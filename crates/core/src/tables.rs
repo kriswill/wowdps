@@ -101,9 +101,9 @@ static RETAIL: Tables = Tables {
 /// Forever's: its classes (by the client's class masks, no spec), its
 /// items, its keystones (none: it has no Mythic+), its open-world maps and
 /// its role signals (R30: its log carries no spec, so roles are inferred),
-/// and its shields (R20). Its role spans and procs have no table yet. Its
-/// log names no UiMap inside a dungeon or a raid (R29: a UiMap 0 there is a
-/// place).
+/// its shields (R20) and its role spans (R18). Its procs have no table yet.
+/// Its log names no UiMap inside a dungeon or a raid (R29: a UiMap 0 there
+/// is a place).
 static FOREVER: Tables = Tables {
     class: Some(crate::forever::class_spells::resolve),
     items: Some(Items {
@@ -111,7 +111,7 @@ static FOREVER: Tables = Tables {
         trinket: crate::forever::item_spells::trinket_of,
     }),
     absorb: Some(crate::forever::absorb_spells::is_absorb_spell),
-    role: None,
+    role: Some(crate::forever::role_spells::role_kind),
     procs: None,
     keystones: Some(Keystones {
         by_challenge: crate::forever::keystone_timers::pars_ms,
@@ -354,12 +354,21 @@ mod tests {
                 assert_eq!(Tables::of(e).role_kind(id), None, "{e:?} {id}");
             }
         }
-        // Shield Wall is Retail's defensive; Forever has no table.
-        assert_eq!(
-            Tables::of(Edition::Retail).role_kind(871),
-            Some(RoleSpellKind::Defensive)
-        );
-        assert_eq!(Tables::of(Edition::Forever).role_kind(871), None);
+        // Shield Wall is a defensive in both editions' tables; Shield
+        // Block's buff is 132404 in Retail's and 2565 in Forever's, each in
+        // its own alone; an edition with no table has none.
+        for e in [Edition::Retail, Edition::Forever] {
+            assert_eq!(
+                Tables::of(e).role_kind(871),
+                Some(RoleSpellKind::Defensive),
+                "{e:?}"
+            );
+        }
+        let am = Some(RoleSpellKind::ActiveMitigation);
+        assert_eq!(Tables::of(Edition::Retail).role_kind(132_404), am);
+        assert_eq!(Tables::of(Edition::Forever).role_kind(132_404), None);
+        assert_eq!(Tables::of(Edition::Forever).role_kind(2565), am);
+        assert_eq!(Tables::of(Edition::Retail).role_kind(2565), None);
         assert_eq!(Tables::of(Edition::Unknown(7)).role_kind(871), None);
     }
 

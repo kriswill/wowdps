@@ -138,6 +138,7 @@ mod tests {
             "gen-keystone-timers",
             "gen-open-world-maps",
             "gen-absorb-spells",
+            "gen-role-spells",
             "gen-role-signals",
         ];
         for c in gens {
@@ -269,8 +270,13 @@ mod tests {
         assert!(through(&e), "{e}");
         let e = go("gen-open-world-maps", &["--product", "wowf"]);
         assert!(through(&e), "{e}");
+        // A census-backed run with no --census reads its own edition's
+        // committed census under the checkout, and goes on to the install
+        // (`tablegen`'s tests hold which census each product reads).
         let e = go("gen-role-spells", &["--product", "wowf"]);
-        assert!(e.ends_with(REFUSED), "{e}");
+        assert!(through(&e), "{e}");
+        let e = go("gen-role-spells", &[]);
+        assert!(through(&e), "{e}");
         assert!(
             !std::path::Path::new(&elsewhere).exists(),
             "nothing written"

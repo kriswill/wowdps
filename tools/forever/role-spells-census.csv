@@ -1,0 +1,446 @@
+id,name,log 1,log 2,log 3
+10,"Blizzard",0,2,2
+17,"Power Word: Shield",0,0,5
+71,"Defensive Stance",34,265,453
+130,"Slow Fall",0,8,18
+131,"Water Breathing",0,3,2
+132,"Detect Invisibility",9,2,20
+139,"Renew",0,0,6
+168,"Frost Armor",0,17,19
+324,"Lightning Shield",0,17,37
+325,"Lightning Shield",1,23,63
+465,"Devotion Aura",0,1,46
+467,"Thorns",3,62,88
+546,"Water Walking",0,0,3
+586,"Fade",0,0,1
+588,"Inner Fire",1,29,36
+592,"Power Word: Shield",0,0,8
+600,"Power Word: Shield",2,10,24
+602,"Inner Fire",0,15,52
+604,"Dampen Magic",0,12,6
+642,"Divine Shield",0,3,10
+643,"Devotion Aura",76,416,320
+673,"Elixir of Minor Defense",7,115,175
+687,"Demon Skin",0,9,20
+696,"Demon Skin",4,68,126
+706,"Demon Armor",19,121,219
+746,"First Aid",0,0,1
+768,"Cat Form",35,442,595
+774,"Rejuvenation",0,4,1
+782,"Thorns",6,96,164
+783,"Travel Form",2,123,442
+871,"Shield Wall",0,2,0
+905,"Lightning Shield",15,106,154
+945,"Lightning Shield",0,5,27
+976,"Shadow Protection",0,11,21
+1002,"Eyes of the Beast",0,1,1
+1006,"Inner Fire",0,3,14
+1008,"Amplify Magic",0,2,1
+1022,"Blessing of Protection",0,0,4
+1032,"Devotion Aura",0,11,44
+1044,"Blessing of Freedom",5,13,6
+1058,"Rejuvenation",0,7,6
+1066,"Aquatic Form",1,1,5
+1075,"Thorns",16,104,131
+1086,"Demon Armor",0,62,154
+1126,"Mark of the Wild",6,96,114
+1159,"First Aid",0,4,2
+1243,"Power Word: Fortitude",0,49,138
+1244,"Power Word: Fortitude",21,507,862
+1245,"Power Word: Fortitude",41,603,1037
+1430,"Rejuvenation",1,7,11
+1459,"Arcane Intellect",3,58,161
+1460,"Arcane Intellect",32,490,857
+1461,"Arcane Intellect",8,281,531
+1463,"Mana Shield",0,1,4
+1494,"Track Beasts",2,67,154
+1706,"Levitate",0,4,6
+1784,"Stealth",0,2,2
+1785,"Stealth",11,49,26
+1850,"Dash",1,18,31
+1949,"Hellfire",0,0,13
+1953,"Blink",2,261,429
+2090,"Rejuvenation",5,48,23
+2091,"Rejuvenation",0,4,10
+2367,"Lesser Strength",1,49,43
+2374,"Lesser Agility",1,22,34
+2378,"Health",2,68,125
+2379,"Speed",0,3,1
+2457,"Battle Stance",34,417,705
+2458,"Berserker Stance",0,10,45
+2565,"Shield Block",82,264,72
+2645,"Ghost Wolf",4,237,365
+2652,"Touch of Weakness",0,13,16
+2791,"Power Word: Fortitude",6,57,214
+2893,"Abolish Poison",0,2,0
+2947,"Fire Shield",0,11,3
+2970,"Detect Invisibility",0,0,1
+2983,"Sprint",2,70,132
+3045,"Rapid Fire",1,6,1
+3160,"Agility",0,6,7
+3164,"Strength",0,11,27
+3166,"Lesser Intellect",1,20,25
+3219,"Minor Troll's Blood Elixir",1,47,88
+3220,"Armor",0,8,29
+3222,"Lesser Troll's Blood Elixir",5,28,51
+3223,"Troll's Blood Elixir",0,7,11
+3267,"First Aid",0,4,3
+3268,"First Aid",0,2,4
+3593,"Health II",0,3,16
+3627,"Rejuvenation",0,4,11
+3747,"Power Word: Shield",3,64,7
+4318,"Guile of the Raptor",0,0,11
+5020,"Stormstout",0,1,0
+5118,"Aspect of the Cheetah",30,354,599
+5171,"Slice and Dice",2,31,10
+5215,"Prowl",11,32,13
+5232,"Mark of the Wild",39,534,772
+5234,"Mark of the Wild",9,218,678
+5242,"Battle Shout",0,6,21
+5277,"Evasion",3,16,3
+5487,"Bear Form",3,132,154
+5500,"Sense Demons",0,8,20
+5502,"Sense Undead",0,1,19
+5573,"Divine Protection",3,11,21
+5599,"Blessing of Protection",0,3,5
+5697,"Unending Breath",11,16,19
+5784,"Summon Felsteed",0,4,45
+6065,"Power Word: Shield",0,1,28
+6066,"Power Word: Shield",0,0,8
+6074,"Renew",0,4,7
+6075,"Renew",0,2,22
+6076,"Renew",1,42,17
+6077,"Renew",0,2,4
+6078,"Renew",0,1,6
+6114,"Raptor Punch",0,2,2
+6117,"Mage Armor",0,17,39
+6141,"Blizzard",0,4,0
+6143,"Frost Ward",0,3,1
+6150,"Quick Shots",28,8,16
+6192,"Battle Shout",27,93,41
+6196,"Far Sight",0,5,17
+6307,"Blood Pact",0,18,34
+6346,"Fear Ward",1,1,5
+6673,"Battle Shout",0,8,23
+6756,"Mark of the Wild",70,788,1226
+6783,"Prowl",0,1,0
+7128,"Inner Fire",4,61,91
+7178,"Water Breathing",0,3,0
+7294,"Retribution Aura",13,139,201
+7300,"Frost Armor",1,33,102
+7301,"Frost Armor",8,142,171
+7302,"Ice Armor",1,45,62
+7320,"Ice Armor",0,0,7
+7744,"Will of the Forsaken",1,2,1
+7764,"Wisdom of Agamaggan",1,15,21
+7804,"Blood Pact",4,53,57
+7805,"Blood Pact",0,22,62
+7844,"Fire Power",0,0,1
+7927,"First Aid",0,0,1
+8068,"Healthy Spirit",0,0,3
+8091,"Armor",3,38,60
+8094,"Armor",0,18,23
+8095,"Armor",0,5,10
+8096,"Intellect",0,12,18
+8097,"Intellect",0,7,7
+8099,"Stamina",0,11,16
+8100,"Stamina",0,22,25
+8101,"Stamina",0,0,3
+8112,"Spirit",2,20,59
+8113,"Spirit",0,20,20
+8114,"Spirit",0,2,7
+8115,"Agility",2,12,22
+8116,"Agility",1,0,11
+8118,"Strength",1,16,18
+8119,"Strength",0,5,22
+8134,"Lightning Shield",0,3,8
+8202,"Sapta Sight",0,0,2
+8212,"Enlarge",0,0,1
+8213,"Savory Deviate Delight",0,32,58
+8314,"Rock Skin",0,6,16
+8316,"Fire Shield",1,2,5
+8317,"Fire Shield",0,0,3
+8385,"Swift Wind",0,2,4
+8422,"Flamestrike",0,1,1
+8450,"Dampen Magic",0,6,9
+8455,"Amplify Magic",0,4,0
+8494,"Mana Shield",0,2,7
+8495,"Mana Shield",0,0,2
+8696,"Sprint",0,7,30
+8898,"Sapta Sight",0,1,2
+8899,"Sapta Sight",0,5,7
+8907,"Mark of the Wild",1,36,165
+8914,"Thorns",0,8,50
+8936,"Regrowth",0,2,5
+8938,"Regrowth",0,1,6
+8939,"Regrowth",4,23,9
+8940,"Regrowth",0,2,9
+8941,"Regrowth",0,0,2
+9578,"Fade",0,8,1
+9634,"Dire Bear Form",0,1,6
+9756,"Thorns",1,0,7
+9782,"Mithril Shield Spike",0,2,12
+9784,"Iron Shield Spike",0,16,88
+9821,"Dash",0,0,4
+9840,"Rejuvenation",0,2,0
+9857,"Regrowth",0,0,1
+9884,"Mark of the Wild",0,11,46
+9885,"Mark of the Wild",0,0,3
+9910,"Thorns",0,0,1
+10060,"Power Infusion",0,0,1
+10156,"Arcane Intellect",0,5,57
+10157,"Arcane Intellect",0,0,2
+10191,"Mana Shield",0,0,1
+10219,"Ice Armor",0,0,3
+10278,"Blessing of Protection",0,0,1
+10290,"Devotion Aura",1,54,212
+10291,"Devotion Aura",2,40,321
+10292,"Devotion Aura",0,0,2
+10298,"Retribution Aura",14,137,323
+10299,"Retribution Aura",0,29,137
+10300,"Retribution Aura",0,7,23
+10301,"Retribution Aura",0,0,3
+10431,"Lightning Shield",0,0,2
+10767,"Rising Spirit",1,10,19
+10937,"Power Word: Fortitude",0,2,19
+10951,"Inner Fire",0,0,2
+11328,"Agility",0,1,14
+11334,"Greater Agility",0,0,6
+11348,"Greater Armor",0,0,1
+11349,"Armor",0,0,9
+11405,"Greater Strength",0,0,2
+11426,"Ice Barrier",0,0,4
+11549,"Battle Shout",0,3,25
+11733,"Demon Armor",0,5,29
+11734,"Demon Armor",0,1,2
+11766,"Blood Pact",0,0,5
+11841,"Static Barrier",0,1,4
+11958,"Ice Block",0,0,1
+12043,"Presence of Mind",0,0,2
+12051,"Evocation",0,3,3
+12176,"Intellect",0,0,2
+12292,"Sweeping Strikes",0,0,1
+12536,"Clearcasting",0,5,12
+12685,"Fade",0,0,8
+12880,"Enrage",0,0,14
+12966,"Flurry",0,0,12
+12976,"Last Stand",1,6,1
+13031,"Ice Barrier",0,0,2
+13159,"Aspect of the Pack",0,0,5
+13161,"Aspect of the Beast",0,2,3
+13163,"Aspect of the Monkey",4,43,60
+13165,"Aspect of the Hawk",6,131,193
+13819,"Summon Warhorse",0,0,1
+13877,"Blade Flurry",0,0,3
+14143,"Remorseless",0,11,13
+14177,"Cold Blood",0,0,1
+14183,"Premeditation",1,0,0
+14318,"Aspect of the Hawk",8,81,98
+14319,"Aspect of the Hawk",4,13,30
+14320,"Aspect of the Hawk",0,3,5
+14751,"Inner Focus",0,0,1
+14752,"Divine Spirit",8,151,473
+14818,"Divine Spirit",0,14,72
+14819,"Divine Spirit",0,2,11
+15271,"Spirit Tap",0,33,25
+15366,"Songflower Serenade",0,0,2
+15473,"Shadowform",0,4,29
+16177,"Ancestral Fortitude",0,0,2
+16188,"Nature's Swiftness",0,0,2
+16246,"Clearcasting",0,1,4
+16257,"Flurry",1,109,128
+16591,"Noggenfogger Elixir",0,0,4
+16595,"Noggenfogger Elixir",0,0,1
+16609,"Warchief's Blessing",0,0,832
+16610,"Razorhide",0,8,11
+16612,"Agamaggan's Strength",1,32,26
+16618,"Spirit of the Wind",0,7,3
+16689,"Nature's Grasp",0,0,2
+16810,"Nature's Grasp",0,2,2
+16811,"Nature's Grasp",0,0,2
+16870,"Clearcasting",5,34,114
+17013,"Agamaggan's Agility",2,34,25
+17057,"Furor",0,21,35
+17941,"Shadow Trance",0,2,36
+18137,"Shadowguard",1,3,29
+18288,"Amplify Curse",0,0,1
+18708,"Fel Domination",0,1,0
+18789,"Burning Shadow",0,0,4
+18792,"Fel Energy",0,0,1
+19261,"Touch of Weakness",0,22,26
+19262,"Touch of Weakness",0,7,16
+19264,"Touch of Weakness",0,0,3
+19265,"Touch of Weakness",0,0,2
+19308,"Shadowguard",0,4,8
+19438,"Sacrifice",1,0,0
+19440,"Sacrifice",0,1,0
+19480,"Paranoia",0,0,6
+19506,"Trueshot Aura",0,0,1
+19740,"Blessing of Might",2,41,112
+19742,"Blessing of Wisdom",13,204,390
+19746,"Concentration Aura",15,6,6
+19834,"Blessing of Might",19,200,447
+19835,"Blessing of Might",26,240,328
+19836,"Blessing of Might",3,55,205
+19837,"Blessing of Might",0,7,26
+19838,"Blessing of Might",0,0,7
+19850,"Blessing of Wisdom",22,203,343
+19852,"Blessing of Wisdom",3,43,190
+19853,"Blessing of Wisdom",0,5,34
+19854,"Blessing of Wisdom",0,0,4
+19876,"Shadow Resistance Aura",0,4,18
+19880,"Track Elementals",0,0,4
+19883,"Track Humanoids",2,57,82
+19884,"Track Undead",0,2,3
+19885,"Track Hidden",3,45,73
+19888,"Frost Resistance Aura",0,0,7
+19895,"Shadow Resistance Aura",0,0,1
+20050,"Vengeance",0,2,15
+20116,"Consecration",0,0,90
+20128,"Redoubt",0,55,15
+20162,"Seal of the Crusader",0,0,11
+20163,"Seal of Fury",0,61,9
+20164,"Seal of Justice",0,3,4
+20165,"Seal of Light",0,0,2
+20216,"Divine Favor",0,0,1
+20217,"Blessing of Kings",73,844,1759
+20230,"Retaliation",0,3,1
+20287,"Seal of Righteousness",0,4,29
+20288,"Seal of Righteousness",0,10,14
+20289,"Seal of Righteousness",0,8,28
+20290,"Seal of Righteousness",0,0,5
+20305,"Seal of the Crusader",22,57,20
+20306,"Seal of the Crusader",0,0,1
+20375,"Seal of Command",77,395,123
+20419,"Seal of Fury",0,2,4
+20554,"Berserking",5,3,5
+20572,"Blood Fury",9,1,21
+20578,"Cannibalize",1,0,4
+20580,"Shadowmeld",2,1,0
+20589,"Escape Artist",0,0,2
+20707,"Soulstone Resurrection",1,33,39
+20762,"Soulstone Resurrection",1,2,26
+20763,"Soulstone Resurrection",0,4,3
+20764,"Soulstone Resurrection",0,0,3
+20905,"Trueshot Aura",0,0,4
+20915,"Seal of Command",0,12,233
+20918,"Seal of Command",0,0,1
+20922,"Consecration",0,0,2
+20925,"Holy Shield",0,0,6
+21082,"Seal of the Crusader",0,0,1
+21084,"Seal of Righteousness",0,0,19
+21335,"Thorns",0,0,2
+21970,"Mark of the Chosen",0,0,1
+22782,"Mage Armor",0,2,8
+23759,"Master Demonologist",0,4,0
+23760,"Master Demonologist",0,0,5
+23761,"Master Demonologist",0,4,31
+23768,"Sayge's Dark Fortune of Damage",0,4,6
+23881,"Bloodthirst",0,0,1
+23948,"Power Word: Fortitude",0,0,5
+24529,"Spirit Bond",0,2,32
+24604,"Furious Howl",0,0,1
+24858,"Moonkin Form",0,0,2
+24907,"Moonkin Aura",0,0,2
+24932,"Leader of the Pack",3,74,306
+25037,"Rumsey Rum Light",0,0,5
+25228,"Soul Link",1,16,39
+25722,"Rumsey Rum Dark",0,0,1
+25780,"Righteous Fury",4,95,173
+25782,"Greater Blessing of Might",0,0,1
+25804,"Rumsey Rum Black Label",0,0,1
+26573,"Consecration",53,194,35
+29131,"Bloodrage",16,46,35
+364161,"Arcane Intellect",0,60,151
+400589,"Missile Barrage",1,1,10
+400625,"Heating Up",0,0,10
+400670,"Fingers of Frost",0,5,14
+402975,"Victorious",15,56,52
+408120,"Wild Growth",0,0,1
+408505,"Maelstrom Weapon",0,1,19
+408510,"Water Shield",5,9,74
+415407,"Rapid Killing",0,12,0
+429959,"Well-Rested",110,961,2246
+433427,"Squall-breakers Potion",0,1,1
+434851,"Minor Evocation",0,0,1
+436432,"Trail Snack",0,1,3
+437146,"Mage's Lament",0,0,7
+437147,"Warrior's Lament",0,0,4
+437148,"Priest's Lament",0,0,2
+440873,"Decimation",0,1,0
+446448,"Duty of the Warden",0,3,1
+446467,"Mark of the Warden",0,0,5
+460939,"Might of Stormwind",0,0,4
+1229741,"Camp Benefits",79,1124,2560
+1238640,"Ghost Wolf",14,184,542
+1238931,"Improved Stormstrike",0,3,35
+1243120,"Demonic Knowledge",0,1658,3428
+1245244,"Minor Arcane Elixir",1,15,38
+1245249,"Elixir of Minor Force",3,16,26
+1250924,"Lesser Cleric's Elixir",1,0,0
+1250942,"Minor Mageblood Elixir",0,2,11
+1250944,"Lesser Mageblood Elixir",0,1,6
+1250971,"Lesser Arcane Elixir",0,0,5
+1252576,"Savory Whimsyfin Delight",0,1,6
+1259416,"Walk on Air",0,69,140
+1259688,"Elemental Blessing",10,82,104
+1259691,"Attuned",0,2,0
+1259799,"Elune's Light",3,0,0
+1260270,"Rapid Regeneration",0,0,4
+1261483,"Thrill of Adventure",3,61,44
+1262243,"The Quick and the Dead",0,4,2
+1262307,"The Quick and the Dead",0,0,2
+1262316,"The Quick and the Dead",0,0,1
+1270893,"Charged",8,136,200
+1277324,"Dark Sacrifice",0,2,0
+1279399,"Summon Warhorse",0,16,76
+1280341,"Uncommon Fishing",0,0,1
+1284017,"Track Beasts",0,0,8
+1292997,"Archmagister's Wisdom",0,0,1
+1293345,"Guardian's Durability",0,0,1
+1294477,"Static Electricity",0,0,1
+1295233,"Heart of the Primeval",0,1,0
+1296202,"Rat Familiar",1,7,11
+1297774,"Magical Awareness",0,5,27
+1299026,"Shatter Curse",0,9,2
+1299038,"Plainsrunning",42,2374,4340
+1299346,"Trueshot Aura",0,18,18
+1299348,"Trueshot Aura",0,7,12
+1301168,"Transformative Cocoon",1,1,10
+1302113,"Trail Snack",0,1,3
+1302285,"Frog Familiar",3,7,12
+1302303,"Cat Familiar",0,1,0
+1309728,"Speed",0,3,5
+1310503,"Mark of the Wild",0,0,1
+1310725,"Spirit Bond",0,6,21
+1310927,"Light's Fury",0,257,64
+1311015,"Templar's Bulwark",0,1,0
+1311649,"Seal of Fury",0,0,7
+1311656,"Seal of Fury",0,3,23
+1311703,"Echo of Command",0,0,1
+1314842,"Blessed by the Great Cat Spirit",0,0,2
+1316048,"Transformative Cocoon",1,1,7
+1321558,"Siphon the Grave",0,0,1
+1323969,"Gore Drinker",0,0,6
+1324188,"Polymorph",0,2,7
+1324189,"Polymorph",0,0,1
+1324315,"Violet Meditation",0,0,2
+1324427,"Silence",0,0,1
+1324448,"Fear",3,2,4
+1324451,"Fear",0,0,2
+1324459,"Death Coil",0,1,0
+1324462,"Banish",0,4,0
+1324487,"Bash",1,1,3
+1324488,"Bash",0,0,8
+1324500,"Freezing Trap",1,4,0
+1324513,"Hammer of Justice",1,0,1
+1324515,"Hammer of Justice",25,74,72
+1324538,"Repentance",0,0,1
+1324551,"Silenced",0,1,6
+1324556,"Concussion Blow",0,0,1
+1326084,"Reckoning",0,4,15
+1326891,"Frigid Power",0,0,6
+1328375,"Violet Flames",7,46,212
+1328548,"Oath of Light",0,1,4
+1328826,"Poised",36,474,788
+1328827,"Poised",3,162,420

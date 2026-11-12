@@ -45,7 +45,7 @@ const EFFECT_APPLY_AURA: &str = "6";
 
 /// Emitted kind order; index = `RoleSpellKind::code`, and the KINDS array
 /// in the generated file.
-const KIND_ORDER: [RoleSpellKind; 6] = [
+pub(crate) const KIND_ORDER: [RoleSpellKind; 6] = [
     RoleSpellKind::ActiveMitigation,
     RoleSpellKind::Defensive,
     RoleSpellKind::External,

@@ -72,7 +72,7 @@ pub const TABLES: [&str; 7] = [
 /// model: mage 3, warrior 4, warlock 5, priest 6, druid 7, rogue 8, hunter
 /// 9, paladin 10, shaman 11. A hunter's pet abilities carry 9 too, which is
 /// harmless: only a player's own casts are read.
-const CLASS_FAMILIES: [i64; 9] = [3, 4, 5, 6, 7, 8, 9, 10, 11];
+pub(crate) const CLASS_FAMILIES: [i64; 9] = [3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 /// `SpellEffect.Effect`: HEAL and ATTACK_ME.
 const EFFECT_HEAL: i64 = 10;

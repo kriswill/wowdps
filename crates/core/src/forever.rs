@@ -9,3 +9,4 @@ pub(crate) mod item_spells;
 pub(crate) mod keystone_timers;
 pub(crate) mod open_world_maps;
 pub(crate) mod role_signals;
+pub(crate) mod role_spells;

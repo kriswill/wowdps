@@ -227,7 +227,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	externals_received	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	externals_received_ms	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	support_uptime_ms	0
-1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	spans	0
+1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	spans	1
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	taken10_0	290
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	absorb_applied	0
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C03	absorb_wasted	
@@ -343,8 +343,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_boss_engaged	1
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_boss_killed	1
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_boss_wiped	0
-1	Encounter	Geilhast	kill	21000	2914	1	*	replay_buff_applied	0
-1	Encounter	Geilhast	kill	21000	2914	1	*	replay_buff_removed	0
+1	Encounter	Geilhast	kill	21000	2914	1	*	replay_buff_applied	1
+1	Encounter	Geilhast	kill	21000	2914	1	*	replay_buff_removed	1
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_buff_dose	0
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_placed_cast	0
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_placed_summon	0
