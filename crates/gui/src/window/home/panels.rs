@@ -130,6 +130,9 @@ struct Meta {
     tonight: i64,
     /// The game Home shows, when it is not Retail among several.
     game: Option<String>,
+    /// The game shown is of a later patch than this wowdps knows, by its
+    /// newest stored fight (`editions::newer_notice`): what that means, once.
+    newer: Option<String>,
 }
 
 /// The whole page: the title and its scope chips, the night, and the
@@ -148,6 +151,10 @@ pub fn view(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
             .header_edition()
             .filter(|e| *e != wowdps_model::Edition::Retail)
             .map(|e| gui.hist.store.census.name(e)),
+        newer: wowdps_gui_logic::editions::newer_notice(
+            gui.hist.edition,
+            gui.hist.store.census.build(gui.hist.edition),
+        ),
     };
     let panels = gui.hist.store.panels.clone();
     // The chips stand still: by name, not by how much each was played.
@@ -198,6 +205,16 @@ pub fn view(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
         && let Some(line) = meta.state_line.clone()
     {
         page = page.child(w.text(line, w.size.micro, w.c(|t| t.ink_2), REGULAR));
+    }
+    // A game newer than this wowdps: one quiet line, where the store's own
+    // state is said, never a card or a toast per fight.
+    if let Some(line) = meta.newer.clone() {
+        page = page.child(div().id("home-newer").test_support().child(w.text(
+            line,
+            w.size.micro,
+            w.c(|t| t.ink_3_text),
+            REGULAR,
+        )));
     }
     page = page.child(last_night(&meta, &panels, &chars, inner, narrow, w, cx));
     if meta.settled {

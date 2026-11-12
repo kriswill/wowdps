@@ -47,7 +47,7 @@ pub fn line(ov: &Ov, r: &Row, lead: Lead, label: &str, indent: f32, max: u64, co
         Lead::Group { open: true } => Some("▾"),
         Lead::Group { open: false } => Some("▸"),
     };
-    let art = images::spell_icon(r.spell_id);
+    let art = images::spell_icon(ov.game, r.spell_id);
     let mut words = div()
         .flex()
         .items_center()
@@ -192,7 +192,7 @@ pub fn crumb(ov: &Ov, player: &str, spell: &str, row: Option<&Row>) -> Div {
         .px(px(8.))
         .child(ov.words(name, 13., ov.c(|t| t.yellow)))
         .child(ov.words("▸", 11., ov.c(|t| t.dim)));
-    if let Some(tile) = row.and_then(|r| images::spell_icon(r.spell_id)) {
+    if let Some(tile) = row.and_then(|r| images::spell_icon(ov.game, r.spell_id)) {
         line = line.child(img(tile).size(ov.z(14.)).flex_none());
     }
     line = line.child(div().flex_1().min_w_0().overflow_hidden().child(ov.words(

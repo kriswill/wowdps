@@ -203,6 +203,7 @@ impl Overlay {
             probe: self.graph_probe,
             t: ov.t,
             data: ov.data,
+            game: ov.game,
         };
         let column = div()
             .flex_1()
@@ -314,7 +315,7 @@ impl Overlay {
             let lit = self.spell_hover.as_deref() == Some(r.key.as_str());
             let cell = |s: String, w: f32, color| ov.metric(s, 11., color, w);
             let ink = ov.c(|t| t.ink);
-            let icon = match images::spell_icon(r.spell_id) {
+            let icon = match images::spell_icon(ov.game, r.spell_id) {
                 Some(tile) => img(tile).size(ov.z(13.)).flex_none().into_any_element(),
                 None => div().w(ov.z(13.)).flex_none().into_any_element(),
             };

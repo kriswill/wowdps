@@ -13,7 +13,7 @@ use wowdps_gui_logic::theme::{
     self as gl, Accent, Bars, DataTokens, Effects, NARROW_WINDOW, Pitches, Shadows, Shape, Sizes,
     TILE_WINDOW, WindowTokens, YOU_CONTRAST,
 };
-use wowdps_model::Class;
+use wowdps_model::{Class, Edition};
 
 use crate::theme::{Look, hsla};
 
@@ -80,6 +80,9 @@ pub struct W {
     /// Device pixels per logical pixel (the display's scale factor): what
     /// a piece of art is chosen by, the drawn size of it.
     pub scale: f32,
+    /// The game of the fight drawn (its segment's, else the window's): the
+    /// one whose spell icons its abilities wear.
+    pub game: Edition,
 }
 
 impl W {
@@ -100,12 +103,18 @@ impl W {
             title: crate::theme::face(&look.def.faces.title),
             width,
             scale: 1.0,
+            game: Edition::Retail,
         }
     }
 
     /// At the display's scale factor (`Window::scale_factor`), 1 until said.
     pub fn at_scale(self, scale: f32) -> Self {
         Self { scale, ..self }
+    }
+
+    /// Drawing a fight of `game` (Retail until said).
+    pub fn in_game(self, game: Edition) -> Self {
+        Self { game, ..self }
     }
 
     /// `d` (already zoomed) in device pixels: the size art is picked for.

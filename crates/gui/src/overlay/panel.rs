@@ -539,7 +539,13 @@ impl Render for Overlay {
                 });
             }));
         }
-        let ov = Ov::new(self.cfg.zoom, cx).at_scale(window.scale_factor());
+        let game = self
+            .state(cx)
+            .segment_edition()
+            .unwrap_or(wowdps_model::Edition::Retail);
+        let ov = Ov::new(self.cfg.zoom, cx)
+            .at_scale(window.scale_factor())
+            .in_game(game);
         let content = if self.expanded {
             self.panel(&ov, window, cx).into_any_element()
         } else {

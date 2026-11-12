@@ -89,6 +89,52 @@ fn the_build_is_the_tooltip_s() {
     assert_eq!(build_words(Some((0, 0, 0))), None);
 }
 
+/// The notice speaks of the game, its patch and what it means for the
+/// player, never of tables; a game of the tables' own patch or older, or
+/// with no stored fight, says nothing, and the census's newest card is what
+/// it reads.
+#[test]
+fn a_game_newer_than_this_wowdps_says_what_that_means_once() {
+    let tables = Edition::Retail.tables_patch().unwrap();
+    let later = (tables.0, tables.1, tables.2 + 5);
+    let words = newer_notice(Edition::Retail, Some(later)).unwrap();
+    assert_eq!(
+        words,
+        format!(
+            "{} {}.{}.{} is newer than this wowdps: some newer spells may be missing or \
+             unnamed until wowdps updates.",
+            name(Edition::Retail, Some(later)),
+            later.0,
+            later.1,
+            later.2
+        )
+    );
+    assert!(!words.to_lowercase().contains("table"), "{words}");
+    assert_eq!(newer_notice(Edition::Retail, Some(tables)), None);
+    assert_eq!(newer_notice(Edition::Retail, None), None);
+    assert_eq!(newer_notice(Edition::Retail, Some((0, 0, 0))), None);
+    let forever = Edition::Forever.tables_patch().unwrap();
+    assert_eq!(newer_notice(Edition::Forever, Some(forever)), None);
+    assert!(
+        newer_notice(Edition::Forever, Some((forever.0, forever.1 + 1, 0)))
+            .is_some_and(|w| w.starts_with("Forever "))
+    );
+    assert_eq!(newer_notice(Edition::Classic(2), Some((9, 9, 9))), None);
+
+    // The census's build is its edition's newest card's.
+    let mut census = Census::new();
+    census.learn(&[
+        card(Edition::Retail, later, 2_000),
+        card(Edition::Retail, tables, 1_000),
+    ]);
+    assert!(newer_notice(Edition::Retail, census.build(Edition::Retail)).is_some());
+    census.learn(&[card(Edition::Retail, tables, 3_000)]);
+    assert_eq!(
+        newer_notice(Edition::Retail, census.build(Edition::Retail)),
+        None
+    );
+}
+
 #[test]
 fn entry_ids_name_the_edition_by_its_key() {
     assert_eq!(entry_id(Edition::Retail), "edition-retail");

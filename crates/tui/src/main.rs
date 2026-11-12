@@ -24,7 +24,8 @@ use wowdps_core::cli::{Cmd, SourceSpec, parse_args};
 use wowdps_daemon::{DaemonOptions, config::Config, spec_display};
 use wowdps_model::Edition;
 use wowdps_proto::{
-    ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, EditionRef, Reconnect, SourceArg,
+    ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, EditionRef, HistoryAnswer,
+    Reconnect, SourceArg,
 };
 
 const USAGE: &str = "\
@@ -42,7 +43,8 @@ Usage:
           [--linger]     ...and never idle-exit
           [--file|--logs] override the config's logs_dir
   wowdps status          report the running daemon's state: each edition's
-                         source, the log it follows and which is live
+                         source, the log it follows and which is live, and
+                         whether the game is newer than this wowdps knows
   wowdps stop            shut the daemon down
   wowdps addon           report the wowdps addon in the game's AddOns folder
   wowdps addon install   write it there (the daemon keeps it current after
@@ -220,7 +222,8 @@ fn do_status() -> i32 {
             ..
         }) => {
             println!("wowdps daemon: running");
-            for line in source_lines(source.as_deref(), &editions) {
+            let builds = newest_builds(&mut client, &editions);
+            for line in source_lines(source.as_deref(), &editions, &builds) {
                 println!("{line}");
             }
             println!("  clients: {clients}");
@@ -279,7 +282,20 @@ fn do_status() -> i32 {
 /// it: a daemon of one source prints that pair alone, as it always has. An
 /// edition its log has not named yet reads "not named yet"; no log reads
 /// "no log yet".
-fn source_lines(first: Option<&str>, editions: &[wowdps_proto::EditionSource]) -> Vec<String> {
+///
+/// `builds` (one per source, as [`newest_builds`] asks) is the patch of each
+/// edition's newest stored fight's log; where one is known a third line
+/// holds it against the patch wowdps's tables of that edition were made
+/// from, and says what a newer game means for the player:
+///
+/// ```text
+///   tables:  from 12.1.0, log from 12.1.5: newer; some newer spells may be missing or …
+/// ```
+fn source_lines(
+    first: Option<&str>,
+    editions: &[wowdps_proto::EditionSource],
+    builds: &[Option<Patch>],
+) -> Vec<String> {
     let source = |s: Option<&str>| format!("  source:  {}", s.unwrap_or("(none)"));
     let mut out = vec![source(first)];
     for (i, e) in editions.iter().enumerate() {
@@ -290,8 +306,71 @@ fn source_lines(first: Option<&str>, editions: &[wowdps_proto::EditionSource]) -
         let live = if e.live { " (live)" } else { "" };
         let log = e.log.as_deref().unwrap_or("no log yet");
         out.push(format!("  edition: {name}{live}, {log}"));
+        let build = builds.get(i).copied().flatten();
+        if let Some(line) = e.edition.zip(build).and_then(|(e, b)| tables_line(e, b)) {
+            out.push(line);
+        }
     }
     out
+}
+
+/// A game patch as a log's BUILD_VERSION names it: (major, minor, patch).
+type Patch = (u16, u16, u16);
+
+/// A patch as the game writes it: `12.1.5`.
+fn patch_words((major, minor, patch): Patch) -> String {
+    format!("{major}.{minor}.{patch}")
+}
+
+/// `wowdps status`'s line holding an edition's newest stored log's patch
+/// against its tables'; `None` for an edition with no tables of its own.
+fn tables_line(edition: Edition, build: Patch) -> Option<String> {
+    let tables = edition.tables_patch()?;
+    let mut line = format!(
+        "  tables:  from {}, log from {}",
+        patch_words(tables),
+        patch_words(build)
+    );
+    if edition.newer_than_tables(build) {
+        line.push_str(": newer; some newer spells may be missing or unnamed until wowdps updates");
+    }
+    Some(line)
+}
+
+/// The build of each source's edition's newest fight stored from this
+/// machine's logs whose log named one, a few newest cards asked of the
+/// store per edition (`history::newest_build_query`; an edition two sources
+/// name is asked once); `None` for a source whose log names no edition, an
+/// edition with no such fight, or a store that does not answer within the
+/// wait.
+fn newest_builds(
+    client: &mut DaemonClient,
+    editions: &[wowdps_proto::EditionSource],
+) -> Vec<Option<Patch>> {
+    let mut asked: Vec<(Edition, Option<Patch>)> = Vec::new();
+    let mut req_id = 1;
+    editions
+        .iter()
+        .map(|e| {
+            let edition = e.edition?.counts_as();
+            if let Some((_, build)) = asked.iter().find(|(a, _)| *a == edition) {
+                return *build;
+            }
+            req_id += 1;
+            client.send(&ClientMsg::GetHistory {
+                req_id,
+                query: wowdps_proto::history::newest_build_query(edition),
+            });
+            let build = match wait_history(client, req_id) {
+                Some(HistoryAnswer::Fights { cards, .. }) => {
+                    wowdps_proto::history::newest_build(&cards)
+                }
+                _ => None,
+            };
+            asked.push((edition, build));
+            build
+        })
+        .collect()
 }
 
 /// `wowdps status`'s game line: `running` or `not running`, and — with
@@ -408,6 +487,28 @@ fn do_addon(install: bool) -> i32 {
         println!("saved:   {account}: {records}, written {seen}");
     }
     0
+}
+
+/// The answer to the `GetHistory` sent as `req_id`, within five seconds.
+fn wait_history(client: &mut DaemonClient, req_id: u32) -> Option<HistoryAnswer> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                req_id: got,
+                answer,
+            } = msg
+                && got == req_id
+            {
+                return Some(answer);
+            }
+        }
+        if client.is_dead() {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
 }
 
 fn wait_status(client: &mut DaemonClient) -> Option<DaemonMsg> {
@@ -603,7 +704,7 @@ fn run(mut client: DaemonClient, mut state: ClientState) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{game_line, source_lines, tui_state};
+    use super::{game_line, source_lines, tables_line, tui_state};
     use wowdps_model::Edition;
     use wowdps_proto::{ClientMsg, Cursor, EditionRef, EditionSource};
 
@@ -623,7 +724,7 @@ mod tests {
     fn status_of_one_source_reads_as_it_did() {
         let one = [retail()];
         assert_eq!(
-            source_lines(Some("dir:/wow/_retail_/Logs"), &one),
+            source_lines(Some("dir:/wow/_retail_/Logs"), &one, &[None]),
             [
                 "  source:  dir:/wow/_retail_/Logs",
                 "  edition: Retail (live), WoWCombatLog-110126_200000.txt",
@@ -636,7 +737,7 @@ mod tests {
         }];
         assert_eq!(game_line(true, &running), "running");
         // A daemon listing no source still names its own.
-        assert_eq!(source_lines(None, &[]), ["  source:  (none)"]);
+        assert_eq!(source_lines(None, &[], &[]), ["  source:  (none)"]);
     }
 
     /// v49: with a source per edition, each is listed with its edition,
@@ -660,7 +761,7 @@ mod tests {
             EditionSource::default(),
         ];
         assert_eq!(
-            source_lines(Some("dir:/wow/_retail_/Logs"), &several),
+            source_lines(Some("dir:/wow/_retail_/Logs"), &several, &[]),
             [
                 "  source:  dir:/wow/_retail_/Logs",
                 "  edition: Retail, WoWCombatLog-110126_200000.txt",
@@ -675,6 +776,56 @@ mod tests {
         // The watcher saw a game it could not place in a source.
         let unplaced = [retail(), EditionSource::default()];
         assert_eq!(game_line(true, &unplaced), "running");
+    }
+
+    /// Where an edition's newest stored fight is known, a line holds its
+    /// log's patch against the patch the edition's tables were made from,
+    /// and a later one says what that means for the player; with no stored
+    /// fight, or no edition named, the lines read as they did.
+    #[test]
+    fn status_holds_each_editions_newest_log_against_its_tables() {
+        let tables = Edition::Retail.tables_patch().unwrap();
+        let later = (tables.0, tables.1, tables.2 + 5);
+        let words = |(a, b, c): (u16, u16, u16)| format!("{a}.{b}.{c}");
+        let forever = EditionSource {
+            edition: Some(Edition::Forever),
+            source: Some("dir:/wow/_forever_/Logs".to_string()),
+            log: None,
+            live: false,
+            running: false,
+        };
+        let ft = Edition::Forever.tables_patch().unwrap();
+        let both = [retail(), forever, EditionSource::default()];
+        assert_eq!(
+            source_lines(
+                Some("dir:/wow/_retail_/Logs"),
+                &both,
+                &[Some(later), Some(ft), Some(later)]
+            ),
+            [
+                "  source:  dir:/wow/_retail_/Logs".to_string(),
+                "  edition: Retail (live), WoWCombatLog-110126_200000.txt".to_string(),
+                format!(
+                    "  tables:  from {}, log from {}: newer; some newer spells may be missing \
+                     or unnamed until wowdps updates",
+                    words(tables),
+                    words(later)
+                ),
+                "  source:  dir:/wow/_forever_/Logs".to_string(),
+                "  edition: Forever, no log yet".to_string(),
+                format!("  tables:  from {}, log from {}", words(ft), words(ft)),
+                "  source:  (none)".to_string(),
+                "  edition: not named yet, no log yet".to_string(),
+            ]
+        );
+        assert_eq!(tables_line(Edition::Classic(2), later), None);
+        assert_eq!(
+            source_lines(None, &[retail()], &[None]),
+            [
+                "  source:  (none)",
+                "  edition: Retail (live), WoWCombatLog-110126_200000.txt",
+            ]
+        );
     }
 
     /// `--edition` pins the session before its first request, so the first

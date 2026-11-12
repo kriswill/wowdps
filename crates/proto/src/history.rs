@@ -2738,3 +2738,69 @@ fn f64_of(v: &Json, key: &str) -> Option<f64> {
 fn bool_of(v: &Json, key: &str) -> Option<bool> {
     v.get(key)?.as_bool()
 }
+
+// ---- an edition's newest log build ------------------------------------------
+
+/// How many of an edition's newest local cards the status paths read its
+/// newest log build from: a card whose log named no build (`0.0.0`) is
+/// passed over for the next, as the window's census passes it over.
+pub const BUILD_CARDS: u32 = 8;
+
+/// What `wowdps status` and the MCP `status` ask the store of `edition`, to
+/// hold its newest log's build against its tables (`Edition::tables_patch`):
+/// its newest fights from this machine's logs, [`BUILD_CARDS`] of them.
+pub fn newest_build_query(edition: Edition) -> crate::HistoryQuery {
+    crate::HistoryQuery::Fights {
+        encounter: None,
+        difficulty: None,
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: crate::FightSort::Newest,
+        limit: BUILD_CARDS,
+        after_id: None,
+        role: None,
+        origin: crate::OriginFilter::Local,
+        edition: Some(edition),
+    }
+}
+
+/// The build of the newest of `cards` (newest first, as
+/// [`newest_build_query`] answers) whose log named one; `None` when none did.
+pub fn newest_build(cards: &[FightCard]) -> Option<(u16, u16, u16)> {
+    cards.iter().map(|c| c.build).find(|b| *b != (0, 0, 0))
+}
+
+#[cfg(test)]
+mod newest_build_tests {
+    use super::*;
+
+    /// The newest card that names a build answers; one whose log named
+    /// none is passed over, and none at all is `None`.
+    #[test]
+    fn the_newest_named_build_answers() {
+        let card = |build| FightCard {
+            build,
+            ..FightCard::default()
+        };
+        let cards = [card((0, 0, 0)), card((12, 1, 5)), card((12, 1, 0))];
+        assert_eq!(newest_build(&cards), Some((12, 1, 5)));
+        assert_eq!(newest_build(&cards[..1]), None);
+        assert_eq!(newest_build(&[]), None);
+        match newest_build_query(Edition::Forever) {
+            crate::HistoryQuery::Fights {
+                limit,
+                origin,
+                edition,
+                sort,
+                ..
+            } => {
+                assert_eq!(limit, BUILD_CARDS);
+                assert_eq!(origin, crate::OriginFilter::Local);
+                assert_eq!(edition, Some(Edition::Forever));
+                assert_eq!(sort, crate::FightSort::Newest);
+            }
+            other => panic!("not a Fights query: {other:?}"),
+        }
+    }
+}

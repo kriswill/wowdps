@@ -84,7 +84,8 @@ wowdps --edition forever     # one edition's logs (retail or forever) when
                              # followed), else an empty list under its name;
                              # without it, the live edition's
 wowdps status                # daemon state: each edition's source, its log
-                             # and which is live
+                             # and which is live, and whether the game is
+                             # newer than this wowdps knows
 wowdps stop                  # stop the daemon
 wowdps addon install         # put the wowdps addon in the game's AddOns
                              # folder: it records your raid's guilds, which
@@ -225,7 +226,11 @@ Class crests, spec icons and spell icons come from your own game install,
 extracted into `~/.local/share/wowdps/` by `tools/gen-icons.sh` and
 `tools/gen-spell-icons.sh` (in the dev shell: `wowdps gen-icons`,
 `wowdps gen-spell-icons`). Without them the meter draws class-colored discs
-and no ability icons. The edition switch's emblems are the ones your game
+and no ability icons. Spell icons are each game's own: a Forever fight draws
+Forever's, from `~/.local/share/wowdps/forever/spell-icons.bin`
+(`tools/gen-spell-icons.sh --product wowf -o` that path), and without that
+file draws none rather than Retail's, since a spell id need not name the same
+spell in both games. The edition switch's emblems are the ones your game
 launcher shows each game with, copied from the launcher's own files into
 `~/.local/share/wowdps/edition-emblems.bin` by `tools/gen-emblems.sh` (the
 launcher is found beside the install under the same Wine prefix, or in
@@ -253,8 +258,17 @@ currencies. The viewer reads the trees of the fight's game, and pastes are
 remembered per game and character, so opening the viewer on a player's meter
 row restores their build in that game. Opening it on a player with
 COMBATANT_INFO in the log shows their actual logged talents and gear instead.
-The pane artwork comes from `tools/gen-talent-art.sh`; without it the trees
-draw on plain panels.
+The pane artwork comes from `tools/gen-talent-art.sh` (Forever's from
+`--product wowf -o ~/.local/share/wowdps/forever/talent-art.bin`); without it
+the trees draw on plain panels.
+
+### A game newer than wowdps
+
+wowdps names spells, classes and items from tables made from one patch of
+each game. When your game is on a later patch, Home says so in one line, and
+`wowdps status` and the MCP `status` tool say it per game: some newer spells
+may be missing or unnamed until wowdps updates. Every amount is still
+counted. It is known once a fight of the newer patch has been stored.
 
 ## Development
 

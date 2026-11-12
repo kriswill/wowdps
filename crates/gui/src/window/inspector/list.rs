@@ -403,7 +403,7 @@ fn line(
 /// An ability's icon (or a square lettered with its initial in the name's
 /// hue), its name, and the pet's or the part's words after it, quieter.
 fn spell_words(name: &str, pet: Option<&str>, spell_id: u32, w: &W) -> AnyElement {
-    let icon: AnyElement = match crate::images::spell_icon(spell_id) {
+    let icon: AnyElement = match crate::images::spell_icon(w.game, spell_id) {
         Some(tile) => img(tile).size(w.z(ICON)).flex_none().into_any_element(),
         None => div()
             .size(w.z(ICON))

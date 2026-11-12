@@ -59,21 +59,13 @@ pub fn dataset_path_in(
     Ok(edition_path(&dataset_path()?, edition))
 }
 
-/// [`dataset_path_in`] from Retail's path, touching nothing.
+/// [`dataset_path_in`] from Retail's path, touching nothing: the data
+/// home's one rule for every per-machine file ([`crate::dirs::in_edition`]).
 fn edition_path(
     retail: &std::path::Path,
     edition: wowdps_model::Edition,
 ) -> Option<std::path::PathBuf> {
-    let edition = edition.canonical().counts_as();
-    if edition == wowdps_model::Edition::Retail {
-        return Some(retail.to_path_buf());
-    }
-    edition.product()?;
-    let name = retail
-        .file_name()
-        .map_or_else(|| "talents.json".into(), std::ffi::OsStr::to_os_string);
-    let dir = retail.parent().unwrap_or_else(|| std::path::Path::new(""));
-    Some(dir.join(edition.key()).join(name))
+    crate::dirs::in_edition(retail, edition)
 }
 
 /// Load and parse Retail's dataset ([`load_in`]).

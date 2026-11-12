@@ -258,7 +258,7 @@ impl Painter {
             self.fill_shape(window, c, TILE / 2.0 + 1.5, n.shape, hsla(t.backing));
             // Coloured art for what the build has; untaken talents are
             // desaturated and dimmed, as every talent UI mutes them.
-            match art::spell(n.spell_id, n.shape, !n.selected) {
+            match art::spell(self.paint.edition, n.spell_id, n.shape, !n.selected) {
                 Some(tile) => self.icon(window, c, tile),
                 None => self.fill_shape(
                     window,
@@ -384,7 +384,7 @@ impl Painter {
             }
             for (i, (spot, opt)) in spots.iter().zip(node.options.iter()).enumerate() {
                 let c = self.at(o, *spot);
-                match art::spell(opt.spell_id, IconStyle::Octagon, false) {
+                match art::spell(self.paint.edition, opt.spell_id, IconStyle::Octagon, false) {
                     Some(tile) => self.icon(window, c, tile),
                     None => self.fill_shape(
                         window,

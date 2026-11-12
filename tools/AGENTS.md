@@ -46,7 +46,13 @@ what it does and how to run it.
   whose edition has none of that table needs `-o`. The extractor refuses
   any product's output on another edition's committed file, Retail's
   included, however `-o` spells it (`cli/owners.rs`). The caches in the
-  data home are Retail's alone: another product's needs `-o` elsewhere.
+  data home are Retail's by default: another product's needs `-o`, and
+  its readers look for it in a folder named for its edition beside
+  Retail's (`forever/talents.json`, `forever/spell-icons.bin`,
+  `forever/spell-tips.bin`, `forever/talent-art.bin`;
+  `proto::dirs::in_edition`), never in Retail's. The class crests
+  (`class-icons.bin`) are drawn by class and spec alone, as every game
+  names them, and are not per edition.
   The games' emblems are the one cache of every game's: `gen-emblems`
   reads no product's client and takes no `--product`.
   What a non-Retail run writes names the product beside the build.
@@ -111,6 +117,7 @@ tools/gen-icons.sh             # class-icons.bin (upscaled 4x; --no-upscale)
 tools/gen-spell-icons.sh       # spell-icons.bin (~58 MiB)
 tools/gen-talent-trees.sh      # talents.json (R14)
 tools/gen-talent-trees.sh --product wowf -o ~/.local/share/wowdps/forever/talents.json   # Forever's, where the talent tools read it
+tools/gen-spell-icons.sh --product wowf -o ~/.local/share/wowdps/forever/spell-icons.bin  # and talent-art, spell-tips: Forever's, where the GUI reads them
 tools/gen-talent-art.sh        # talent-art.bin (~60 MiB)
 tools/gen-spell-tips.sh        # spell-tips.bin (gui-logic's spell tips; ~7 s, 4 s when current)
 tools/gen-emblems.sh           # edition-emblems.bin (each game's emblem, from the launcher's own files)

@@ -11,8 +11,10 @@
 //! fight's roster (sorted by guid, the same order on both sides) and their
 //! class; a trash fight by its place in the log, never its name.
 //!
-//! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
-//! -p wowdps-core --test real_log_roles -- --ignored --nocapture`
+//! Run: `WOWDPS_REAL_LOG_FOREVER=/path/to/WoWCombatLog-*.txt cargo test
+//! --release -p wowdps-core --test real_log_roles -- --ignored --nocapture`
+//! (`WOWDPS_REAL_LOG` serves too when its header names Forever:
+//! `real_log/mod.rs`).
 
 #![allow(
     clippy::expect_used,
@@ -21,13 +23,14 @@
     clippy::panic
 )]
 
+mod real_log;
+
 use std::path::Path;
 
 use wowdps_core::index::{SegmentMeta, load_segment_text, scan};
 use wowdps_core::meter::{Segment, SegmentKind, View, meter_from_lines};
-use wowdps_core::parser::{Event, parse_line};
 use wowdps_core::roles::RoleScore;
-use wowdps_model::{Class, Edition, Role};
+use wowdps_model::{Class, Role};
 
 fn class_name(c: Option<Class>) -> &'static str {
     c.map_or("?", Class::name)
@@ -97,25 +100,13 @@ fn lazy_equals_full(path: &str, label: &str, seg: &Segment, meta: &SegmentMeta) 
 }
 
 #[test]
-#[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
-fn real_log_roles() {
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
+#[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
+fn roles_are_inferred_on_every_real_forever_fight() {
     // The header names the edition: a log of one that reads its specs (a
     // Retail log, the other gates' usual) is passed over before it is read.
-    let mut head = String::new();
-    std::io::BufRead::read_line(
-        &mut std::io::BufReader::new(std::fs::File::open(&path).expect("open the log")),
-        &mut head,
-    )
-    .expect("read the header");
-    let edition = match parse_line(head.trim_end()).map(|l| l.event) {
-        Some(Event::Version { project_id, .. }) => Edition::from_project_id(project_id),
-        _ => Edition::Retail,
-    };
-    if edition.counts_as() != Edition::Forever {
-        println!("{edition:?}: this log's edition reads its specs; no role is inferred");
+    let Some(path) = real_log::forever_log() else {
         return;
-    }
+    };
     let text = std::fs::read_to_string(&path).expect("read the log");
     let meter = meter_from_lines(text.lines());
     let mut file = std::fs::File::open(&path).expect("open the log");

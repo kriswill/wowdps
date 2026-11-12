@@ -5,22 +5,54 @@
 //! log's first tick lands ~200 ms after UNIT_DIED), so a run where most
 //! spans read under a second means the liveness signals are wrong again.
 //!
+//! Its Forever variant holds a Forever log (`WOWDPS_REAL_LOG_FOREVER`) to the
+//! same, naming no player and no fight by name (`real_log/mod.rs`).
+//!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_deaths -- --ignored --nocapture`
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
+mod real_log;
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use wowdps_core::index::{load_segment_text, scan};
-use wowdps_core::meter::SegmentKind;
+use wowdps_core::meter::{Segment, SegmentKind};
 use wowdps_core::parser::{Event, parse_line};
-use wowdps_model::MarkKind;
+use wowdps_model::{Mark, MarkKind};
 
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn death_spans_are_sane_on_every_real_segment() {
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
-    let mut file = std::fs::File::open(&path).expect("open the log");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
+    gate(&path, |_, seg| seg.name.clone(), |m| format!("{m:?}"));
+}
+
+#[test]
+#[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
+fn death_spans_are_sane_on_every_real_forever_segment() {
+    let Some(path) = real_log::forever_log() else {
+        return;
+    };
+    // A mark is shown by its times and its spell, never its caster.
+    gate(&path, real_log::fight, |m| {
+        format!("at {} ms for {} ms, {}", m.at_ms, m.dur_ms, m.label)
+    });
+}
+
+/// The gate over `path`: `fight` names a segment by its place in the log,
+/// `mark` a death mark, in every line it prints.
+fn gate(path: &str, fight: impl Fn(usize, &Segment) -> String, mark: impl Fn(&Mark) -> String) {
+    let mut file = std::fs::File::open(path).expect("open the log");
     let idx = scan(&mut file);
     let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();
     assert!(!metas.is_empty(), "a real log has segments");
@@ -32,8 +64,8 @@ fn death_spans_are_sane_on_every_real_segment() {
     let mut longest = 0i64;
     let mut by_rez: BTreeMap<String, u32> = BTreeMap::new();
 
-    for meta in &metas {
-        let text = load_segment_text(Path::new(&path), meta).expect("load the segment");
+    for (n, meta) in metas.iter().enumerate() {
+        let text = load_segment_text(Path::new(path), meta).expect("load the segment");
         let meter = text.meter();
         let Some(seg) = meter.segments().last() else {
             continue;
@@ -60,10 +92,11 @@ fn death_spans_are_sane_on_every_real_segment() {
                 .collect();
             for m in &marks {
                 deaths += 1;
-                assert!(m.dur_ms >= 0, "a death lasting negative time: {m:?}");
+                assert!(m.dur_ms >= 0, "a death lasting negative time: {}", mark(m));
                 assert!(
                     m.at_ms >= 0 && m.at_ms <= duration.max(0),
-                    "a death outside its segment: {m:?} of {duration} ms"
+                    "a death outside its segment: {} of {duration} ms",
+                    mark(m)
                 );
                 longest = longest.max(m.dur_ms);
                 if m.dur_ms < 1_000 {
@@ -77,7 +110,8 @@ fn death_spans_are_sane_on_every_real_segment() {
                     *by_rez.entry(m.label.clone()).or_default() += 1;
                     assert!(
                         m.dur_ms > 0,
-                        "a rez that ended a death before it started: {m:?}"
+                        "a rez that ended a death before it started: {}",
+                        mark(m)
                     );
                 }
             }
@@ -86,7 +120,7 @@ fn death_spans_are_sane_on_every_real_segment() {
             assert!(
                 deaths > 0,
                 "players died in {} and no span says so",
-                seg.name
+                fight(n, seg)
             );
         }
     }
