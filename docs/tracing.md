@@ -177,10 +177,12 @@ the log format. Note it expects at least one *closed* segment, so a log
 captured mid-first-pull fails its non-empty assertion by design.
 
 Forever's logs have their own variants of the gates whose rules that
-edition has (deaths, taken, stacks, power), and two gates of Forever's
-alone: the roles it infers, and `real_log_segments` (the scan and the
-replay cut alike, every fight lazy = full, Forever's tables read). Each
-one's name holds `forever`:
+edition has (deaths, taken, stacks, power), and three gates of Forever's
+alone: the roles it infers, `real_log_segments` (the scan and the
+replay cut alike, every fight lazy = full, Forever's tables read), and
+`real_log_posts` (every boss pull's replay posts each credited player, on
+the instance's map, from its first seconds to its end: the client names no
+UiMap inside a dungeon, R29). Each one's name holds `forever`:
 
 ```sh
 WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored forever --nocapture

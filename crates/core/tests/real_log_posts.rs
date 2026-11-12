@@ -16,7 +16,8 @@
 //!
 //! Run: `WOWDPS_REAL_LOG_FOREVER=/path/to/WoWCombatLog-*.txt cargo test
 //! --release -p wowdps-core --test real_log_posts -- --ignored --nocapture`
-//! (`WOWDPS_REAL_LOG` is read instead when it names a Forever log).
+//! (which log it reads: `tests/real_log/mod.rs`). Its name holds `real` and
+//! `forever`, so `-- --ignored real` and `-- --ignored forever` run it.
 
 #![allow(
     clippy::expect_used,
@@ -25,58 +26,24 @@
     clippy::panic
 )]
 
+mod real_log;
+
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use wowdps_core::index::{load_segment_text, scan};
 use wowdps_core::meter::{SegmentKind, View};
 use wowdps_core::model::replay::UnitKind;
-use wowdps_core::parser::{Event, parse_line};
 use wowdps_core::replay::{NoPlaced, cut};
-use wowdps_model::Edition;
 
 /// The longest the players may go unposted, at the pull's ends and between
 /// two posts: a block lands on nearly every line a player is in.
 const MAX_SILENCE_MS: u32 = 5_000;
 
-/// The Forever log to read: `WOWDPS_REAL_LOG_FOREVER`, else
-/// `WOWDPS_REAL_LOG` when its header names Forever; `None`, saying so,
-/// when neither does.
-fn forever_log() -> Option<String> {
-    let edition_of = |path: &str| {
-        let mut head = String::new();
-        let file = std::fs::File::open(path).expect("open the log");
-        std::io::BufRead::read_line(&mut std::io::BufReader::new(file), &mut head)
-            .expect("read the header");
-        match parse_line(head.trim_end()).map(|l| l.event) {
-            Some(Event::Version { project_id, .. }) => {
-                Edition::from_project_id(project_id).counts_as()
-            }
-            _ => Edition::Retail,
-        }
-    };
-    if let Ok(path) = std::env::var("WOWDPS_REAL_LOG_FOREVER") {
-        let edition = edition_of(&path);
-        assert_eq!(
-            edition,
-            Edition::Forever,
-            "WOWDPS_REAL_LOG_FOREVER names a log of {edition:?}"
-        );
-        return Some(path);
-    }
-    match std::env::var("WOWDPS_REAL_LOG") {
-        Ok(path) if edition_of(&path) == Edition::Forever => Some(path),
-        _ => {
-            println!("no Forever log: set WOWDPS_REAL_LOG_FOREVER to run this gate");
-            None
-        }
-    }
-}
-
 #[test]
-#[ignore = "needs WOWDPS_REAL_LOG_FOREVER, a real Forever combat log"]
-fn real_log_forever_pulls_keep_their_posts() {
-    let Some(path) = forever_log() else {
+#[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
+fn posts_cover_every_real_forever_boss_pull() {
+    let Some(path) = real_log::forever_log() else {
         return;
     };
     let path = Path::new(&path);
