@@ -7,7 +7,8 @@
 //! argv[0]; every other system sweeps /proc, so one without it never sees
 //! the game.
 //!
-//! Every edition's client is a `Wow.exe` (`Wow` on macOS), so the pattern
+//! Every edition's client is a `Wow.exe` (on macOS a `World of Warcraft`
+//! inside its `World of Warcraft.app`), so the pattern
 //! finds them all; the product folder in a matched process's argv[0]
 //! (`_retail_`, `_forever_`: `wowdps_core::cli::PRODUCTS`) names which, by
 //! model's `product_of`, which the overlay names a game window's process by.
@@ -156,6 +157,7 @@ pub fn scan_proc(root: &std::path::Path, pattern: &str) -> Running {
 /// The program a NUL-separated command line runs: its argv[0], whole (wine
 /// writes the client's Windows path there, spaces and all), never the
 /// arguments after it.
+#[cfg(any(not(target_os = "macos"), test))]
 fn program(cmdline: &[u8]) -> &[u8] {
     cmdline.split(|&b| b == 0).next().unwrap_or_default()
 }
