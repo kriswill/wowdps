@@ -179,10 +179,8 @@ With one edition the window shows no switch, and its top bar is unchanged
 wherever it fit before; where it ran past the window's edge (a window a few
 hundred pixels wide) it now folds instead: the live pill keeps its dot, then
 the help button and the jump glyph give way (`?` and Ctrl K still reach
-them). Folded, it unfolds once the window has a little room to spare, so a
-pull's clock ticking at the edge never makes it flicker. The overlay has no
-switch: it always follows the game that is running. The defaults find both
-games: the
+them). The overlay has no switch: it always follows the game that is
+running. The defaults find both games: the
 daemon's `game_process` (`wow.exe`) matches either client and names each by
 its product folder, and the overlay's `game_match` (`world of warcraft`)
 matches either window. With both games open at once the two windows look

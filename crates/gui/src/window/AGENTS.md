@@ -96,8 +96,8 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   edition known nothing is asked differently and no switch is drawn; its
   bar is main's wherever main's fit, and folds (below) only where main's
   would draw a piece past the window (main's gives up its right padding
-  first: `top_bar::RUN_PAST`); a fold drawn holds until the bar unfolded
-  fits with room to spare (`UNFOLD_SPARE`), as the switch's forms do
+  first: `top_bar::RUN_PAST`), by the width and the bar alone: no fold
+  holds once main's would fit
   (`editions::tests::one_game_folds_only_where_its_bar_would_run_past`).
   The switch takes the richest form whose bar, at its widest for either
   game (the pill and the picker at their caps: `top_bar::Parts::widest`),
@@ -117,7 +117,10 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   a name's slot drawn at the zoom never an ulp narrower than its words
   (`top_bar::words_width`, `top_bar::holding`). No width from the
   window's least runs a bar with the switch past it
-  (`editions::tests::the_bar_never_runs_past_the_window_with_the_switch`). The shown
+  (`editions::tests::the_bar_never_runs_past_the_window_with_the_switch`),
+  and at each form's least width the bar at its widest keeps its right
+  padding
+  (`editions::tests::each_form_s_threshold_holds_the_bar_at_its_widest`). The shown
   game's chip is filled with its color, the live dot is a pip on the
   played game's badge, and `Gui::edition_chips` keeps the menu shut (and
   out of `modal`) while the chips are drawn. A named chip's geometry is

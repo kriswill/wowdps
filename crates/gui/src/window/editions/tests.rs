@@ -1022,17 +1022,29 @@ const AFTER: [&str; 6] = [
     "top-help",
 ];
 
+/// The bar as `bar_at` found it drawn.
+struct Drawn {
+    /// Its last piece's right edge, in the window's pixels.
+    right: f32,
+    /// Whether any two pieces after the places overlap.
+    overlap: bool,
+    /// The switch's form.
+    form: Option<wowdps_gui_logic::editions::Form>,
+    /// The width of the jump box, or of its glyph where it stands alone.
+    jump: f32,
+    /// The pieces after the places that were drawn (`AFTER`'s ids).
+    shown: Vec<&'static str>,
+}
+
 /// The bar over `link` at `width` in its real faces, `cards` told to its
 /// census (a Retail build of another expansion, a third game), in a
-/// window of its own (the headless platform keeps a window's size): the
-/// overflow past the window's right edge of its last piece (0 when it
-/// fits), and whether any two pieces after the places overlap.
+/// window of its own (the headless platform keeps a window's size).
 fn bar_at(
     cx: &mut gpui_kit::HeadlessAppContext,
     link: impl crate::session::Link + 'static,
     cards: &[wowdps_proto::history::FightCard],
     width: f32,
-) -> (f32, bool, Option<wowdps_gui_logic::editions::Form>) {
+) -> Drawn {
     use super::super::shots::Shot;
     let path = own_config();
     std::fs::write(
@@ -1062,24 +1074,32 @@ fn bar_at(
             g.hist.store.census.learn(cards);
         });
     }
-    let measured = cx
+    let mut drawn = cx
         .update_window(window, |_, window, cx| {
             window.render_frame(cx);
             window.render_frame(cx);
-            let pieces: Vec<gpui_kit::Bounds<gpui_kit::Pixels>> = AFTER
+            let pieces: Vec<(&'static str, gpui_kit::Bounds<gpui_kit::Pixels>)> = AFTER
                 .iter()
-                .filter_map(|id| window.try_find(*id).map(|e| e.bounds()))
+                .filter_map(|id| window.try_find(*id).map(|e| (*id, e.bounds())))
                 .collect();
             let overlap = pieces
                 .windows(2)
-                .any(|p| p[0].right() > p[1].left() + px(0.5));
-            let right = pieces.last().map_or(0.0, |b| f32::from(b.right()));
-            ((right - width).max(0.0), overlap)
+                .any(|p| p[0].1.right() > p[1].1.left() + px(0.5));
+            Drawn {
+                right: pieces.last().map_or(0.0, |(_, b)| f32::from(b.right())),
+                overlap,
+                form: None,
+                jump: pieces
+                    .iter()
+                    .find(|(id, _)| *id == "top-jump")
+                    .map_or(0.0, |(_, b)| f32::from(b.size.width)),
+                shown: pieces.iter().map(|(id, _)| *id).collect(),
+            }
         })
         .expect("the window");
     let _ = cx.update_window(window, |_, window, _| window.remove_window());
-    let form = shot.gui.read_with(cx, |g, _| g.edition_form.get());
-    (measured.0, measured.1, form)
+    drawn.form = shot.gui.read_with(cx, |g, _| g.edition_form.get());
+    drawn
 }
 
 /// The bar never runs past the window while it holds the switch: at every
@@ -1131,10 +1151,11 @@ fn the_bar_never_runs_past_the_window_with_the_switch() {
         for width in &widths {
             let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
             link.playing.set(Some(Edition::Retail));
-            let (over, overlap, form) = bar_at(&mut cx, link, &cards, *width);
-            assert!(!overlap, "{what} at {width}: two pieces overlap");
+            let drawn = bar_at(&mut cx, link, &cards, *width);
+            assert!(!drawn.overlap, "{what} at {width}: two pieces overlap");
+            let over = (drawn.right - width).max(0.0);
             assert_eq!(over, 0.0, "{what} at {width}: the bar runs past");
-            forms.extend(form);
+            forms.extend(drawn.form);
         }
         // Every form is reached somewhere from the least width to the
         // widest.
@@ -1254,9 +1275,8 @@ fn one_game_at(
 /// unfolded bar drawn at it, and so are the widths at the unfolded bar's
 /// least window, measured from its layout (its jump glyph's room taken
 /// in), with its right padding whole and with its help button at the
-/// edge. A fold drawn holds until the bar unfolded fits with room to
-/// spare, so a clock a pixel wider one second than the next never blinks
-/// it.
+/// edge. No fold holds: a window folded once is main's again at every
+/// width where main's keeps every piece.
 #[test]
 #[cfg_attr(
     target_os = "macos",
@@ -1322,6 +1342,12 @@ fn one_game_folds_only_where_its_bar_would_run_past() {
     for width in widths {
         let (main, _) = one_game_at(&mut cx, width, true, None);
         let (over, fold) = one_game_at(&mut cx, width, false, None);
+        if width == edge.floor() - 1.0 {
+            assert!(
+                main > 0.0,
+                "{width}: main's bar fits below its least window"
+            );
+        }
         if main == 0.0 {
             assert_eq!(fold, 0, "{width}: main's bar fits, yet it folded");
             assert_eq!(over, 0.0, "{width}");
@@ -1330,21 +1356,93 @@ fn one_game_folds_only_where_its_bar_would_run_past() {
             assert_eq!(over, 0.0, "{width}: folded, it still runs past");
         }
     }
-    // A fold drawn holds as the window widens past the unfolded bar's edge,
-    // inside the window, until the bar unfolded fits with room to spare;
-    // past that the bar is main's again.
-    let spare = wowdps_gui_logic::editions::UNFOLD_SPARE;
-    for width in [edge.ceil() + 1.0, edge.ceil() + spare - 2.0] {
-        let (over, fold) = one_game_at(&mut cx, width, false, Some(1));
-        assert_eq!(fold, 1, "{width}: the fold gave way inside its spare");
-        assert_eq!(over, 0.0, "{width}");
+    // No fold holds: a bar folded as deep as it goes (a narrower window's)
+    // is main's again at every width from its least window holding every
+    // piece, through the room the switch's hysteresis would ask.
+    let deepest = Some(super::super::top_bar::FOLDS);
+    let mut width = edge.ceil();
+    while width <= edge.ceil() + wowdps_gui_logic::editions::UNFOLD_SPARE + 1.0 {
+        let (over, fold) = one_game_at(&mut cx, width, false, deepest);
+        assert_eq!(
+            (fold, over),
+            (0, 0.0),
+            "{width}: a fold held where main's fits"
+        );
+        width += 1.0;
     }
-    let width = edge.ceil() + spare + 1.0;
-    let (over, fold) = one_game_at(&mut cx, width, false, Some(1));
-    assert_eq!(
-        (fold, over),
-        (0, 0.0),
-        "{width}: the fold held past its spare"
-    );
+    crate::images::without_art(false);
+}
+
+/// Each of the switch's forms from the least width that draws it, in a
+/// fresh window over two games, with the bar at its widest for a game
+/// (the pill's words and the picker's name past their caps, a clock of
+/// "88:88"'s digits: `top_bar::widest`): there every piece and the bar's
+/// right padding are inside the window, nothing overlaps and, beside the
+/// named chips, the search box is whole; a pixel narrower the switch takes
+/// a poorer form. The form is chosen by the bar's measure, so this holds
+/// only while the measure is the layout's: words measured a fraction
+/// short of the width they are laid out at draw a form a pixel or more too
+/// early, into the padding or the search box. In the narrow frame the
+/// named dropdown and its badge alone; above it every form.
+#[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "gpui's mac platform must be created on the main thread"
+)]
+fn each_form_s_threshold_holds_the_bar_at_its_widest() {
+    use wowdps_gui_logic::editions::Form;
+    crate::images::without_art(true);
+    super::super::top_bar::widest(true);
+    let mut cx = super::super::shots::app();
+    let mut at = |width: f32| {
+        let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
+        link.playing.set(Some(Edition::Retail));
+        bar_at(&mut cx, link, &[], width)
+    };
+    let rank = |d: &Drawn| d.form.map_or(usize::MAX, |f| f as usize);
+    let narrow = wowdps_gui_logic::theme::NARROW_WINDOW;
+    // Each form richer than the badge alone, and the frame it is reached
+    // in: the named dropdown's in the narrow frame, every form's above it.
+    let mut thresholds = vec![(Form::Dropdown, 320.0, narrow)];
+    thresholds.extend(Form::ALL[..4].iter().map(|f| (*f, narrow + 1.0, 1600.0)));
+    for (form, least, most) in thresholds {
+        // The least width in the frame that draws this form or a richer.
+        let (mut lo, mut hi) = (least, most);
+        assert!(rank(&at(hi)) <= form as usize, "{form:?} at {hi}");
+        assert!(rank(&at(lo)) > form as usize, "{form:?} at {lo}");
+        while hi - lo > 1.0 {
+            let mid = ((lo + hi) / 2.0).floor();
+            if rank(&at(mid)) <= form as usize {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        let drawn = at(hi);
+        assert_eq!(drawn.form, Some(form), "at {hi}");
+        for id in ["top-live", "top-picker", "top-help"] {
+            assert!(drawn.shown.contains(&id), "{form:?} at {hi}: no {id}");
+        }
+        assert!(!drawn.overlap, "{form:?} at {hi}: two pieces overlap");
+        let pad = hi - drawn.right;
+        assert!(
+            pad >= super::super::top_bar::PAD_RIGHT - 0.5,
+            "{form:?} at {hi}: the bar runs {} px into its padding",
+            super::super::top_bar::PAD_RIGHT - pad
+        );
+        if form == Form::Chips {
+            assert!(
+                drawn.jump >= 200.0 - 0.5,
+                "at {hi}: the search box is {} px",
+                drawn.jump
+            );
+        }
+        assert!(
+            rank(&at(hi - 1.0)) > form as usize,
+            "{form:?}: {} draws it too",
+            hi - 1.0
+        );
+    }
+    super::super::top_bar::widest(false);
     crate::images::without_art(false);
 }

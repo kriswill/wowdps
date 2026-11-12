@@ -38,7 +38,7 @@ use crate::theme::hsla;
 /// The bar's sides (`.top{padding-inline:8px 10px}`) and the gap between
 /// its pieces (`gap:2px`).
 const PAD_LEFT: f32 = 8.0;
-const PAD_RIGHT: f32 = 10.0;
+pub(crate) const PAD_RIGHT: f32 = 10.0;
 const GAP: f32 = 2.0;
 /// How far the picker's right edge stands in from the window's: the bar's
 /// right padding, then the gear and — unless the bar folded it away — the
@@ -450,6 +450,21 @@ pub(crate) fn unfolded(on: bool) {
     UNFOLDED.with(|u| u.set(on));
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A test's switch: draw the pill's words and the picker's name past
+    /// their caps and a clock of as many digits as `CLOCK_WIDEST`, the bar
+    /// at its widest for a game (`Parts::widest`), as the switch's form is
+    /// chosen by.
+    static WIDEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Draw the bar at its widest on this thread (`false`: as it is).
+#[cfg(test)]
+pub(crate) fn widest(on: bool) {
+    WIDEST.with(|u| u.set(on));
+}
+
 /// The bar, laid out by the window's width.
 pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl IntoElement {
     let narrow = w.narrow();
@@ -457,6 +472,18 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
     let home = gui.place == super::Place::Home;
     // A stored pull on the stage is no more the live one than Home is.
     let pill = Pill::of(app, home || gui.hist.store.stored.is_some());
+    #[cfg(test)]
+    let pill = pill.map(|p| {
+        if WIDEST.with(std::cell::Cell::get) {
+            Pill {
+                name: "W".repeat(64),
+                ms: 10 * 60_000,
+                ..p
+            }
+        } else {
+            p
+        }
+    });
     let mut line = div()
         .size_full()
         .flex()
@@ -493,6 +520,17 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
     // its dot alone, the help button goes, then the jump glyph — each
     // folding back as the window widens, with room to spare.
     let me = gui.picked(cx);
+    #[cfg(test)]
+    let me = me.map(|me| {
+        if WIDEST.with(std::cell::Cell::get) {
+            CharPick {
+                name: "W".repeat(64),
+                ..me
+            }
+        } else {
+            me
+        }
+    });
     let switch = gui
         .edition_entries()
         .map(|entries| (entries, gui.edition_face()));
@@ -518,21 +556,20 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         gui.edition_form.set(Some(chosen));
         chosen
     });
-    // The folds keep the switch's hysteresis: a fold drawn holds until the
-    // bar a fold richer fits with room to spare, so a live clock a pixel
-    // wider one second than the next never blinks the clock or the help
-    // button at the edge. One game's bar is main's wherever main's keeps
-    // every piece inside the window, from a fresh window, and folds the
-    // moment a piece would pass its edge.
-    let margin = if form.is_some() {
-        FIT_MARGIN
-    } else {
-        -RUN_PAST
+    // With the switch the folds keep its hysteresis: a fold drawn holds
+    // until the bar a fold richer fits with room to spare. One game's bar
+    // is main's wherever main's keeps every piece inside the window, so its
+    // fold is the width's and the bar's alone, folding the moment a piece
+    // would pass the edge. (The bundled faces' digits are tabular, so a
+    // live clock widens only when it gains a digit and never blinks it.)
+    let (margin, last) = match form {
+        Some(_) => (FIT_MARGIN, gui.bar_fold.get()),
+        None => (-RUN_PAST, None),
     };
     let folds: Vec<f32> = (0..=FOLDS)
         .map(|fold| parts.total(w, form, fold) + margin)
         .collect();
-    let fold = richest_fit(&folds, w.width, gui.bar_fold.get());
+    let fold = richest_fit(&folds, w.width, last);
     #[cfg(test)]
     let fold = if UNFOLDED.with(std::cell::Cell::get) {
         0
