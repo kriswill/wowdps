@@ -101,9 +101,11 @@ static RETAIL: Tables = Tables {
 /// Forever's: its classes (by the client's class masks, no spec), its
 /// items, its keystones (none: it has no Mythic+), its open-world maps and
 /// its role signals (R30: its log carries no spec, so roles are inferred),
-/// its shields (R20) and its role spans (R18). Its procs have no table yet.
-/// Its log names no UiMap inside a dungeon or a raid (R29: a UiMap 0 there
-/// is a place).
+/// its shields (R20) and its role spans (R18). It has no proc table: its
+/// logs hold no talent proc R26 nests under a driver that deals damage
+/// under its own name (its procs are weapon enchants', seals' and items').
+/// Its placed table is proto's (`placed::placed`). Its log names no UiMap
+/// inside a dungeon or a raid (R29: a UiMap 0 there is a place).
 static FOREVER: Tables = Tables {
     class: Some(crate::forever::class_spells::resolve),
     items: Some(Items {

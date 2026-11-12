@@ -17,15 +17,22 @@
 //! names the edition the log was written by (`Edition::counts_as`, a log
 //! that names none counting as Retail), and an edition with no table
 //! places nothing and tells nothing, never another edition's entry.
-//! Retail's is the only one generated so far.
+//! Retail's (`placed_spells.rs`) and Forever's (`forever_placed_spells.rs`,
+//! its own ids, each rank of a totem an entry) are generated; Forever's
+//! log posts nobody in a dungeon yet, so what finds its entries by posts
+//! waits on that.
 
 use wowdps_model::Edition;
 
+mod forever_placed_spells;
 mod placed_spells;
 
 /// Each edition's table, by the edition it counts as. A table generated
 /// for another edition is one entry here.
-static TABLES: &[(Edition, &[Placed])] = &[(Edition::Retail, placed_spells::TABLE)];
+static TABLES: &[(Edition, &[Placed])] = &[
+    (Edition::Retail, placed_spells::TABLE),
+    (Edition::Forever, forever_placed_spells::TABLE),
+];
 
 /// How the log tells where a placed spell stands. An entry lists what
 /// tells, most trusted first; the replay takes the first that does.
@@ -164,18 +171,30 @@ mod tests {
             assert!(tells(e, trip), "{e:?}");
             assert!(!all(e).is_empty(), "{e:?}");
         }
-        for e in [Edition::Forever, Edition::Classic(2), Edition::Unknown(7)] {
+        for e in [Edition::Classic(2), Edition::Unknown(7)] {
             assert!(all(e).is_empty(), "{e:?}");
             for id in [gateway, trip, 0, u32::MAX] {
                 assert!(placed(e, id).is_none(), "{e:?} {id}");
                 assert!(!tells(e, id), "{e:?} {id}");
             }
         }
+        // Forever's own: Retail's gateway places nothing there, and its
+        // Freezing Trap's cast (1499) and freeze (3355) are Forever's ids.
+        let forever = Edition::Forever;
+        assert!(!all(forever).is_empty());
+        assert!(placed(forever, gateway).is_none() && !tells(forever, trip));
+        assert!(placed(forever, 1499).is_some() && tells(forever, 3355));
+        assert!(placed(Edition::Retail, 1499).is_none());
         for id in [0, u32::MAX] {
-            assert!(placed(Edition::Retail, id).is_none(), "{id}");
-            assert!(!tells(Edition::Retail, id), "{id}");
+            for e in [Edition::Retail, forever] {
+                assert!(placed(e, id).is_none(), "{e:?} {id}");
+                assert!(!tells(e, id), "{e:?} {id}");
+            }
         }
-        assert_eq!(editions().collect::<Vec<_>>(), [Edition::Retail]);
+        assert_eq!(
+            editions().collect::<Vec<_>>(),
+            [Edition::Retail, Edition::Forever]
+        );
     }
 
     /// Every table is sorted by spell id, as `placed`'s search needs, and
@@ -212,5 +231,22 @@ mod tests {
         let patch = (n[0], n[1], n[2]);
         let tables = Edition::Retail.tables_patch().expect("Retail has tables");
         assert!(patch >= tables, "{patch:?} is older than {tables:?}");
+        // Forever's, likewise against Forever's.
+        let text = include_str!("placed/forever_placed_spells.rs");
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("//! Source:"))
+            .expect("a Source line");
+        let build = line.split("build ").nth(1).expect("a build");
+        let n: Vec<u16> = build
+            .split(|c: char| !c.is_ascii_digit())
+            .take(3)
+            .map(|p| p.parse().expect("a number"))
+            .collect();
+        let forever = Edition::Forever.tables_patch().expect("Forever has tables");
+        assert!(
+            (n[0], n[1], n[2]) >= forever,
+            "{n:?} is older than {forever:?}"
+        );
     }
 }

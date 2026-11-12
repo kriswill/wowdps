@@ -40,7 +40,8 @@ what it does and how to run it.
   names another (Forever's `wowf`). Each committed table and review twin
   is one edition's (`tablegen::committed`): Retail's beside the code,
   Forever's class, item, keystone, open-world, absorb, role-span and
-  role-signal tables under `crates/core/src/forever/` (the role signals are Forever's
+  role-signal tables under `crates/core/src/forever/` and its placed table
+  beside Retail's in proto (`forever_placed_spells.rs`) (the role signals are Forever's
   alone: a run of another product needs `-o`). A table script passes
   `--checkout "$root"`, so a run with no `-o` writes its own edition's
   committed table, and one whose edition has none of that table needs
@@ -116,7 +117,7 @@ tools/gen-class-spells.sh --product wowf   # and the other three: Forever's, cra
 tools/gen-role-spells.sh       # role_spells.rs (R18, curated; --product wowf: Forever's, by name)
 tools/gen-absorb-spells.sh     # absorb_spells.rs (R20; --product wowf: Forever's, over tools/forever/'s census)
 tools/gen-proc-spells.sh       # proc_spells.rs (R26, curated)
-tools/gen-placed-spells.sh     # proto's placed_spells.rs (what the replay cut keeps of placed things, curated)
+tools/gen-placed-spells.sh     # proto's placed_spells.rs (what the replay cut keeps of placed things, curated; --product wowf: Forever's)
 tools/gen-role-signals.sh      # Forever's forever/role_signals.rs (R30, curated by name; Retail has none)
 tools/gen-icons.sh             # class-icons.bin (upscaled 4x; --no-upscale)
 tools/gen-spell-icons.sh       # spell-icons.bin (~58 MiB)

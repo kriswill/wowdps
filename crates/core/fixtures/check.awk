@@ -944,9 +944,9 @@ FNR == NR {
 # version line's PROJECT_ID (field 7; absent or 0 counts as Retail, 1). The
 # copies in BEGIN are Retail's (ROLE_R, SHIELD_R, PLACE_R, TELL_R) and
 # Forever's (SIG_F, SHIELD_F, ROLE_F): Forever reads its role signals, its
-# shields and its role buffs, and has no placed table, so it opens no R29
-# placed row; every other edition — a Classic client's, an unlisted id — has
-# no table at all.
+# shields and its role buffs; its placed table holds nothing the fixtures
+# cast, so it opens no R29 placed row; every other edition — a Classic
+# client's, an unlisted id — has no table at all.
 # R29: Forever's client names no UiMap inside a dungeon or a raid and writes 0
 # there, its x and y still the unit's own, so in its log a 0 is a place
 # (RZERO); every other edition's 0 places the unit nowhere.

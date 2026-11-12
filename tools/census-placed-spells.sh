@@ -14,8 +14,11 @@
 # the order given (never the file's name, which says when it was played),
 # sorted by id: the generator reads it via `wowdps-extract gen-placed-spells
 # --census` and requires each entry's spells in it, writing the counts into
-# crates/proto/src/placed/placed_spells.expected.md. The committed copy is
-# tools/placed-spells-census.csv.
+# crates/proto/src/placed/placed_spells.expected.md. The committed copies are
+# each edition's, over that edition's logs: tools/placed-spells-census.csv
+# (Retail's) and tools/forever/placed-spells-census.csv (Forever's, counted
+# with WOWDPS_PRODUCT=wowf, which names Forever's own ids, and read by a
+# --product wowf run).
 #
 # usage: tools/census-placed-spells.sh [-o out.csv] <WoWCombatLog-*.txt>...
 set -euo pipefail

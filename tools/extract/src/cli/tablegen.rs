@@ -93,7 +93,7 @@ pub const COMMANDS: &[Cmd] = &[
     .reads(&[ROLE_SIGNALS.tables]),
     cmd(
         "placed-spells-ids",
-        "placed-spells-ids   (every spell the placed-spell census counts)",
+        "placed-spells-ids [--product wow]   (every spell the placed-spell census counts)",
         placed_spells_ids,
     ),
     cmd(
@@ -247,10 +247,16 @@ const PROC_SPELLS: Table = Table {
 const PLACED_SPELLS: Table = Table {
     command: "gen-placed-spells",
     out: Some("crates/proto/src/placed/placed_spells.rs"),
-    editions: &[],
+    editions: &[(
+        Edition::Forever,
+        "crates/proto/src/placed/forever_placed_spells.rs",
+    )],
     tables: &placegen::TABLES,
     reads: None,
-    census: &[(Edition::Retail, "tools/placed-spells-census.csv")],
+    census: &[
+        (Edition::Retail, "tools/placed-spells-census.csv"),
+        (Edition::Forever, "tools/forever/placed-spells-census.csv"),
+    ],
 };
 
 const ROLE_SIGNALS: Table = Table {
@@ -585,10 +591,11 @@ pub fn proc_pairs(a: Args) -> Result<(), String> {
 }
 
 pub fn placed_spells(a: Args) -> Result<(), String> {
-    generate(a, PLACED_SPELLS, |text, _| {
+    generate(a, PLACED_SPELLS, |text, product| {
         let census = placegen::Census::parse(text)?;
+        let product = product.to_string();
         Ok(move |tables: &Tables, build: &str| {
-            let g = placegen::generate(tables, &census, build)?;
+            let g = placegen::generate_for(&product, tables, &census, build)?;
             Ok(Made {
                 summary: format!(
                     "{} placed spells, census over {} log(s)",
@@ -625,9 +632,15 @@ pub fn role_signals(a: Args) -> Result<(), String> {
 }
 
 /// Every spell the placed-spell census counts (`placegen::census_ids`).
-pub fn placed_spells_ids(a: Args) -> Result<(), String> {
+/// A product's (`--product ROW`, else `$WOWDPS_PRODUCT`, else Retail's).
+pub fn placed_spells_ids(mut a: Args) -> Result<(), String> {
+    let named = a.opt(&["--product"])?;
     a.finish()?;
-    print!("{}", placegen::census_ids());
+    let product = wowdps_extract::game::product(named);
+    print!(
+        "{}",
+        placegen::census_ids_of(placegen::curated_for(&product))
+    );
     Ok(())
 }
 
@@ -668,6 +681,13 @@ mod tests {
             }
             assert_eq!(t.own("wow"), t.out, "{}", t.command);
             let out = t.out.unwrap();
+            if t.command == "gen-placed-spells" {
+                assert_eq!(
+                    forever,
+                    Some("crates/proto/src/placed/forever_placed_spells.rs")
+                );
+                continue;
+            }
             match t.command {
                 "gen-class-spells"
                 | "gen-item-spells"
@@ -723,8 +743,8 @@ mod tests {
             assert_eq!(twins.count(), 0, "{} twice", path.display());
         }
         let of = |e: Edition| committed.iter().filter(|(o, _)| *o == e).count();
-        assert_eq!((of(Edition::Retail), of(Edition::Forever)), (12, 10));
-        assert_eq!(committed.len(), 22);
+        assert_eq!((of(Edition::Retail), of(Edition::Forever)), (12, 12));
+        assert_eq!(committed.len(), 24);
     }
 
     /// Retail's class run reads the tables it always did, in their order;

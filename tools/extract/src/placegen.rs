@@ -27,6 +27,16 @@
 //! (Consecration, Death and Decay, Sigil of Flame, Blizzard), and what no
 //! committed log holds (Earthen Wall and Ancestral Protection totems).
 //!
+//! Forever's list (`FOREVER`, `--product wowf`) is its own, by its own
+//! ids: a totem's every rank is a spell of its own, each with its own
+//! duration, so each rank is an entry the client proves alone. Its log's
+//! advanced block names no map in a dungeon, so the replay cut posts
+//! nobody there yet: what finds a Forever entry by its unit's or its
+//! caster's posts is proven by the client and the census, and drawn only
+//! once a Forever log posts its units. An entry the committed census does
+//! not hold carries a written waiver (`Curated::exempt`), printed in the
+//! twin in place of the counts.
+//!
 //! Output is the table and its review twin (`placed_spells.expected.md`),
 //! every entry with its sources and census counts.
 
@@ -70,6 +80,9 @@ pub struct Curated {
     pub reach: Source,
     pub lasts: Source,
     pub until_touched: bool,
+    /// `Some(reason)` waives the census check (the client still proves the
+    /// name, the reach and the duration); the reason lands in the twin.
+    pub census_exempt: Option<&'static str>,
 }
 
 const fn entry(
@@ -90,6 +103,7 @@ const fn entry(
         reach,
         lasts,
         until_touched: false,
+        census_exempt: None,
     }
 }
 
@@ -98,6 +112,14 @@ impl Curated {
     const fn until_touched(self) -> Curated {
         Curated {
             until_touched: true,
+            ..self
+        }
+    }
+
+    /// The entry, with the census requirement waived for `reason`.
+    const fn exempt(self, reason: &'static str) -> Curated {
+        Curated {
+            census_exempt: Some(reason),
             ..self
         }
     }
@@ -426,11 +448,153 @@ pub const CURATED: &[Curated] = &[
     ),
 ];
 
+/// The waiver on a Forever entry no committed log holds a player placing:
+/// the client proves its name and duration, not that a log writes it.
+const UNSEEN: &str = "no committed Forever log holds a player placing it";
+
+/// Forever's table: its own ids, each rank an entry. Its totems are found
+/// by their own posts, else their shaman's; its Freezing Traps by the
+/// enemies they freeze, each rank's cast by its own rank's freeze (3355,
+/// 14308, 14309, paired by rank: the trap's object casts it, which no
+/// spell table records). Its damage totems are left out, as Retail's
+/// carpets are.
+pub const FOREVER: &[Curated] = &[
+    // -- Crowd control -------------------------------------------------------
+    entry(
+        Control,
+        2484,
+        "Earthbind Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(2484),
+    ),
+    entry(
+        Control,
+        1499,
+        "Freezing Trap",
+        &[Touch(&[3355])],
+        Area,
+        Source::None,
+        Hand(60_000.0),
+    )
+    .until_touched(),
+    entry(
+        Control,
+        14310,
+        "Freezing Trap",
+        &[Touch(&[14308])],
+        Area,
+        Source::None,
+        Hand(60_000.0),
+    )
+    .until_touched()
+    .exempt(UNSEEN),
+    entry(
+        Control,
+        14311,
+        "Freezing Trap",
+        &[Touch(&[14309])],
+        Area,
+        Source::None,
+        Hand(60_000.0),
+    )
+    .until_touched()
+    .exempt(UNSEEN),
+    // -- Healing, where it stands --------------------------------------------
+    entry(
+        Heal,
+        5394,
+        "Healing Stream Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(5394),
+    ),
+    entry(
+        Heal,
+        6375,
+        "Healing Stream Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(6375),
+    ),
+    entry(
+        Heal,
+        6377,
+        "Healing Stream Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(6377),
+    )
+    .exempt(UNSEEN),
+    entry(
+        Heal,
+        10462,
+        "Healing Stream Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(10462),
+    )
+    .exempt(UNSEEN),
+    entry(
+        Heal,
+        10463,
+        "Healing Stream Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(10463),
+    )
+    .exempt(UNSEEN),
+    entry(
+        Heal,
+        8143,
+        "Tremor Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(8143),
+    ),
+    entry(
+        Heal,
+        8166,
+        "Poison Cleansing Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(8166),
+    ),
+    entry(
+        Heal,
+        8170,
+        "Disease Cleansing Totem",
+        &[Unit, Caster],
+        Post,
+        Source::None,
+        Spell(8170),
+    )
+    .exempt(UNSEEN),
+];
+
+/// The list a product's run reads: Forever's for `wowf`, else Retail's.
+pub fn curated_for(product: &str) -> &'static [Curated] {
+    if product == "wowf" { FOREVER } else { CURATED }
+}
+
 /// Every spell the census counts: each entry's placing spell and every
 /// spell it is found by, one id a line (`wowdps-extract placed-spells-ids`,
-/// for tools/census-placed-spells.sh).
+/// for tools/census-placed-spells.sh). Retail's list's.
 pub fn census_ids() -> String {
-    let mut ids: Vec<u32> = CURATED
+    census_ids_of(CURATED)
+}
+
+/// [`census_ids`] of a list.
+pub fn census_ids_of(curated: &[Curated]) -> String {
+    let mut ids: Vec<u32> = curated
         .iter()
         .flat_map(|c| std::iter::once(c.spell).chain(telling(c.found)))
         .collect();
@@ -676,9 +840,37 @@ pub fn generate(tables: &Tables, census: &Census, build: &str) -> Result<Generat
     generate_curated(CURATED, tables, census, build)
 }
 
+/// A product's table: its list (`curated_for`), written under its own file
+/// name (Forever's `forever_placed_spells.rs`).
+pub fn generate_for(
+    product: &str,
+    tables: &Tables,
+    census: &Census,
+    build: &str,
+) -> Result<Generated, String> {
+    let stem = if product == "wowf" {
+        "forever_placed_spells"
+    } else {
+        "placed_spells"
+    };
+    generate_named(curated_for(product), stem, tables, census, build)
+}
+
 /// The generator over an explicit list, so tests can run it on a few.
 pub fn generate_curated(
     curated: &[Curated],
+    tables: &Tables,
+    census: &Census,
+    build: &str,
+) -> Result<Generated, String> {
+    generate_named(curated, "placed_spells", tables, census, build)
+}
+
+/// [`generate_curated`], its table written as `<stem>.rs` beside its twin
+/// `<stem>.expected.md`, which each names.
+fn generate_named(
+    curated: &[Curated],
+    stem: &str,
     tables: &Tables,
     census: &Census,
     build: &str,
@@ -746,10 +938,13 @@ pub fn generate_curated(
             Source::None => 0,
         };
         // The census: the placing spell cast or summoned by a player, and
-        // every spell it is found by applied or landing as a heal.
+        // every spell it is found by applied or landing as a heal, unless
+        // the entry is waived (a row that does exist must still agree on
+        // the name).
         let mut evidence = Vec::new();
+        let waived = c.census_exempt.is_some();
         let (n, logged) = census.seen(&["cast", "summon"], c.spell);
-        if n == 0 {
+        if n == 0 && !waived {
             return Err(format!(
                 "placed spell {} ({}): no player casts or summons it in the census",
                 c.spell, c.name
@@ -765,7 +960,7 @@ pub fn generate_curated(
         for id in telling(c.found) {
             let name = name_of(id)?;
             let (n, logged) = census.seen(&["aura", "heal"], id);
-            if n == 0 {
+            if n == 0 && !waived {
                 return Err(format!(
                     "placed spell {} ({}): {id} ({name}) is never applied or healed with in the census",
                     c.spell, c.name
@@ -792,8 +987,8 @@ pub fn generate_curated(
     }
     Ok(Generated {
         spells: table.len(),
-        content: emit(&table, build).map_err(|e| format!("emit: {e}"))?,
-        expected: emit_expected(&table, census, build).map_err(|e| format!("emit: {e}"))?,
+        content: emit(&table, stem, build).map_err(|e| format!("emit: {e}"))?,
+        expected: emit_expected(&table, stem, census, build).map_err(|e| format!("emit: {e}"))?,
     })
 }
 
@@ -826,7 +1021,11 @@ fn yards(r: f64) -> String {
     }
 }
 
-fn emit(table: &BTreeMap<u32, Proven<'_>>, build: &str) -> Result<String, std::fmt::Error> {
+fn emit(
+    table: &BTreeMap<u32, Proven<'_>>,
+    stem: &str,
+    build: &str,
+) -> Result<String, std::fmt::Error> {
     let mut o = String::new();
     writeln!(
         o,
@@ -844,12 +1043,45 @@ fn emit(table: &BTreeMap<u32, Proven<'_>>, build: &str) -> Result<String, std::f
          //! log tells where each stands, how it is drawn, its reach and how\n\
          //! long it stands (`wowdps_proto::placed::Placed`). Membership is\n\
          //! curated in tools/extract/src/placegen.rs; every name, reach and\n\
-         //! duration is the client's (or marked as by hand), and the real-log\n\
-         //! census behind each entry sits in placed_spells.expected.md.\n\n\
-         use super::Form::{Area, Gate, Post, Ring};\n\
-         use super::Found::{Caster, Target, Thrown, Touch, Trips, Unit};\n\
-         use super::Placed;\n\
-         use super::Purpose::{Control, Heal, Wall, Way};\n\n\
+         //! duration is the client's (or marked as by hand), and the real-log\n",
+    );
+    writeln!(
+        o,
+        "//! census behind each entry sits in {stem}.expected.md."
+    )?;
+    writeln!(o)?;
+    // What the table names, and only that: an unused import is a warning.
+    let pick = |all: &[&str], used: &dyn Fn(&str) -> bool| -> String {
+        let names: Vec<&str> = all.iter().copied().filter(|n| used(n)).collect();
+        names.join(", ")
+    };
+    let forms = pick(&["Area", "Gate", "Post", "Ring"], &|n| {
+        table.values().any(|p| format!("{:?}", p.c.form) == n)
+    });
+    let founds = pick(
+        &["Caster", "Target", "Thrown", "Touch", "Trips", "Unit"],
+        &|n| {
+            table
+                .values()
+                .any(|p| p.c.found.iter().any(|f| found_rs(f).starts_with(n)))
+        },
+    );
+    let purposes = pick(&["Control", "Heal", "Wall", "Way"], &|n| {
+        table.values().any(|p| format!("{:?}", p.c.purpose) == n)
+    });
+    let one = |path: &str, list: String| {
+        if list.contains(", ") {
+            format!("use super::{path}::{{{list}}};\n")
+        } else {
+            format!("use super::{path}::{list};\n")
+        }
+    };
+    o.push_str(&one("Form", forms));
+    o.push_str(&one("Found", founds));
+    o.push_str("use super::Placed;\n");
+    o.push_str(&one("Purpose", purposes));
+    o.push_str(
+        "\n\
          /// Sorted by spell id.\n\
          #[rustfmt::skip]\n\
          pub(super) static TABLE: &[Placed] = &[\n",
@@ -875,11 +1107,12 @@ fn emit(table: &BTreeMap<u32, Proven<'_>>, build: &str) -> Result<String, std::f
 
 fn emit_expected(
     table: &BTreeMap<u32, Proven<'_>>,
+    stem: &str,
     census: &Census,
     build: &str,
 ) -> Result<String, std::fmt::Error> {
     let mut o = String::new();
-    writeln!(o, "# Placed spells — review twin of placed_spells.rs")?;
+    writeln!(o, "# Placed spells — review twin of {stem}.rs")?;
     writeln!(o)?;
     writeln!(
         o,
@@ -910,11 +1143,14 @@ fn emit_expected(
             ),
             false => source(p.c.lasts, p.lasts_ms.to_string()),
         };
-        let census: Vec<String> = p
+        let mut census: Vec<String> = p
             .evidence
             .iter()
             .map(|(id, name, what, n)| format!("{name} {id}: {n} {what}"))
             .collect();
+        if let Some(reason) = p.c.census_exempt {
+            census.push(format!("exempt: {reason}"));
+        }
         writeln!(
             o,
             "| {id} | {} | {:?} | {} | {:?} | {} | {lasts} | {} | {} |",

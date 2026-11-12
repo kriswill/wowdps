@@ -139,6 +139,7 @@ mod tests {
             "gen-open-world-maps",
             "gen-absorb-spells",
             "gen-role-spells",
+            "gen-placed-spells",
             "gen-role-signals",
         ];
         for c in gens {

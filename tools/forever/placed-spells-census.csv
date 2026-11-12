@@ -1,0 +1,14 @@
+event,id,name,log 1,log 2,log 3
+cast,1499,"Freezing Trap",2,6,4
+summon,1499,"Freezing Trap",2,6,4
+cast,2484,"Earthbind Totem",0,7,15
+summon,2484,"Earthbind Totem",0,7,15
+aura,3355,"Freezing Trap",2,2,0
+cast,5394,"Healing Stream Totem",0,25,4
+summon,5394,"Healing Stream Totem",0,25,4
+cast,6375,"Healing Stream Totem",0,0,17
+summon,6375,"Healing Stream Totem",0,0,17
+cast,8143,"Tremor Totem",0,3,2
+summon,8143,"Tremor Totem",0,3,2
+cast,8166,"Poison Cleansing Totem",2,0,4
+summon,8166,"Poison Cleansing Totem",2,0,4
