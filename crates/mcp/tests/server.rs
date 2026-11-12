@@ -1154,16 +1154,24 @@ fn status_words_the_overlay_and_a_lost_daemon() {
     }
 
     // A supervisor set to spawn a gui that does not exist, woken by a
-    // "game" whose process pattern is a real sleep we spawn. The test
-    // binary itself would be the game on Linux (its name matches), but it
-    // is an ancestor of the daemon's pgrep call and macOS pgrep does not
-    // match its own ancestors — so the game is a process on neither side.
-    let mut game = std::process::Command::new("sleep")
+    // "game" that is a real sleep we spawn, run through a link in a folder
+    // no other process's path holds: the watcher matches a process's
+    // program (argv[0]), never its arguments, so the folder's name is the
+    // pattern. The link keeps the program's own name, `sleep`, which a
+    // multi-call coreutils dispatches on.
+    let tmp2 = Temp::new("spawnfail");
+    let me = format!("wowdps-fake-game-{}", std::process::id());
+    let dir = tmp2.0.join(&me);
+    std::fs::create_dir_all(&dir).expect("mkdir the fake game's folder");
+    let sleep = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|d| d.join("sleep"))
+        .find(|p| p.is_file())
+        .expect("a sleep on PATH");
+    std::os::unix::fs::symlink(&sleep, dir.join("sleep")).expect("link the fake game");
+    let mut game = std::process::Command::new(dir.join("sleep"))
         .arg("30")
         .spawn()
         .expect("spawn the fake game");
-    let me = "sleep 30".to_string();
-    let tmp2 = Temp::new("spawnfail");
     let socket = start_daemon_with(&tmp2, FIXTURE, move |opts| {
         opts.game_pattern = Some(me);
         opts.auto_overlay = true;

@@ -1044,11 +1044,13 @@ One process owns bytes → rows: a tail thread and an engine (live meter + index
 stable ids + LRU of ≤16 lazily parsed segments) per followed source (v49: one per
 edition, the editions paragraph below), loader worker pool (historical parses
 never run on the hub thread), hub (session table, 10 Hz changed-only pushes),
-game watcher (3s sweep for a case-insensitive `game_process` substring — /proc
-comm+cmdline everywhere but macOS, `pgrep -fil` on macOS — v49: reporting which
-editions run, each matched process named by the product folder among its
-command line's path components (`_retail_`, `_forever_`), or unnamed; a change
-from one edition to another is reported though no sweep saw none running),
+game watcher (3s sweep for a case-insensitive `game_process` substring of each
+process's program: its comm or its whole argv[0], never a later argument, so a
+process whose arguments merely mention the pattern is not the game — /proc
+everywhere but macOS, `ps`'s argv[0] on macOS — v49: reporting which editions
+run, each matched process named by the product folder among its argv[0]'s path
+components (`_retail_`, `_forever_`), or unnamed; a change from one edition to
+another is reported though no sweep saw none running),
 overlay supervisor (spawns/hides/terminates `<gui_binary> --overlay`, by default
 `wowdps-gui`, on game transitions; a manual hide sticks until the next transition; spawn failures
 surface in `Status`; the overlay is shown while any game runs, as before
@@ -1142,7 +1144,8 @@ and `.build.info` product (`_retail_` / `wow`, `_forever_` / `wowf`, `None` wher
 model `PRODUCTS` lists the editions with a product folder (Retail, Forever; `cli::PRODUCTS`
 re-exports it), and `product_of(cmdline)` names the edition a process's command line names by
 a product folder among its path components, in any case (`None` for none): the game watcher
-names a running client by it, and the overlay a game window's process.
+names a running client by it over the client's argv[0], and the overlay a game window's
+process.
 `FightCard::edition()` reads a card's. Editions share encounter, difficulty and map ids with no
 promise that one id means one fight, so the store's bookkeeping keys on `Edition::counts_as()`
 — `Unknown(0)` counts as Retail, every other edition as itself (each Classic client apart, and
