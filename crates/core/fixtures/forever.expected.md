@@ -44,10 +44,12 @@ header.
 ## Forever's own tables, and the ones it has none of
 
 Forever has its own absorb table (`crates/core/src/forever/absorb_spells.rs`,
-R20) and role-span table (`crates/core/src/forever/role_spells.rs`, R18), and
-no proc or placed table, so `check.awk` reads its Forever copies (`SHIELD_F`,
-`ROLE_F`) for a Forever log and its Retail copies (`ROLE`, `SHIELD`, `PLACE`,
-`TELL`) only while the version line names Retail (`edition_tables`):
+R20), role-span table (`crates/core/src/forever/role_spells.rs`, R18) and
+placed table (proto's `placed/forever_placed_spells.rs`, R29: totems and
+traps, none of which this log casts), and no proc table, so `check.awk` reads
+its Forever copies (`SHIELD_F`, `ROLE_F`) for a Forever log and its Retail
+copies (`ROLE`, `SHIELD`, `PLACE`, `TELL`) only while the version line names
+Retail (`edition_tables`):
 
 - Power Word: Shield (17, in Forever's absorb table) opens an R20 shield of
   known size on Elowyn's ledger: applied 250 at 16.0 s, 200 of it absorbed at
