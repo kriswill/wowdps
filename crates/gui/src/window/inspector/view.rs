@@ -659,7 +659,7 @@ fn ability_strip(a: &Ability, w: &W, widened: bool, fit: Fit, cx: &Context<Gui>)
     if let Some(tile) = a
         .row
         .as_ref()
-        .and_then(|r| crate::images::spell_icon(r.spell_id))
+        .and_then(|r| crate::images::spell_icon(w.game, r.spell_id))
     {
         crumb = crumb.child(img(tile).size(w.z(CRUMB_ICON)).flex_none());
     }

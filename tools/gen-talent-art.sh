@@ -11,7 +11,9 @@
 #
 # -o is the cache's path (default $XDG_DATA_HOME/wowdps/talent-art.bin).
 # --product ROW reads another edition of the game (tools/lib.sh); its art
-# goes only where -o FILE names, never where the GUI reads Retail's.
+# goes only where -o FILE names, never where the GUI reads Retail's. The
+# talent viewer reads Forever's (--product wowf) beside Retail's, at
+# $XDG_DATA_HOME/wowdps/forever/talent-art.bin.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 . "$root/tools/lib.sh"

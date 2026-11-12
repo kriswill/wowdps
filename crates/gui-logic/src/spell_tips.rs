@@ -7,6 +7,10 @@
 //! replay's spell-tips generator writes it (it arrives with the
 //! extractor's split, and documents how each fact is read from the game's
 //! tables); this module documents the file as a reader takes it, below.
+//! That is Retail's; each other edition of the game has its own beside it,
+//! in a folder named for it (`forever/spell-tips.bin`,
+//! [`SpellTips::open_in`]), since a spell id need not name the same spell
+//! in two editions.
 //!
 //! Entirely optional, as the icons are: no file (or one of a future format
 //! version) answers `None`, and a reader says the spell's name as the log
@@ -34,6 +38,7 @@
 //! effect.
 
 use std::path::{Path, PathBuf};
+use wowdps_model::Edition;
 
 use crate::drill::school_name;
 use crate::lazy_tiles::le_u32;
@@ -96,8 +101,8 @@ pub struct SpellTips {
     body: Vec<u8>,
 }
 
-fn cache_path() -> Option<PathBuf> {
-    wowdps_proto::talents::data_path(FILE)
+fn cache_path(edition: Edition) -> Option<PathBuf> {
+    wowdps_proto::dirs::data_path_in(FILE, edition)
 }
 
 /// A length-prefixed string at `at` in `b`, and where it ends.
@@ -108,10 +113,20 @@ fn string_at(b: &[u8], at: usize) -> Option<(String, usize)> {
 }
 
 impl SpellTips {
-    /// The per-machine cache, or `None` without one (or with one this build
-    /// cannot read).
+    /// Retail's per-machine cache, or `None` without one (or with one this
+    /// build cannot read).
     pub fn open() -> Option<SpellTips> {
-        SpellTips::open_at(&cache_path()?)
+        SpellTips::open_in(Edition::Retail)
+    }
+
+    /// `edition`'s per-machine cache, or `None` without one: Retail's file
+    /// for Retail (and a card that names no edition), the same name in a
+    /// folder named for another edition beside it (`forever/…`,
+    /// `proto::dirs::in_edition`). An edition whose cache was never made
+    /// draws without one, never from another game's: the games share ids
+    /// that do not always mean the same thing.
+    pub fn open_in(edition: Edition) -> Option<SpellTips> {
+        SpellTips::open_at(&cache_path(edition)?)
     }
 
     /// The reader behind a path, so tests can point it at absent, truncated

@@ -77,6 +77,8 @@ pub struct Graph {
     pub t: OverlayTokens,
     /// The theme's data hues: the marks' colours.
     pub data: DataTokens,
+    /// The segment's game: whose spell icons its marks wear.
+    pub game: wowdps_model::Edition,
 }
 
 /// A stroke whose joins never spike: GPUI exports no round join, and a
@@ -288,7 +290,7 @@ impl Graph {
                 point(px(ox + x - ICON_SIZE / 2.0), px(oy + 2.0)),
                 size(px(ICON_SIZE), px(ICON_SIZE)),
             );
-            match images::spell_icon(m.spell_id) {
+            match images::spell_icon(self.game, m.spell_id) {
                 Some(tile) => {
                     let _ = window.paint_image(r, r, Corners::default(), tile, 0, false);
                     if recede {
@@ -592,6 +594,7 @@ pub fn drill(
             probe,
             t: ov.t,
             data: ov.data,
+            game: ov.game,
         },
         None => Graph {
             plot: Plot::new(&t, mode, peak_of(&[&t], mode, window), window, spans),
@@ -602,6 +605,7 @@ pub fn drill(
             probe,
             t: ov.t,
             data: ov.data,
+            game: ov.game,
         },
     };
     let legend = legend(ov, mode, shown, reading, rate, hovered, &kinds);

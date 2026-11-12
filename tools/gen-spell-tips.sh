@@ -33,7 +33,9 @@
 #   a frozen copy of one works too).
 #   --force: regenerate a file the stamp says is current.
 #   --product ROW: another edition of the game (tools/lib.sh); its tips go
-#   only where -o FILE names, never where the GUI reads Retail's.
+#   only where -o FILE names, never where the GUI reads Retail's. A
+#   reader finds Forever's (--product wowf) beside Retail's, at
+#   $XDG_DATA_HOME/wowdps/forever/spell-tips.bin.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

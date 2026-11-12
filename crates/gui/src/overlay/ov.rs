@@ -15,6 +15,8 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::theme::{self as gl, Bars, DataTokens, Effects, OverlayTokens, Shape};
 
+use wowdps_model::Edition;
+
 use crate::theme::{Look, hsla};
 
 /// The overlay's render context.
@@ -37,6 +39,8 @@ pub struct Ov {
     /// Device pixels per logical pixel (the display's scale factor): what
     /// a piece of art is chosen by, the drawn size of it.
     pub scale: f32,
+    /// The game of the segment shown: the one whose spell icons it wears.
+    pub game: Edition,
 }
 
 impl Ov {
@@ -52,12 +56,18 @@ impl Ov {
             fx: look.def.effects,
             data: look.def.data,
             scale: 1.0,
+            game: Edition::Retail,
         }
     }
 
     /// At the display's scale factor (`Window::scale_factor`), 1 until said.
     pub fn at_scale(self, scale: f32) -> Self {
         Self { scale, ..self }
+    }
+
+    /// Showing a segment of `game` (Retail until said).
+    pub fn in_game(self, game: Edition) -> Self {
+        Self { game, ..self }
     }
 
     /// `d` (already zoomed) in device pixels: the size art is picked for.

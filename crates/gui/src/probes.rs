@@ -107,7 +107,7 @@ impl Render for Icons {
         // Fireball, Frostbolt, Power Word: Shield, Shadow Word: Pain, Bloodlust.
         let spells = [133, 116, 17, 589, 2825]
             .into_iter()
-            .filter_map(crate::images::spell_icon);
+            .filter_map(|s| crate::images::spell_icon(wowdps_model::Edition::Retail, s));
         let row = |tiles: Vec<crate::images::Tile>| {
             div()
                 .flex()

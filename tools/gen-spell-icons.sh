@@ -17,6 +17,8 @@
 #   -o: the cache's path (default $XDG_DATA_HOME/wowdps/spell-icons.bin).
 #   --product ROW: another edition of the game (tools/lib.sh); its cache
 #   goes only where -o FILE names, never where the GUI reads Retail's.
+#   The GUI reads Forever's (--product wowf) beside Retail's, at
+#   $XDG_DATA_HOME/wowdps/forever/spell-icons.bin.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

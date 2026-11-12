@@ -103,9 +103,61 @@ pub fn data_path(rel: impl AsRef<Path>) -> Option<PathBuf> {
     data_home().map(|d| d.join("wowdps").join(rel))
 }
 
+/// Where `edition`'s copy of a per-machine file lives, given where Retail's
+/// does: Retail's own path for Retail (and for a card that names no
+/// edition, which counts as Retail), so every cache made before editions
+/// stays where it is and valid; for another edition whose install product
+/// wowdps knows, a file of the same name in a folder named for that edition
+/// beside it (`…/wowdps/forever/spell-icons.bin`); `None` for an edition
+/// wowdps knows no product of, which no generator writes for. One game's
+/// file never answers for another's: ids are shared and do not always mean
+/// the same thing.
+pub fn in_edition(retail: &Path, edition: wowdps_model::Edition) -> Option<PathBuf> {
+    let edition = edition.canonical().counts_as();
+    if edition == wowdps_model::Edition::Retail {
+        return Some(retail.to_path_buf());
+    }
+    edition.product()?;
+    let name = retail.file_name()?;
+    let dir = retail.parent().unwrap_or_else(|| Path::new(""));
+    Some(dir.join(edition.key()).join(name))
+}
+
+/// [`data_path`] of `edition`'s copy ([`in_edition`]): `rel` itself for
+/// Retail, `<edition key>/rel` for another known edition, `None` for an
+/// edition no generator writes for or with no data home.
+pub fn data_path_in(rel: impl AsRef<Path>, edition: wowdps_model::Edition) -> Option<PathBuf> {
+    in_edition(&data_path(rel)?, edition)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wowdps_model::Edition;
+
+    /// Retail's copy keeps its path (a card that names no edition reads it
+    /// too); Forever's sits in a folder named for it beside Retail's; an
+    /// edition no generator writes for has none.
+    #[test]
+    fn each_edition_has_its_own_copy_beside_retails() {
+        let retail = Path::new("/d/wowdps/spell-icons.bin");
+        for e in [Edition::Retail, Edition::Unknown(0), Edition::Unknown(1)] {
+            assert_eq!(in_edition(retail, e).as_deref(), Some(retail), "{e:?}");
+        }
+        assert_eq!(
+            in_edition(retail, Edition::Forever),
+            Some(PathBuf::from("/d/wowdps/forever/spell-icons.bin"))
+        );
+        assert_eq!(
+            in_edition(retail, Edition::Classic(18)),
+            Some(PathBuf::from("/d/wowdps/forever/spell-icons.bin")),
+            "a hand-made value reads as its number names"
+        );
+        for e in [Edition::Classic(2), Edition::Unknown(7)] {
+            assert_eq!(in_edition(retail, e), None, "{e:?}");
+        }
+        assert_eq!(in_edition(Path::new("/"), Edition::Forever), None);
+    }
 
     fn os(s: &str) -> Option<&OsStr> {
         Some(OsStr::new(s))

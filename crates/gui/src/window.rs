@@ -1024,7 +1024,14 @@ impl Render for Gui {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let zoom = self.cfg.zoom;
         self.width = f32::from(window.viewport_size().width) / zoom;
-        let w = W::new(zoom, self.width, cx).at_scale(window.scale_factor());
+        // The fight drawn wears its own game's art.
+        let game = self
+            .fight(cx)
+            .segment_edition()
+            .unwrap_or(self.hist.edition);
+        let w = W::new(zoom, self.width, cx)
+            .at_scale(window.scale_factor())
+            .in_game(game);
         let root = div()
             .id("window")
             .track_focus(&self.focus)

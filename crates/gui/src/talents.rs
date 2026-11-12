@@ -331,6 +331,8 @@ pub(crate) struct Paint {
     /// Device pixels per logical pixel (the display's scale factor): what
     /// a crest is chosen by, the drawn size of it.
     pub scale: f32,
+    /// The game whose trees are shown: its art caches alone are read.
+    pub edition: Edition,
 }
 
 impl Paint {
@@ -436,6 +438,7 @@ impl Render for TalentViewer {
             t,
             s,
             scale: window.scale_factor(),
+            edition: self.ui.edition,
         };
         let motion = self.motion(window, cx);
         let ui = &self.ui;
@@ -816,7 +819,7 @@ impl TalentViewer {
                     .absolute()
                     .size_full(),
             );
-        if let Some((painting, w, h)) = art::background(b.spec_id) {
+        if let Some((painting, w, h)) = art::background(p.edition, b.spec_id) {
             area = area
                 .child(tip::backdrop(painting, w, h))
                 .child(div().absolute().size_full().bg(p.c(|t| t.veil)));
@@ -856,7 +859,7 @@ fn hero_column(
     let ring_d = 168.0 * p.s;
     let medallion_d = ring_d * 0.56;
     let mut col = div().flex().flex_col().items_center().gap(px(6.));
-    if let Some(art) = art::medallion(hero_id) {
+    if let Some(art) = art::medallion(p.edition, hero_id) {
         col = col.child(
             div()
                 .relative()
@@ -865,7 +868,7 @@ fn hero_column(
                 .items_center()
                 .justify_center()
                 .child(img(art).size(px(medallion_d)))
-                .children(art::ring().map(|r| img(r).absolute().size(px(ring_d)))),
+                .children(art::ring(p.edition).map(|r| img(r).absolute().size(px(ring_d)))),
         );
     }
     col = col.child(p.text(hero_name.to_uppercase(), 14. * p.s, p.c(|t| t.taken)));

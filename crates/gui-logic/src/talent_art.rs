@@ -2,7 +2,9 @@
 //! pane background paintings, hero-tree medallions, and the golden medallion
 //! ring — lazily read from the per-machine cache
 //! `$XDG_DATA_HOME/wowdps/talent-art.bin` written by
-//! `tools/gen-talent-art.sh`.
+//! `tools/gen-talent-art.sh`. That is Retail's; each other edition of the
+//! game has its own beside it, in a folder named for it
+//! (`forever/talent-art.bin`, [`TalentArt::open_in`]), as its trees do.
 //!
 //! Entirely optional, like the icon caches: no file (or a future version)
 //! means every lookup answers `None` and the talent viewer draws plain
@@ -20,6 +22,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::lazy_tiles::{Rgba, Tiles, le_u32};
+use wowdps_model::Edition;
 
 const KIND_BACKGROUND: u8 = 0;
 const KIND_MEDALLION: u8 = 1;
@@ -40,8 +43,8 @@ pub struct TalentArt<H> {
     tiles: Tiles<(u8, u32), H>,
 }
 
-fn cache_path() -> Option<PathBuf> {
-    wowdps_proto::talents::data_path("talent-art.bin")
+fn cache_path(edition: Edition) -> Option<PathBuf> {
+    wowdps_proto::dirs::data_path_in("talent-art.bin", edition)
 }
 
 /// The whole reader behind a path parameter, so tests can point it at
@@ -102,10 +105,20 @@ fn open_at<H: Clone>(path: &Path) -> Option<TalentArt<H>> {
 }
 
 impl<H: Clone> TalentArt<H> {
-    /// The per-machine cache, or `None` without one (or with one this build
-    /// cannot read).
+    /// Retail's per-machine cache, or `None` without one (or with one this
+    /// build cannot read).
     pub fn open() -> Option<Self> {
-        open_at(&cache_path()?)
+        Self::open_in(Edition::Retail)
+    }
+
+    /// `edition`'s per-machine cache, or `None` without one: Retail's file
+    /// for Retail (and a card that names no edition), the same name in a
+    /// folder named for another edition beside it (`forever/…`,
+    /// `proto::dirs::in_edition`). An edition whose cache was never made
+    /// draws without one, never from another game's: the games share ids
+    /// that do not always mean the same thing.
+    pub fn open_in(edition: Edition) -> Option<Self> {
+        open_at(&cache_path(edition)?)
     }
 
     /// The whole reader behind a path parameter, so tests can point it at

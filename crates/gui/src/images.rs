@@ -79,9 +79,19 @@ fn class_icons() -> Option<&'static ClassIcons<Tile>> {
     art_on().then(|| CACHE.get_or_init(ClassIcons::open).as_ref())?
 }
 
-fn spell_icons() -> Option<&'static SpellIcons<Tile>> {
-    static CACHE: OnceLock<Option<SpellIcons<Tile>>> = OnceLock::new();
-    art_on().then(|| CACHE.get_or_init(SpellIcons::open).as_ref())?
+/// `edition`'s spell icons, read once per game: Retail's and Forever's
+/// each their own file (`SpellIcons::open_in`), so a spell id never draws
+/// another game's icon; any other edition has none.
+fn spell_icons(edition: Edition) -> Option<&'static SpellIcons<Tile>> {
+    static RETAIL: OnceLock<Option<SpellIcons<Tile>>> = OnceLock::new();
+    static FOREVER: OnceLock<Option<SpellIcons<Tile>>> = OnceLock::new();
+    let edition = edition.canonical().counts_as();
+    let cache = match edition {
+        Edition::Retail => &RETAIL,
+        Edition::Forever => &FOREVER,
+        Edition::Classic(_) | Edition::Unknown(_) => return None,
+    };
+    art_on().then(|| cache.get_or_init(|| SpellIcons::open_in(edition)).as_ref())?
 }
 
 fn emblems() -> Option<&'static Emblems> {
@@ -169,15 +179,17 @@ fn rasterize(svg: &[u8], edge: u32) -> Option<Tile> {
     })
 }
 
-/// An ability's icon, read from the spell cache on first use.
-pub fn spell_icon(spell_id: u32) -> Option<Tile> {
-    spell_icons()?.lookup(spell_id, make)
+/// An ability's icon in `edition`'s spell cache (the fight's game's),
+/// read on first use.
+pub fn spell_icon(edition: Edition, spell_id: u32) -> Option<Tile> {
+    spell_icons(edition)?.lookup(spell_id, make)
 }
 
 /// The talent viewer's cut of an ability icon: shaped to its node (square,
 /// circle, octagon) and desaturated for a talent the build did not take.
 /// Each cut is its own tile, made once.
 pub fn spell_styled(
+    edition: Edition,
     spell_id: u32,
     style: wowdps_gui_logic::spell_icons::IconStyle,
     gray: bool,
@@ -185,7 +197,7 @@ pub fn spell_styled(
     if spell_id == 0 {
         return None;
     }
-    spell_icons()?.lookup_styled(spell_id, style, gray, make)
+    spell_icons(edition)?.lookup_styled(spell_id, style, gray, make)
 }
 
 #[cfg(test)]

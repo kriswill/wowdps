@@ -226,7 +226,11 @@ Class crests, spec icons and spell icons come from your own game install,
 extracted into `~/.local/share/wowdps/` by `tools/gen-icons.sh` and
 `tools/gen-spell-icons.sh` (in the dev shell: `wowdps gen-icons`,
 `wowdps gen-spell-icons`). Without them the meter draws class-colored discs
-and no ability icons. The edition switch's emblems are the ones your game
+and no ability icons. Spell icons are each game's own: a Forever fight draws
+Forever's, from `~/.local/share/wowdps/forever/spell-icons.bin`
+(`tools/gen-spell-icons.sh --product wowf -o` that path), and without that
+file draws none rather than Retail's, since a spell id need not name the same
+spell in both games. The edition switch's emblems are the ones your game
 launcher shows each game with, copied from the launcher's own files into
 `~/.local/share/wowdps/edition-emblems.bin` by `tools/gen-emblems.sh` (the
 launcher is found beside the install under the same Wine prefix, or in
@@ -254,8 +258,9 @@ currencies. The viewer reads the trees of the fight's game, and pastes are
 remembered per game and character, so opening the viewer on a player's meter
 row restores their build in that game. Opening it on a player with
 COMBATANT_INFO in the log shows their actual logged talents and gear instead.
-The pane artwork comes from `tools/gen-talent-art.sh`; without it the trees
-draw on plain panels.
+The pane artwork comes from `tools/gen-talent-art.sh` (Forever's from
+`--product wowf -o ~/.local/share/wowdps/forever/talent-art.bin`); without it
+the trees draw on plain panels.
 
 ### A game newer than wowdps
 

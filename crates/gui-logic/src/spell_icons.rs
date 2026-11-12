@@ -1,7 +1,10 @@
 //! The runtime spell-icon cache reader: ability icons for the ids that
 //! by-spell rows carry (`Row::spell_id`, wire v9), lazily read from the
 //! per-machine cache `$XDG_DATA_HOME/wowdps/spell-icons.bin` written by
-//! `tools/gen-spell-icons.sh`.
+//! `tools/gen-spell-icons.sh`. That is Retail's; each other edition of the
+//! game has its own beside it, in a folder named for it
+//! (`forever/spell-icons.bin`, [`SpellIcons::open_in`]), since a spell id
+//! need not name the same spell in two editions.
 //!
 //! Entirely optional: no file (or a file from a future format version) means
 //! every lookup answers `None` and the UI simply draws no ability icons. The
@@ -20,6 +23,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::lazy_tiles::{Rgba, Tiles, le_u32};
+use wowdps_model::Edition;
 
 /// How the talent viewer wants an ability icon cut: the game's node
 /// shapes — square active abilities, circular passives, octagonal choice
@@ -54,8 +58,8 @@ pub struct SpellIcons<H> {
     tiles: Tiles<(u32, u8), H>,
 }
 
-fn cache_path() -> Option<PathBuf> {
-    wowdps_proto::talents::data_path("spell-icons.bin")
+fn cache_path(edition: Edition) -> Option<PathBuf> {
+    wowdps_proto::dirs::data_path_in("spell-icons.bin", edition)
 }
 
 /// The whole reader behind a path parameter, so tests can point it at absent,
@@ -98,10 +102,20 @@ fn open_at<H: Clone>(path: &Path) -> Option<SpellIcons<H>> {
 }
 
 impl<H: Clone> SpellIcons<H> {
-    /// The per-machine cache, or `None` without one (or with one this build
-    /// cannot read).
+    /// Retail's per-machine cache, or `None` without one (or with one this
+    /// build cannot read).
     pub fn open() -> Option<Self> {
-        open_at(&cache_path()?)
+        Self::open_in(Edition::Retail)
+    }
+
+    /// `edition`'s per-machine cache, or `None` without one: Retail's file
+    /// for Retail (and a card that names no edition), the same name in a
+    /// folder named for another edition beside it (`forever/…`,
+    /// `proto::dirs::in_edition`). An edition whose cache was never made
+    /// draws without one, never from another game's: the games share ids
+    /// that do not always mean the same thing.
+    pub fn open_in(edition: Edition) -> Option<Self> {
+        open_at(&cache_path(edition)?)
     }
 
     /// The whole reader behind a path parameter, so tests can point it at
