@@ -57,9 +57,9 @@ no proc or placed table, so `check.awk` reads its Forever copies (`SHIELD_F`,
   on Tharokk from 14.0 s (4 000 ms into the pull) to its removal at 26.0 s:
   `spans` 1; a defensive is no active mitigation, so `am_uptime_ms` stays 0.
 - The cut keeps Shield Wall's two buff rows, a role buff going on and coming
-  off a player (`replay_buff_applied` 1, `replay_buff_removed` 1), which
-  numbers Tharokk among its units (`replay_units` 3); Power Word: Shield is
-  no role buff, so it keeps none.
+  off a player (`replay_buff_applied` 1, `replay_buff_removed` 1); Tharokk is
+  one of its units by his posts already (`replay_units` 6, "The replay cut"
+  below). Power Word: Shield is no role buff, so it keeps none.
 
 ## Totals (segment 1, the pull, 21 000 ms of combat)
 
@@ -151,7 +151,8 @@ Elowyn 1, Hollin 1. The SPELL_ABSORBED line has no block.
 - `replay_pcast_success` 5: the five casts. `replay_debuff_applied` and
   `_removed` 1 each: Velkris's Expose Armor on the boss (a player's debuff on
   an NPC). `replay_npc_died` 1, `replay_boss_engaged` and `_killed` 1 each.
-  No buff row: Forever has no role table, and both buffs' casters are ours.
+  `replay_buff_applied` and `_removed` 1 each: Tharokk's Shield Wall, a role
+  buff in Forever's role table; Power Word: Shield is none, so no row.
 - `replay_absorb` 100: Tharokk's block says 50 of shield at each of his two
   posts (the Power Word: Shield); every other block says 0.
 - `replay_pools` 8 and `replay_pool_sum` 5 150: one pool on each player post

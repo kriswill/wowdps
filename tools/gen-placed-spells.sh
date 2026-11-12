@@ -27,7 +27,9 @@
 #   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
 #   logs_dir, or a scan of Steam compatdata prefixes).
 #   --product ROW: another edition of the game (tools/lib.sh): Forever's
-#   (wowf) writes its committed table; one with none needs -o FILE.
+#   (wowf) writes its committed table and reads its census; one with
+#   none needs -o FILE, and one no edition names (a test realm's row)
+#   --census CSV too.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

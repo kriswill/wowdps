@@ -29,13 +29,15 @@
 //!
 //! Forever's list (`FOREVER`, `--product wowf`) is its own, by its own
 //! ids: a totem's every rank is a spell of its own, each with its own
-//! duration, so each rank is an entry the client proves alone. Its log's
-//! advanced block names no map in a dungeon, so the replay cut posts
-//! nobody there yet: what finds a Forever entry by its unit's or its
-//! caster's posts is proven by the client and the census, and drawn only
-//! once a Forever log posts its units. An entry the committed census does
-//! not hold carries a written waiver (`Curated::exempt`), printed in the
-//! twin in place of the counts.
+//! duration, so each rank is an entry the client proves alone. Its log
+//! names no UiMap inside a dungeon, and the cut posts its units there on
+//! map 0 (R29): every placing cast in the boss pulls of the Forever logs on
+//! hand stands where its caster stood (the daemon's `real_log_placed`
+//! gate), and the totems they summon are never posted, so a Forever totem
+//! is found by its shaman (`Caster`), its own `Unit` listed first, as
+//! Retail's are, for a log that posts it. An entry the committed census
+//! does not hold carries a written waiver (`Curated::exempt`), printed in
+//! the twin in place of the counts.
 //!
 //! Output is the table and its review twin (`placed_spells.expected.md`),
 //! every entry with its sources and census counts.
@@ -453,10 +455,13 @@ pub const CURATED: &[Curated] = &[
 const UNSEEN: &str = "no committed Forever log holds a player placing it";
 
 /// Forever's table: its own ids, each rank an entry. Its totems are found
-/// by their own posts, else their shaman's; its Freezing Traps by the
-/// enemies they freeze, each rank's cast by its own rank's freeze (3355,
-/// 14308, 14309, paired by rank: the trap's object casts it, which no
-/// spell table records). Its damage totems are left out, as Retail's
+/// by their own posts, else their shaman's; Earthbind is an area of its
+/// slow's reach (Earthbind, 3600), as Retail's is, and the others posts.
+/// Its Freezing Traps are found by the enemies they freeze, each rank's
+/// cast by its own rank's freeze (3355, 14308, 14309, paired by rank: the
+/// trap's object casts it, which no spell table records), and drawn as
+/// posts: this client gives the trap no radius (Retail's trap spell carries
+/// one), and none is made up. Its damage totems are left out, as Retail's
 /// carpets are.
 pub const FOREVER: &[Curated] = &[
     // -- Crowd control -------------------------------------------------------
@@ -465,8 +470,8 @@ pub const FOREVER: &[Curated] = &[
         2484,
         "Earthbind Totem",
         &[Unit, Caster],
-        Post,
-        Source::None,
+        Area,
+        Spell(3600),
         Spell(2484),
     ),
     entry(
@@ -474,7 +479,7 @@ pub const FOREVER: &[Curated] = &[
         1499,
         "Freezing Trap",
         &[Touch(&[3355])],
-        Area,
+        Post,
         Source::None,
         Hand(60_000.0),
     )
@@ -484,7 +489,7 @@ pub const FOREVER: &[Curated] = &[
         14310,
         "Freezing Trap",
         &[Touch(&[14308])],
-        Area,
+        Post,
         Source::None,
         Hand(60_000.0),
     )
@@ -495,7 +500,7 @@ pub const FOREVER: &[Curated] = &[
         14311,
         "Freezing Trap",
         &[Touch(&[14309])],
-        Area,
+        Post,
         Source::None,
         Hand(60_000.0),
     )

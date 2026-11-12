@@ -48,7 +48,9 @@ what it does and how to run it.
   `-o`; a census-backed table's run reads its own edition's committed
   census under it (Retail's `tools/*-census.csv`, Forever's
   `tools/forever/*-census.csv`, but the role signals' Forever-only
-  `tools/role-signals-census.csv`), unless `--census` names another. The extractor refuses
+  `tools/role-signals-census.csv`), unless `--census` names another. A
+  product no edition names (a test realm's `.build.info` row) has no
+  committed census, so its run needs `--census` as well as `-o`. The extractor refuses
   any product's output on another edition's committed file, Retail's
   included, however `-o` spells it (`cli/owners.rs`). The caches in the
   data home are Retail's by default: another product's needs `-o`, and

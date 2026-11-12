@@ -17,8 +17,8 @@ use super::Purpose::{Control, Heal};
 /// Sorted by spell id.
 #[rustfmt::skip]
 pub(super) static TABLE: &[Placed] = &[
-    Placed { spell: 1499, name: "Freezing Trap", purpose: Control, found: &[Touch(&[3355])], form: Area, reach: 0.0, lasts_ms: 60000, cooldown_ms: 30000, until_touched: true },
-    Placed { spell: 2484, name: "Earthbind Totem", purpose: Control, found: &[Unit, Caster], form: Post, reach: 0.0, lasts_ms: 45000, cooldown_ms: 15000, until_touched: false },
+    Placed { spell: 1499, name: "Freezing Trap", purpose: Control, found: &[Touch(&[3355])], form: Post, reach: 0.0, lasts_ms: 60000, cooldown_ms: 30000, until_touched: true },
+    Placed { spell: 2484, name: "Earthbind Totem", purpose: Control, found: &[Unit, Caster], form: Area, reach: 10.0, lasts_ms: 45000, cooldown_ms: 15000, until_touched: false },
     Placed { spell: 5394, name: "Healing Stream Totem", purpose: Heal, found: &[Unit, Caster], form: Post, reach: 0.0, lasts_ms: 300000, cooldown_ms: 0, until_touched: false },
     Placed { spell: 6375, name: "Healing Stream Totem", purpose: Heal, found: &[Unit, Caster], form: Post, reach: 0.0, lasts_ms: 300000, cooldown_ms: 0, until_touched: false },
     Placed { spell: 6377, name: "Healing Stream Totem", purpose: Heal, found: &[Unit, Caster], form: Post, reach: 0.0, lasts_ms: 300000, cooldown_ms: 0, until_touched: false },
@@ -27,6 +27,6 @@ pub(super) static TABLE: &[Placed] = &[
     Placed { spell: 8170, name: "Disease Cleansing Totem", purpose: Heal, found: &[Unit, Caster], form: Post, reach: 0.0, lasts_ms: 300000, cooldown_ms: 0, until_touched: false },
     Placed { spell: 10462, name: "Healing Stream Totem", purpose: Heal, found: &[Unit, Caster], form: Post, reach: 0.0, lasts_ms: 300000, cooldown_ms: 0, until_touched: false },
     Placed { spell: 10463, name: "Healing Stream Totem", purpose: Heal, found: &[Unit, Caster], form: Post, reach: 0.0, lasts_ms: 300000, cooldown_ms: 0, until_touched: false },
-    Placed { spell: 14310, name: "Freezing Trap", purpose: Control, found: &[Touch(&[14308])], form: Area, reach: 0.0, lasts_ms: 60000, cooldown_ms: 30000, until_touched: true },
-    Placed { spell: 14311, name: "Freezing Trap", purpose: Control, found: &[Touch(&[14309])], form: Area, reach: 0.0, lasts_ms: 60000, cooldown_ms: 30000, until_touched: true },
+    Placed { spell: 14310, name: "Freezing Trap", purpose: Control, found: &[Touch(&[14308])], form: Post, reach: 0.0, lasts_ms: 60000, cooldown_ms: 30000, until_touched: true },
+    Placed { spell: 14311, name: "Freezing Trap", purpose: Control, found: &[Touch(&[14309])], form: Post, reach: 0.0, lasts_ms: 60000, cooldown_ms: 30000, until_touched: true },
 ];

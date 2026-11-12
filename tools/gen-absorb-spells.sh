@@ -29,7 +29,9 @@
 #   logs_dir, or a scan of the install roots (Steam compatdata on
 #   Linux, /Applications and ~/Applications on macOS).
 #   --product ROW: another edition of the game (tools/lib.sh): Forever's
-#   (wowf) writes its committed table; one with none needs -o FILE.
+#   (wowf) writes its committed table and reads its census; one with
+#   none needs -o FILE, and one no edition names (a test realm's row)
+#   --census CSV too.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

@@ -82,8 +82,9 @@ WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt cargo test --
 The real-log gates need a log with at least one closed segment
 (`docs/tracing.md`, "Real-log gates"). libtest filters on a test's own
 name, never its file's: every gate's name holds `real`, and every Forever
-variant's `forever`; `real_log` selects REALLOGCOUNT. Each gate whose rule
-Forever has (deaths, taken, stacks, power, shields, spans, and roles,
+variant's `forever`; `real_log` selects four. Each gate whose rule
+Forever has (the whole-file parse, deaths, taken, stacks, power, shields,
+spans, and roles,
 `real_log_segments`' cut and totals and `real_log_posts`' replay positions,
 which are Forever's alone) has a
 Forever variant over `WOWDPS_REAL_LOG_FOREVER` (`tests/real_log/mod.rs`);

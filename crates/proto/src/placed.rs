@@ -18,9 +18,10 @@
 //! that names none counting as Retail), and an edition with no table
 //! places nothing and tells nothing, never another edition's entry.
 //! Retail's (`placed_spells.rs`) and Forever's (`forever_placed_spells.rs`,
-//! its own ids, each rank of a totem an entry) are generated; Forever's
-//! log posts nobody in a dungeon yet, so what finds its entries by posts
-//! waits on that.
+//! its own ids, each rank of a totem an entry) are generated. Forever's log
+//! names no UiMap inside a dungeon, and the cut posts its units there on
+//! map 0 (R29), so its entries are found as Retail's are; its totems, which
+//! its logs never post, stand where their shaman cast them.
 
 use wowdps_model::Edition;
 
@@ -217,36 +218,53 @@ mod tests {
     /// alone from an older client, would make the patch claim too much.
     #[test]
     fn the_table_is_no_older_than_its_editions_tables_patch() {
-        let text = include_str!("placed/placed_spells.rs");
-        let line = text
-            .lines()
-            .find(|l| l.starts_with("//! Source:"))
-            .expect("a Source line");
-        let build = line.split("build ").nth(1).expect("a build");
-        let n: Vec<u16> = build
-            .split(|c: char| !c.is_ascii_digit())
-            .take(3)
-            .map(|p| p.parse().expect("a number"))
-            .collect();
-        let patch = (n[0], n[1], n[2]);
-        let tables = Edition::Retail.tables_patch().expect("Retail has tables");
-        assert!(patch >= tables, "{patch:?} is older than {tables:?}");
-        // Forever's, likewise against Forever's.
-        let text = include_str!("placed/forever_placed_spells.rs");
-        let line = text
-            .lines()
-            .find(|l| l.starts_with("//! Source:"))
-            .expect("a Source line");
-        let build = line.split("build ").nth(1).expect("a build");
-        let n: Vec<u16> = build
-            .split(|c: char| !c.is_ascii_digit())
-            .take(3)
-            .map(|p| p.parse().expect("a number"))
-            .collect();
-        let forever = Edition::Forever.tables_patch().expect("Forever has tables");
-        assert!(
-            (n[0], n[1], n[2]) >= forever,
-            "{n:?} is older than {forever:?}"
-        );
+        // The patch a generated file's header says its client was.
+        let patch_of = |text: &str| {
+            let line = text
+                .lines()
+                .find(|l| l.starts_with("//! Source:"))
+                .expect("a Source line");
+            let build = line.split("build ").nth(1).expect("a build");
+            let n: Vec<u16> = build
+                .split(|c: char| !c.is_ascii_digit())
+                .take(3)
+                .map(|p| p.parse().expect("a number"))
+                .collect();
+            (n[0], n[1], n[2])
+        };
+        let tables = [
+            (
+                "placed_spells.rs",
+                Edition::Retail,
+                include_str!("placed/placed_spells.rs"),
+            ),
+            (
+                "forever_placed_spells.rs",
+                Edition::Forever,
+                include_str!("placed/forever_placed_spells.rs"),
+            ),
+        ];
+        for (file, edition, text) in tables {
+            let patch = patch_of(text);
+            let want = edition.tables_patch().expect("the edition has tables");
+            assert!(patch >= want, "{file}: {patch:?} is older than {want:?}");
+        }
+        // Every generated table here is held so: one added without joining
+        // the list above would not.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/placed");
+        for entry in std::fs::read_dir(dir).expect("src/placed") {
+            let path = entry.expect("an entry").path();
+            if path.extension().is_none_or(|x| x != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable");
+            if text.lines().any(|l| l.starts_with("//! Source:")) {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                assert!(
+                    tables.iter().any(|(f, _, _)| *f == name),
+                    "{name}: a generated table this test does not hold to its patch"
+                );
+            }
+        }
     }
 }
