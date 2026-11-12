@@ -163,8 +163,9 @@ season_start = "2026-11-10"   # Home counts from here; unset, from the
 
 With one edition the window shows no switch. The overlay has none: it
 always follows the game that is running. The defaults find both games: the
-daemon's `game_process` (`wow.exe`) matches either client and names each by
-its product folder, and the overlay's `game_match` (`world of warcraft`)
+daemon's `game_process` (`wow.exe`) matches either client's own program
+(never a command that merely mentions it, such as a search for it) and names
+each by its product folder, and the overlay's `game_match` (`world of warcraft`)
 matches either window. With both games open at once the two windows look
 the same to the compositor, so under Hyprland the overlay tells them apart
 by their processes' product folders: it shows, hides and places itself (on

@@ -21,10 +21,11 @@ pub struct Config {
     /// `/Volumes/T7/Games/World of Warcraft/_retail_/Logs`; the addon and
     /// everything else derive from it (`addon::product_dir`).
     pub logs_dir: Option<PathBuf>,
-    /// How the game is found: on Linux a case-insensitive substring of
-    /// /proc comm+cmdline; on macOS the same substring over every
-    /// process's full argument list (`pgrep -fil`, so an ERE, not a
-    /// literal).
+    /// How the game is found: a case-insensitive substring of a process's
+    /// program, its comm or its argv[0] whole (under wine the client's
+    /// Windows path), so a file name, a folder or a path fragment of it;
+    /// never of its later arguments. Linux reads /proc, macOS `ps`'s
+    /// argv[0] (`game::matches`).
     pub game_process: String,
     pub auto_overlay: bool,
     pub overlay_exit_grace_secs: u64,
@@ -63,9 +64,8 @@ pub struct Config {
 }
 
 /// The default `game_process`: the game binary — Windows-style under
-/// Proton; on macOS the app bundle (`World of Warcraft.app` matches the
-/// game's own command line — the bundle path inside `_retail_` — and not
-/// this meter's, which a broader `World of Warcraft` would).
+/// Proton; on macOS the app bundle (`World of Warcraft.app`, which the
+/// game's argv[0], the bundle's path inside its product folder, holds).
 pub fn default_game_process() -> &'static str {
     if cfg!(target_os = "macos") {
         "World of Warcraft.app"
