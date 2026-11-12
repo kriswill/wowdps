@@ -38,7 +38,7 @@ use crate::theme::hsla;
 /// The bar's sides (`.top{padding-inline:8px 10px}`) and the gap between
 /// its pieces (`gap:2px`).
 const PAD_LEFT: f32 = 8.0;
-const PAD_RIGHT: f32 = 10.0;
+pub(crate) const PAD_RIGHT: f32 = 10.0;
 const GAP: f32 = 2.0;
 /// How far the picker's right edge stands in from the window's: the bar's
 /// right padding, then the gear and — unless the bar folded it away — the
@@ -193,11 +193,14 @@ pub(crate) const FOLDS: usize = 3;
 /// an hour and a half long.
 const CLOCK_WIDEST: &str = "88:88";
 /// The room a form of the switch keeps spare beyond the bar's measured
-/// width, for the layout's rounding.
+/// width, for the layout's rounding of its pieces' bounds.
 const FIT_MARGIN: f32 = 1.0;
-/// How far past the window one game's bar may measure before it folds:
-/// the layout's rounding, so it folds only where it truly runs past.
-const RUN_PAST: f32 = 0.5;
+/// How far past the window one game's bar may measure before it folds, so
+/// that it folds only where main's would draw a piece past the window: its
+/// right padding, which main's bar gives up before its help button meets
+/// the edge, and the rounding of the pieces' bounds (the words are
+/// measured as laid out).
+const RUN_PAST: f32 = PAD_RIGHT + 0.5;
 
 impl Parts {
     /// The bar at its widest for whichever game it shows: the pill and the
@@ -387,9 +390,11 @@ fn name_slot(w: &W, window: &mut Window, entries: &[Entry], face: &Face, narrow:
         .min(cap)
 }
 
-/// One line of words' width at `size` in `family` and `weight`, as it is
-/// painted, in zoom-1 pixels: the shaper's own, so a sum of them is the
-/// laid-out line's.
+/// One line of words' width at `size` in `family` and `weight`, as the
+/// text element lays it out, in zoom-1 pixels: the shaper's width rounded
+/// up to a whole window pixel (gpui's text element sizes a line so), so a
+/// sum of them is the laid-out bar's. A box this wide drawn at the zoom
+/// (`W::z`) holds the words whole (`holding`).
 fn words_width(
     w: &W,
     window: &mut Window,
@@ -416,7 +421,20 @@ fn words_width(
         window
             .text_system()
             .shape_line(SharedString::from(s.to_string()), w.z(size), &[run], None);
-    f32::from(shaped.width) / w.zoom
+    holding(w.zoom, f32::from(shaped.width).ceil())
+}
+
+/// The zoom-1 width whose box, drawn at `zoom` (`W::z`), is at least
+/// `room` window pixels. `room / zoom` alone can come back an ulp short
+/// once multiplied again, and gpui truncates words whose shaped width is
+/// past their box's by any amount, so a name in a slot of its own width
+/// would read cut short at some zooms.
+fn holding(zoom: f32, room: f32) -> f32 {
+    let mut width = room / zoom;
+    while width * zoom < room {
+        width = width.next_up();
+    }
+    width
 }
 
 #[cfg(test)]
@@ -432,6 +450,21 @@ pub(crate) fn unfolded(on: bool) {
     UNFOLDED.with(|u| u.set(on));
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A test's switch: draw the pill's words and the picker's name past
+    /// their caps and a clock of as many digits as `CLOCK_WIDEST`, the bar
+    /// at its widest for a game (`Parts::widest`), as the switch's form is
+    /// chosen by.
+    static WIDEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Draw the bar at its widest on this thread (`false`: as it is).
+#[cfg(test)]
+pub(crate) fn widest(on: bool) {
+    WIDEST.with(|u| u.set(on));
+}
+
 /// The bar, laid out by the window's width.
 pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl IntoElement {
     let narrow = w.narrow();
@@ -439,6 +472,18 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
     let home = gui.place == super::Place::Home;
     // A stored pull on the stage is no more the live one than Home is.
     let pill = Pill::of(app, home || gui.hist.store.stored.is_some());
+    #[cfg(test)]
+    let pill = pill.map(|p| {
+        if WIDEST.with(std::cell::Cell::get) {
+            Pill {
+                name: "W".repeat(64),
+                ms: 10 * 60_000,
+                ..p
+            }
+        } else {
+            p
+        }
+    });
     let mut line = div()
         .size_full()
         .flex()
@@ -475,6 +520,17 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
     // its dot alone, the help button goes, then the jump glyph — each
     // folding back as the window widens, with room to spare.
     let me = gui.picked(cx);
+    #[cfg(test)]
+    let me = me.map(|me| {
+        if WIDEST.with(std::cell::Cell::get) {
+            CharPick {
+                name: "W".repeat(64),
+                ..me
+            }
+        } else {
+            me
+        }
+    });
     let switch = gui
         .edition_entries()
         .map(|entries| (entries, gui.edition_face()));
@@ -500,20 +556,20 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         gui.edition_form.set(Some(chosen));
         chosen
     });
-    let fold = if form.is_some() {
-        let folds: Vec<f32> = (0..=FOLDS)
-            .map(|fold| parts.total(w, form, fold) + FIT_MARGIN)
-            .collect();
-        richest_fit(&folds, w.width, gui.bar_fold.get())
-    } else {
-        // One game: main's bar wherever it fits, folded only where it would
-        // run past the window, with no hysteresis to hold a fold where it
-        // would fit.
-        let folds: Vec<f32> = (0..=FOLDS)
-            .map(|fold| parts.total(w, None, fold) - RUN_PAST)
-            .collect();
-        richest_fit(&folds, w.width, None)
+    // With the switch the folds keep its hysteresis: a fold drawn holds
+    // until the bar a fold richer fits with room to spare. One game's bar
+    // is main's wherever main's keeps every piece inside the window, so its
+    // fold is the width's and the bar's alone, folding the moment a piece
+    // would pass the edge. (The bundled faces' digits are tabular, so a
+    // live clock widens only when it gains a digit and never blinks it.)
+    let (margin, last) = match form {
+        Some(_) => (FIT_MARGIN, gui.bar_fold.get()),
+        None => (-RUN_PAST, None),
     };
+    let folds: Vec<f32> = (0..=FOLDS)
+        .map(|fold| parts.total(w, form, fold) + margin)
+        .collect();
+    let fold = richest_fit(&folds, w.width, last);
     #[cfg(test)]
     let fold = if UNFOLDED.with(std::cell::Cell::get) {
         0
@@ -1036,4 +1092,35 @@ fn picker(
                 this.toggle_menu(super::cards::Menu::Picker, window, cx)
             }),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::holding;
+
+    /// Every zoom the window steps through (from 1 by its chords, as they
+    /// add up in f32, and as a config writes them) and every width a name
+    /// is laid out at, in quarters and whole pixels: a box of `holding`'s
+    /// width drawn at the zoom is never narrower than the room asked, so a
+    /// name in a slot of its own laid-out width is never truncated.
+    #[test]
+    fn a_slot_drawn_at_any_zoom_holds_its_words() {
+        let mut zooms = vec![];
+        let (mut up, mut down) = (1.0f32, 1.0f32);
+        for _ in 0..20 {
+            up += 0.1;
+            down -= 0.1;
+            zooms.extend([up, down]);
+        }
+        zooms.extend((5..=30).map(|tenths| tenths as f32 / 10.0));
+        zooms.retain(|z| (0.5..=3.0).contains(z));
+        for zoom in zooms {
+            for quarter in 1..=4 * 400 {
+                let room = quarter as f32 / 4.0;
+                let width = holding(zoom, room);
+                assert!(width * zoom >= room, "{room} at {zoom}: {width}");
+                assert!(width * zoom - room < 0.001, "{room} at {zoom}: {width}");
+            }
+        }
+    }
 }
