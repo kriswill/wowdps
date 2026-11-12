@@ -343,7 +343,7 @@ like `SPELL_MISSED`.
 ### `*_SUPPORT` events — Augmentation Evoker shares (R19)
 
 Verified 2026-09-04 on a training-dummy session with an Augmentation
-(`WoWCombatLog-080126_225759.txt`, 13 821 support lines) and a raid log.
+(13 821 support lines) and a raid log.
 Families observed: `SPELL_DAMAGE_SUPPORT`, `SPELL_PERIODIC_DAMAGE_SUPPORT`,
 `SWING_DAMAGE_LANDED_SUPPORT`, `SPELL_HEAL_SUPPORT`, `SPELL_PERIODIC_HEAL_SUPPORT`,
 `SPELL_ABSORBED_SUPPORT`; `RANGE_DAMAGE_SUPPORT` is the same shape (fixture only).
@@ -611,9 +611,9 @@ The fixture deliberately contains all three. Expected totals count each hit **on
 
 ---
 
-## Verified against the live raid log (2026-07-27, build 12.0.7)
+## Verified against a live raid log (build 12.0.7)
 
-`WoWCombatLog-072726_205251.txt`, 177 915 lines, read-only. **Ground truth outranks
+One raid night's log, 177 915 lines, read-only. **Ground truth outranks
 both spec.json and the wiki.** Result: spec.json confirmed on every offset above;
 the wiki's 17-field advanced block and flat damage suffix are wrong.
 

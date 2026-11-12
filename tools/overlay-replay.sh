@@ -95,7 +95,7 @@ export XDG_RUNTIME_DIR=$RUN XDG_CONFIG_HOME=$W/config XDG_DATA_HOME=$W/data \
   XDG_CACHE_HOME=$W/cache XDG_STATE_HOME=$W/state
 
 # ---- the log in chunks, a chunk every 250 ms ----------------------------
-# The log's span from its first and last stamps ("9/27/2026 18:58:54.564-7"),
+# The log's span from its first and last stamps ("1/1/2026 20:00:00.000-8"),
 # one day's wrap allowed for.
 secs() { awk '{split($2, t, /[:.-]/); print t[1]*3600 + t[2]*60 + t[3]; exit}'; }
 first=$(head -1 "$LOG" | secs); last=$(tail -1 "$LOG" | secs)
