@@ -389,6 +389,69 @@ fn a_ui_map_zero_is_a_place_in_forevers_log_alone() {
     }
 }
 
+/// A pull that mixes no UiMap with a real one: the mage's last cast is a
+/// step out onto Ashenvale's UiMap (1440), as a block writes it on the way
+/// out of the dungeon. That post keeps 1440 while every other keeps 0, the
+/// floor stays 0 (the players stood on it most), and `maps()` lists both.
+/// With the rogue's two posts out there too, the players stand four and
+/// four: the tie goes to the lower id, 0. The edition says what 0 is; 0
+/// itself votes as any floor does.
+#[test]
+fn a_forever_pull_that_steps_onto_a_ui_map_keeps_both() {
+    let floors = |c: &Cut, guid: &str| -> Vec<u32> {
+        let u = c.units.iter().find(|u| u.guid == guid).unwrap();
+        u.posts.iter().map(|p| p.map_id).collect()
+    };
+    let out = |text: &str, from: &str| {
+        assert!(text.contains(from), "{from}");
+        text.replace(from, &from.replace(",0,0.", ",1440,0."))
+    };
+    // Brindlewick's second Fireball cast (29.5 s), alone of his two.
+    let step = out(&text(), "1210,1800,130,-512.40,-14.20,0,0.3500");
+    let c = cut_of(&step);
+    assert_eq!(floors(&c, MAGE), [0, 1440]);
+    assert_eq!(floors(&c, ROGUE), [0, 0]);
+    assert_eq!(c.floor, 0);
+    assert_eq!(
+        c.maps(),
+        [
+            MapPosts {
+                map_id: 0,
+                posts: 15,
+                players: 7
+            },
+            MapPosts {
+                map_id: 1440,
+                posts: 1,
+                players: 1
+            }
+        ]
+    );
+    let mage = c.units.iter().find(|u| u.guid == MAGE).unwrap();
+    assert_eq!(
+        mage.posts.last().map(|p| (p.t_ms, p.x, p.y)),
+        Some((19_500, -51_240, -1_420)),
+        "the step out keeps its own place"
+    );
+    // Both of the mage's and both of the rogue's posts out there: four of
+    // the players' posts on each floor.
+    let tie = out(
+        &out(&step, "1500,1800,130,-512.40,-14.20,0,0.3500"),
+        "-505.20,-9.80,0,0.4000",
+    );
+    let c = cut_of(&tie);
+    assert_eq!(floors(&c, MAGE), [1440, 1440]);
+    assert_eq!(floors(&c, ROGUE), [1440, 1440]);
+    let players = |map_id: u32| {
+        c.maps()
+            .iter()
+            .find(|m| m.map_id == map_id)
+            .map_or(0, |m| m.players)
+    };
+    assert_eq!((players(0), players(1440)), (4, 4));
+    assert_eq!(c.floor, 0, "a tie to the lower id");
+}
+
 /// A door onto a map Forever's own map table calls open world (2980,
 /// Dalaran City) is zoned out whatever difficulty the game stamped on it,
 /// in the meter and the scanner alike; Retail's table does not list that

@@ -169,7 +169,7 @@ type comes *after* the block, at 28).
 > no UiMap inside a dungeon or a raid and writes 0 on every block there, its x, y
 > and facing still the unit's own: every block with health inside Blackfathom
 > Deeps (instance 48) and Scarlet Monastery (189), some 71 000 over 13 boss pulls
-> on three nights, read 0, while its open world names the zone's UiMap as Retail
+> in three logs, read 0, while its open world names the zone's UiMap as Retail
 > does (1440, 1413, 1456 …, matching the log's `MAP_CHANGE` lines; a dungeon writes
 > no `MAP_CHANGE`). So the parser keeps the 0 as written and the replay cut asks
 > the edition (`Tables::map_zero_is_a_place`): Retail's 0 places nobody, Forever's

@@ -218,11 +218,10 @@ impl Tables {
     /// with no health, which post nothing anyway), so its 0 places the
     /// unit nowhere. Forever's client has no UiMap inside a dungeon or a
     /// raid and writes 0 there on every block, the coordinates still the
-    /// unit's (three nights, 2026-11-09 to 11: every block with health
-    /// inside two dungeons, some 71 000 over 13 boss pulls, while its open
-    /// world names the zone's UiMap as Retail's does). Asked of the
-    /// edition, never of the value: the same 0 is nowhere in one log and a
-    /// room in the other.
+    /// unit's (three logs: every block with health inside two dungeons,
+    /// some 71 000 over 13 boss pulls, while its open world names the
+    /// zone's UiMap as Retail's does). Asked of the edition, never of the
+    /// value: the same 0 is nowhere in one log and a room in the other.
     pub(crate) fn map_zero_is_a_place(&self) -> bool {
         self.map_zero_is_a_place
     }

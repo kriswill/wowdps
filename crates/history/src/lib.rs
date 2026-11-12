@@ -119,8 +119,6 @@ fn row_cols(alias: &str, as_guid: bool) -> String {
     sql
 }
 
-/// Where the lake lives: `$XDG_DATA_HOME/wowdps/history/v1`, else
-/// `~/.local/share/wowdps/history/v1` — the daemon's default too.
 /// A `WHERE` clause over `fights` keeping the cards of `edition` as the
 /// daemon picks them (`FightCard::of_edition`, by `Edition::counts_as`):
 /// every project id that counts as it, so a card that names none (0) is
@@ -137,6 +135,8 @@ pub fn edition_filter(edition: Edition) -> String {
     )
 }
 
+/// Where the lake lives: `$XDG_DATA_HOME/wowdps/history/v1`, else
+/// `~/.local/share/wowdps/history/v1` — the daemon's default too.
 pub fn default_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .filter(|v| !v.is_empty())
