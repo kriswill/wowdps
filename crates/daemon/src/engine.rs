@@ -208,6 +208,16 @@ pub struct Engine {
     /// which `game_running` counts for every source. What lets a boss fight
     /// with no END hold a pull open however quiet (`pull_open`).
     pub edition_running: bool,
+    /// The tail event last fed grew this source's log ([`Engine::grew`]).
+    grew: bool,
+    /// The folder held no log when the tail last looked (`TailEvent::
+    /// Waiting`): the next log switched to is one created since.
+    waiting: bool,
+    /// The log just switched to is another file than the one followed, or
+    /// the first after the folder held none — not the log a source opens at
+    /// start, nor the same file re-read after a truncation. Its index says
+    /// whether the game created it just now ([`Engine::grew`]).
+    new_log: bool,
     /// v35: the account's characters as the history thread last resolved
     /// them (`HistoryLink::mine`), set by the hub each tick — what every
     /// answer's rows are marked `mine` from.
@@ -288,6 +298,9 @@ impl Engine {
             last_fresh: None,
             game_running: false,
             edition_running: false,
+            grew: false,
+            waiting: false,
+            new_log: false,
             mine: Arc::default(),
             source_edition: None,
             index_project_id: 0,
@@ -324,12 +337,34 @@ impl Engine {
 
     /// v49: whether this source's log is being written: lines of it landed
     /// within the meter's trash gap (or, before any did, the file was
-    /// modified within it). What keeps the live edition where it is, no
-    /// pull open on either side, while two logs are written in turn.
+    /// modified within it). What keeps the live edition where it is, with no
+    /// followed game seen and no pull open on either side, until the other
+    /// log grows ([`Engine::grew`]) or is written later once this one has
+    /// gone quiet.
     pub fn being_written(&self) -> bool {
+        self.written_within(PULL_QUIET)
+    }
+
+    /// Whether this source's log was written within `d` (see `written`):
+    /// lines of it landed, or before any did the file was modified, that
+    /// recently. A live edition written within `sources::HANDOFF_QUIET`
+    /// is not left for another log growing.
+    pub fn written_within(&self, d: Duration) -> bool {
         self.written
             .and_then(|t| SystemTime::now().duration_since(t).ok())
-            .is_some_and(|age| age < PULL_QUIET)
+            .is_some_and(|age| age < d)
+    }
+
+    /// Whether the tail event last fed grew this source's log: complete
+    /// lines the game appended after the backlog, or a log the game
+    /// created while the daemon watched (a switch to another file than the
+    /// one followed, or to the first after the folder held none, modified
+    /// within the fresh window). Never the backlog, index or seeds of a log
+    /// opened at start or switched to, a switch back to an older log, nor
+    /// the same file re-read after a truncation. What moves the live
+    /// edition to the game being played (`sources::Sources::tick`).
+    pub fn grew(&self) -> bool {
+        self.grew
     }
 
     /// v49: this source's log has a pull open now, lines of it having
@@ -389,6 +424,7 @@ impl Engine {
     }
 
     pub fn on_tail(&mut self, ev: TailEvent, out: &mut Vec<EngineEvent>) {
+        self.grew = false;
         match ev {
             // State only (owners, classes, visits): a seed opens no segment,
             // so there is nothing to number or announce.
@@ -406,6 +442,7 @@ impl Engine {
                 if self.caught_up && !lines.is_empty() {
                     self.last_fresh = Some(Instant::now());
                     self.written = Some(SystemTime::now());
+                    self.grew = true;
                 }
                 for line in &lines {
                     if let Some(parsed) = parse_line(line) {
@@ -461,6 +498,15 @@ impl Engine {
                 self.emit_closed(out);
             }
             TailEvent::Switched(path) => {
+                // Another file than the one followed, or the first after
+                // the folder held none, may be a log the game just created:
+                // its index tells. The same file again is a truncation's
+                // re-read, and a source's first log at start is no growth.
+                self.new_log = match &self.source_path {
+                    Some(old) => *old != path,
+                    None => self.waiting,
+                };
+                self.waiting = false;
                 // A different log file is a different session: reset all
                 // per-file state. Ids keep counting — that is the whole
                 // point of daemon-lifetime monotonicity.
@@ -500,6 +546,13 @@ impl Engine {
                 // the daemon follows runs.
                 self.written = file_age_ms
                     .and_then(|age| SystemTime::now().checked_sub(Duration::from_millis(age)));
+                // A new log modified just now is the game writing it: its
+                // source grew. One switched back to, older, is not.
+                if std::mem::take(&mut self.new_log)
+                    && file_age_ms.is_some_and(|age| Duration::from_millis(age) < FRESH_WINDOW)
+                {
+                    self.grew = true;
+                }
                 // v49: the scan read the header; the log's edition is
                 // known now, not only once the seed lines replay it.
                 self.index_project_id = index.checkpoint.project_id;
@@ -519,7 +572,10 @@ impl Engine {
                 }
                 self.seen_segments = self.segment_count();
             }
-            TailEvent::Waiting => self.source_name = None,
+            TailEvent::Waiting => {
+                self.source_name = None;
+                self.waiting = true;
+            }
             TailEvent::Error(msg) => self.status = Some(msg),
         }
     }

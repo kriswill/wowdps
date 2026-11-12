@@ -1164,14 +1164,24 @@ having arrived since the backlog: a boss fight begun and not ended — while the
 its edition's client running, however quiet, else (no game, or only one it cannot name or of an
 edition no source follows) until no line has come for five minutes (`ENCOUNTER_QUIET`: the game
 crashed or stopped logging) — or any other open segment with lines within the trash gap), kept while it
-has one, and while neither has, until the other OPENS one — two games writing in turn never move
-a follower on every line; with none running, the one whose log was written last (its modified
-time when opened, then each batch of fresh lines), kept too while it has a pull open or is still
-being written (`Engine::being_written`: written within the trash gap) — so with no pull open on
-either side it moves only on a pull opening in the other, or once it has gone quiet and the other
-is written. It is chosen again on every tail event, every game report and every tick, so a pull
-or a log going quiet moves it within a tick; with one source it never moves. A source not yet
-holding a log is never live.
+has one, and while neither has, until the other OPENS one or its log GROWS; with none running, the
+one whose log was written last (its modified time when opened, then each batch of fresh lines),
+kept too while it has a pull open, is still being written (`Engine::being_written`: written within
+the trash gap) or has been live less than `HANDOFF_QUIET` (ten seconds), until the other opens a
+pull or its log grows, or once it has gone quiet and the other was written later. A log GROWS
+(`Engine::grew`) when complete lines land in it after its backlog, or when the game creates one
+while the daemon watches (a switch to another file than the one followed, or to the first in a
+folder that held none, modified within the last ten seconds); never by the backlog, index or seeds
+of a log opened at start or switched to, a switch back to an older log, a truncated log re-read or
+an import. One account plays one game at a time, so the other edition's log growing is the other
+game being played: it makes that edition live on the next tick (`Sources::tick`), once the live
+edition has been live, and its log quiet, for `HANDOFF_QUIET`. An open pull in the live edition
+always keeps it; two logs growing within one tick, the live one's among them, move nothing,
+whichever landed first; and with no pull opening, lines alone — two logs written in turn, however
+they alternate — never move it twice within `HANDOFF_QUIET`, since every move but the start-up
+pick starts that interval again. It is chosen again on every tail event, every game report and
+every tick, so a pull, a log growing or a log going quiet moves it within a tick; with one source
+it never moves. A source not yet holding a log is never live.
 Only the live source's trailing segment is a follower's: another edition's open pull, stale or
 not, draws no follower and announces no `SegmentOpened` to one. A source's game runs
 (`Engine::game_running`, its liveness) when its edition's client is named running, or a game runs

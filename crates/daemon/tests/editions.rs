@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use wowdps_core::model::{Edition, Role, SegmentId, Spec, View};
-use wowdps_core::tail::TailEvent;
+use wowdps_core::tail::{SourceSpec, TailEvent, Tailer};
 use wowdps_daemon::engine::{Engine, EngineEvent};
 use wowdps_daemon::history::{Backend, ClosedFight, LogFacts, MemBackend, Retention, Store};
 use wowdps_daemon::mock::{MockDaemon, pump};
@@ -1573,4 +1573,89 @@ fn a_source_named_zero_is_named_nothing() {
         Some(Edition::Forever),
         "as its number names it"
     );
+}
+
+// ---- the live edition moves to the game being played ----------------------------
+
+/// Every event the tailer has now, fed to `engine` poll after poll until a
+/// poll has none (the backlog read, then caught up): whether any of them
+/// grew the source's log (`Engine::grew`).
+fn settle(tailer: &mut Tailer, engine: &mut Engine) -> bool {
+    let mut grew = false;
+    for _ in 0..64 {
+        let events = tailer.poll();
+        if events.is_empty() {
+            return grew;
+        }
+        for ev in events {
+            engine.on_tail(ev, &mut Vec::new());
+            grew |= engine.grew();
+        }
+    }
+    panic!("the tailer never settled");
+}
+
+fn append(path: &Path, text: &str) {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    f.write_all(text.as_bytes()).unwrap();
+}
+
+const BUFF: &str = "11/1/2026 20:50:00.000-8  SPELL_AURA_APPLIED,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,71,\"Defensive Stance\",0x1,BUFF";
+
+/// What grows a source's log for the live edition's choice, through a real
+/// tailer over a logs folder: complete lines the game appends after the
+/// backlog, and a log it creates while the daemon watches — a newer file
+/// beside the one followed, or the first in a folder that held none. Not
+/// the backlog, index or seeds of the log a source opens at start, a line
+/// still half written, the same log re-read after a truncation, nor a
+/// switch back to an older log.
+#[test]
+fn only_the_game_writing_now_grows_a_log() {
+    let tmp = Temp::new("grew");
+    let dir = tmp.0.join("Logs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("WoWCombatLog-110126_200000.txt");
+    std::fs::copy(FOREVER_LOG, &first).unwrap();
+    let mut tailer = Tailer::new(SourceSpec::Dir(dir.clone()));
+    let mut engine = Engine::new();
+    assert!(!settle(&mut tailer, &mut engine), "the log opened at start");
+    assert!(engine.source_path.is_some());
+
+    append(&first, BUFF);
+    assert!(!settle(&mut tailer, &mut engine), "half a line");
+    append(&first, "\n");
+    assert!(settle(&mut tailer, &mut engine), "the line completed");
+    assert!(!settle(&mut tailer, &mut engine), "nothing since");
+
+    let text = std::fs::read_to_string(FOREVER_LOG).unwrap();
+    let half: String = text.lines().take(4).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&first, half).unwrap();
+    assert!(!settle(&mut tailer, &mut engine), "the same log re-read");
+    append(&first, &format!("{BUFF}\n"));
+    assert!(settle(&mut tailer, &mut engine), "a line after the re-read");
+
+    let second = dir.join("WoWCombatLog-110126_210000.txt");
+    std::fs::copy(FOREVER_LOG, &second).unwrap();
+    assert!(settle(&mut tailer, &mut engine), "a new log");
+    assert_eq!(engine.source_path.as_deref(), Some(second.as_path()));
+
+    std::fs::remove_file(&second).unwrap();
+    let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&first)
+        .and_then(|f| f.set_modified(hour_ago))
+        .unwrap();
+    assert!(!settle(&mut tailer, &mut engine), "back to an older log");
+    assert_eq!(engine.source_path.as_deref(), Some(first.as_path()));
+
+    let empty = tmp.0.join("Empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let mut tailer = Tailer::new(SourceSpec::Dir(empty.clone()));
+    let mut engine = Engine::new();
+    assert!(!settle(&mut tailer, &mut engine), "no log yet");
+    assert!(engine.source_path.is_none());
+    std::fs::copy(FOREVER_LOG, empty.join("WoWCombatLog-110126_220000.txt")).unwrap();
+    assert!(settle(&mut tailer, &mut engine), "the folder's first log");
 }

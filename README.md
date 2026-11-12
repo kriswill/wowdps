@@ -138,7 +138,13 @@ stderr, and in the ⚙ menu) and skipped; the rest of the theme still applies.
 ### Editions
 
 The window shows one game at a time, and by default the one you are
-playing. When this machine has more than one edition of the game (a log
+playing: the one running, or with both running the one in a pull, else the
+one writing its combat log. Tab from one game to the other and, once the
+first has logged nothing for ten seconds, the next lines the other logs
+move the window and the overlay to it; a pull keeps them where they are
+until it ends.
+
+When this machine has more than one edition of the game (a log
 followed or a fight stored of each), the window's top bar carries an
 edition switch beside Home and Fights, named for the game shown: Retail by
 its current expansion's name (Midnight), Forever by its own, each with its

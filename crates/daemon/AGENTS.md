@@ -27,8 +27,11 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   editions paragraph). Every answer goes through `Sources`: an id to the
   engine holding it, `Live` and the list to the session's edition's, the
   live edition by its rule there. A session no source serves acts on
-  nothing. Over the hub's one-source scenario a daemon of one source queues
-  the wire bytes it queued before editions were followed:
+  nothing. A log growing (`Engine::grew`) moves the live edition only on
+  the tick (`Sources::tick`), so two logs growing in one tick move
+  nothing; tests stand in for the clock with `Sources::age_for_test`.
+  Over the hub's one-source scenario a daemon of one source queues the
+  wire bytes it queued before editions were followed:
   `one_source_frames_are_the_daemon_s_before_editions` holds them to
   `tests/golden/one_source_frames.txt`, made by the daemon before. Re-bless
   it (`WOWDPS_BLESS=1`, which rewrites it and fails) only for a change every
