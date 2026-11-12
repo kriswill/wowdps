@@ -58,7 +58,7 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // scanned by the old rule read a Forever log's doors and keys by Retail's
 // open-world and keystone tables, so its visits may differ. ScanState
 // gained `project_id`, stored as a u8 after `arena_over`.
-pub(crate) const MAGIC: &[u8; 8] = b"WDPSIDX\x14";
+const MAGIC: &[u8; 8] = b"WDPSIDX\x14";
 
 pub struct IndexCache {
     dir: PathBuf,

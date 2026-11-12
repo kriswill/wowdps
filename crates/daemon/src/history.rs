@@ -530,14 +530,15 @@ pub fn spawn(
     thread::spawn(move || {
         let cache = opts.cache_dir.clone().map(IndexCache::new);
         let retention = Retention::from(&opts);
+        let rules = swept::rules(&retention);
+        let mut store = Store::open(DirBackend::new(opts.dir.clone()), retention);
         // The logs read whole before, beside the checkpoints: a start reads
-        // only what is new (`swept`). No cache, no manifest: every start
-        // reads every log, as before there was one.
+        // only what is new (`swept`), for this store alone. No cache, no
+        // manifest: every start reads every log, as before there was one.
         let manifest = opts
             .cache_dir
             .as_deref()
-            .map(|dir| Manifest::load(dir, swept::rules(&retention)));
-        let store = Store::open(DirBackend::new(opts.dir.clone()), retention);
+            .map(|dir| Manifest::load(dir, rules, store.identity()));
         let mut worker = Worker {
             store,
             loader,
@@ -1504,6 +1505,10 @@ impl<B: Backend> Worker<B> {
         let Some(idx) = self.scan(&path) else {
             return;
         };
+        // Only a read that reached the file's end is a whole read: one cut
+        // short (a read error, a last line not yet ended) is not recorded,
+        // and the next start reads the log again.
+        let before = before.filter(|stat| idx.scanned == stat.len);
         let project_id = idx.checkpoint.project_id;
         // The tailed log's open tail is live, not aborted. Anything still
         // open in an older log never closes — including its last VISIT:
@@ -2164,7 +2169,15 @@ pub struct Store<B: Backend> {
     evicted: Vec<(u64, String)>,
     /// Fight writes that failed since open ([`Store::write_failures`]).
     write_failures: u64,
+    /// The store's identity ([`Store::identity`]), once read or made.
+    identity: Option<u64>,
 }
+
+/// The file at the store's root that names it: a random 64-bit id in hex,
+/// written the first time [`Store::identity`] is asked. The sweep's
+/// manifest records it, so a manifest left by another store (a
+/// `history_dir` moved, a store deleted and begun again) is discarded.
+pub const STORE_ID_FILE: &str = "store.id";
 
 impl<B: Backend> Store<B> {
     /// Rebuild the index from `fights/`. Unreadable cards are skipped and
@@ -2283,6 +2296,7 @@ impl<B: Backend> Store<B> {
             killed: HashSet::new(),
             evicted: Vec::new(),
             write_failures: 0,
+            identity: None,
         };
         store.refresh_killed();
         // Cards stamped with the store-wide owner before ownership was
@@ -3058,6 +3072,38 @@ impl<B: Backend> Store<B> {
     /// How many fight writes failed since the store was opened.
     pub fn write_failures(&self) -> u64 {
         self.write_failures
+    }
+
+    /// The store's identity: [`STORE_ID_FILE`]'s id, or a fresh random one
+    /// written there when the file is missing or unreadable. One that
+    /// cannot be written is this run's alone, so every start makes another
+    /// and the sweep reads every log (the safe direction).
+    pub fn identity(&mut self) -> u64 {
+        if let Some(id) = self.identity {
+            return id;
+        }
+        let read = self
+            .backend
+            .read("", STORE_ID_FILE)
+            .and_then(|b| String::from_utf8(b).ok())
+            .and_then(|t| u64::from_str_radix(t.trim(), 16).ok());
+        let id = read.unwrap_or_else(|| {
+            use std::hash::{BuildHasher, Hasher};
+            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+            h.write_u128(
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos()),
+            );
+            h.write_u32(std::process::id());
+            let id = h.finish();
+            let _ = self
+                .backend
+                .write("", STORE_ID_FILE, format!("{id:016x}\n").as_bytes());
+            id
+        });
+        self.identity = Some(id);
+        id
     }
 
     pub fn card(&self, id: &str) -> Option<&FightCard> {

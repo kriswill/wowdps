@@ -71,21 +71,7 @@ fn log_text(month: u32, day: u32, project_id: u8, pulls: &[(u32, bool)], pad: us
     for (i, (dur_s, kill)) in pulls.iter().enumerate() {
         let h = 20 + (i / 6) as u32;
         let m = ((i % 6) * 10) as u32;
-        let ts = |sec: u32| format!("{date} {h:02}:{:02}:{:02}.000-4", m + sec / 60, sec % 60);
-        out.push_str(&format!(
-            "{}  ENCOUNTER_START,3130,\"The Ashen Warden\",15,20,2769\n",
-            ts(0)
-        ));
-        out.push_str(&format!(
-            "{}  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,1000,1000,0,0,0,0,0,nil,nil\n",
-            ts(1),
-        ));
-        out.push_str(&format!(
-            "{}  ENCOUNTER_END,3130,\"The Ashen Warden\",15,20,{},{}\n",
-            ts(*dur_s),
-            u8::from(*kill),
-            dur_s * 1000
-        ));
+        out.push_str(&pull(&date, h, m, *dur_s, *kill));
     }
     let mut hit = 0u32;
     while out.len() < pad {
@@ -98,6 +84,27 @@ fn log_text(month: u32, day: u32, project_id: u8, pulls: &[(u32, bool)], pad: us
         hit += 1;
     }
     out
+}
+
+/// One pull of the boss on `date` at `h:m`, lasting `dur_s` seconds.
+fn pull(date: &str, h: u32, m: u32, dur_s: u32, kill: bool) -> String {
+    let ts = |sec: u32| format!("{date} {h:02}:{:02}:{:02}.000-4", m + sec / 60, sec % 60);
+    format!(
+        "{}  ENCOUNTER_START,3130,\"The Ashen Warden\",15,20,2769\n\
+         {}  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,1000,1000,0,0,0,0,0,nil,nil\n\
+         {}  ENCOUNTER_END,3130,\"The Ashen Warden\",15,20,{},{}\n",
+        ts(0),
+        ts(1),
+        ts(dur_s),
+        u8::from(kill),
+        dur_s * 1000
+    )
+}
+
+fn append(path: &Path, text: &str) {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    file.write_all(text.as_bytes()).unwrap();
 }
 
 /// Three pulls: two wipes and a kill.
@@ -217,6 +224,36 @@ fn settle(
     panic!("the store never settled at {want:?}: {last:?}");
 }
 
+/// Poll `Status` until `done` holds of the history's status, and has for
+/// 300 ms.
+fn settle_when(socket: &Path, done: impl Fn(&HistoryStatus) -> bool) -> HistoryStatus {
+    let mut c = client(socket);
+    let until = Instant::now() + DEADLINE;
+    let mut since: Option<Instant> = None;
+    let mut last = None;
+    let mut req_id = 1;
+    while Instant::now() < until {
+        c.send(&ClientMsg::GetStatus { req_id });
+        req_id += 1;
+        thread::sleep(Duration::from_millis(20));
+        for msg in c.poll() {
+            let DaemonMsg::Status { history, .. } = msg else {
+                continue;
+            };
+            since = if done(&history) {
+                since.or(Some(Instant::now()))
+            } else {
+                None
+            };
+            if since.is_some_and(|at| at.elapsed() >= Duration::from_millis(300)) {
+                return history;
+            }
+            last = Some(history);
+        }
+    }
+    panic!("the store never settled: {last:?}");
+}
+
 /// Start a daemon, wait for the store to hold `fights` with nothing
 /// importing, and stop it.
 fn run_until(opts: DaemonOptions, fights: u32) {
@@ -276,6 +313,11 @@ fn move_second_pull(log: &Path, from: u32, to: u32) {
     assert_ne!(text, moved);
     assert_eq!(text.len(), moved.len());
     std::fs::write(log, moved).unwrap();
+}
+
+/// The manifest's entries in `cache`, none without a file.
+fn manifest(cache: &Path) -> Vec<(PathBuf, swept::Entry)> {
+    swept::read(cache).map(|d| d.entries).unwrap_or_default()
 }
 
 fn cards(hist: &Path) -> Vec<FightCard> {
@@ -383,7 +425,7 @@ fn an_older_log_is_read_again_only_when_its_file_changed() {
     let f = Folder::new("rule");
     run_until(f.options(), FOLDER_FIGHTS);
     let [a, b] = f.older.clone();
-    let entries = swept::read(&f.cache).unwrap().1;
+    let entries = manifest(&f.cache);
     let mut listed: Vec<PathBuf> = entries.iter().map(|(p, _)| p.clone()).collect();
     listed.sort();
     assert_eq!(
@@ -407,15 +449,11 @@ fn an_older_log_is_read_again_only_when_its_file_changed() {
                 std::fs::write(&other, text).unwrap();
                 std::fs::rename(&other, &a).unwrap();
             }
-            "grown" => {
-                use std::io::Write;
-                let mut file = std::fs::OpenOptions::new().append(true).open(&a).unwrap();
-                // A cast: a line the index reads and stores nothing of.
-                file.write_all(
-                    b"7/1/2026 23:59:00.000-4  SPELL_CAST_SUCCESS,Player-1-A,\"Ana-Realm\",0x511,0x0,0000000000000000,nil,0x80000000,0x80000000,116,\"Frostbolt\",0x10\n",
-                )
-                .unwrap();
-            }
+            // A cast: a line the index reads and stores nothing of.
+            "grown" => append(
+                &a,
+                "7/1/2026 23:59:00.000-4  SPELL_CAST_SUCCESS,Player-1-A,\"Ana-Realm\",0x511,0x0,0000000000000000,nil,0x80000000,0x80000000,116,\"Frostbolt\",0x10\n",
+            ),
             "truncated" => {
                 let len = std::fs::metadata(&a).unwrap().len();
                 std::fs::File::options()
@@ -519,7 +557,7 @@ fn an_evicted_fight_reads_no_log_until_the_rules_move() {
     };
     // The newest wipe and the visit's Σ.
     run_until(opts(1), 2);
-    let entry = swept::read(&cache).unwrap().1;
+    let entry = manifest(&cache);
     assert_eq!(entry.len(), 1);
     assert_eq!(entry[0].1.held.len(), 2, "the evicted three held no more");
 
@@ -546,9 +584,7 @@ fn the_log_tailed_last_run_is_read_whole_once_it_is_older() {
     run_until(f.options(), FOLDER_FIGHTS);
     let was_tailed = f.logs.join("WoWCombatLog-070326.txt");
     assert!(
-        swept::read(&f.cache)
-            .unwrap()
-            .1
+        manifest(&f.cache)
             .iter()
             .all(|(p, _)| *p != swept::key_of(&was_tailed))
     );
@@ -571,13 +607,163 @@ fn a_deleted_log_drops_out_of_the_manifest() {
     let ckpt = checkpoint(&f.cache, &a);
     run_until(f.options(), FOLDER_FIGHTS);
     assert_eq!(checkpoint(&f.cache, &a), ckpt);
-    let listed: Vec<PathBuf> = swept::read(&f.cache)
-        .unwrap()
-        .1
-        .into_iter()
-        .map(|(p, _)| p)
-        .collect();
+    let listed: Vec<PathBuf> = manifest(&f.cache).into_iter().map(|(p, _)| p).collect();
     assert_eq!(listed, [swept::key_of(&a)]);
+}
+
+/// A read that stops short of the file's end — here a last line the game
+/// has not ended yet, as a read error would leave it — is not a whole
+/// read: it is not recorded, and every start reads the log again until it
+/// is.
+#[test]
+fn a_read_short_of_the_files_end_is_not_recorded() {
+    let tmp = Temp::new("short");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let a = logs.join("WoWCombatLog-070126.txt");
+    std::fs::write(
+        &a,
+        log_text(7, 1, RETAIL, NIGHT, 0) + "7/1/2026 23:00:00.000-4  SPELL_CAST_SUC",
+    )
+    .unwrap();
+    set_mtime(&a, SystemTime::now() - Duration::from_secs(200));
+    write_log(&logs, 2, RETAIL, 100);
+    let (hist, cache) = (tmp.join("history"), tmp.join("cache"));
+    let opts = || {
+        options(
+            &tmp,
+            SourceSpec::Dir(logs.clone()),
+            hist.clone(),
+            Some(cache.clone()),
+        )
+    };
+    run_until(opts(), 4 + 3);
+    assert!(manifest(&cache).is_empty(), "{:?}", manifest(&cache));
+    let ckpt = checkpoint(&cache, &a);
+    run_until(opts(), 4 + 3);
+    assert_ne!(checkpoint(&cache, &a), ckpt, "read again");
+    // The line ends: the next read reaches the end, and is recorded. (Its
+    // mtime kept, so it stays the older log: the newest is the tailed one.)
+    let at = mtime(&a);
+    append(
+        &a,
+        "CESS,Player-1-A,\"Ana-Realm\",0x511,0x0,0000000000000000,nil,0x80000000,0x80000000,116,\"Frostbolt\",0x10\n",
+    );
+    set_mtime(&a, at);
+    run_until(opts(), 4 + 3);
+    let listed: Vec<PathBuf> = manifest(&cache).into_iter().map(|(p, _)| p).collect();
+    assert_eq!(listed, [swept::key_of(&a)]);
+}
+
+/// A read during which a fight write failed is not recorded: the store
+/// cannot hold its rows (a file stands where their folder goes), nothing
+/// is stored, and no log enters the manifest. Once the store can write,
+/// the next start reads them all and records them.
+#[test]
+fn a_read_during_a_failed_write_is_not_recorded() {
+    let f = Folder::new("failed");
+    std::fs::create_dir_all(&f.hist).unwrap();
+    std::fs::write(f.hist.join("rows"), "not a folder").unwrap();
+    let d = start(f.options());
+    let st = settle_when(&d.socket, |h| h.error.is_some() && h.importing == 0);
+    stop(d);
+    assert_eq!(st.fights, 0, "{st:?}");
+    assert!(manifest(&f.cache).is_empty(), "{:?}", manifest(&f.cache));
+
+    std::fs::remove_file(f.hist.join("rows")).unwrap();
+    run_until(f.options(), FOLDER_FIGHTS);
+    let mut listed: Vec<PathBuf> = manifest(&f.cache).into_iter().map(|(p, _)| p).collect();
+    listed.sort();
+    assert_eq!(listed, f.older.clone().map(|p| swept::key_of(&p)));
+}
+
+/// The tailer leaves its log for a newer one while the daemon runs: the
+/// left log is read as an older one and recorded. The game flushes a last
+/// pull into it late; the next start reads it again and stores the pull.
+#[test]
+fn a_log_the_tailer_left_is_recorded_and_read_again_once_it_grows() {
+    let f = Folder::new("left");
+    let left = f.logs.join("WoWCombatLog-070326.txt");
+    let d = start(f.options());
+    settle(
+        &d.socket,
+        Some(FOLDER_FIGHTS),
+        Duration::from_millis(300),
+        DEADLINE,
+    );
+    assert!(
+        manifest(&f.cache)
+            .iter()
+            .all(|(p, _)| *p != swept::key_of(&left))
+    );
+    // A newer log: the tailer moves to it, and the one it left is read.
+    write_log(&f.logs, 4, RETAIL, 0);
+    // Day 3's Σ, day 4's pulls.
+    settle(
+        &d.socket,
+        Some(FOLDER_FIGHTS + 1 + 3),
+        Duration::from_millis(300),
+        DEADLINE,
+    );
+    wait_for("the left log was never recorded", || {
+        manifest(&f.cache)
+            .iter()
+            .any(|(p, _)| *p == swept::key_of(&left))
+    });
+    stop(d);
+
+    let ckpt = checkpoint(&f.cache, &left);
+    // Its mtime kept, so day 4's log stays the tailed one.
+    let at = mtime(&left);
+    append(&left, &pull("7/3/2026", 22, 0, 50, false));
+    set_mtime(&left, at);
+    run_until(f.options(), FOLDER_FIGHTS + 1 + 3 + 1);
+    assert_ne!(checkpoint(&f.cache, &left), ckpt, "read again");
+    let ckpt = checkpoint(&f.cache, &left);
+    run_until(f.options(), FOLDER_FIGHTS + 1 + 3 + 1);
+    assert_eq!(checkpoint(&f.cache, &left), ckpt, "and recorded again");
+}
+
+/// The manifest describes one store: a daemon on another store (a
+/// `history_dir` moved, a store deleted and begun anew) discards it and
+/// reads every log, even one that left no fight to miss.
+#[test]
+fn a_manifest_of_another_store_is_discarded() {
+    let tmp = Temp::new("store");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    // An older log with no pull: it leaves the store nothing to hold.
+    let empty = logs.join("WoWCombatLog-070126.txt");
+    std::fs::write(&empty, log_text(7, 1, RETAIL, &[], 0)).unwrap();
+    set_mtime(&empty, SystemTime::now() - Duration::from_secs(200));
+    write_log(&logs, 2, RETAIL, 100);
+    let cache = tmp.join("cache");
+    let opts = |hist: &str| {
+        options(
+            &tmp,
+            SourceSpec::Dir(logs.clone()),
+            tmp.join(hist),
+            Some(cache.clone()),
+        )
+    };
+    run_until(opts("one"), 3);
+    let entries = manifest(&cache);
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].1.held.is_empty(), "{entries:?}");
+    let ckpt = checkpoint(&cache, &empty);
+    run_until(opts("one"), 3);
+    assert_eq!(checkpoint(&cache, &empty), ckpt, "its own store: unread");
+
+    run_until(opts("two"), 3);
+    assert_ne!(checkpoint(&cache, &empty), ckpt, "another store: read");
+    let ckpt = checkpoint(&cache, &empty);
+    run_until(opts("two"), 3);
+    assert_eq!(checkpoint(&cache, &empty), ckpt);
+
+    // Deleted and begun again: a new store, whatever its folder.
+    std::fs::remove_dir_all(tmp.join("two")).unwrap();
+    run_until(opts("two"), 3);
+    assert_ne!(checkpoint(&cache, &empty), ckpt, "a store begun anew: read");
 }
 
 // ---- what needs a log after a restart ---------------------------------------------
@@ -700,7 +886,7 @@ fn two_editions_each_read_only_what_is_new() {
     // Each edition: the older log's pulls and Σ, the tailed one's pulls.
     let fights = 2 * (4 + 3);
     run_until(opts(), fights);
-    let entries = swept::read(&cache).unwrap().1;
+    let entries = manifest(&cache);
     let mut editions: Vec<u8> = entries.iter().map(|(_, e)| e.project_id).collect();
     editions.sort();
     assert_eq!(editions, [RETAIL, FOREVER]);

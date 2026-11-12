@@ -13,19 +13,22 @@
 //! retention evicts later is dropped from its entry ([`Manifest::forget`]),
 //! so it stays evicted rather than being parsed again on every start.
 //!
-//! The whole manifest answers to one set of rules ([`rules`]): the card
-//! schema, the index cache's format (the scanner's rules), and the history
-//! config that decides what a read stores and keeps. Any of them moving
-//! voids every entry, so each log is read once more under the new rules.
+//! The whole manifest answers to one store ([`Store::identity`]) and one
+//! set of rules ([`rules`]): a fingerprint of the sources that decide what
+//! a read yields and keeps (`build.rs`), and the history config that does.
+//! Another store, another build of those sources or another config voids
+//! every entry, so each log is read once more.
 //!
 //! Serialized with the wire primitives, as the checkpoints are.
+//!
+//! [`Store::identity`]: crate::history::Store::identity
 
 use std::collections::{BTreeMap, HashSet};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use wowdps_proto::history::{HISTORY_SCHEMA, fight_id, fnv64};
+use wowdps_proto::history::{fight_id, fnv64};
 use wowdps_proto::wire::{self, Reader};
 
 use crate::cache::write_atomic;
@@ -104,12 +107,21 @@ impl Entry {
     }
 }
 
-/// The fingerprint every entry answers to: the card schema, the index
-/// cache's format and the history config that decides what a read of a
-/// log stores (`store_trash`) and what retention keeps of it (the cap, the
-/// kept-whole switches, the configured characters, whose bests are kept).
-/// Detail and replay caps are left out: what a kept fight is short of, the
-/// rewrite queue fills from its log without the sweep.
+/// `build.rs`'s hash of every Rust source that decides which fights a read
+/// of a log yields and the store keeps: all of model and core (the parser,
+/// the scanner, the meter, the generated tables), proto's history codec
+/// (`HISTORY_SCHEMA`, the ids), and the daemon's history store, loader,
+/// index cache and this module. A build that changes any of them reads
+/// every log once; one that changes none (the hub, a client) reads nothing
+/// again.
+pub const SOURCES: &str = env!("WOWDPS_SWEEP_SOURCES");
+
+/// The fingerprint every entry answers to: [`SOURCES`] and the history
+/// config that decides what a read of a log stores (`store_trash`) and
+/// what retention keeps of it (the cap, the kept-whole switches, the
+/// configured characters, whose bests are kept). Detail and replay caps
+/// are left out: what a kept fight is short of, the rewrite queue fills
+/// from its log without the sweep.
 pub fn rules(cfg: &Retention) -> u64 {
     let mut chars: Vec<String> = cfg
         .characters
@@ -120,10 +132,9 @@ pub fn rules(cfg: &Retention) -> u64 {
     chars.sort();
     let mut key = Vec::new();
     key.extend_from_slice(MAGIC);
-    key.extend_from_slice(crate::cache::MAGIC);
     key.extend_from_slice(
         format!(
-            "|{HISTORY_SCHEMA}|{}|{}|{}|{}|{}",
+            "|{SOURCES}|{}|{}|{}|{}|{}",
             cfg.store_trash,
             cfg.keep_per_encounter,
             cfg.keep_whole,
@@ -144,27 +155,31 @@ pub fn key_of(path: &Path) -> PathBuf {
 pub struct Manifest {
     file: PathBuf,
     rules: u64,
+    /// The store it describes (`Store::identity`).
+    store: u64,
     entries: BTreeMap<PathBuf, Entry>,
     /// Changed since the file was last written.
     dirty: bool,
 }
 
 impl Manifest {
-    /// The manifest in `dir` (the index cache's directory) for `rules`.
-    /// A missing, torn or foreign file, or one written under other rules,
-    /// is an empty manifest; an entry whose file is gone or no longer what
-    /// it describes is dropped (it can never match again).
-    pub fn load(dir: &Path, rules: u64) -> Self {
+    /// The manifest in `dir` (the index cache's directory) for `rules` and
+    /// the store `store`. A missing, torn or foreign file, or one written
+    /// under other rules or for another store, is an empty manifest; an
+    /// entry whose file is gone or no longer what it describes is dropped
+    /// (it can never match again).
+    pub fn load(dir: &Path, rules: u64, store: u64) -> Self {
         let file = dir.join(FILE);
         let entries = std::fs::read(&file)
             .ok()
             .and_then(|bytes| decode(&bytes))
-            .filter(|(r, _)| *r == rules)
-            .map(|(_, entries)| entries)
+            .filter(|d| d.rules == rules && d.store == store)
+            .map(|d| d.entries)
             .unwrap_or_default();
         let mut m = Self {
             file,
             rules,
+            store,
             entries: entries.into_iter().collect(),
             dirty: false,
         };
@@ -235,7 +250,7 @@ impl Manifest {
                 self.entries.remove(&path);
             }
         }
-        let bytes = encode(self.rules, &self.entries);
+        let bytes = encode(self.rules, self.store, &self.entries);
         // Written or not, it is clean until it changes again: a cache that
         // refuses writes is not tried on every turn, and a lost write costs
         // a read on the next start, never a fight.
@@ -257,16 +272,25 @@ impl Manifest {
     }
 }
 
-/// The entries a manifest file holds, whatever its rules — for a reader
-/// that only looks (a test, a diagnostic).
-pub fn read(dir: &Path) -> Option<(u64, Vec<(PathBuf, Entry)>)> {
+/// What a manifest file holds, whatever its rules and store.
+#[derive(Debug)]
+pub struct Decoded {
+    pub rules: u64,
+    pub store: u64,
+    pub entries: Vec<(PathBuf, Entry)>,
+}
+
+/// The manifest file in `dir` as it is — for a reader that only looks (a
+/// test, a diagnostic).
+pub fn read(dir: &Path) -> Option<Decoded> {
     decode(&std::fs::read(dir.join(FILE)).ok()?)
 }
 
-fn encode(rules: u64, entries: &BTreeMap<PathBuf, Entry>) -> Vec<u8> {
+fn encode(rules: u64, store: u64, entries: &BTreeMap<PathBuf, Entry>) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(MAGIC);
     wire::put_u64(&mut buf, rules);
+    wire::put_u64(&mut buf, store);
     let entries: Vec<(&PathBuf, &Entry)> = entries.iter().collect();
     wire::put_vec(&mut buf, &entries, |b, (path, e)| {
         wire::put_bytes(b, path.as_os_str().as_bytes());
@@ -287,10 +311,11 @@ fn encode(rules: u64, entries: &BTreeMap<PathBuf, Entry>) -> Vec<u8> {
     buf
 }
 
-fn decode(bytes: &[u8]) -> Option<(u64, Vec<(PathBuf, Entry)>)> {
+fn decode(bytes: &[u8]) -> Option<Decoded> {
     let rest = bytes.strip_prefix(MAGIC.as_slice())?;
     let mut rd = Reader::new(rest);
     let rules = rd.u64().ok()?;
+    let store = rd.u64().ok()?;
     let entries = rd
         .vec(|r| {
             let path = PathBuf::from(std::ffi::OsStr::from_bytes(&r.bytes()?));
@@ -311,7 +336,11 @@ fn decode(bytes: &[u8]) -> Option<(u64, Vec<(PathBuf, Entry)>)> {
         })
         .ok()?;
     rd.finish().ok()?;
-    Some((rules, entries))
+    Some(Decoded {
+        rules,
+        store,
+        entries,
+    })
 }
 
 #[cfg(test)]
@@ -359,19 +388,20 @@ mod tests {
         let tmp = Temp::new("roundtrip");
         let log = tmp.0.join("WoWCombatLog-1.txt");
         std::fs::write(&log, "a log\n").unwrap();
-        let mut m = Manifest::load(&tmp.0, 7);
+        let mut m = Manifest::load(&tmp.0, 7, 70);
         m.record(
             key_of(&log),
             entry_for(&log, &[(1000, false), (2000, true)]),
         );
         m.flush();
-        let back = Manifest::load(&tmp.0, 7);
+        let back = Manifest::load(&tmp.0, 7, 70);
         let got: Vec<(&Path, &Entry)> = back.entries().collect();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].0, key_of(&log));
         assert_eq!(got[0].1, &entry_for(&log, &[(1000, false), (2000, true)]));
-        // Another rule set reads none of it.
-        assert_eq!(Manifest::load(&tmp.0, 8).entries().count(), 0);
+        // Another rule set reads none of it, nor another store.
+        assert_eq!(Manifest::load(&tmp.0, 8, 70).entries().count(), 0);
+        assert_eq!(Manifest::load(&tmp.0, 7, 71).entries().count(), 0);
         // A torn file is no manifest, never a panic.
         let bytes = std::fs::read(tmp.0.join(FILE)).unwrap();
         for cut in 0..bytes.len() {
@@ -384,7 +414,7 @@ mod tests {
         let tmp = Temp::new("unchanged");
         let log = tmp.0.join("WoWCombatLog-1.txt");
         std::fs::write(&log, "a log\n").unwrap();
-        let mut m = Manifest::load(&tmp.0, 1);
+        let mut m = Manifest::load(&tmp.0, 1, 1);
         let key = key_of(&log);
         m.record(key.clone(), entry_for(&log, &[(1000, false), (2000, true)]));
         let both = [fight_id(0xabc, 1000, false), fight_id(0xabc, 2000, true)];
@@ -428,7 +458,7 @@ mod tests {
         let b = tmp.0.join("WoWCombatLog-b.txt");
         std::fs::write(&a, "a\n").unwrap();
         std::fs::write(&b, "b\n").unwrap();
-        let mut m = Manifest::load(&tmp.0, 1);
+        let mut m = Manifest::load(&tmp.0, 1, 1);
         m.record(key_of(&a), entry_for(&a, &[]));
         let mut eb = entry_for(&b, &[]);
         eb.log = 0xb;
@@ -440,21 +470,24 @@ mod tests {
         // The next write leaves it out.
         m.record(key_of(&a), entry_for(&a, &[(5, false)]));
         m.flush();
-        let (_, entries) = read(&tmp.0).unwrap();
+        let entries = read(&tmp.0).unwrap().entries;
         assert_eq!(
             entries.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>(),
             [key_of(&a)]
         );
         // And a load drops what no write got to, writing at its first flush.
         std::fs::remove_file(&a).unwrap();
-        let mut m = Manifest::load(&tmp.0, 1);
+        let mut m = Manifest::load(&tmp.0, 1, 1);
         assert_eq!(m.entries().count(), 0);
         m.flush();
-        assert_eq!(read(&tmp.0).unwrap().1.len(), 0);
+        assert_eq!(read(&tmp.0).unwrap().entries.len(), 0);
     }
 
     #[test]
     fn the_rules_move_with_what_a_read_stores_and_keeps() {
+        // The build's fingerprint of the deciding sources is in them.
+        assert_eq!(SOURCES.len(), 16);
+        assert!(SOURCES.bytes().all(|b| b.is_ascii_hexdigit()), "{SOURCES}");
         let base = Retention::default();
         let r = rules(&base);
         assert_eq!(r, rules(&base.clone()));
