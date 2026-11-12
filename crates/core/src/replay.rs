@@ -25,7 +25,13 @@
 //! one. The cut's FLOOR is the one the block reports players at most often
 //! (a tie to the lower id): what a boss pull is drawn on. A hit's position
 //! is its victim's post at that moment, and a placed thing's its caster's
-//! or its target's, on whatever floor that is.
+//! or its target's, on whatever floor that is. A UiMap 0 means what the
+//! log's edition means by it (`stood`): Retail names a UiMap wherever it
+//! places a unit, so its 0 is no place and posts nothing; Forever's client
+//! names none inside a dungeon or a raid and writes 0 there on every block,
+//! so there each post keeps map 0 — no UiMap: its x and y are the unit's
+//! own on the instance's map, the head's `map` — and a pull fought inside
+//! one has floor 0.
 //!
 //! THE UNITS: numbered where first seen — a post (a player, creature or
 //! vehicle the block puts on any floor), or an event row naming them —
@@ -423,6 +429,11 @@ impl Cutter {
         Tables::of(self.edition())
     }
 
+    /// Whether the edition's UiMap 0 is a place ([`stood`]).
+    fn zero_is_a_place(&self) -> bool {
+        self.tables().map_zero_is_a_place()
+    }
+
     fn gix(&mut self, guid: &str) -> Gix {
         if let Some(&g) = self.index.get(guid) {
             return g;
@@ -604,7 +615,7 @@ impl Cutter {
         // The post: the block's unit on whatever floor, kept with it; the
         // main floor is chosen once every line is in.
         if let Some(h) = &line.hp_hint
-            && let Some(pos) = h.pos
+            && let Some(pos) = stood(h, self.zero_is_a_place())
             && is_posted(&h.unit_guid)
         {
             if h.unit_guid.starts_with("Player-") {
@@ -889,11 +900,12 @@ impl Cutter {
             } if is_player(dst) && foe(self, src) && spell.id != 0 => {
                 // The victim's own block: only a hit it placed makes a row,
                 // on whatever floor it placed them.
+                let zero = self.zero_is_a_place();
                 let at = line
                     .hp_hint
                     .as_ref()
                     .filter(|h| h.unit_guid == dst.guid)
-                    .and_then(|h| h.pos)?;
+                    .and_then(|h| stood(h, zero))?;
                 let mut r = row(EventKind::Hit, self.gix(&dst.guid), spell.id, &spell.name);
                 r.at = Some(at);
                 r.src = self.src_of(src);
@@ -1077,11 +1089,12 @@ impl Cutter {
     /// The `placed.csv` row a line may make, resolved after every other.
     fn place(&mut self, t: u32, line: &LogLine, placed: &dyn PlacedTable) {
         // The line's own block, and whom it describes.
+        let zero = self.zero_is_a_place();
         let block = |guid: &str| {
             line.hp_hint
                 .as_ref()
                 .filter(|h| h.unit_guid == guid)
-                .and_then(|h| h.pos)
+                .and_then(|h| stood(h, zero))
         };
         let edition = self.edition();
         let draft = match &line.event {
@@ -1480,6 +1493,15 @@ fn is_player(u: &LogUnit) -> bool {
 
 fn is_creature(u: &LogUnit) -> bool {
     u.guid.starts_with("Creature-") || u.guid.starts_with("Vehicle-")
+}
+
+/// Where a block puts its unit, as the log's edition means it: the parser
+/// keeps a UiMap 0 as the log wrote it, and it is a place only where the
+/// edition's log writes 0 for an instance with no UiMap (Forever's:
+/// `zero_is_a_place`, [`Tables::map_zero_is_a_place`]). Anywhere else a 0
+/// puts the unit nowhere: no post, no hit's place, no placed thing's.
+fn stood(hint: &parser::HpHint, zero_is_a_place: bool) -> Option<Position> {
+    hint.pos.filter(|p| p.map != 0 || zero_is_a_place)
 }
 
 /// A unit the advanced block posts: a player, a creature, a vehicle.

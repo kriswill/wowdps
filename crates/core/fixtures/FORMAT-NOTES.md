@@ -146,7 +146,8 @@ type comes *after* the block, at 28).
 > reads the block's place: `x`, `y` (two decimals: `1500.25,-3.50`), `ui_map_id`
 > (the floor, a UiMap id) and `facing` (four decimals, radians), kept exact as
 > integers (`HpHint.pos`: hundredths of a yard, ten-thousandths of a radian; none
-> when a field does not read or the map is 0), and field 18 (a player's item level,
+> when a field does not read — a map of 0 is kept as written, see below), and field
+> 18 (a player's item level,
 > an NPC's own level: `325`, `93`). `DAMAGE_SPLIT` (Blessing of Sacrifice's share)
 > carries the 3-field spell prefix, so its block is at off12 like a spell's — it
 > describes the unit the split landed on; read at off9, it was never found (452
@@ -160,6 +161,19 @@ type comes *after* the block, at 28).
 > 59 % of a run's posts off its most-posted floor). A boss room was one UiMap
 > in each of 48 real pulls. The replay keeps every post with its own (tier
 > format 2, `tracks.csv`'s `map_id`).
+>
+> **`ui_map_id` 0 means what the edition means (2026-11-12).** Retail names a
+> UiMap wherever it places a unit: over three logs (some 2.8 million blocks) four
+> blocks with health wrote 0, and 958 more wrote 0 with no health (and `0.00`
+> coordinates), which post nothing anyway. The Forever client (`PROJECT_ID,18`) has
+> no UiMap inside a dungeon or a raid and writes 0 on every block there, its x, y
+> and facing still the unit's own: every block with health inside Blackfathom
+> Deeps (instance 48) and Scarlet Monastery (189), some 71 000 over 13 boss pulls
+> on three nights, read 0, while its open world names the zone's UiMap as Retail
+> does (1440, 1413, 1456 …, matching the log's `MAP_CHANGE` lines; a dungeon writes
+> no `MAP_CHANGE`). So the parser keeps the 0 as written and the replay cut asks
+> the edition (`Tables::map_zero_is_a_place`): Retail's 0 places nobody, Forever's
+> is a post on no UiMap, on the instance's map (R29).
 
 ### Which unit the advanced block describes  ← attribution-critical
 

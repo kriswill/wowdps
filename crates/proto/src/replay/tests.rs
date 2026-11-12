@@ -1124,6 +1124,40 @@ fn every_floor_round_trips() {
     assert_eq!(decode(&encode(&empty)), Some(empty));
 }
 
+/// R29: a Forever pull inside a dungeon, whose client names no UiMap
+/// there: every post on map 0 (no UiMap: x and y on the instance's own
+/// map, the head's `map`) and the floor 0. It is format 6 as it stands —
+/// its maps section a one-floor table, 0's one byte — and round-trips, a
+/// step out onto a UiMap included; the files say 0 on every track row and
+/// the instance's map in `pull.txt`.
+#[test]
+fn a_pull_on_no_ui_map_round_trips_and_its_files_say_so() {
+    let mut cut = small();
+    cut.head.map = 48;
+    cut.floor = 0;
+    for p in cut.units.iter_mut().flat_map(|u| &mut u.posts) {
+        p.map_id = 0;
+    }
+    let bytes = encode(&cut);
+    assert_eq!(format_of(&bytes), Some(FORMAT));
+    assert_eq!(decode(&bytes), Some(cut.clone()));
+    let (from, len) = section_at(&bytes, MAPS);
+    assert_eq!(&bytes[from..from + len], &[1, 0, 0]);
+    let rows: Vec<String> = csv::tracks_csv(&cut)
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').nth(9).unwrap().to_string())
+        .collect();
+    assert_eq!(rows, ["0", "0", "0"], "map_id on every track row");
+    assert!(csv::pull_txt(&cut, &PullFacts::default()).contains("\nmap = 48\n"));
+    // The tank walks out onto the continent's UiMap and back in.
+    let tank = &mut cut.units[0].posts;
+    tank.push(on(1414, post(1500, 1, 2, 0, 700, Some((6, 100, 100)))));
+    tank.push(on(0, post(2000, 3, 4, 0, 700, Some((6, 100, 100)))));
+    *tank = track(std::mem::take(tank));
+    assert_eq!(decode(&encode(&cut)), Some(cut.clone()));
+}
+
 /// Where section `tag` lies in a file: (offset, length), off its index.
 fn section_at(b: &[u8], tag: u8) -> (usize, usize) {
     let index_len = u32::from_le_bytes(b[5..9].try_into().unwrap()) as usize;

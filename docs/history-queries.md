@@ -275,7 +275,10 @@ none until a regrade rewrites it, and a regrade finds only the logs in a
 followed folder or read since the daemon started: while Forever's folder is
 not followed, run `wowdps history import` on its log (or its `Logs`
 folder), let the scan finish, then `wowdps history regrade`, all in one
-daemon run. `role-night` reads `players.role` as the daemon does: a player
+daemon run; `--edition forever` keeps the regrade to Forever's cards (`wowdps
+history regrade --kind encounter --edition forever` rewrites its boss pulls
+and recuts their replays: one an earlier build cut inside a dungeon holds no
+positions). `role-night` reads `players.role` as the daemon does: a player
 takes their most-played spec's role, else, with no spec on any of the
 night's pulls, the role their pulls stored most often (a tie: tank, healer,
 dps), and each column counts only the pulls of that role.

@@ -18,9 +18,9 @@ use wowdps_core::model::replay::{Cut, EventKind, PlacedKind, UnitKind};
 use wowdps_core::replay::{PlacedTable, cut};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures");
-const GATED: [&str; 10] = [
+const GATED: [&str; 11] = [
     "sample", "taken", "support", "spans", "shields", "stacks", "tree", "relog", "replay",
-    "forever",
+    "forever", "roles",
 ];
 
 /// The fixtures' placed spells — check.awk's `PLACE` / `TELL`, a subset of
