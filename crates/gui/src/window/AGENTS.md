@@ -96,10 +96,12 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   edition known nothing is drawn or asked differently. The switch is a
   row of chips after the places while the games fit (`editions::chips`:
   up to three, a bar that is not narrow), the shown game's chip filled
-  with its color and the live dot on the played game's; else a dropdown
-  and its menu (`Gui::edition_chips` keeps the menu shut while the chips
-  are drawn). At the tile frame beside the chips the jump box is its
-  glyph. Each game has one mark and one color (gui-logic's
+  with its color and the live dot a pip on the played game's badge; else a
+  dropdown and its menu (`Gui::edition_chips` keeps the menu shut while
+  the chips are drawn). A chip's geometry is the same in every state, and
+  beside the chips the jump box starts right after them (its glyph at the
+  tile frame), so a pick or the game played moves nothing in the bar
+  (`editions::tests::the_switch_holds_still_whatever_is_shown_or_played`). Each game has one mark and one color (gui-logic's
   `editions::Mark` and `Tone`, the marks glyphs of the `glyph` table),
   worn in one round badge (`marks.rs`) wherever the game is named: a
   chip, the dropdown and its menu, a fight's tag (`head-edition`, once

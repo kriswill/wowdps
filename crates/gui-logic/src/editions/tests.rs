@@ -494,8 +494,9 @@ fn themes() -> [(&'static str, &'static crate::theme::Def); 3] {
 }
 
 /// On every built-in theme the games' colors read at a glance on the bar
-/// and on a menu (3:1 and more), differ from each other in lightness as
-/// well as hue, keep clear of what the window's colors already mean
+/// and on a menu (3:1 and more), are siblings of a like weight that differ
+/// in lightness as well as hue, keep clear of what the window's colors
+/// already mean
 /// (the chrome, a kill, a wipe, a best), and carry words on a chip's fill
 /// at AA — the muted fill of a game with no color too.
 #[test]
@@ -520,9 +521,14 @@ fn the_games_colors_read_on_every_theme() {
                 assert!(d >= NEAR, "{name} {tone:?} too like {what}: {d}");
             }
         }
+        // Siblings: the teal a step lighter than the violet, of a like
+        // weight, and their hues well apart.
         let (m, f) = (oklab(t.midnight).0, oklab(t.forever).0);
-        assert!((f - m).abs() >= 0.15, "{name}: lightness {m} and {f}");
-        assert!(difference(t.midnight, t.forever) >= 0.3, "{name}");
+        assert!(
+            (0.04..=0.12).contains(&(f - m)),
+            "{name}: lightness {m} and {f}"
+        );
+        assert!(difference(t.midnight, t.forever) >= 0.2, "{name}");
         for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
             let fill = tone.fill(t);
             assert!(reads_on(fill, t), "{name} {tone:?}'s fill");
@@ -534,11 +540,11 @@ fn the_games_colors_read_on_every_theme() {
 }
 
 /// A class chrome that looks like a game's color would read as that game
-/// (a Warlock's lavender beside Midnight's violet): the mark then wears the
-/// bar's ink and its shape tells the game. On the built-in themes that is
-/// the Warlock's chrome beside Midnight's color and no other pair; a
-/// theme's own chrome never takes a mark's color away, and the muted ink
-/// is never swapped.
+/// (a Warlock's lavender beside Midnight's violet, a Mage's cyan beside
+/// Forever's teal): the mark then wears the bar's ink and its shape tells
+/// the game. On the built-in themes those two pairs are all; a theme's own
+/// chrome never takes a mark's color away, and the muted ink is never
+/// swapped.
 #[test]
 fn a_chrome_too_like_a_game_s_color_takes_its_mark_to_ink() {
     use crate::theme::{CLASSES, chrome_base, difference};
@@ -557,26 +563,19 @@ fn a_chrome_too_like_a_game_s_color_takes_its_mark_to_ink() {
                     .map(move |tone| (class, tone))
             })
             .collect();
-        assert_eq!(near, vec![(Class::Warlock, Tone::Midnight)], "{name}");
+        assert_eq!(
+            near,
+            vec![
+                (Class::Mage, Tone::Forever),
+                (Class::Warlock, Tone::Midnight)
+            ],
+            "{name}"
+        );
         let warlock = chrome_base(Class::Warlock);
         assert!(difference(warlock, t.midnight) < NEAR);
         assert_eq!(Tone::Midnight.mark_color(t, warlock), t.ink_2);
         assert_eq!(Tone::Forever.mark_color(t, warlock), t.forever);
         assert_eq!(Tone::Muted.mark_color(t, t.ink_3), t.ink_3, "{name}");
-    }
-}
-
-/// The live dot on a chip filled with a game's color: red on violet or
-/// teal is lost, so it wears a ring of the bar's color; on the bar itself
-/// it needs none.
-#[test]
-fn the_live_dot_wears_a_ring_where_a_fill_drowns_it() {
-    for (name, def) in themes() {
-        let t = &def.window;
-        assert!(!dot_needs_ring(t.bad, t.surface), "{name}: the bar");
-        for tone in [Tone::Midnight, Tone::Forever] {
-            assert!(dot_needs_ring(t.bad, tone.fill(t)), "{name} {tone:?}");
-        }
     }
 }
 

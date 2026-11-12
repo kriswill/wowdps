@@ -58,11 +58,11 @@ committed `sample.txt` and `forever.txt`, both followed, both stored), at
 the three frames; the wide and tile frames draw the switch as a row of
 chips, the narrow one as the dropdown:
 
-- `editions`: Retail shown and played (its chip filled, the live dot in it);
+- `editions`: Retail shown and played (its chip filled, the live pip on its badge);
 - `editions-menu`: the dropdown's menu, at the narrow frame (the chips have
   none to open);
 - `editions-forever`: Forever shown while Retail is played: its own pull on
-  the stage, its rail, the dot on Retail's chip, the fight's tag;
+  the stage, its rail, the pip on Retail's badge, the fight's tag;
 - `editions-forever-menu`, `editions-forever-home`: that, with the menu
   open, and on Forever's Home;
 - `editions-playing-forever`, `editions-forever-playing-forever`: Forever

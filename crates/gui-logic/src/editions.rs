@@ -159,12 +159,9 @@ pub fn mark(edition: Edition, build: Option<(u16, u16, u16)>) -> Mark {
 
 /// How unlike the chrome a game's color must look for its mark to keep
 /// it: a distance in OKLab. A class chrome nearer than this (a Warlock's
-/// lavender beside Midnight's violet) would read as the same color.
+/// lavender beside Midnight's violet, a Mage's cyan beside Forever's teal)
+/// would read as the same color.
 pub const NEAR: f32 = 0.085;
-
-/// What a live dot owes the fill it sits on before it needs no ring of the
-/// bar's color round it.
-pub const DOT_CONTRAST: f32 = 3.0;
 
 impl Tone {
     /// The game's color on theme `t`.
@@ -207,12 +204,6 @@ pub fn ink_on(fill: Color, t: &WindowTokens) -> Color {
     } else {
         t.ink
     }
-}
-
-/// Whether the live dot (`dot`) on a chip filled with `fill` needs a thin
-/// ring of the bar's color to be seen.
-pub fn dot_needs_ring(dot: Color, fill: Color) -> bool {
-    contrast(dot, fill) < DOT_CONTRAST
 }
 
 /// Whether the words on a fill reach AA: what [`ink_on`] owes every fill.

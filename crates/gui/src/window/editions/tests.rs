@@ -764,6 +764,17 @@ struct Measure {
 /// The window over two editions at `at`, in its real faces, measured with
 /// `emblem` as every game's emblem (`None`: none cached, our marks).
 fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
+    measure_in(at, emblem, Edition::Retail, false)
+}
+
+/// [`measure`], with `playing` the game being played and Forever shown
+/// when `forever`.
+fn measure_in(
+    at: (f32, f32),
+    emblem: Option<&'static [u8]>,
+    playing: Edition,
+    forever: bool,
+) -> Measure {
     use super::super::cards::Menu;
     use super::super::shots::{Shot, app};
     // No art but the stand-in in either run (it is read before the
@@ -773,10 +784,19 @@ fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
     crate::images::emblem_on_this_thread(emblem);
     let mut cx = app();
     let path = own_config();
-    std::fs::write(&path, "zoom = 1.0\nhome_on_start = false\n").expect("the config");
+    // The theme named, as the app's: a pick repaints the window from the
+    // config.
+    std::fs::write(
+        &path,
+        format!(
+            "zoom = 1.0\nhome_on_start = false\ntheme = \"{}\"\n",
+            testkit::shots_theme().name
+        ),
+    )
+    .expect("the config");
     let cfg = Config::load();
     let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
-    link.playing.set(Some(Edition::Retail));
+    link.playing.set(Some(playing));
     let mut held = None;
     let (window, gui) = testkit::open_headless(&mut cx, size(px(at.0), px(at.1)), |window, cx| {
         let session =
@@ -790,6 +810,10 @@ fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
         session: held.expect("the session was built"),
     };
     shot.settle(&mut cx);
+    if forever {
+        cx.update_entity(&shot.gui, |g, cx| g.pick_edition(Edition::Forever, cx));
+        shot.settle(&mut cx);
+    }
     let ids = ["edition-retail", "edition-forever"];
     let (switch, chips, bar, meter_top) = cx
         .update_window(window, |_, window, cx| {
@@ -869,5 +893,36 @@ fn a_badge_keeps_the_switch_s_rhythm() {
             }
         }
         assert!(marks.bar.len() >= 2, "{frame}: the places at least");
+    }
+}
+
+/// The row holds still: whichever game is shown and whichever is played,
+/// every chip keeps its place and size, the row its width, and the search
+/// box beside it its place — the filled chip pads as a quiet one does, and
+/// the playing pip sits on a badge's edge rather than in a slot of its own.
+#[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "gpui's mac platform must be created on the main thread"
+)]
+fn the_switch_holds_still_whatever_is_shown_or_played() {
+    for (frame, w, h) in super::super::shots::SIZES {
+        if frame == "narrow" {
+            continue;
+        }
+        let states = [
+            (Edition::Retail, false),
+            (Edition::Retail, true),
+            (Edition::Forever, false),
+            (Edition::Forever, true),
+        ]
+        .map(|(playing, forever)| {
+            let m = measure_in((w, h), None, playing, forever);
+            let jump = m.bar[2];
+            (m.switch, m.chips, jump.origin.x)
+        });
+        for (i, state) in states.iter().enumerate().skip(1) {
+            assert_eq!(state, &states[0], "{frame}: state {i} moved the bar");
+        }
     }
 }

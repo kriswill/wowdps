@@ -143,7 +143,7 @@ playing. When this machine has more than one edition of the game (a log
 followed or a fight stored of each), the window's top bar shows the games
 side by side after Home and Fights, a chip each: Retail by its current
 expansion's name (Midnight), Forever by its own. The game shown is the chip
-filled with its color, the live dot sits in the chip of the game being
+filled with its color, the live dot sits on the badge of the game being
 played, and the build is in the tooltip. Press another to look at it; the
 window goes back to the game you play once you pick it again or that game
 moves on. On a narrow window the chips fold into a dropdown that lists the

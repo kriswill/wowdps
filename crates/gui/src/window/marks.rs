@@ -82,6 +82,47 @@ pub fn badge(w: &W, edition: Edition, mark: Mark, side: Pixels, seat: Seat) -> A
     .into_any_element()
 }
 
+/// The ring of the bar's color round the playing pip: it parts the red
+/// from a fill and from the badge under it alike.
+const PIP_RING: f32 = 1.5;
+
+/// `badge` (`side` across) with, while its game is the one being played,
+/// the live dot as a small pip over its upper-right edge, ringed in the
+/// bar's color: it takes no room of its own, so nothing beside the badge
+/// moves when the game played changes.
+pub fn with_pip(w: &W, badge: AnyElement, side: Pixels, playing: bool) -> AnyElement {
+    let d = w.z(w.size.dot);
+    let ring = w.z(PIP_RING);
+    let whole = d + ring * 2.;
+    // Centered on the badge's edge at its upper-right diagonal.
+    let r = side / 2.;
+    let along = r * std::f32::consts::FRAC_1_SQRT_2;
+    let (left, top) = (r + along - whole / 2., r - along - whole / 2.);
+    let (bar, red) = (w.c(|t| t.surface), w.c(|t| t.bad));
+    div()
+        .relative()
+        .size(side)
+        .flex_none()
+        .child(badge)
+        .when(playing, |el| {
+            el.child(
+                canvas(
+                    |_, _, _| {},
+                    move |b, (), window, _| {
+                        let half = b.size.width.min(b.size.height) / 2.;
+                        fill_disc(window, b.center(), half, bar);
+                        fill_disc(window, b.center(), half - ring, red);
+                    },
+                )
+                .absolute()
+                .left(left)
+                .top(top)
+                .size(whole),
+            )
+        })
+        .into_any_element()
+}
+
 /// Our mark's badge in `b`: a disc of `disc` across its short side, the
 /// glyph stroked over it in `cut`.
 pub fn paint_badge(

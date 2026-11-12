@@ -73,7 +73,7 @@ pub static ONYX: LazyLock<Def> = LazyLock::new(|| Def {
         dial: Color::hex(0x6E737B),
         // The games' colors: a violet and a teal for this theme's bar.
         midnight: Color::hex(0x9478FF),
-        forever: Color::hex(0x2CECF3),
+        forever: Color::hex(0x49B8B8),
     },
     overlay: OverlayTokens {
         panel: Color::hex(0x000000),
