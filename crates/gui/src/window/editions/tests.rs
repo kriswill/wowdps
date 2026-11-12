@@ -762,6 +762,10 @@ struct Measure {
     /// How many badges hold an emblem rather than our mark, the menu's
     /// included.
     emblems: usize,
+    /// The switch's form, as the bar drew it.
+    form: Option<wowdps_gui_logic::editions::Form>,
+    /// The live pill said "Live".
+    live: bool,
 }
 
 impl Measure {
@@ -769,6 +773,8 @@ impl Measure {
     fn geometry(&self) -> Measure {
         Measure {
             emblems: 0,
+            form: self.form,
+            live: self.live,
             switch: self.switch,
             chips: self.chips.clone(),
             bar: self.bar.clone(),
@@ -781,16 +787,17 @@ impl Measure {
 /// The window over two editions at `at`, in its real faces, measured with
 /// `emblem` as every game's emblem (`None`: none cached, our marks).
 fn measure(at: (f32, f32), emblem: Option<&'static [u8]>) -> Measure {
-    measure_in(at, emblem, Edition::Retail, false)
+    measure_in(at, emblem, Edition::Retail, false, false)
 }
 
-/// [`measure`], with `playing` the game being played and Forever shown
-/// when `forever`.
+/// [`measure`], with `playing` the game being played, Forever shown when
+/// `forever`, and Retail's last pull still going when `live`.
 fn measure_in(
     at: (f32, f32),
     emblem: Option<&'static [u8]>,
     playing: Edition,
     forever: bool,
+    live: bool,
 ) -> Measure {
     use super::super::cards::Menu;
     use super::super::shots::{Shot, app};
@@ -812,7 +819,10 @@ fn measure_in(
     )
     .expect("the config");
     let cfg = Config::load();
-    let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
+    let mut link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
+    if live {
+        link = link.with_retail_live(&[RETAIL_ME, FOREVER_ME]);
+    }
     link.playing.set(Some(playing));
     let mut held = None;
     let (window, gui) = testkit::open_headless(&mut cx, size(px(at.0), px(at.1)), |window, cx| {
@@ -867,6 +877,11 @@ fn measure_in(
             (rows, emblems)
         })
         .expect("the window");
+    let (form, live) = shot.gui.read_with(&cx, |g, cx| {
+        let state = g.session.read(cx).state();
+        let live = state.entries().last().is_some_and(|e| e.row.live);
+        (g.edition_form.get(), live)
+    });
     crate::images::emblem_on_this_thread(None);
     crate::images::without_art(false);
     Measure {
@@ -876,16 +891,18 @@ fn measure_in(
         meter_top,
         rows,
         emblems,
+        form,
+        live,
     }
 }
 
 /// A game's badge holds its emblem where one is cached, else our mark,
 /// and the bar is the same either way at each of the three frames: the
 /// switch, its chips and the menu's rows keep their every pixel of place.
-/// The games sit side by side where the bar has room — two chips as tall
-/// as the live pill, on the jump box's line — and the narrow bar has the
-/// dropdown, whose menu lists them; the bar's other pieces and the meter
-/// keep their line.
+/// The games sit side by side where the bar has room (the wide frame) —
+/// two chips as tall as the live pill, on the jump box's line — and
+/// elsewhere the dropdown's menu lists them; the bar's other pieces and
+/// the meter keep their line.
 #[test]
 #[cfg_attr(
     target_os = "macos",
@@ -902,7 +919,10 @@ fn a_badge_keeps_the_switch_s_rhythm() {
             emblems.geometry(),
             "{frame}: an emblem or a mark, one rhythm"
         );
-        if frame == "narrow" {
+        if !marks
+            .form
+            .is_some_and(wowdps_gui_logic::editions::Form::chips)
+        {
             assert!(marks.chips.is_empty(), "{frame}: the dropdown");
             assert_eq!(marks.rows.len(), 2, "{frame}: its menu lists both");
             assert_eq!(marks.rows[0].size, marks.rows[1].size);
@@ -920,36 +940,51 @@ fn a_badge_keeps_the_switch_s_rhythm() {
             }
         }
         assert!(marks.bar.len() >= 2, "{frame}: the places at least");
+        if frame == "wide" {
+            assert!(
+                marks
+                    .form
+                    .is_some_and(wowdps_gui_logic::editions::Form::chips),
+                "the wide frame has room for the games side by side"
+            );
+        }
     }
 }
 
-/// The row holds still: whichever game is shown and whichever is played,
-/// every chip keeps its place and size, the row its width, and the search
-/// box beside it its place — the filled chip pads as a quiet one does, and
-/// the playing pip sits on a badge's edge rather than in a slot of its own.
+/// The switch holds still: its form is the window's width's alone, so
+/// neither a pick nor a pull going live changes it. At every width from
+/// the narrow frame to the wide one, with each game shown and with
+/// Retail's last pull going or over, the form, the switch's place and
+/// size and every chip's are the same — the dropdown keeps room for the
+/// longest name — and beside the chips the search box keeps its place.
+/// Only the fill and the pip move, and the pill's own words.
 #[test]
 #[cfg_attr(
     target_os = "macos",
     ignore = "gpui's mac platform must be created on the main thread"
 )]
 fn the_switch_holds_still_whatever_is_shown_or_played() {
-    for (frame, w, h) in super::super::shots::SIZES {
-        if frame == "narrow" {
-            continue;
-        }
-        let states = [
-            (Edition::Retail, false),
-            (Edition::Retail, true),
-            (Edition::Forever, false),
-            (Edition::Forever, true),
-        ]
-        .map(|(playing, forever)| {
-            let m = measure_in((w, h), None, playing, forever);
-            let jump = m.bar[2];
-            (m.switch, m.chips, jump.origin.x)
-        });
-        for (i, state) in states.iter().enumerate().skip(1) {
-            assert_eq!(state, &states[0], "{frame}: state {i} moved the bar");
+    let mut widths = vec![460.0, 640.0];
+    widths.extend((21..=37).map(|w| w as f32 * 40.0));
+    for width in widths {
+        let states =
+            [(false, false), (true, false), (false, true), (true, true)].map(|(forever, live)| {
+                let m = measure_in((width, 900.0), None, Edition::Retail, forever, live);
+                (m, forever, live)
+            });
+        assert!(states[2].0.live, "{width}: Retail's pull is going");
+        let (first, ..) = &states[0];
+        for (m, forever, live) in &states {
+            let what = format!("{width}, Forever shown {forever}, live {live}");
+            assert_eq!(m.form, first.form, "{what}: the form moved");
+            assert_eq!(m.switch, first.switch, "{what}: the switch moved");
+            assert_eq!(m.chips, first.chips, "{what}: a chip moved");
+            if m.form.is_some_and(wowdps_gui_logic::editions::Form::chips) {
+                assert_eq!(
+                    m.bar[2].origin.x, first.bar[2].origin.x,
+                    "{what}: the search box moved"
+                );
+            }
         }
     }
 }
@@ -1024,18 +1059,20 @@ fn bar_at(
     measured
 }
 
-/// The bar never runs past the window: at every width from the window's
-/// least (320 px) up, with one game (and a character picked), two games,
-/// two with Retail named by its longest expansion, and three, no piece
-/// after the places overlaps the next and the last ends inside the window.
-/// The switch takes the richest form that fits, and at the least widths
-/// the bar folds: the pill's clock, the help button, the jump glyph.
+/// The bar never runs past the window while it holds the switch: at every
+/// width from the window's least (320 px) up, with two games, two with
+/// Retail named by its longest expansion, and three, no piece after the
+/// places overlaps the next and the last ends inside the window. The
+/// switch takes the richest form that fits, and at the least widths the
+/// bar folds: the pill's clock, the help button, the jump glyph. (One game
+/// folds only where its bar would run past:
+/// `one_game_folds_only_where_its_bar_would_run_past`.)
 #[test]
 #[cfg_attr(
     target_os = "macos",
     ignore = "gpui's mac platform must be created on the main thread"
 )]
-fn the_bar_never_runs_past_the_window() {
+fn the_bar_never_runs_past_the_window_with_the_switch() {
     use wowdps_proto::history::FightCard;
     crate::images::without_art(true);
     let card = |edition: Edition, build: (u16, u16, u16)| FightCard {
@@ -1050,14 +1087,6 @@ fn the_bar_never_runs_past_the_window() {
     // anew (the headless platform keeps a window's size).
     let mut widths: Vec<f32> = (8..=37).map(|w| w as f32 * 40.0).collect();
     widths.push(1500.0);
-    for width in &widths {
-        let mock = MockDaemon::fixture()
-            .with_characters(&[RETAIL_ME.to_string()])
-            .with_history();
-        let (over, overlap) = bar_at(&mut cx, MockLink::new(mock), &[], *width);
-        assert!(!overlap, "one game at {width}: two pieces overlap");
-        assert_eq!(over, 0.0, "one game at {width}: the bar runs past");
-    }
     let configs: [(&str, usize, Vec<FightCard>); 3] = [
         ("two games", 2, vec![]),
         (
@@ -1117,4 +1146,138 @@ fn bar_games(
     });
     let _ = cx.update_window(window, |_, window, _| window.remove_window());
     games
+}
+
+/// One game's bar over `MockDaemon`'s fixture, a character picked, at
+/// `width`, drawn `unfolded` as main drew it or folded as it must: how far
+/// its last piece runs past the window (0 inside it), and how often it
+/// folded.
+fn one_game_at(cx: &mut gpui_kit::HeadlessAppContext, width: f32, unfolded: bool) -> (f32, usize) {
+    use super::super::shots::Shot;
+    super::super::top_bar::unfolded(unfolded);
+    let path = own_config();
+    std::fs::write(
+        &path,
+        format!(
+            "zoom = 1.0\nhome_on_start = false\ntheme = \"{}\"\n",
+            testkit::shots_theme().name
+        ),
+    )
+    .expect("the config");
+    let cfg = Config::load();
+    let mock = MockDaemon::fixture()
+        .with_characters(&[RETAIL_ME.to_string()])
+        .with_history();
+    let mut held = None;
+    let (window, gui) = testkit::open_headless(cx, size(px(width), px(900.)), |window, cx| {
+        let session = cx.new(|_| {
+            Session::with_state(
+                Box::new(MockLink::new(mock)),
+                wowdps_proto::ClientState::new(),
+            )
+        });
+        held = Some(session.clone());
+        cx.new(|cx| Gui::new(session, cfg, window, cx))
+    });
+    let shot = Shot {
+        window,
+        gui,
+        session: held.expect("the session was built"),
+    };
+    shot.settle(cx);
+    let over = cx
+        .update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            AFTER
+                .iter()
+                .filter_map(|id| window.try_find(*id).map(|e| f32::from(e.bounds().right())))
+                .fold(0.0, f32::max)
+                - width
+        })
+        .expect("the window");
+    let fold = shot
+        .gui
+        .read_with(cx, |g, _| g.bar_fold.get().unwrap_or_default());
+    let _ = cx.update_window(window, |_, window, _| window.remove_window());
+    super::super::top_bar::unfolded(false);
+    (over.max(0.0), fold)
+}
+
+/// With one game known the bar is main's wherever main's fit: it folds
+/// only at a width where, drawn unfolded as main draws it, it runs past
+/// the window — and there it folds to fit. Each swept width is held to the
+/// unfolded bar drawn at it, and so are the widths at the unfolded bar's
+/// own edge, measured from its layout (its jump glyph's room taken in).
+#[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "gpui's mac platform must be created on the main thread"
+)]
+fn one_game_folds_only_where_its_bar_would_run_past() {
+    crate::images::without_art(true);
+    let mut cx = super::super::shots::app();
+    // The unfolded narrow bar's own width: at 800 px, the window less the
+    // room its jump glyph leaves free between the places and the glyph.
+    let edge = {
+        super::super::top_bar::unfolded(true);
+        let path = own_config();
+        std::fs::write(&path, "zoom = 1.0\nhome_on_start = false\n").expect("the config");
+        let cfg = Config::load();
+        let mock = MockDaemon::fixture()
+            .with_characters(&[RETAIL_ME.to_string()])
+            .with_history();
+        let (window, gui) =
+            testkit::open_headless(&mut cx, size(px(800.), px(900.)), |window, cx| {
+                let session = cx.new(|_| {
+                    Session::with_state(
+                        Box::new(MockLink::new(mock)),
+                        wowdps_proto::ClientState::new(),
+                    )
+                });
+                cx.new(|cx| Gui::new(session, cfg, window, cx))
+            });
+        let session = gui.read_with(&cx, |g, _| g.session().clone());
+        for _ in 0..16 {
+            if !cx.update_entity(&session, |s, cx| s.pump(cx)) {
+                break;
+            }
+        }
+        let free = cx
+            .update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let fights = window.find("place-fights").bounds();
+                let jump = window.find("top-jump").bounds();
+                f32::from(jump.left()) - f32::from(fights.right()) - 2.0
+            })
+            .expect("the window");
+        let _ = cx.update_window(window, |_, window, _| window.remove_window());
+        super::super::top_bar::unfolded(false);
+        800.0 - free
+    };
+    assert!(
+        edge > 320.0 && edge < 800.0,
+        "the unfolded bar's width: {edge}"
+    );
+    let mut widths: Vec<f32> = (8..=37).map(|w| w as f32 * 40.0).collect();
+    widths.push(1500.0);
+    widths.extend([
+        edge.floor() - 1.0,
+        edge.floor(),
+        edge.ceil(),
+        edge.ceil() + 1.0,
+    ]);
+    for width in widths {
+        let (main, _) = one_game_at(&mut cx, width, true);
+        let (over, fold) = one_game_at(&mut cx, width, false);
+        if main == 0.0 {
+            assert_eq!(fold, 0, "{width}: main's bar fits, yet it folded");
+            assert_eq!(over, 0.0, "{width}");
+        } else {
+            assert!(fold > 0, "{width}: main's bar runs past {main}, unfolded");
+            assert_eq!(over, 0.0, "{width}: folded, it still runs past");
+        }
+    }
+    crate::images::without_art(false);
 }

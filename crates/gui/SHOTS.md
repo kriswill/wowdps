@@ -55,12 +55,14 @@ pictures are `navy`'s.
 
 The window over a daemon of two editions (`testkit::EditionsLink`: the
 committed `sample.txt` and `forever.txt`, both followed, both stored), at
-the three frames; the wide and tile frames draw the switch as a row of
-chips, the narrow one as the dropdown:
+the three frames; the wide frame draws the switch as a row of chips, the
+tile frame as the dropdown with the game's name, the narrow one as the
+dropdown's badge alone (the form is the width's, the bar at its widest for
+either game):
 
 - `editions`: Retail shown and played (its chip filled, the live pip on its badge);
-- `editions-menu`: the dropdown's menu, at the narrow frame (the chips have
-  none to open);
+- `editions-menu`: the dropdown's menu, at the tile and narrow frames (the
+  chips have none to open);
 - `editions-forever`: Forever shown while Retail is played: its own pull on
   the stage, its rail, the pip on Retail's badge, the fight's tag;
 - `editions-forever-menu`, `editions-forever-home`: that, with the menu

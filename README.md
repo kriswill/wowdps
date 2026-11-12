@@ -146,8 +146,10 @@ expansion's name (Midnight), Forever by its own. The game shown is the chip
 filled with its color, the live dot sits on the badge of the game being
 played, and the build is in the tooltip. Press another to look at it; the
 window goes back to the game you play once you pick it again or that game
-moves on. On a narrow window the chips fold into a dropdown that lists the
-same games, "Playing now" beside the one running.
+moves on. Where the window is too narrow for the chips (about 1,020 px with
+two games) they fold into a dropdown that lists the same games, "Playing
+now" beside the one running; which of the two is drawn depends on the
+window's width alone, never on the game shown or a pull going live.
 
 Each game has one mark and one color, the same everywhere it is named: a
 violet crescent for Midnight and a teal loop for Forever (Classic and a game
@@ -171,8 +173,12 @@ season_start = "2026-11-10"   # Home counts from here; unset, from the
                               # edition's first stored fight
 ```
 
-With one edition the window shows no switch. The overlay has none: it
-always follows the game that is running. The defaults find both games: the
+With one edition the window shows no switch, and its top bar is unchanged
+wherever it fit before; where it ran past the window's edge (a window a few
+hundred pixels wide) it now folds instead: the live pill keeps its dot, then
+the help button and the jump glyph give way (`?` and Ctrl K still reach
+them). The overlay has no switch: it always follows the game that is
+running. The defaults find both games: the
 daemon's `game_process` (`wow.exe`) matches either client and names each by
 its product folder, and the overlay's `game_match` (`world of warcraft`)
 matches either window. With both games open at once the two windows look

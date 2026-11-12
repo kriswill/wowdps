@@ -41,10 +41,12 @@ const PAD_LEFT: f32 = 8.0;
 const PAD_RIGHT: f32 = 10.0;
 const GAP: f32 = 2.0;
 /// How far the picker's right edge stands in from the window's: the bar's
-/// right padding, then the gear and the help button and the gaps before
-/// them. The character menu hangs from there (`.menu{right:70px}`).
-pub fn picker_end(w: &W) -> f32 {
-    PAD_RIGHT + 2.0 * (w.pitch.icon_button + GAP)
+/// right padding, then the gear and — unless the bar folded it away — the
+/// help button, and the gaps before them. The character menu hangs from
+/// there (`.menu{right:70px}`).
+pub fn picker_end(w: &W, help: bool) -> f32 {
+    let buttons = if help { 2.0 } else { 1.0 };
+    PAD_RIGHT + buttons * (w.pitch.icon_button + GAP)
 }
 /// The jump box (`.jump{flex:0 1 360px;height:28px;gap:8px;padding-inline:
 /// 10px;border:1px solid;border-radius:6px;font-size:14px}`): content-box,
@@ -183,9 +185,45 @@ struct Parts {
 /// How often the bar folds, at most, beyond the switch's own forms: the
 /// pill keeps its dot alone, then the help button goes (`?` still opens
 /// the sheet), then the jump glyph (Ctrl K still opens the palette).
-const FOLDS: usize = 3;
+pub(crate) const FOLDS: usize = 3;
+/// The widest clock the switch's form reserves room for: a pull up to
+/// an hour and a half long.
+const CLOCK_WIDEST: &str = "88:88";
+/// The room a form of the switch keeps spare beyond the bar's measured
+/// width, for the layout's rounding.
+const FIT_MARGIN: f32 = 1.0;
+/// How far past the window one game's bar may measure before it folds:
+/// the layout's rounding, so it folds only where it truly runs past.
+const RUN_PAST: f32 = 0.5;
 
 impl Parts {
+    /// The bar at its widest for whichever game it shows: the pill and the
+    /// picker there with their words at their caps (a clock up to an hour
+    /// and a half). What the switch's
+    /// form is chosen by, so that neither a pick nor a pull going live, but
+    /// the window's width alone, changes it.
+    fn widest(w: &W, window: &mut Window, narrow: bool, entries: &[Entry], face: &Face) -> Self {
+        let mut parts = Self::measure(w, window, narrow, None, None, Some((entries, face)));
+        let words = if narrow { 0.0 } else { PILL_NAME_W };
+        let clock = words_width(w, window, CLOCK_WIDEST, PILL_PX, &w.ui, REGULAR);
+        parts.pill = Some((words, clock));
+        let name = if narrow {
+            0.0
+        } else {
+            PICKER_NAME_W + PICKER_INNER_GAP
+        };
+        parts.picker = Some(
+            PICKER_GAP
+                + PICKER_PAD.0
+                + w.size.place
+                + PICKER_INNER_GAP
+                + w.size.place * CARET
+                + PICKER_PAD.1
+                + name,
+        );
+        parts
+    }
+
     /// Measure the bar: every piece as `bar` lays it out, its words in the
     /// window's own faces.
     fn measure(
@@ -249,15 +287,9 @@ impl Parts {
                 })
                 .sum::<f32>()
                 + CHIP_GAP * entries.len().saturating_sub(1) as f32;
-            let name_w = if narrow {
-                SWITCH_NAME_NARROW
-            } else {
-                SWITCH_NAME_W
-            };
             let badge_only = SWITCH_PAD.0 + place_px + SWITCH_INNER_GAP + caret + SWITCH_PAD.1;
-            let dropdown = badge_only
-                + text(window, &face.name, place_px, &w.ui, MEDIUM).min(name_w)
-                + SWITCH_INNER_GAP;
+            let dropdown =
+                badge_only + name_slot(w, window, entries, face, narrow) + SWITCH_INNER_GAP;
             [chips, chips, dropdown, badge_only].map(|width| SWITCH_GAP + width)
         });
         Parts {
@@ -313,9 +345,27 @@ impl Parts {
     }
 }
 
+/// The dropdown's room for a game's name: the longest of the games'
+/// names, at most the name's cap, so the dropdown keeps its width
+/// whichever game it shows.
+fn name_slot(w: &W, window: &mut Window, entries: &[Entry], face: &Face, narrow: bool) -> f32 {
+    let cap = if narrow {
+        SWITCH_NAME_NARROW
+    } else {
+        SWITCH_NAME_W
+    };
+    entries
+        .iter()
+        .map(|e| e.name.as_str())
+        .chain(std::iter::once(face.name.as_str()))
+        .map(|name| words_width(w, window, name, w.size.place, &w.ui, MEDIUM))
+        .fold(0.0, f32::max)
+        .min(cap)
+}
+
 /// One line of words' width at `size` in `family` and `weight`, as it is
-/// painted, in zoom-1 pixels, rounded up a pixel so a sum of them never
-/// falls short of the laid-out line.
+/// painted, in zoom-1 pixels: the shaper's own, so a sum of them is the
+/// laid-out line's.
 fn words_width(
     w: &W,
     window: &mut Window,
@@ -342,7 +392,20 @@ fn words_width(
         window
             .text_system()
             .shape_line(SharedString::from(s.to_string()), w.z(size), &[run], None);
-    (f32::from(shaped.width) / w.zoom).ceil() + 1.0
+    f32::from(shaped.width) / w.zoom
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's switch: draw the bar unfolded on this thread, as main drew
+    /// it, to measure where it would run past the window.
+    static UNFOLDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Draw the bar unfolded on this thread (`false`: fold it as it must).
+#[cfg(test)]
+pub(crate) fn unfolded(on: bool) {
+    UNFOLDED.with(|u| u.set(on));
 }
 
 /// The bar, laid out by the window's width.
@@ -399,8 +462,11 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         me.as_ref().map(|me| (me, gui.cfg.hide_realms)),
         switch.as_ref().map(|(e, f)| (e.as_slice(), f)),
     );
-    let form = switch.as_ref().map(|(entries, _)| {
-        let needs = Form::ALL.map(|form| parts.total(w, Some(form), 0));
+    // The form by the bar at its widest for either game, so the width
+    // alone moves it; the folds by the bar as it is.
+    let form = switch.as_ref().map(|(entries, face)| {
+        let widest = Parts::widest(w, window, narrow, entries, face);
+        let needs = Form::ALL.map(|form| widest.total(w, Some(form), 0) + FIT_MARGIN);
         let chosen = switch_form(
             needs,
             w.width,
@@ -410,19 +476,37 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         gui.edition_form.set(Some(chosen));
         chosen
     });
-    let folds: Vec<f32> = (0..=FOLDS).map(|fold| parts.total(w, form, fold)).collect();
-    let fold = richest_fit(&folds, w.width, gui.bar_fold.get());
+    let fold = if form.is_some() {
+        let folds: Vec<f32> = (0..=FOLDS)
+            .map(|fold| parts.total(w, form, fold) + FIT_MARGIN)
+            .collect();
+        richest_fit(&folds, w.width, gui.bar_fold.get())
+    } else {
+        // One game: main's bar wherever it fits, folded only where it would
+        // run past the window, with no hysteresis to hold a fold where it
+        // would fit.
+        let folds: Vec<f32> = (0..=FOLDS)
+            .map(|fold| parts.total(w, None, fold) - RUN_PAST)
+            .collect();
+        richest_fit(&folds, w.width, None)
+    };
+    #[cfg(test)]
+    let fold = if UNFOLDED.with(std::cell::Cell::get) {
+        0
+    } else {
+        fold
+    };
     gui.bar_fold.set(Some(fold));
     if let (Some((entries, face)), Some(form)) = (switch, form) {
         line = line.child(div().w(w.z(SWITCH_GAP)).flex_none());
         line = if form.chips() {
             line.child(edition_chips(w, entries, cx))
         } else {
+            let slot = name_slot(w, window, &entries, &face, narrow);
             line.child(edition_switch(
                 w,
                 face,
-                narrow,
-                form == Form::Dropdown,
+                (form == Form::Dropdown).then_some(slot),
                 Rc::clone(&gui.edition_at),
                 cx,
             ))
@@ -615,8 +699,7 @@ fn chip(w: &W, e: Entry, cx: &mut Context<Gui>) -> impl IntoElement {
 fn edition_switch(
     w: &W,
     face: Face,
-    narrow: bool,
-    named: bool,
+    named: Option<f32>,
     at: Rc<Cell<Bounds<Pixels>>>,
     cx: &mut Context<Gui>,
 ) -> impl IntoElement {
@@ -638,11 +721,6 @@ fn edition_switch(
     let seat = canvas(move |b, _, _| at.set(b), |_, (), _, _| {})
         .absolute()
         .inset_0();
-    let name_w = if narrow {
-        SWITCH_NAME_NARROW
-    } else {
-        SWITCH_NAME_W
-    };
     let switch = div()
         .id("top-edition")
         .test_support()
@@ -660,10 +738,10 @@ fn edition_switch(
         .hover(|s| s.bg(w.c(|t| t.hover)).text_color(w.c(|t| t.ink)))
         .child(seat)
         .child(mark)
-        .when(named, |d| {
+        .when_some(named, |d, slot| {
             d.child(
                 div()
-                    .max_w(w.z(name_w))
+                    .w(w.z(slot))
                     .min_w_0()
                     .font_family(w.ui.clone())
                     .font_weight(MEDIUM)
