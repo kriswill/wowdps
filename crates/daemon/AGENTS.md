@@ -13,8 +13,10 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
 - **`wowdps stop` is the shutdown.** The daemon takes no signals; the unit's
   `ExecStop` runs it.
 - **Liveness is observation plus the game process** (`game.rs`), never the
-  log's mtime: the game flushes in multi-minute bursts. The watcher names
-  each running edition by the product folder in its command line; the
+  log's mtime: the game flushes in multi-minute bursts. A process is the
+  game by its program alone (comm or argv[0], never a later argument: a
+  shell or editor that mentions `wow.exe` is not the game). The watcher
+  names each running edition by the product folder in its argv[0]; the
   overlay is shown while any runs.
 - **Nothing closes on the game-process signal.** Closing is file-derived: a
   tailer that switches logs sends `HistoryReq::Retire` for the one it left.

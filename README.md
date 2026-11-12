@@ -181,8 +181,9 @@ hundred pixels wide) it now folds instead: the live pill keeps its dot, then
 the help button and the jump glyph give way (`?` and Ctrl K still reach
 them). The overlay has no switch: it always follows the game that is
 running. The defaults find both games: the
-daemon's `game_process` (`wow.exe`) matches either client and names each by
-its product folder, and the overlay's `game_match` (`world of warcraft`)
+daemon's `game_process` (`wow.exe`) matches either client's own program
+(never a command that merely mentions it, such as a search for it) and names
+each by its product folder, and the overlay's `game_match` (`world of warcraft`)
 matches either window. With both games open at once the two windows look
 the same to the compositor, so under Hyprland the overlay tells them apart
 by their processes' product folders: it shows, hides and places itself (on
