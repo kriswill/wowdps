@@ -4225,16 +4225,72 @@ mod tests {
         assert_eq!(build_shape(Some(71), &[pick; 30], &kit), BuildShape::Full);
     }
 
-    /// Whole-file smoke test against a real combat log. Skipped unless
-    /// `WOWDPS_REAL_LOG` points at one, so the shared gate stays hermetic.
+    /// The edition a real log's header names, as it counts (Retail for a
+    /// first line that names none).
+    fn header_edition(path: &str) -> wowdps_model::Edition {
+        let mut head = String::new();
+        let file = std::fs::File::open(path).expect("readable log");
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(file), &mut head)
+            .expect("readable header");
+        match parse_line(head.trim_end()).map(|l| l.event) {
+            Some(Event::Version { project_id, .. }) => {
+                wowdps_model::Edition::from_project_id(project_id).counts_as()
+            }
+            _ => wowdps_model::Edition::Retail,
+        }
+    }
+
+    /// Whole-file smoke test against a real Retail combat log
+    /// (`WOWDPS_REAL_LOG`); a Forever log there is passed over, as every
+    /// Retail gate passes it (its variant below reads it). Prints no line of
+    /// the log, a failure included: a line that does not parse is shown by
+    /// its event and field count.
     ///
-    /// Run: `WOWDPS_REAL_LOG=<path> cargo test real_log -- --nocapture`
+    /// Run: `WOWDPS_REAL_LOG=<path> cargo test --release -p wowdps-core --lib
+    /// -- --ignored real_log_parses --nocapture`
     #[test]
+    #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
     fn real_log_parses_without_loss() {
         let Ok(path) = std::env::var("WOWDPS_REAL_LOG") else {
+            println!("set WOWDPS_REAL_LOG to run it");
             return;
         };
-        let text = std::fs::read_to_string(&path).expect("readable log");
+        if header_edition(&path) == wowdps_model::Edition::Forever {
+            println!("WOWDPS_REAL_LOG is a Forever log: the Forever variant reads it");
+            return;
+        }
+        parses_without_loss(&path, false);
+    }
+
+    /// The same over a real Forever log (`WOWDPS_REAL_LOG_FOREVER`, else
+    /// `WOWDPS_REAL_LOG` when its header names Forever): every line parses.
+    /// Its log carries no COMBATANT_INFO, so the build brackets are
+    /// Retail's checks alone; the count is printed.
+    #[test]
+    #[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
+    fn real_log_parses_without_loss_forever() {
+        let path = match std::env::var("WOWDPS_REAL_LOG_FOREVER") {
+            Ok(path) => path,
+            Err(_) => match std::env::var("WOWDPS_REAL_LOG") {
+                Ok(path) if header_edition(&path) == wowdps_model::Edition::Forever => path,
+                _ => {
+                    println!("no Forever log: set WOWDPS_REAL_LOG_FOREVER to run it");
+                    return;
+                }
+            },
+        };
+        assert_eq!(
+            header_edition(&path),
+            wowdps_model::Edition::Forever,
+            "WOWDPS_REAL_LOG_FOREVER names no Forever log"
+        );
+        parses_without_loss(&path, true);
+    }
+
+    /// The real-log parse gate over `path`; `forever` skips the build
+    /// brackets, which a log without COMBATANT_INFO cannot hold.
+    fn parses_without_loss(path: &str, forever: bool) {
+        let text = std::fs::read_to_string(path).expect("readable log");
 
         let (mut total, mut none, mut other, mut dmg, mut heal, mut absorb) = (0, 0, 0, 0, 0, 0);
         let (mut dmg_sum, mut heal_sum) = (0u64, 0u64);
@@ -4250,8 +4306,15 @@ mod tests {
             total += 1;
             match parse_line(raw) {
                 None => {
+                    // The line's event and shape, never the line: no name
+                    // leaves a real log.
                     if none < 5 {
-                        eprintln!("UNPARSED: {raw}");
+                        let event = raw
+                            .split("  ")
+                            .nth(1)
+                            .and_then(|r| r.split(',').next())
+                            .unwrap_or("?");
+                        eprintln!("UNPARSED: {event} with {} fields", raw.split(',').count());
                     }
                     none += 1;
                 }
@@ -4309,6 +4372,9 @@ mod tests {
         );
         assert_eq!(none, 0, "every line of a real log must parse");
         assert!(dmg > 0 && heal > 0 && absorb > 0, "expected real events");
+        if forever {
+            return;
+        }
         // The bracket scan against real 160-530-field lines: every
         // COMBATANT_INFO must yield a plausible gear dump, and a full build
         // or one of the two honest short builds (`build_shape`). Those two

@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use wowdps_core::index::{load_segment_text, scan, scan_from};
 use wowdps_core::meter::{Meter, Segment, SegmentKind, View, meter_from_lines};
 use wowdps_core::model::replay::{Cut, EventKind, MapPosts, UnitKind};
-use wowdps_core::model::{Class, Spec};
+use wowdps_core::model::{Class, MarkKind, Spec};
 use wowdps_core::replay::{NoPlaced, cut};
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/forever.txt");
@@ -169,20 +169,26 @@ fn an_id_no_table_knows_is_counted() {
     assert!(tree.groups.is_empty(), "{:?}", tree.groups);
 }
 
-/// The tables Forever has none of add nothing, and take nothing away: the
-/// Warrior's Shield Wall (a defensive in Retail's role table) opens no
-/// span, and the Priest's Power Word: Shield (Retail's absorb table) opens
-/// no shield, yet the 200 it absorbed is her healing and on her shield
-/// ledger, whose size it never learned.
+/// Forever's own tables: its shields (R20) open the Priest's Power Word:
+/// Shield as a shield of known size, 250 applied, the 200 it absorbed her
+/// healing, the 50 left at its removal wasted; its role spans (R18) open the
+/// Warrior's Shield Wall as a defensive from 4 s into the pull to its
+/// removal 12 s later, which is no active mitigation.
 #[test]
-fn a_table_forever_lacks_adds_nothing_and_takes_nothing() {
+fn forevers_shields_and_role_spans_read_its_own_tables() {
     let meter = meter_from_lines(text().lines());
     let seg = boss_pull(&meter);
-    assert!(seg.spans(WARRIOR).is_empty());
+    let spans = seg.spans(WARRIOR);
+    assert_eq!(spans.len(), 1);
+    let s = &spans[0];
+    assert_eq!(
+        (s.spell_id, s.kind, s.at_ms, s.dur_ms),
+        (871, MarkKind::Defensive, 4_000, 12_000)
+    );
     assert_eq!(seg.am_uptime_ms(WARRIOR), 0);
     assert_eq!(seg.absorbed_healing(PRIEST), 200);
-    assert_eq!(seg.absorb_wasted(PRIEST), None);
-    assert_eq!(seg.shields_unknown(PRIEST), 1);
+    assert_eq!(seg.absorb_wasted(PRIEST), Some(50));
+    assert_eq!(seg.shields_unknown(PRIEST), 0);
     let shields = seg.shields(PRIEST);
     assert_eq!(shields.len(), 1);
     assert_eq!((shields[0].spell_id, shields[0].consumed), (17, 200));

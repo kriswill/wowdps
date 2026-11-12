@@ -11,11 +11,20 @@
 //! balance (one on a shield already drained to 0 is a recast the log never
 //! wrote, counted apart); and the wall time.
 //!
-//! Retail's alone: R20 reads a shield table, which Forever has none of yet,
-//! so a Forever log is passed over (`real_log/mod.rs`).
+//! Its Forever variant holds a Forever log (`WOWDPS_REAL_LOG_FOREVER`,
+//! `real_log/mod.rs`) to the same by Forever's own absorb table, with
+//! Power Word: Shield's ranks as its healer set, naming no player and no
+//! fight by name.
 //!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_shields -- --ignored --nocapture`
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 mod real_log;
 
@@ -40,6 +49,20 @@ const HEALER_SET: &[(u32, &str)] = &[
     (451299, "Chi Cocoon"),
     (177268, "Void Shield"),
     (302322, "Void Shield"),
+];
+
+/// Forever's healer shield: Power Word: Shield's ten player ranks.
+const FOREVER_HEALER_SET: &[(u32, &str)] = &[
+    (17, "Power Word: Shield"),
+    (592, "Power Word: Shield"),
+    (600, "Power Word: Shield"),
+    (3747, "Power Word: Shield"),
+    (6065, "Power Word: Shield"),
+    (6066, "Power Word: Shield"),
+    (10898, "Power Word: Shield"),
+    (10899, "Power Word: Shield"),
+    (10900, "Power Word: Shield"),
+    (10901, "Power Word: Shield"),
 ];
 
 /// One spell's ledger totals: (shields, applied, consumed, wasted, unknown).
@@ -80,7 +103,23 @@ fn shields_balance_on_every_real_segment() {
     let Some(path) = real_log::retail_log() else {
         return;
     };
-    let mut file = std::fs::File::open(&path).expect("open the log");
+    gate(&path, false, HEALER_SET);
+}
+
+#[test]
+#[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
+fn shields_balance_on_every_real_forever_segment() {
+    let Some(path) = real_log::forever_log() else {
+        return;
+    };
+    gate(&path, true, FOREVER_HEALER_SET);
+}
+
+/// The gate over `path`, `healers` its trusted shields; `anon` prints no
+/// name and no guid: a segment by its place in the log, a player by their
+/// place in its roster.
+fn gate(path: &str, anon: bool, healers: &[(u32, &str)]) {
+    let mut file = std::fs::File::open(path).expect("open the log");
     let idx = scan(&mut file);
     let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();
     assert!(!metas.is_empty(), "a real log has segments");
@@ -100,8 +139,8 @@ fn shields_balance_on_every_real_segment() {
     let mut by_spell: BTreeMap<(u32, String), SpellTotals> = BTreeMap::new();
     let mut census: BTreeMap<(u32, String), Census> = BTreeMap::new();
 
-    for meta in &metas {
-        let text = load_segment_text(Path::new(&path), meta).expect("load the segment");
+    for (n, meta) in metas.iter().enumerate() {
+        let text = load_segment_text(Path::new(path), meta).expect("load the segment");
         let t = Instant::now();
         let lines: Vec<_> = text
             .seeds()
@@ -235,8 +274,20 @@ fn shields_balance_on_every_real_segment() {
             .filter(|g| g.starts_with("Player-") || g.starts_with("Pet-"))
             .collect();
         keys.sort();
+        let who = |k: &str| {
+            if anon {
+                real_log::place(&keys, k)
+            } else {
+                k.to_string()
+            }
+        };
 
         for seg in meter.segments() {
+            let here = if anon {
+                real_log::fight(n, seg)
+            } else {
+                seg.name.clone()
+            };
             segments += 1;
             if seg.kind == SegmentKind::Encounter {
                 pulls += 1;
@@ -247,19 +298,19 @@ fn shields_balance_on_every_real_segment() {
                 assert_eq!(
                     sum,
                     seg.absorbed_healing(k),
-                    "{}: {k} Σ rows.consumed vs absorbed_healing",
-                    seg.name
+                    "{here}: {} Σ rows.consumed vs absorbed_healing",
+                    who(k)
                 );
                 let waste = seg.absorb_wasted(k);
                 let unknown = seg.shields_unknown(k);
                 assert_eq!(
                     unknown,
                     rows.iter().map(|r| r.unknown).sum::<u32>(),
-                    "{}: {k} shields_unknown vs Σ rows.unknown",
-                    seg.name
+                    "{here}: {} shields_unknown vs Σ rows.unknown",
+                    who(k)
                 );
                 if rows.is_empty() {
-                    assert_eq!(waste, None, "{}: {k} waste without rows", seg.name);
+                    assert_eq!(waste, None, "{here}: {} waste without rows", who(k));
                     continue;
                 }
                 shielders += 1;
@@ -274,9 +325,9 @@ fn shields_balance_on_every_real_segment() {
                     consumed_total += r.consumed;
                     wasted_total += r.wasted;
                     applied_total += r.applied;
-                    assert!(r.count > 0, "{}: {k} {r:?}", seg.name);
-                    assert!(r.unknown <= r.count, "{}: {k} {r:?}", seg.name);
-                    assert!(!r.label.is_empty(), "{}: {k} {r:?}", seg.name);
+                    assert!(r.count > 0, "{here}: {} {r:?}", who(k));
+                    assert!(r.unknown <= r.count, "{here}: {} {r:?}", who(k));
+                    assert!(!r.label.is_empty(), "{here}: {} {r:?}", who(k));
                     if r.unknown == 0 {
                         known_rows += 1;
                         // Raise-only: no transition ever lowers `applied`,
@@ -287,14 +338,19 @@ fn shields_balance_on_every_real_segment() {
                         // identity is exact.
                         assert!(
                             r.applied >= r.consumed + r.wasted,
-                            "{}: {k} {r:?}",
-                            seg.name
+                            "{here}: {} {r:?}",
+                            who(k)
                         );
                         let shrank = census
                             .get(&(r.spell_id, r.label.clone()))
                             .is_some_and(|c| c.shrank > 0);
                         if !shrank {
-                            assert_eq!(r.applied, r.consumed + r.wasted, "{}: {k} {r:?}", seg.name);
+                            assert_eq!(
+                                r.applied,
+                                r.consumed + r.wasted,
+                                "{here}: {} {r:?}",
+                                who(k)
+                            );
                         }
                     }
                     if i > 0 && rows[i - 1].consumed < r.consumed {
@@ -307,7 +363,11 @@ fn shields_balance_on_every_real_segment() {
                     cell.3 += r.wasted;
                     cell.4 += r.unknown;
                 }
-                assert!(sorted, "{}: {k} rows not consumed-desc: {rows:?}", seg.name);
+                assert!(
+                    sorted,
+                    "{here}: {} rows not consumed-desc: {rows:?}",
+                    who(k)
+                );
                 // A known waste implies a row that could have fixed one:
                 // some closed shield, so not every shield is open (unknown
                 // ≤ count is the bound; a row of only open shields has
@@ -316,8 +376,8 @@ fn shields_balance_on_every_real_segment() {
                     assert!(
                         rows.iter()
                             .any(|r| r.unknown < r.count || r.wasted > 0 || w == 0),
-                        "{}: {k} waste {w} from rows {rows:?}",
-                        seg.name
+                        "{here}: {} waste {w} from rows {rows:?}",
+                        who(k)
                     );
                 }
             }
@@ -360,11 +420,11 @@ fn shields_balance_on_every_real_segment() {
         // left POSITIVE would be a trailer that lied. One on a drained
         // shield is the log missing a recast, counted above.
         let over_balance = c.over_absorbs - c.over_drained;
-        if HEALER_SET.iter().any(|(h, _)| h == id) && over_balance > 0 {
+        if healers.iter().any(|(h, _)| h == id) && over_balance > 0 {
             healer_over.push((*id, name.clone(), over_balance));
         }
     }
-    let seen: Vec<_> = HEALER_SET
+    let seen: Vec<_> = healers
         .iter()
         .filter(|(id, _)| census.keys().any(|(k, _)| k == id))
         .collect();
@@ -373,5 +433,5 @@ fn shields_balance_on_every_real_segment() {
         healer_over.is_empty(),
         "the healer set over-absorbed: {healer_over:?}"
     );
-    assert!(rows_total > 0, "a real raid log carries shields");
+    assert!(rows_total > 0, "a real log carries shields");
 }

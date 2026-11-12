@@ -23,8 +23,11 @@
 #   logs_dir, or a scan of the install roots (Steam compatdata on
 #   Linux, /Applications and ~/Applications on macOS).
 #   --product ROW: another edition of the game (tools/lib.sh); no edition
-#   but Retail has this table yet, so its table and review twin go only
-#   where -o FILE names, never over a committed one.
+#   but Retail has this table (Forever's logs hold no proc it nests:
+#   tools/extract/src/procgen.rs), so another's table and review twin go
+#   only where -o FILE names, never over a committed one, over the census
+#   --census CSV names (none is committed for it). Retail's run reads
+#   tools/proc-spells-census.csv under the checkout.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -41,5 +44,4 @@ fetch_keys "$work/tactkeys.txt"
 # table goes to its edition's committed file in this checkout.
 "$extract" gen-proc-spells \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" \
-    --census "$root/tools/proc-spells-census.csv" \
     --checkout "$root" "$@"

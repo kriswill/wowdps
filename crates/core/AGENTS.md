@@ -47,8 +47,8 @@ rulings, §Fixtures). Read the ruling before changing what it governs.
   `role_signals.rs` come from `tools/gen-*.sh` (read `tools/AGENTS.md`). `class_spells` wins over
   `item_spells`' generous trigger chase.
 - **Each table is one edition's.** Retail's sit in `src/`, Forever's in
-  `src/forever/` (class, item, keystone, open-world, and the role signals
-  Retail has none of). Code outside tests
+  `src/forever/` (class, item, keystone, open-world, absorb, role-span, and
+  the role signals Retail has none of). Code outside tests
   reads every table through `tables.rs` with the fight's edition
   (`Segment::project_id`): an edition with no table of a kind gets nothing
   of it, never another edition's entry, except open-world maps, which an
@@ -82,8 +82,9 @@ WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt cargo test --
 The real-log gates need a log with at least one closed segment
 (`docs/tracing.md`, "Real-log gates"). libtest filters on a test's own
 name, never its file's: every gate's name holds `real`, and every Forever
-variant's `forever`; `real_log` selects three. Each gate whose rule
-Forever has (deaths, taken, stacks, power, and roles,
+variant's `forever`; `real_log` selects four. Each gate whose rule
+Forever has (the whole-file parse, deaths, taken, stacks, power, shields,
+spans, and roles,
 `real_log_segments`' cut and totals and `real_log_posts`' replay positions,
 which are Forever's alone) has a
 Forever variant over `WOWDPS_REAL_LOG_FOREVER` (`tests/real_log/mod.rs`);

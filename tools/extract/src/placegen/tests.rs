@@ -150,3 +150,71 @@ fn the_curated_list_is_one_entry_a_spell_and_its_ids_are_the_censuss() {
         assert!(ids.lines().any(|l| l == want), "{want} in the census ids");
     }
 }
+
+/// A waived entry ships without a census row, its reason in the twin; one
+/// it does have still counts there. The table imports what it names alone,
+/// and a list of every kind imports as Retail's always did.
+#[test]
+fn a_waived_entry_ships_and_the_table_imports_what_it_names() {
+    let waived = EARTHBIND.exempt("not in these logs");
+    let g = generate_curated(&[waived], &tables(), &census(""), "b").unwrap();
+    assert!(
+        g.expected
+            .contains("Earthbind Totem 2484: 0 cast or summon; exempt: not in these logs |"),
+        "{}",
+        g.expected
+    );
+    assert!(g.content.contains(
+        "use super::Form::Area;\nuse super::Found::Unit;\nuse super::Placed;\n\
+         use super::Purpose::Control;\n"
+    ));
+    let c = census(
+        "cast,111771,Demonic Gateway,1,2\naura,113942,Demonic Gateway,5,0\n\
+         summon,2484,Earthbind Totem,0,3\n",
+    );
+    let g = generate_curated(&[GATE, EARTHBIND], &tables(), &c, "b").unwrap();
+    assert!(
+        g.content
+            .contains("use super::Form::{Area, Gate};\nuse super::Found::{Caster, Trips, Unit};\n")
+    );
+    // Retail's whole list names every kind, as its committed table imports.
+    let committed = include_str!("../../../../crates/proto/src/placed/placed_spells.rs");
+    for line in [
+        "use super::Form::{Area, Gate, Post, Ring};",
+        "use super::Found::{Caster, Target, Thrown, Touch, Trips, Unit};",
+        "use super::Purpose::{Control, Heal, Wall, Way};",
+    ] {
+        assert!(committed.contains(line), "{line}");
+    }
+    let names = |list: &[Curated], f: fn(&Curated) -> String| {
+        list.iter().map(f).collect::<HashSet<String>>()
+    };
+    let forms = names(CURATED, |c| format!("{:?}", c.form));
+    assert_eq!(forms.len(), 4, "Retail's list draws every form");
+    let purposes = names(CURATED, |c| format!("{:?}", c.purpose));
+    assert_eq!(purposes.len(), 4, "and is for every purpose");
+}
+
+/// Forever's list is its own ids, one entry a spell, its table and twin
+/// named for it; Retail's run still writes Retail's.
+#[test]
+fn forevers_list_is_its_own() {
+    let mut spells: Vec<u32> = FOREVER.iter().map(|c| c.spell).collect();
+    let n = spells.len();
+    spells.sort_unstable();
+    spells.dedup();
+    assert_eq!(spells.len(), n, "a spell curated twice");
+    let spells_of = |list: &[Curated]| list.iter().map(|c| c.spell).collect::<Vec<_>>();
+    assert_eq!(spells_of(curated_for("wowf")), spells_of(FOREVER));
+    assert_eq!(spells_of(curated_for("wow")), spells_of(CURATED));
+    let ids = census_ids_of(FOREVER);
+    for want in ["1499", "3355", "2484", "5394"] {
+        assert!(
+            ids.lines().any(|l| l == want),
+            "{want} in Forever's census ids"
+        );
+    }
+    assert!(!ids.lines().any(|l| l == "111771"), "no Retail gateway");
+    let waived = FOREVER.iter().filter(|c| c.census_exempt.is_some()).count();
+    assert!(waived < FOREVER.len(), "some entry the census holds");
+}

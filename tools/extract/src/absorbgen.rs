@@ -8,19 +8,27 @@
 //! — never on the log's absorb trailer alone, because Feast of Souls, Soul
 //! Fragments and every `Second Wind …,BUFF,0,0` carry one too.
 //!
-//! Two safety rails:
+//! Each edition of the game has its own table, discovered from its own
+//! client the same way: Retail's `absorb_spells.rs`, and Forever's
+//! `forever/absorb_spells.rs` (`--product wowf`), whose ids are its own.
 //!
-//! - the fixture's shields (`FIXTURE_SHIELDS`: Power Word: Shield 17, Ice
-//!   Barrier 11426, Blood Shield 77535) must resolve, or the generator fails
-//!   naming the id — a schema drift that emptied the table would otherwise
-//!   ship as a silent "nothing is a shield";
-//! - the committed census of real logs (`tools/absorb-spells-census.csv`,
-//!   written by `tools/census-absorb-spells.sh`: every `SPELL_ABSORBED`'s
-//!   absorb spell, counted per (id, name) per log) is printed beside each
-//!   entry in the review twin, and every census id NOT in the table is
-//!   listed under its own heading — those are the shields the ledger still
-//!   counts as `known = false` applied (their consumed amounts are never
-//!   lost), so the reviewer sees exactly what the client tables miss.
+//! Two safety rails, each the edition's own (`Rail`):
+//!
+//! - the edition's fixture shields (Retail's `FIXTURE_SHIELDS`: Power Word:
+//!   Shield 17, Ice Barrier 11426, Blood Shield 77535; Forever's
+//!   `FOREVER_FIXTURE_SHIELDS`: the Power Word: Shield its fixture casts)
+//!   must resolve, or the generator fails naming the id — a schema drift
+//!   that emptied the table would otherwise ship as a silent "nothing is a
+//!   shield";
+//! - the edition's committed census of real logs
+//!   (`tools/absorb-spells-census.csv`, Forever's
+//!   `tools/forever/absorb-spells-census.csv`, written by
+//!   `tools/census-absorb-spells.sh`: every `SPELL_ABSORBED`'s absorb spell,
+//!   counted per (id, name) per log) is printed beside each entry in the
+//!   review twin, and every census id NOT in the table is listed under its
+//!   own heading — those are the shields the ledger still counts as
+//!   `known = false` applied (their consumed amounts are never lost), so the
+//!   reviewer sees exactly what the client tables miss.
 //!
 //! Output is two files: the table (`absorb_spells.rs`) and its review twin
 //! (`absorb_spells.expected.md`).
@@ -36,13 +44,43 @@ pub const TABLES: [&str; 2] = ["SpellName", "SpellEffect"];
 /// SpellEffect.EffectAura for SCHOOL_ABSORB.
 const AURA_SCHOOL_ABSORB: &str = "69";
 
-/// The shields the committed fixtures cast; the generator fails when any is
-/// missing from the discovered table.
+/// The shields Retail's committed fixtures cast; the generator fails when
+/// any is missing from the discovered table.
 pub const FIXTURE_SHIELDS: [(u32, &str); 3] = [
     (17, "Power Word: Shield"),
     (11426, "Ice Barrier"),
     (77535, "Blood Shield"),
 ];
+
+/// The shield Forever's committed fixture (`forever.txt`) casts.
+pub const FOREVER_FIXTURE_SHIELDS: [(u32, &str); 1] = [(17, "Power Word: Shield")];
+
+/// What one edition's run is held to: its fixtures' shields, which must be
+/// in the discovered table, and its committed census, which the review twin
+/// names.
+#[derive(Debug, Clone, Copy)]
+pub struct Rail {
+    pub shields: &'static [(u32, &'static str)],
+    pub census: &'static str,
+}
+
+/// Retail's rail.
+pub const RETAIL: Rail = Rail {
+    shields: &FIXTURE_SHIELDS,
+    census: "tools/absorb-spells-census.csv",
+};
+
+/// Forever's rail.
+pub const FOREVER: Rail = Rail {
+    shields: &FOREVER_FIXTURE_SHIELDS,
+    census: "tools/forever/absorb-spells-census.csv",
+};
+
+/// The rail of the edition a product's client is (`.build.info`'s row):
+/// Forever's for `wowf`, else Retail's.
+pub fn rail(product: &str) -> Rail {
+    if product == "wowf" { FOREVER } else { RETAIL }
+}
 
 #[derive(Debug)]
 pub struct Generated {
@@ -55,7 +93,18 @@ pub struct Generated {
     pub unknown: Vec<(u32, String, Vec<u64>)>,
 }
 
+/// Retail's table ([`generate_for`] with [`RETAIL`]).
 pub fn generate(tables: &Tables, census: &Census, build: &str) -> Result<Generated, String> {
+    generate_for(tables, census, build, RETAIL)
+}
+
+/// One edition's table, held to its `rail`.
+pub fn generate_for(
+    tables: &Tables,
+    census: &Census,
+    build: &str,
+    rail: Rail,
+) -> Result<Generated, String> {
     // SpellEffect: every spell with a SCHOOL_ABSORB aura on any difficulty.
     let se = tables.get("SpellEffect")?;
     let (e_spell, e_aura) = (se.col("SpellID")?, se.col("EffectAura")?);
@@ -80,7 +129,7 @@ pub fn generate(tables: &Tables, census: &Census, build: &str) -> Result<Generat
         }
     }
 
-    for (id, name) in FIXTURE_SHIELDS {
+    for &(id, name) in rail.shields {
         if !table.contains_key(&id) {
             return Err(format!(
                 "absorb spell {id} ({name}): no SCHOOL_ABSORB SpellEffect row — the fixture's \
@@ -100,13 +149,19 @@ pub fn generate(tables: &Tables, census: &Census, build: &str) -> Result<Generat
     let ids: Vec<u32> = table.keys().copied().collect();
     Ok(Generated {
         spells: ids.len(),
-        content: emit(&ids, build)?,
-        expected: emit_expected(&table, census, &unknown, build)?,
+        content: emit(&ids, build, rail)?,
+        expected: emit_expected(&table, census, &unknown, build, rail)?,
         unknown,
     })
 }
 
-fn emit(table: &[u32], build: &str) -> Result<String, String> {
+/// The rail's shield ids, as the generated header lists them: `17, 11426`.
+fn shield_ids(rail: Rail) -> String {
+    let ids: Vec<String> = rail.shields.iter().map(|(id, _)| id.to_string()).collect();
+    ids.join(", ")
+}
+
+fn emit(table: &[u32], build: &str, rail: Rail) -> Result<String, String> {
     let mut o = String::new();
     o.push_str("//! GENERATED by tools/gen-absorb-spells.sh — do not edit by hand.\n");
     // No timestamp: same build in, same bytes out.
@@ -120,9 +175,16 @@ fn emit(table: &[u32], build: &str) -> Result<String, String> {
         "//!\n\
          //! Every spell id with a `SpellEffect` row whose `EffectAura` is 69\n\
          //! (SCHOOL_ABSORB): the shields the R20 ledger admits on a Buff aura apply\n\
-         //! (CONTRACT.md R20). Discovered by tools/extract/src/absorbgen.rs; the\n\
-         //! fixture's shields (17, 11426, 77535) are proven present at generation\n\
-         //! time, and the real-log census sits in absorb_spells.expected.md.\n\
+         //! (CONTRACT.md R20). Discovered by tools/extract/src/absorbgen.rs; the\n",
+    );
+    writeln!(
+        o,
+        "//! fixture's shields ({}) are proven present at generation",
+        shield_ids(rail)
+    )
+    .map_err(|e| format!("emit: {e}"))?;
+    o.push_str(
+        "//! time, and the real-log census sits in absorb_spells.expected.md.\n\
          \n\
          /// Whether a spell places an absorb shield.\n\
          #[allow(dead_code)] // consumed by the meter's R20 shield ledger\n\
@@ -152,11 +214,14 @@ fn emit(table: &[u32], build: &str) -> Result<String, String> {
          \n\
          \x20   /// The fixtures' shields resolve, and a stranger does not.\n\
          \x20   #[test]\n\
-         \x20   fn fixture_shields_resolve() {\n\
-         \x20       assert!(super::is_absorb_spell(17));\n\
-         \x20       assert!(super::is_absorb_spell(11426));\n\
-         \x20       assert!(super::is_absorb_spell(77535));\n\
-         \x20       assert!(!super::is_absorb_spell(0));\n\
+         \x20   fn fixture_shields_resolve() {\n",
+    );
+    for (id, _) in rail.shields {
+        writeln!(o, "        assert!(super::is_absorb_spell({id}));")
+            .map_err(|e| format!("emit: {e}"))?;
+    }
+    o.push_str(
+        "\x20       assert!(!super::is_absorb_spell(0));\n\
          \x20   }\n\
          }\n",
     );
@@ -168,6 +233,7 @@ fn emit_expected(
     census: &Census,
     unknown: &[(u32, String, Vec<u64>)],
     build: &str,
+    rail: Rail,
 ) -> Result<String, String> {
     let mut o = String::new();
     let w = |o: &mut String, s: &str| -> Result<(), String> {
@@ -200,11 +266,31 @@ fn emit_expected(
         &mut o,
         "- Membership is discovered by `tools/extract/src/absorbgen.rs`: every spell id with\n\
          \x20 a `SpellEffect` row whose `EffectAura == 69` (SCHOOL_ABSORB) on some difficulty.\n\
-         \x20 Nothing is curated; the name column comes from `SpellName` for review only.\n\
-         - The fixtures' shields — Power Word: Shield 17, Ice Barrier 11426, Blood Shield\n\
-         \x20 77535 — must be in the result or the generator fails, naming the id.\n\
-         - The census `tools/absorb-spells-census.csv` (`tools/census-absorb-spells.sh\n\
-         \x20 <log>...`: every `SPELL_ABSORBED`'s absorb spell — field n−5 of n — counted per\n\
+         \x20 Nothing is curated; the name column comes from `SpellName` for review only.",
+    )?;
+    let shields: Vec<String> = rail
+        .shields
+        .iter()
+        .map(|(id, name)| format!("{name} {id}"))
+        .collect();
+    w(
+        &mut o,
+        &wrap_rule(&format!(
+            "- The fixtures' shields — {} — must be in the result or the generator fails, naming the id.",
+            shields.join(", ")
+        )),
+    )?;
+    // Unwrapped: its next line goes on with the command's words.
+    w(
+        &mut o,
+        &format!(
+            "- The census `{}` (`tools/census-absorb-spells.sh",
+            rail.census
+        ),
+    )?;
+    w(
+        &mut o,
+        "\x20 <log>...`: every `SPELL_ABSORBED`'s absorb spell — field n−5 of n — counted per\n\
          \x20 (id, name) per log) is evidence, not a gate: its counts print beside each entry,\n\
          \x20 and every census id the table lacks is listed under *Census ids outside the\n\
          \x20 table*. Those are the shields the R20 ledger opens as `known = false` applied on\n\
@@ -253,6 +339,28 @@ fn emit_expected(
         w(&mut o, &line)?;
     }
     Ok(o)
+}
+
+/// A rule of the review twin's list, wrapped as the hand-wrapped ones are:
+/// words to 80 columns, each line after the first indented by two.
+fn wrap_rule(text: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split(' ') {
+        let indent = if lines.is_empty() { "" } else { "  " };
+        let len = |s: &str| s.chars().count();
+        if !line.is_empty() && len(indent) + len(&line) + 1 + len(word) > 80 {
+            lines.push(format!("{indent}{line}"));
+            line.clear();
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    let indent = if lines.is_empty() { "" } else { "  " };
+    lines.push(format!("{indent}{line}"));
+    lines.join("\n")
 }
 
 /// A markdown table header + rule with one `observed (<log>)` column per
@@ -391,6 +499,63 @@ mod tests {
             generate(&t, &census(), "b")
                 .unwrap_err()
                 .contains("EffectAura")
+        );
+    }
+
+    /// Retail's rules read as the committed twin's, line for line: the
+    /// rail's words wrap where the hand-wrapped ones did.
+    #[test]
+    fn retails_rules_read_as_they_did() {
+        let g = generate(&tables(), &census(), "b").unwrap();
+        assert!(
+            g.expected.contains(
+                "- The fixtures' shields — Power Word: Shield 17, Ice Barrier 11426, Blood Shield\n\
+                 \x20 77535 — must be in the result or the generator fails, naming the id.\n\
+                 - The census `tools/absorb-spells-census.csv` (`tools/census-absorb-spells.sh\n\
+                 \x20 <log>...`: every"
+            ),
+            "{}",
+            g.expected
+        );
+        assert!(g.content.contains(
+            "//! fixture's shields (17, 11426, 77535) are proven present at generation\n"
+        ));
+        assert!(
+            g.content
+                .contains("        assert!(super::is_absorb_spell(77535));\n")
+        );
+    }
+
+    /// Forever's run is held to its own fixture's shield and names its own
+    /// census; a Retail shield it lacks does not fail it, its own does.
+    #[test]
+    fn forevers_run_is_held_to_its_own_rail() {
+        assert_eq!(rail("wowf").census, FOREVER.census);
+        assert_eq!(rail("wow").census, RETAIL.census);
+        let mut t = tables();
+        t.get_mut("SpellEffect")
+            .unwrap()
+            .rows
+            .retain(|r| r[4] != "77535");
+        let g = generate_for(&t, &census(), "b", FOREVER).unwrap();
+        assert!(g.content.contains("//! fixture's shields (17) are proven"));
+        assert!(!g.content.contains("is_absorb_spell(77535)"));
+        assert!(
+            g.expected
+                .contains("- The fixtures' shields — Power Word: Shield 17 — must")
+        );
+        assert!(
+            g.expected
+                .contains("`tools/forever/absorb-spells-census.csv`")
+        );
+        t.get_mut("SpellEffect")
+            .unwrap()
+            .rows
+            .retain(|r| r[4] != "17");
+        let err = generate_for(&t, &census(), "b", FOREVER).unwrap_err();
+        assert!(
+            err.contains("17") && err.contains("Power Word: Shield"),
+            "{err}"
         );
     }
 

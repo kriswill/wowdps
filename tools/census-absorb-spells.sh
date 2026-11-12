@@ -10,8 +10,10 @@
 # the generator reads it via `wowdps-extract gen-absorb-spells --census` and
 # writes the counts into crates/core/src/absorb_spells.expected.md, listing
 # every census id the client tables do NOT mark as SCHOOL_ABSORB — the shields
-# the ledger can only count as unknown-applied. The committed copy is
-# tools/absorb-spells-census.csv. Twin of tools/census-role-spells.sh.
+# the ledger can only count as unknown-applied. The committed copies are each
+# edition's, over that edition's logs: tools/absorb-spells-census.csv
+# (Retail's) and tools/forever/absorb-spells-census.csv (Forever's, read by a
+# --product wowf run). Twin of tools/census-role-spells.sh.
 #
 # usage: tools/census-absorb-spells.sh [-o out.csv] <WoWCombatLog-*.txt>...
 set -euo pipefail

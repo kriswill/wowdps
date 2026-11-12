@@ -63,8 +63,8 @@ mod tests {
     use super::*;
 
     /// The set agrees with the table's own question, spell for spell, in
-    /// every edition: Retail's answers (and a log naming none), an edition
-    /// with no table answers nothing.
+    /// every edition: each edition's table answers for it (Retail's for a
+    /// log naming none too), and an edition with no table answers nothing.
     #[test]
     fn the_set_answers_as_the_table_does() {
         let t = PlacedSpells::get();
@@ -75,19 +75,29 @@ mod tests {
             Edition::Classic(2),
             Edition::Unknown(7),
         ];
-        for p in placed::all(Edition::Retail) {
-            for e in editions {
-                let has = placed::placed(e, p.spell).is_some();
-                assert_eq!(t.places(e, p.spell), has, "{} {e:?}", p.name);
-                assert_eq!(has, e.counts_as() == Edition::Retail, "{} {e:?}", p.name);
+        for own in [Edition::Retail, Edition::Forever] {
+            for p in placed::all(own) {
+                for e in editions {
+                    let has = placed::placed(e, p.spell).is_some();
+                    assert_eq!(t.places(e, p.spell), has, "{} {e:?}", p.name);
+                    if e.counts_as() == own {
+                        assert!(has, "{} {e:?}", p.name);
+                    }
+                    for id in p.telling() {
+                        assert_eq!(t.tells(e, id), placed::tells(e, id), "{id} {e:?}");
+                    }
+                }
                 for id in p.telling() {
-                    assert_eq!(t.tells(e, id), placed::tells(e, id), "{id} {e:?}");
+                    assert!(t.tells(own, id), "{id}");
                 }
             }
-            for id in p.telling() {
-                assert!(t.tells(Edition::Retail, id), "{id}");
-            }
         }
+        // Each edition's ids are its own: Retail's gateway is no Forever
+        // spell, Forever's Freezing Trap rank no Retail one, and a table-less
+        // edition places neither.
+        assert!(t.places(Edition::Retail, 111_771) && !t.places(Edition::Forever, 111_771));
+        assert!(t.places(Edition::Forever, 1499) && !t.places(Edition::Retail, 1499));
+        assert!(!t.places(Edition::Classic(2), 1499) && !t.places(Edition::Unknown(7), 111_771));
         for e in editions {
             assert!(
                 !t.places(e, 133) && !t.tells(e, 133),

@@ -41,21 +41,25 @@ Under a header naming an edition with no table (a Classic client's id, an
 unlisted one) nobody has a class, and the amounts are the same under every
 header.
 
-## The tables Forever has none of
+## Forever's own tables, and the ones it has none of
 
-Forever has no role-span, absorb, proc or placed table, so `check.awk` reads its
-Retail copies (`ROLE`, `SHIELD`, `PLACE`, `TELL`) only while the version line
-names Retail (`edition_tables`):
+Forever has its own absorb table (`crates/core/src/forever/absorb_spells.rs`,
+R20) and role-span table (`crates/core/src/forever/role_spells.rs`, R18), and
+no proc or placed table, so `check.awk` reads its Forever copies (`SHIELD_F`,
+`ROLE_F`) for a Forever log and its Retail copies (`ROLE`, `SHIELD`, `PLACE`,
+`TELL`) only while the version line names Retail (`edition_tables`):
 
-- Shield Wall (871, a defensive in Retail's role table) opens no R18 span:
-  `spans` and `am_uptime_ms` are 0 for Tharokk.
-- Power Word: Shield (17, in Retail's absorb table) opens no R20 shield, so
-  its applied 250 and its removal's 50 are never seen; the 200 it absorbed
-  still credits Elowyn's healing (`absorbheal` 200, R2) and opens an
-  unknown-size shield on her ledger, open at the pull's end:
-  `shields_unknown` 1, `absorb_applied` 0, `absorb_wasted` blank.
-- The cut keeps no buff row for either (neither is a role buff here, and
-  both casters are the group's).
+- Power Word: Shield (17, in Forever's absorb table) opens an R20 shield of
+  known size on Elowyn's ledger: applied 250 at 16.0 s, 200 of it absorbed at
+  17.0 s (her healing, `absorbheal` 200, R2), and the 50 left at its removal at
+  25.0 s wasted: `absorb_applied` 250, `absorb_wasted` 50, `shields_unknown` 0.
+- Shield Wall (871, a defensive in Forever's role table) opens an R18 span
+  on Tharokk from 14.0 s (4 000 ms into the pull) to its removal at 26.0 s:
+  `spans` 1; a defensive is no active mitigation, so `am_uptime_ms` stays 0.
+- The cut keeps Shield Wall's two buff rows, a role buff going on and coming
+  off a player (`replay_buff_applied` 1, `replay_buff_removed` 1); Tharokk is
+  one of its units by his posts already (`replay_units` 6, "The replay cut"
+  below). Power Word: Shield is no role buff, so it keeps none.
 
 ## Totals (segment 1, the pull, 21 000 ms of combat)
 
@@ -147,7 +151,8 @@ Elowyn 1, Hollin 1. The SPELL_ABSORBED line has no block.
 - `replay_pcast_success` 5: the five casts. `replay_debuff_applied` and
   `_removed` 1 each: Velkris's Expose Armor on the boss (a player's debuff on
   an NPC). `replay_npc_died` 1, `replay_boss_engaged` and `_killed` 1 each.
-  No buff row: Forever has no role table, and both buffs' casters are ours.
+  `replay_buff_applied` and `_removed` 1 each: Tharokk's Shield Wall, a role
+  buff in Forever's role table; Power Word: Shield is none, so no row.
 - `replay_absorb` 100: Tharokk's block says 50 of shield at each of his two
   posts (the Power Word: Shield); every other block says 0.
 - `replay_pools` 8 and `replay_pool_sum` 5 150: one pool on each player post

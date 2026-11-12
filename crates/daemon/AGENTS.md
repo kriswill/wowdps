@@ -147,4 +147,5 @@ it. Keep it answering as the hub does.
 ```sh
 cargo test -p wowdps-daemon
 WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-daemon -- --ignored real_log --nocapture
+WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt cargo test --release -p wowdps-daemon --test real_log_placed -- --ignored --nocapture   # Forever's placed rows, name-free
 ```

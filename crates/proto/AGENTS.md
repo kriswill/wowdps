@@ -44,13 +44,14 @@ the engine. Wire spec: CONTRACT.md, "Wire protocol".
   a reader takes older formats and refuses newer ones, and a format bump
   needs the daemon's rewrite queue to bring old files forward. Both code
   through the crate-private `varint.rs`.
-- **`placed` is generated.** `placed/placed_spells.rs` and its review twin
-  come from `tools/gen-placed-spells.sh` (`placegen.rs` in
+- **`placed` is generated.** `placed/placed_spells.rs` (Retail's),
+  `placed/forever_placed_spells.rs` (Forever's, `--product wowf`) and their
+  review twins come from `tools/gen-placed-spells.sh` (`placegen.rs` in
   `tools/extract`); never hand-edit them. The daemon's replay cut keeps
   the lines of its spells (core's `PlacedTable`) and the replay draws
   them by it, so a new entry changes the cut (`tools/AGENTS.md`). It is a
-  stored table, not a message: changing it moves no `PROTO_VERSION`. It
-  is Retail's: every lookup names the edition (`all`, `placed`, `tells`),
+  stored table, not a message: changing it moves no `PROTO_VERSION`. Each
+  is one edition's: every lookup names the edition (`all`, `placed`, `tells`),
   an edition with no table gets nothing, and another edition's table is
   one entry in `placed::TABLES` (CONTRACT.md R8).
 - **`lua.rs` reads serializer output** (the game's `SavedVariables`); it is

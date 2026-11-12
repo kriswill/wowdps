@@ -201,8 +201,8 @@ mod tests {
         let committed = tablegen::committed();
         assert_eq!(
             committed.len(),
-            18,
-            "Retail's 8 tables and 4 review twins, Forever's 5 tables and the role signals' twin"
+            24,
+            "Retail's 8 tables and 4 review twins, Forever's 8 tables and 4 review twins"
         );
         for (_, rel) in &committed {
             assert!(root.join(rel).is_file(), "{}", rel.display());
@@ -231,7 +231,11 @@ mod tests {
             owner("crates/core/src/forever/open_world_maps.rs"),
             Some(Edition::Forever)
         );
-        assert_eq!(owner("crates/core/src/forever/role_spells.rs"), None);
+        assert_eq!(
+            owner("crates/core/src/forever/role_spells.rs"),
+            Some(Edition::Forever)
+        );
+        assert_eq!(owner("crates/core/src/forever/meter.rs"), None);
         assert_eq!(owner("crates/core/src/forever.rs"), None);
     }
 

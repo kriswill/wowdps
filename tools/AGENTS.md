@@ -39,11 +39,18 @@ what it does and how to run it.
   `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
   names another (Forever's `wowf`). Each committed table and review twin
   is one edition's (`tablegen::committed`): Retail's beside the code,
-  Forever's class, item, keystone, open-world and role-signal tables under
-  `crates/core/src/forever/` (the role signals are Forever's alone: a run
-  of another product needs `-o`). A table script passes `--checkout "$root"`,
-  so a run with no `-o` writes its own edition's committed table, and one
-  whose edition has none of that table needs `-o`. The extractor refuses
+  Forever's class, item, keystone, open-world, absorb, role-span and
+  role-signal tables under `crates/core/src/forever/` and its placed table
+  beside Retail's in proto (`forever_placed_spells.rs`) (the role signals are Forever's
+  alone: a run of another product needs `-o`). A table script passes
+  `--checkout "$root"`, so a run with no `-o` writes its own edition's
+  committed table, and one whose edition has none of that table needs
+  `-o`; a census-backed table's run reads its own edition's committed
+  census under it (Retail's `tools/*-census.csv`, Forever's
+  `tools/forever/*-census.csv`, but the role signals' Forever-only
+  `tools/role-signals-census.csv`), unless `--census` names another. A
+  product no edition names (a test realm's `.build.info` row) has no
+  committed census, so its run needs `--census` as well as `-o`. The extractor refuses
   any product's output on another edition's committed file, Retail's
   included, however `-o` spells it (`cli/owners.rs`). The caches in the
   data home are Retail's by default: another product's needs `-o`, and
@@ -59,8 +66,9 @@ what it does and how to run it.
 - **Curated tables need two proofs.** `role_spells`, `proc_spells`,
   `placed_spells` and Forever's `role_signals` are hand lists in
   `tools/extract/src/` (`rolegen.rs`, `procgen.rs`, `placegen.rs`,
-  `signalgen.rs`, the last curated by name and expanded to every id the
-  client proves) that the generator checks against the client's own data,
+  `signalgen.rs`, and Forever's role spans in `spangen.rs`; Forever's lists
+  are curated by name and expanded to every id the client proves, since
+  each of its ranks is an id of its own) that the generator checks against the client's own data,
   plus a committed real-log census (`tools/*-census.csv` from
   `census-*.sh`). Rerun the census when curating, and commit counts,
   never names: a census labels its logs `log 1`, `log 2`, … in the order
@@ -108,10 +116,10 @@ tools/gen-keystone-timers.sh   # keystone_timers.rs (R10)
 tools/gen-open-world-maps.sh   # open_world_maps.rs (R10)
 tools/gen-item-spells.sh       # item_spells.rs (R12; SpellEffect is big, be patient)
 tools/gen-class-spells.sh --product wowf   # and the other three: Forever's, crates/core/src/forever/
-tools/gen-role-spells.sh       # role_spells.rs (R18, curated)
-tools/gen-absorb-spells.sh     # absorb_spells.rs (R20)
+tools/gen-role-spells.sh       # role_spells.rs (R18, curated; --product wowf: Forever's, by name)
+tools/gen-absorb-spells.sh     # absorb_spells.rs (R20; --product wowf: Forever's, over tools/forever/'s census)
 tools/gen-proc-spells.sh       # proc_spells.rs (R26, curated)
-tools/gen-placed-spells.sh     # proto's placed_spells.rs (what the replay cut keeps of placed things, curated)
+tools/gen-placed-spells.sh     # proto's placed_spells.rs (what the replay cut keeps of placed things, curated; --product wowf: Forever's)
 tools/gen-role-signals.sh      # Forever's forever/role_signals.rs (R30, curated by name; Retail has none)
 tools/gen-icons.sh             # class-icons.bin (upscaled 4x; --no-upscale)
 tools/gen-spell-icons.sh       # spell-icons.bin (~58 MiB)

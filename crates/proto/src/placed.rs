@@ -17,15 +17,23 @@
 //! names the edition the log was written by (`Edition::counts_as`, a log
 //! that names none counting as Retail), and an edition with no table
 //! places nothing and tells nothing, never another edition's entry.
-//! Retail's is the only one generated so far.
+//! Retail's (`placed_spells.rs`) and Forever's (`forever_placed_spells.rs`,
+//! its own ids, each rank of a totem an entry) are generated. Forever's log
+//! names no UiMap inside a dungeon, and the cut posts its units there on
+//! map 0 (R29), so its entries are found as Retail's are; its totems, which
+//! its logs never post, stand where their shaman cast them.
 
 use wowdps_model::Edition;
 
+mod forever_placed_spells;
 mod placed_spells;
 
 /// Each edition's table, by the edition it counts as. A table generated
 /// for another edition is one entry here.
-static TABLES: &[(Edition, &[Placed])] = &[(Edition::Retail, placed_spells::TABLE)];
+static TABLES: &[(Edition, &[Placed])] = &[
+    (Edition::Retail, placed_spells::TABLE),
+    (Edition::Forever, forever_placed_spells::TABLE),
+];
 
 /// How the log tells where a placed spell stands. An entry lists what
 /// tells, most trusted first; the replay takes the first that does.
@@ -164,18 +172,30 @@ mod tests {
             assert!(tells(e, trip), "{e:?}");
             assert!(!all(e).is_empty(), "{e:?}");
         }
-        for e in [Edition::Forever, Edition::Classic(2), Edition::Unknown(7)] {
+        for e in [Edition::Classic(2), Edition::Unknown(7)] {
             assert!(all(e).is_empty(), "{e:?}");
             for id in [gateway, trip, 0, u32::MAX] {
                 assert!(placed(e, id).is_none(), "{e:?} {id}");
                 assert!(!tells(e, id), "{e:?} {id}");
             }
         }
+        // Forever's own: Retail's gateway places nothing there, and its
+        // Freezing Trap's cast (1499) and freeze (3355) are Forever's ids.
+        let forever = Edition::Forever;
+        assert!(!all(forever).is_empty());
+        assert!(placed(forever, gateway).is_none() && !tells(forever, trip));
+        assert!(placed(forever, 1499).is_some() && tells(forever, 3355));
+        assert!(placed(Edition::Retail, 1499).is_none());
         for id in [0, u32::MAX] {
-            assert!(placed(Edition::Retail, id).is_none(), "{id}");
-            assert!(!tells(Edition::Retail, id), "{id}");
+            for e in [Edition::Retail, forever] {
+                assert!(placed(e, id).is_none(), "{e:?} {id}");
+                assert!(!tells(e, id), "{e:?} {id}");
+            }
         }
-        assert_eq!(editions().collect::<Vec<_>>(), [Edition::Retail]);
+        assert_eq!(
+            editions().collect::<Vec<_>>(),
+            [Edition::Retail, Edition::Forever]
+        );
     }
 
     /// Every table is sorted by spell id, as `placed`'s search needs, and
@@ -198,19 +218,53 @@ mod tests {
     /// alone from an older client, would make the patch claim too much.
     #[test]
     fn the_table_is_no_older_than_its_editions_tables_patch() {
-        let text = include_str!("placed/placed_spells.rs");
-        let line = text
-            .lines()
-            .find(|l| l.starts_with("//! Source:"))
-            .expect("a Source line");
-        let build = line.split("build ").nth(1).expect("a build");
-        let n: Vec<u16> = build
-            .split(|c: char| !c.is_ascii_digit())
-            .take(3)
-            .map(|p| p.parse().expect("a number"))
-            .collect();
-        let patch = (n[0], n[1], n[2]);
-        let tables = Edition::Retail.tables_patch().expect("Retail has tables");
-        assert!(patch >= tables, "{patch:?} is older than {tables:?}");
+        // The patch a generated file's header says its client was.
+        let patch_of = |text: &str| {
+            let line = text
+                .lines()
+                .find(|l| l.starts_with("//! Source:"))
+                .expect("a Source line");
+            let build = line.split("build ").nth(1).expect("a build");
+            let n: Vec<u16> = build
+                .split(|c: char| !c.is_ascii_digit())
+                .take(3)
+                .map(|p| p.parse().expect("a number"))
+                .collect();
+            (n[0], n[1], n[2])
+        };
+        let tables = [
+            (
+                "placed_spells.rs",
+                Edition::Retail,
+                include_str!("placed/placed_spells.rs"),
+            ),
+            (
+                "forever_placed_spells.rs",
+                Edition::Forever,
+                include_str!("placed/forever_placed_spells.rs"),
+            ),
+        ];
+        for (file, edition, text) in tables {
+            let patch = patch_of(text);
+            let want = edition.tables_patch().expect("the edition has tables");
+            assert!(patch >= want, "{file}: {patch:?} is older than {want:?}");
+        }
+        // Every generated table here is held so: one added without joining
+        // the list above would not.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/placed");
+        for entry in std::fs::read_dir(dir).expect("src/placed") {
+            let path = entry.expect("an entry").path();
+            if path.extension().is_none_or(|x| x != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable");
+            if text.lines().any(|l| l.starts_with("//! Source:")) {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                assert!(
+                    tables.iter().any(|(f, _, _)| *f == name),
+                    "{name}: a generated table this test does not hold to its patch"
+                );
+            }
+        }
     }
 }

@@ -100,17 +100,20 @@ static RETAIL: Tables = Tables {
 
 /// Forever's: its classes (by the client's class masks, no spec), its
 /// items, its keystones (none: it has no Mythic+), its open-world maps and
-/// its role signals (R30: its log carries no spec, so roles are inferred).
-/// Its shields, role spans and procs have no table yet. Its log names no
-/// UiMap inside a dungeon or a raid (R29: a UiMap 0 there is a place).
+/// its role signals (R30: its log carries no spec, so roles are inferred),
+/// its shields (R20) and its role spans (R18). It has no proc table: its
+/// logs hold no talent proc R26 nests under a driver that deals damage
+/// under its own name (its procs are weapon enchants', seals' and items').
+/// Its placed table is proto's (`placed::placed`). Its log names no UiMap
+/// inside a dungeon or a raid (R29: a UiMap 0 there is a place).
 static FOREVER: Tables = Tables {
     class: Some(crate::forever::class_spells::resolve),
     items: Some(Items {
         kind: crate::forever::item_spells::item_kind,
         trinket: crate::forever::item_spells::trinket_of,
     }),
-    absorb: None,
-    role: None,
+    absorb: Some(crate::forever::absorb_spells::is_absorb_spell),
+    role: Some(crate::forever::role_spells::role_kind),
     procs: None,
     keystones: Some(Keystones {
         by_challenge: crate::forever::keystone_timers::pars_ms,
@@ -333,9 +336,16 @@ mod tests {
                 assert!(!Tables::of(e).is_absorb_spell(id), "{e:?} {id}");
             }
         }
-        // Power Word: Shield is Retail's shield; Forever has no table.
-        assert!(Tables::of(Edition::Retail).is_absorb_spell(17));
-        assert!(!Tables::of(Edition::Forever).is_absorb_spell(17));
+        // Power Word: Shield is a shield in both editions' tables; Blood
+        // Shield is Retail's alone, Light's Fury Forever's alone; an edition
+        // with no table has none.
+        for e in [Edition::Retail, Edition::Forever] {
+            assert!(Tables::of(e).is_absorb_spell(17), "{e:?}");
+        }
+        assert!(Tables::of(Edition::Retail).is_absorb_spell(77535));
+        assert!(!Tables::of(Edition::Forever).is_absorb_spell(77535));
+        assert!(Tables::of(Edition::Forever).is_absorb_spell(1_310_927));
+        assert!(!Tables::of(Edition::Retail).is_absorb_spell(1_310_927));
         assert!(!Tables::of(Edition::Classic(2)).is_absorb_spell(17));
     }
 
@@ -346,12 +356,21 @@ mod tests {
                 assert_eq!(Tables::of(e).role_kind(id), None, "{e:?} {id}");
             }
         }
-        // Shield Wall is Retail's defensive; Forever has no table.
-        assert_eq!(
-            Tables::of(Edition::Retail).role_kind(871),
-            Some(RoleSpellKind::Defensive)
-        );
-        assert_eq!(Tables::of(Edition::Forever).role_kind(871), None);
+        // Shield Wall is a defensive in both editions' tables; Shield
+        // Block's buff is 132404 in Retail's and 2565 in Forever's, each in
+        // its own alone; an edition with no table has none.
+        for e in [Edition::Retail, Edition::Forever] {
+            assert_eq!(
+                Tables::of(e).role_kind(871),
+                Some(RoleSpellKind::Defensive),
+                "{e:?}"
+            );
+        }
+        let am = Some(RoleSpellKind::ActiveMitigation);
+        assert_eq!(Tables::of(Edition::Retail).role_kind(132_404), am);
+        assert_eq!(Tables::of(Edition::Forever).role_kind(132_404), None);
+        assert_eq!(Tables::of(Edition::Forever).role_kind(2565), am);
+        assert_eq!(Tables::of(Edition::Retail).role_kind(2565), None);
         assert_eq!(Tables::of(Edition::Unknown(7)).role_kind(871), None);
     }
 
@@ -498,6 +517,14 @@ mod tests {
             (
                 "forever/role_signals.rs",
                 include_str!("forever/role_signals.rs"),
+            ),
+            (
+                "forever/absorb_spells.rs",
+                include_str!("forever/absorb_spells.rs"),
+            ),
+            (
+                "forever/role_spells.rs",
+                include_str!("forever/role_spells.rs"),
             ),
         ];
         // Every generated table of either edition is held here: one added

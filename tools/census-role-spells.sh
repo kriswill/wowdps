@@ -10,8 +10,10 @@
 # which says when it was played), sorted by id: the generator reads it via
 # `wowdps-extract gen-role-spells --census` and writes the counts into
 # crates/core/src/role_spells.expected.md, so a curated id nobody has ever
-# seen applied to a player is visible in review. The committed copy is
-# tools/role-spells-census.csv.
+# seen applied to a player is visible in review. The committed copies are each
+# edition's, over that edition's logs: tools/role-spells-census.csv (Retail's)
+# and tools/forever/role-spells-census.csv (Forever's, read by a --product wowf
+# run).
 #
 # usage: tools/census-role-spells.sh [-o out.csv] <WoWCombatLog-*.txt>...
 set -euo pipefail

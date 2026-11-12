@@ -894,6 +894,12 @@ BEGIN {
     SIG_F[2050]  = 4    # Lesser Heal
     SIG_F[2061]  = 4    # Flash Heal
     SIG_F[19750] = 4    # Flash of Light
+    # R20: Forever's shields the fixtures cast, a subset of its generated
+    # forever/absorb_spells.rs. Read only for a Forever log.
+    SHIELD_F[17] = 1    # Power Word: Shield (forever.txt)
+    # R18: Forever's role buffs the fixtures wear, a subset of its generated
+    # forever/role_spells.rs. Read only for a Forever log.
+    ROLE_F[871] = "Defensive"   # Shield Wall (forever.txt)
     # The lines the parser models with a source and a destination: what R29
     # learns hostility from (an unmodelled line — a swing's _LANDED twin, a
     # drain — teaches nothing).
@@ -936,9 +942,11 @@ FNR == NR {
 
 # ---- R8 (editions): the tables a log reads are its own edition's, by the
 # version line's PROJECT_ID (field 7; absent or 0 counts as Retail, 1). The
-# copies in BEGIN are Retail's; every other edition — Forever's 18, a Classic
-# client's, an unlisted id — has no role, absorb or placed table, so it opens
-# no R18 span, no R20 shield and no R29 placed row, and keys no aura as R18's.
+# copies in BEGIN are Retail's (ROLE_R, SHIELD_R, PLACE_R, TELL_R) and
+# Forever's (SIG_F, SHIELD_F, ROLE_F): Forever reads its role signals, its
+# shields and its role buffs; its placed table holds nothing the fixtures
+# cast, so it opens no R29 placed row; every other edition — a Classic
+# client's, an unlisted id — has no table at all.
 # R29: Forever's client names no UiMap inside a dungeon or a raid and writes 0
 # there, its x and y still the unit's own, so in its log a 0 is a place
 # (RZERO); every other edition's 0 places the unit nowhere.
@@ -948,7 +956,12 @@ function edition_tables(pid,   k) {
     # R30: Forever infers roles from its own signals; Retail (its spec says
     # the role) and every other edition infer none.
     infers = (pid == 18)
-    if (infers) for (k in SIG_F) SIG[k] = SIG_F[k]
+    if (pid == 18) {
+        for (k in SIG_F)    SIG[k] = SIG_F[k]
+        for (k in SHIELD_F) SHIELD[k] = SHIELD_F[k]
+        for (k in ROLE_F)   ROLE[k] = ROLE_F[k]
+        return
+    }
     if (pid != 0 && pid != 1) return
     for (k in ROLE_R)   ROLE[k] = ROLE_R[k]
     for (k in SHIELD_R) SHIELD[k] = SHIELD_R[k]

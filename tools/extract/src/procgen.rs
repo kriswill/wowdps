@@ -33,6 +33,16 @@
 //!
 //! Output is two files: the table (`proc_spells.rs`) and its review twin
 //! (`proc_spells.expected.md`) with every entry's evidence.
+//!
+//! Retail's alone. Forever has procs, but none this table could nest: its
+//! logs' procs come from weapon enchants (Flametongue Attack), seals
+//! (Judgement of Command) and items, whose drivers write no damage line of
+//! their own, or share their driver's name (a rune's Lightning Bolt) and so
+//! its row already; Hellfire Effect's driver deals only its warlock's own
+//! damage (R22's self-harm, no row); and the one pair the client ties with
+//! a damage-dealing driver (Hydra Strike under Corrosive Poison, by the
+//! driver's text) is in no class's spell family, an item's or the world's,
+//! never a talent's.
 
 use crate::spelltip::ids_in;
 use crate::table::{Tables, cell, parse_csv};
