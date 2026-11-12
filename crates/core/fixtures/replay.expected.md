@@ -95,7 +95,11 @@ Healing Rain on him, his Chaos Bolt, and three energizes, whose blocks
 describe their target); Ula'tek 2 (its Spit landing at 02.5, the
 Incinerate finding it at 16.0), Egg 1, Coil 1 (a swing — its block at off9
 describes the SOURCE — whose amount, 2434, is the floor's id: no line is
-read twice for it). Per floor: 2434 17, 2435 2.
+read twice for it). Per floor: 2434 17, 2435 2. No post on UiMap 0: the Tank's
+swing's `_LANDED` twin at 02.6 describes Ula'tek, health and all, on map 0,
+and a Retail log names a UiMap wherever it places a unit, so its 0 places
+nobody (R29; a Forever log's 0 would be a post). The twin is no second hit
+and teaches no hostility, so nothing else reads it.
 
 **Shields and pools (format 3; format 5's readings).** Two blocks carry a
 shield in field 9: Tank's at 01.0 (300, after the Venom) and Ula'tek's at
@@ -139,6 +143,7 @@ to `energize_wasted` (R27), and the Chaos Bolt a second cast (R26).
 | 02.0 | Ula'tek begins Spit | `cast_start` |
 | 02.2 | Bone Shield on Tank down a stack, never seen applied | `buff_applied` at 0, src Tank (up before the pull), then `buff_dose` (4) |
 | 02.5 | Ula'tek lands Spit on Tank | `cast_success` |
+| 02.6 | a swing's `_LANDED` twin, its block Ula'tek's on UiMap 0 | — (no row, and no post: Retail's 0 is no place) |
 | 03.0 | Egg lands Hatch | `cast_success` |
 | 03.0 | Bone Shield off Tank | `buff_removed` |
 | 03.2 | Coil's swing on Tank | — (melee is no hit row) |

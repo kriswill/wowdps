@@ -567,7 +567,9 @@ function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
 # own): the FLOOR — the UiMap id the advanced block reports players on most
 # (pass 1; a tie to the lower id) —, every post on EVERY floor (a Player /
 # Creature / Vehicle block whose health reads, max above 0, with x, y,
-# facing and a map above 0) and the posts per floor, (format 3) the posts'
+# facing and a map above 0 — or 0 itself in a log whose edition names no
+# UiMap inside an instance, Forever's: RZERO, set at each version line of
+# either pass) and the posts per floor, (format 3) the posts'
 # shields and pools (`r_post_pools`), the event rows by kind (the boss rows:
 # each ENCOUNTER_START and ENCOUNTER_END the cut holds; format 3's aura rows,
 # `r_aura`), the placed rows by kind, the world markers (those standing on
@@ -587,7 +589,7 @@ function r_block(pk) {
     if ($pk !~ /^(Player|Pet|Creature|Vehicle|GameObject|BattlePet|Vignette)-/) return 0
     if ($(pk + 3) + 0 <= 0) return 0
     if (!r_num($(pk + 14)) || !r_num($(pk + 15)) || !r_num($(pk + 17))) return 0
-    if ($(pk + 16) !~ /^[0-9]+$/ || $(pk + 16) + 0 == 0) return 0
+    if ($(pk + 16) !~ /^[0-9]+$/ || ($(pk + 16) + 0 == 0 && !RZERO)) return 0
     rguid = $pk; rmap = $(pk + 16) + 0
     return 1
 }
@@ -901,7 +903,7 @@ BEGIN {
 {
     # epoch is advanced by both passes; reset it when pass 2 begins or the two
     # passes disagree about which epoch a pet's owner was recorded in.
-    if (FNR == 1 && NR != FNR) epoch = 0
+    if (FNR == 1 && NR != FNR) { epoch = 0; RZERO = 0 }
 
     i = index($0, "  ")
     if (i == 0) { blanks++; next }          # blank / no-timestamp line
@@ -921,8 +923,9 @@ FNR == NR {
     if (ev == "CHALLENGE_MODE_START") { kk1++; kin1 = 1 }
     else if (ev == "CHALLENGE_MODE_END" || ev == "COMBAT_LOG_VERSION") kin1 = 0
     else if (kin1 && r_block(r_pk()) && rguid ~ /^Player-/) kvote[kk1 SUBSEP rmap]++
-    # R6: a COMBAT_LOG_VERSION after the first line is a hard boundary.
-    if (ev == "COMBAT_LOG_VERSION") { if (seenVersion) epoch++; seenVersion = 1; next }
+    # R6: a COMBAT_LOG_VERSION after the first line is a hard boundary. R29:
+    # the edition it names says what a UiMap 0 is (`edition_tables` in pass 2).
+    if (ev == "COMBAT_LOG_VERSION") { if (seenVersion) epoch++; seenVersion = 1; RZERO = ($8 + 0 == 18); next }
     if (ev == "SPELL_SUMMON") owner[$6 SUBSEP epoch] = $2
     # SWING_DAMAGE advanced block describes the SOURCE; block offset 1 = owner_guid
     # => absolute offset 10 => awk $11
@@ -936,8 +939,12 @@ FNR == NR {
 # copies in BEGIN are Retail's; every other edition — Forever's 18, a Classic
 # client's, an unlisted id — has no role, absorb or placed table, so it opens
 # no R18 span, no R20 shield and no R29 placed row, and keys no aura as R18's.
+# R29: Forever's client names no UiMap inside a dungeon or a raid and writes 0
+# there, its x and y still the unit's own, so in its log a 0 is a place
+# (RZERO); every other edition's 0 places the unit nowhere.
 function edition_tables(pid,   k) {
     delete ROLE; delete SHIELD; delete PLACE; delete TELL; delete SIG
+    RZERO = (pid == 18)
     # R30: Forever infers roles from its own signals; Retail (its spec says
     # the role) and every other edition infer none.
     infers = (pid == 18)

@@ -6,9 +6,11 @@
 //! gives, none gets a spec, none is read off Retail's table (the same lines
 //! under Retail's header read otherwise), and a spell no table knows is
 //! counted like any other. The lazy load, a resumed scan and the replay cut
-//! read the same edition the full replay does. Goldens in
-//! `forever.expected.md` / `.tsv`; the totals are gated by
-//! `fixture_totals.rs`.
+//! read the same edition the full replay does, and the cut keeps every
+//! post its log writes on UiMap 0, Forever's word for a dungeon with no
+//! UiMap (R29), where the same lines under another edition's header post
+//! nobody. Goldens in `forever.expected.md` / `.tsv`; the totals are gated
+//! by `fixture_totals.rs`, the replay rows by `replay.rs`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
@@ -16,6 +18,7 @@ use std::collections::BTreeMap;
 
 use wowdps_core::index::{load_segment_text, scan, scan_from};
 use wowdps_core::meter::{Meter, Segment, SegmentKind, View, meter_from_lines};
+use wowdps_core::model::replay::{Cut, EventKind, MapPosts, UnitKind};
 use wowdps_core::model::{Class, Spec};
 use wowdps_core::replay::{NoPlaced, cut};
 
@@ -228,10 +231,9 @@ fn a_resumed_scan_reads_the_same_edition() {
     }
 }
 
-/// The replay cut reads the edition too: the Rogue, the one player it
-/// numbers (his cast), is a Rogue with no spec, never Retail's Monk.
-#[test]
-fn the_cut_reads_forevers_classes() {
+/// The boss pull's replay cut, its segment loaded lazily as the store
+/// cuts it.
+fn the_pull_cut() -> Cut {
     let idx = scan(&mut std::fs::File::open(FIXTURE).unwrap());
     let meta = idx
         .segments
@@ -239,9 +241,215 @@ fn the_cut_reads_forevers_classes() {
         .find(|m| m.kind == SegmentKind::Encounter)
         .unwrap();
     let text = load_segment_text(std::path::Path::new(FIXTURE), meta).unwrap();
-    let c = cut(text.seeds(), text.slice(), &NoPlaced, None);
-    let rogue = c.units.iter().find(|u| u.guid == ROGUE).unwrap();
-    assert_eq!((rogue.class, rogue.spec), (Some(Class::Rogue), None));
+    cut(text.seeds(), text.slice(), &NoPlaced, None)
+}
+
+/// `text`'s boss pull cut from its lines: every line before its
+/// ENCOUNTER_START the seeds, the START through the END the slice.
+fn cut_of(text: &str) -> Cut {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| l.contains("  ENCOUNTER_START,"))
+        .unwrap();
+    let end = lines
+        .iter()
+        .position(|l| l.contains("  ENCOUNTER_END,"))
+        .unwrap();
+    cut(
+        lines[..start].iter().copied(),
+        lines[start..=end].iter().copied(),
+        &NoPlaced,
+        None,
+    )
+}
+
+/// The replay cut reads the edition too: each player it numbers (all five,
+/// each posted) has the class Forever's table gives and no spec — the
+/// Rogue never Retail's Monk, the Shaman whose spells no table holds none.
+#[test]
+fn the_cut_reads_forevers_classes() {
+    let c = the_pull_cut();
+    let class_of = |guid: &str| {
+        let u = c.units.iter().find(|u| u.guid == guid).unwrap();
+        assert_eq!(u.kind, UnitKind::Player);
+        (u.class, u.spec)
+    };
+    assert_eq!(class_of(ROGUE), (Some(Class::Rogue), None));
+    assert_eq!(class_of(MAGE), (Some(Class::Mage), None));
+    assert_eq!(class_of(WARRIOR), (Some(Class::Warrior), None));
+    assert_eq!(class_of(PRIEST), (Some(Class::Priest), None));
+    assert_eq!(class_of(STRANGER), (None, None));
+}
+
+/// R29: Forever's client names no UiMap inside a dungeon and writes 0 on
+/// every block there, so the pull keeps each post on map 0 — no UiMap, its
+/// x and y the unit's own on the instance's map (the head's 48) — and its
+/// floor is 0: every player is posted, the boss through the whole pull
+/// (from its first second to its killing blow), the coordinates exact, and
+/// the boss's hit on the warrior placed where his block put him.
+#[test]
+fn a_forever_pull_keeps_its_posts_on_no_ui_map() {
+    let c = the_pull_cut();
+    assert_eq!((c.floor, c.head.map), (0, 48));
+    assert_eq!(
+        c.maps(),
+        [MapPosts {
+            map_id: 0,
+            posts: 16,
+            players: 8
+        }]
+    );
+    let posts = |guid: &str| -> Vec<(u32, i32, i32, i32)> {
+        let u = c.units.iter().find(|u| u.guid == guid).unwrap();
+        u.posts
+            .iter()
+            .map(|p| (p.t_ms, p.x, p.y, p.facing))
+            .collect()
+    };
+    assert_eq!(
+        posts(ROGUE),
+        [
+            (1_000, -50_520, -980, 4_000),
+            (10_000, -50_520, -980, 4_000)
+        ]
+    );
+    assert_eq!(
+        posts(MAGE),
+        [
+            (2_500, -51_240, -1_420, 3_500),
+            (19_500, -51_240, -1_420, 3_500)
+        ]
+    );
+    assert_eq!(
+        posts(WARRIOR),
+        [
+            (7_000, -50_610, -1_040, 35_000),
+            (12_000, -50_610, -1_040, 35_000)
+        ]
+    );
+    assert_eq!(posts(PRIEST), [(7_800, -51_460, -630, 1_200)]);
+    assert_eq!(posts(STRANGER), [(9_000, -50_690, -1_210, 5_200)]);
+    let boss = c.units.iter().find(|u| u.kind == UnitKind::Boss).unwrap();
+    let times: Vec<u32> = boss.posts.iter().map(|p| p.t_ms).collect();
+    assert_eq!(
+        times,
+        [2_000, 3_000, 5_000, 8_000, 9_000, 9_000, 10_000, 20_000]
+    );
+    assert!(boss.posts.iter().all(|p| (p.x, p.y) == (-50_779, -1_167)));
+    assert_eq!(boss.posts.last().map(|p| p.hp), Some(0), "the killing blow");
+    assert!(
+        c.units.iter().flat_map(|u| &u.posts).all(|p| p.map_id == 0),
+        "every post on no UiMap"
+    );
+    let hits: Vec<_> = c
+        .events
+        .iter()
+        .filter(|e| e.kind == EventKind::Hit)
+        .collect();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(
+        (hits[0].t_ms, hits[0].spell_id, hits[0].at),
+        (7_000, 8374, Some((-50_610, -1_040)))
+    );
+}
+
+/// The edition decides what a 0 is, never the value: the same lines under
+/// Retail's header, a log that names no edition (Retail's), a Classic
+/// client's or an unlisted one post nobody — no floor but 0, no hit
+/// placed — where Forever's posts every unit. The players' casts, which
+/// no table and no block decides, are rows under every header alike.
+#[test]
+fn a_ui_map_zero_is_a_place_in_forevers_log_alone() {
+    let casts = |c: &Cut| -> Vec<(u32, u32)> {
+        c.events
+            .iter()
+            .filter(|e| e.kind == EventKind::PcastSuccess)
+            .map(|e| (e.t_ms, e.spell_id))
+            .collect()
+    };
+    let forever = cut_of(&text());
+    assert_eq!(
+        forever,
+        the_pull_cut(),
+        "the lines alone, as the store cuts"
+    );
+    assert_eq!(forever.posts(), 16);
+    assert_eq!(casts(&forever).len(), 5);
+    for project in [1, 0, 2, 7] {
+        let c = cut_of(&as_project(project));
+        assert_eq!(c.posts(), 0, "PROJECT_ID {project}");
+        assert!(c.maps().is_empty(), "PROJECT_ID {project}");
+        assert_eq!(c.floor, 0, "PROJECT_ID {project}");
+        assert!(
+            !c.events.iter().any(|e| e.kind == EventKind::Hit),
+            "PROJECT_ID {project}: a hit only where a block placed its victim"
+        );
+        assert_eq!(casts(&c), casts(&forever), "PROJECT_ID {project}");
+    }
+}
+
+/// A pull that mixes no UiMap with a real one: the mage's last cast is a
+/// step out onto Ashenvale's UiMap (1440), as a block writes it on the way
+/// out of the dungeon. That post keeps 1440 while every other keeps 0, the
+/// floor stays 0 (the players stood on it most), and `maps()` lists both.
+/// With the rogue's two posts out there too, the players stand four and
+/// four: the tie goes to the lower id, 0. The edition says what 0 is; 0
+/// itself votes as any floor does.
+#[test]
+fn a_forever_pull_that_steps_onto_a_ui_map_keeps_both() {
+    let floors = |c: &Cut, guid: &str| -> Vec<u32> {
+        let u = c.units.iter().find(|u| u.guid == guid).unwrap();
+        u.posts.iter().map(|p| p.map_id).collect()
+    };
+    let out = |text: &str, from: &str| {
+        assert!(text.contains(from), "{from}");
+        text.replace(from, &from.replace(",0,0.", ",1440,0."))
+    };
+    // Brindlewick's second Fireball cast (29.5 s), alone of his two.
+    let step = out(&text(), "1210,1800,130,-512.40,-14.20,0,0.3500");
+    let c = cut_of(&step);
+    assert_eq!(floors(&c, MAGE), [0, 1440]);
+    assert_eq!(floors(&c, ROGUE), [0, 0]);
+    assert_eq!(c.floor, 0);
+    assert_eq!(
+        c.maps(),
+        [
+            MapPosts {
+                map_id: 0,
+                posts: 15,
+                players: 7
+            },
+            MapPosts {
+                map_id: 1440,
+                posts: 1,
+                players: 1
+            }
+        ]
+    );
+    let mage = c.units.iter().find(|u| u.guid == MAGE).unwrap();
+    assert_eq!(
+        mage.posts.last().map(|p| (p.t_ms, p.x, p.y)),
+        Some((19_500, -51_240, -1_420)),
+        "the step out keeps its own place"
+    );
+    // Both of the mage's and both of the rogue's posts out there: four of
+    // the players' posts on each floor.
+    let tie = out(
+        &out(&step, "1500,1800,130,-512.40,-14.20,0,0.3500"),
+        "-505.20,-9.80,0,0.4000",
+    );
+    let c = cut_of(&tie);
+    assert_eq!(floors(&c, MAGE), [1440, 1440]);
+    assert_eq!(floors(&c, ROGUE), [1440, 1440]);
+    let players = |map_id: u32| {
+        c.maps()
+            .iter()
+            .find(|m| m.map_id == map_id)
+            .map_or(0, |m| m.players)
+    };
+    assert_eq!((players(0), players(1440)), (4, 4));
+    assert_eq!(c.floor, 0, "a tie to the lower id");
 }
 
 /// A door onto a map Forever's own map table calls open world (2980,

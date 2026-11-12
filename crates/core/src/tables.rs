@@ -21,6 +21,10 @@
 //! index scanner's and the replay cut's alike, so the three cannot read
 //! different editions' tables for one fight. A table generated for an
 //! edition is one entry in that edition's [`Tables`].
+//!
+//! Beside the tables, one fact about what an edition's log writes, which
+//! no value in a line can tell (R29): whether the advanced block's UiMap 0
+//! is a place ([`Tables::map_zero_is_a_place`]).
 
 use crate::roles::RoleSignal;
 use wowdps_model::{Class, Edition, ItemKind, RoleSpellKind, Spec};
@@ -54,6 +58,9 @@ pub(crate) struct Tables {
     /// meter keeps R30's ledger and infers each fight's roles; without it
     /// (Retail, whose role is its spec's) it keeps none and infers nothing.
     signals: Option<fn(u32) -> Option<RoleSignal>>,
+    /// R29: whether the advanced block's UiMap 0 is a place. Not a table:
+    /// what the edition's log writes ([`Tables::map_zero_is_a_place`]).
+    map_zero_is_a_place: bool,
 }
 
 /// An item table's two questions.
@@ -88,12 +95,14 @@ static RETAIL: Tables = Tables {
     }),
     open_world: Some(crate::open_world_maps::open_world),
     signals: None,
+    map_zero_is_a_place: false,
 };
 
 /// Forever's: its classes (by the client's class masks, no spec), its
 /// items, its keystones (none: it has no Mythic+), its open-world maps and
 /// its role signals (R30: its log carries no spec, so roles are inferred).
-/// Its shields, role spans and procs have no table yet.
+/// Its shields, role spans and procs have no table yet. Its log names no
+/// UiMap inside a dungeon or a raid (R29: a UiMap 0 there is a place).
 static FOREVER: Tables = Tables {
     class: Some(crate::forever::class_spells::resolve),
     items: Some(Items {
@@ -109,11 +118,13 @@ static FOREVER: Tables = Tables {
     }),
     open_world: Some(crate::forever::open_world_maps::open_world),
     signals: Some(crate::forever::role_signals::signal),
+    map_zero_is_a_place: true,
 };
 
 /// An edition no table was generated for: a Classic client, or a game this
 /// build does not know. It reads Retail's open-world maps for now (the
-/// module's one exception) and nothing else.
+/// module's one exception) and nothing else, and its UiMap 0 is read as
+/// it always was, as no place: what such a log means by one is unmeasured.
 static NONE: Tables = Tables {
     class: None,
     items: None,
@@ -123,6 +134,7 @@ static NONE: Tables = Tables {
     keystones: None,
     open_world: Some(crate::open_world_maps::open_world),
     signals: None,
+    map_zero_is_a_place: false,
 };
 
 impl Tables {
@@ -198,6 +210,21 @@ impl Tables {
     pub(crate) fn open_world(&self, map_id: u32) -> bool {
         self.open_world.is_some_and(|f| f(map_id))
     }
+
+    /// R29: whether the advanced block's UiMap 0 is a place — a post on the
+    /// fight's instance map, its `x`, `y` and facing the unit's own — or
+    /// none. Retail's log names a UiMap wherever it places a unit (three
+    /// logs, some 2.8 million blocks: four with health and a 0, and 958
+    /// with no health, which post nothing anyway), so its 0 places the
+    /// unit nowhere. Forever's client has no UiMap inside a dungeon or a
+    /// raid and writes 0 there on every block, the coordinates still the
+    /// unit's (three logs: every block with health inside two dungeons,
+    /// some 71 000 over 13 boss pulls, while its open world names the
+    /// zone's UiMap as Retail's does). Asked of the edition, never of the
+    /// value: the same 0 is nowhere in one log and a room in the other.
+    pub(crate) fn map_zero_is_a_place(&self) -> bool {
+        self.map_zero_is_a_place
+    }
 }
 
 #[cfg(test)]
@@ -238,6 +265,17 @@ mod tests {
         assert!(std::ptr::eq(Tables::of_project(18), &FOREVER));
         assert!(std::ptr::eq(Tables::of_project(2), &NONE));
         assert!(std::ptr::eq(Tables::of_project(200), &NONE));
+    }
+
+    /// R29: a UiMap 0 is a place in Forever's log alone; Retail's, a log
+    /// that names no edition and one no table was generated for read it as
+    /// none, as every edition did before.
+    #[test]
+    fn only_forevers_log_places_a_unit_on_map_zero() {
+        assert!(Tables::of(Edition::Forever).map_zero_is_a_place());
+        for e in RETAILS.into_iter().chain(TABLELESS) {
+            assert!(!Tables::of(e).map_zero_is_a_place(), "{e:?}");
+        }
     }
 
     /// One id, two editions, two classes: Expose Armor is a Rogue's in

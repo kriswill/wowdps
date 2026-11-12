@@ -113,3 +113,19 @@ The five fights merged, on their summed clocks (combat 111 s; span 111 s): Garro
 16 swings of 36, 8 kit casts, 29 s of stance — a tank; Fennoa a tank; Mirela (1 200 on
 others, 6 heals of 8 casts) and Ilsabet (1 300, 3 of 4) healers; the rest dps; Quillan
 none.
+
+## The replay cut (R29)
+
+Every advanced block in the log writes map 0, as the Forever client does inside a
+dungeon (it has no UiMap there), and in a Forever log that 0 is a place: each block
+with health posts its unit on map 0, no UiMap, over the instance's map 48, and each
+boss pull's floor is 0. Every block names one pool, power type 1 at 60 of 100, so each
+post carries one pool reading 60.
+
+| pull | posts | the boss | the players' (by guid) | `replay_pools` | `replay_pool_sum` |
+|---|---:|---:|---|---:|---:|
+| Twilight Lord Kelris | 40 | 16 | `…2E01` 9, `…2E02` 6, `…2E03` 2, `…2E04` 2, `…2E05` 4, `…2E0A` 1 | 40 | 2 400 |
+| Aku'mai | 35 | 19 | `…2E01` 4, `…2E06` 5, `…2E07` 4, `…2E08` 3 | 35 | 2 100 |
+
+The units, the event rows and the shields are those the cut read before posts were
+kept: every unit posted was already numbered by a row, and no block says a shield.

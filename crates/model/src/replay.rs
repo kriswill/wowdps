@@ -8,7 +8,8 @@
 //!
 //! What the replay needs and nothing more: where every unit stood — on
 //! whichever floor (UiMap) the log put it, so a keystone run follows the
-//! party from level to level — which way it faced, how much health, shield
+//! party from level to level, or on no UiMap at all where the log names
+//! none (map 0, [`Post::map_id`]) — which way it faced, how much health, shield
 //! and power it had whenever the log said (a [`Post`]); the deaths, the
 //! hostile casts, the hits on players, the debuffs on them, the buffs that
 //! matter to the fight on them, the players' own debuffs on NPCs and where
@@ -112,6 +113,13 @@ pub struct Post {
     /// its own, so a unit that changes floors does so in its track. A
     /// format-1 file kept the cut's [`Cut::floor`] alone, and reads with
     /// that on every post.
+    ///
+    /// 0 is NO UiMap: the log named none where the unit stood, and `x` and
+    /// `y` are its own on the instance's map, [`Head::map`] — an instance
+    /// map id, never a UiMap id, so the two never meet in one field.
+    /// Forever's client writes 0 on every block inside a dungeon or a raid
+    /// (it has no UiMap there); Retail's names a UiMap wherever it places a
+    /// unit, and a Retail cut keeps no post on 0.
     pub map_id: u32,
     /// `absorb` (format 3): the shields on the unit in total, as the block
     /// says them after the line (its field 9); 0 for none, and on every post
@@ -483,7 +491,8 @@ pub struct Head {
     pub encounter: Option<EncounterHead>,
     /// The keystone at the cut's start (or, for a run, the run's own).
     pub key: Option<KeyHead>,
-    /// The instance's map id: ENCOUNTER_START's, else the run's.
+    /// The instance's map id: ENCOUNTER_START's, else the run's. Not a
+    /// UiMap id: what a post on no UiMap ([`Post::map_id`] 0) stands on.
     pub map: u32,
     /// The zone the log was in at the start (the last ZONE_CHANGE's name).
     pub zone: String,
@@ -499,8 +508,9 @@ pub struct Head {
     pub date: (u16, u8, u8),
 }
 
-/// One floor the cut's posts stand on ([`Cut::maps`]): its UiMap id, how
-/// many posts stand there and how many of those are players'.
+/// One floor the cut's posts stand on ([`Cut::maps`]): its UiMap id (0, no
+/// UiMap: the instance's map, [`Post::map_id`]), how many posts stand
+/// there and how many of those are players'.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapPosts {
     pub map_id: u32,
@@ -516,7 +526,10 @@ pub struct Cut {
     /// The main floor (a UiMap id): where the players were posted most, a
     /// tie to the lower id — what a boss pull is drawn on. Every post keeps
     /// its own [`Post::map_id`] besides ([`Cut::maps`] lists them). 0 when
-    /// no player was posted (a log written without the advanced block).
+    /// no player was posted (a log written without the advanced block), or
+    /// when the players stood on no UiMap most (a Forever pull inside a
+    /// dungeon or a raid: [`Cut::maps`] then lists map 0 with their posts,
+    /// on the instance's map, [`Head::map`]).
     pub floor: u32,
     pub units: Vec<Unit>,
     /// In time order (the log's).

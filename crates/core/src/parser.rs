@@ -95,8 +95,10 @@ pub struct HpHint {
     /// A type at or above 64 is no pool in `power` either.
     pub more_power: Vec<Power>,
     /// v45 (R29): advanced fields 14–17 — where the unit stands and which
-    /// way it faces. `None` when any of them does not read, or the map is 0
-    /// (a unit the block places nowhere).
+    /// way it faces. `None` when any of them does not read. A map of 0 is
+    /// kept as the log wrote it: what it means is the edition's, so the
+    /// replay cut, which knows the edition, decides (Retail's 0 places the
+    /// unit nowhere; Forever's is an instance with no UiMap, R29).
     pub pos: Option<Position>,
     /// v45: advanced field 18 — a player's item level (an NPC's own level);
     /// 0 when it does not read.
@@ -115,8 +117,9 @@ impl HpHint {
 
 /// v45 (R29): a unit's place from the advanced block, in the log's own
 /// precision kept exact as integers: `x` and `y` in hundredths of a yard
-/// (the log writes two decimals), `map` the UiMap id (the floor), `facing`
-/// in ten-thousandths of a radian (four decimals).
+/// (the log writes two decimals), `map` the UiMap id (the floor; 0 where
+/// the log names none), `facing` in ten-thousandths of a radian (four
+/// decimals).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub x: i32,
@@ -851,10 +854,10 @@ fn fixed_at(f: &[Cow<'_, str>], i: usize, scale: f64) -> Option<i32> {
 }
 
 /// v45 (R29): advanced fields `i..i+4` (x, y, map, facing) → the unit's
-/// [`Position`]; `None` when any does not read or the map is 0.
+/// [`Position`]; `None` when any does not read. A map of 0 reads: the
+/// replay cut asks the edition what it means.
 fn position_at(f: &[Cow<'_, str>], i: usize) -> Option<Position> {
     let map: u32 = get(f, i + 2)?.parse().ok()?;
-    (map > 0).then_some(())?;
     Some(Position {
         x: fixed_at(f, i, 100.0)?,
         y: fixed_at(f, i + 1, 100.0)?,
@@ -3411,7 +3414,8 @@ mod tests {
     }
 
     /// v45 (R29): a position the block does not give — a field that is no
-    /// number, or map 0 — is none; the health beside it still reads.
+    /// number — is none; the health beside it still reads. A map of 0 is
+    /// read as written: the cut asks the edition what it means.
     #[test]
     fn a_position_reads_only_whole() {
         let hint = |tail: &str| {
@@ -3433,7 +3437,16 @@ mod tests {
                 90
             )
         );
-        assert_eq!(hint("0.00,0.00,0,0.0000,90").unwrap().pos, None, "map 0");
+        assert_eq!(
+            hint("-507.79,-11.67,0,0.3814,22").unwrap().pos,
+            Some(Position {
+                x: -50_779,
+                y: -1_167,
+                map: 0,
+                facing: 3_814
+            }),
+            "map 0, as written"
+        );
         assert_eq!(hint("nil,1.00,2434,0.0000,90").unwrap().pos, None);
         assert_eq!(hint("1.00,1.00,2434").unwrap().pos, None, "truncated");
     }

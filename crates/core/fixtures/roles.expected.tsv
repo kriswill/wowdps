@@ -1088,10 +1088,10 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 5	Trash	Trash		15000			Player-6101-0C1D2E02	power_max	100
 5	Trash	Trash		15000			Player-6101-0C1D2E02	role	3
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_units	7
-1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_posts	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_posts	40
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_absorb	0
-1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pools	0
-1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pool_sum	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pools	40
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_pool_sum	2400
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_floor	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_affixes	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_affix_sum	0
@@ -1119,11 +1119,18 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_placed_touch	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_placed_gone	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_markers	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	0	replay_map_posts	40
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	replay_posts	9
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	replay_posts	6
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	replay_posts	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	replay_posts	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	replay_posts	4
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	replay_posts	1
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_units	6
-2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_posts	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_posts	35
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_absorb	0
-2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pools	0
-2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pool_sum	0
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pools	35
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_pool_sum	2100
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_floor	0
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_affixes	0
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_affix_sum	0
@@ -1151,3 +1158,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_placed_touch	0
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_placed_gone	0
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_markers	0
+2	Encounter	Aku'mai	kill	40000	2910	1	0	replay_map_posts	35
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	replay_posts	4
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	replay_posts	5
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	replay_posts	4
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	replay_posts	3

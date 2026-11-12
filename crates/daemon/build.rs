@@ -70,6 +70,8 @@ const DECIDING: &[&str] = &[
     "pub fn load_segment_text(",
     "pub fn feed(",
     "pub fn cut_and_meter<",
+    // core: what the cut keeps of a block's place (R29: a UiMap 0, by edition).
+    "fn stood(",
     // proto: the identities and the card schema.
     "pub fn log_id(",
     "pub fn fight_id(",

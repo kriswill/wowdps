@@ -114,6 +114,14 @@
 //!   byte. An older file still reads, its key with no affixes; the rewrite
 //!   queue recuts every one from its log, so a run stored before the parser
 //!   kept them gets them back while its log survives.
+//!
+//! A post's map 0 is NO UiMap (2026-11-12, R29): the Forever client names
+//! none inside a dungeon or a raid, so a Forever cut keeps its posts there
+//! on map 0, x and y on the head's instance map, its floor 0. The codec
+//! writes 0 as any floor, so no format moved: a Retail file is what it was,
+//! and a Forever file cut before (no post at all) is format 6 too, which
+//! the rewrite queue counts as current; a regrade of Forever's fights
+//! (`Regrade`'s `edition`) recuts it from its log.
 
 use std::collections::HashMap;
 

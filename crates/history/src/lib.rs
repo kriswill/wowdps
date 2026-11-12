@@ -119,6 +119,22 @@ fn row_cols(alias: &str, as_guid: bool) -> String {
     sql
 }
 
+/// A `WHERE` clause over `fights` keeping the cards of `edition` as the
+/// daemon picks them (`FightCard::of_edition`, by `Edition::counts_as`):
+/// every project id that counts as it, so a card that names none (0) is
+/// Retail's. `wowdps history regrade --edition` shows what it rewrites by
+/// it.
+pub fn edition_filter(edition: Edition) -> String {
+    let ids: Vec<String> = (0..=u8::MAX)
+        .filter(|&n| Edition::from_project_id(n).counts_as() == edition.counts_as())
+        .map(|n| n.to_string())
+        .collect();
+    format!(
+        "coalesce(TRY_CAST(project_id AS BIGINT), 0) IN ({})",
+        ids.join(", ")
+    )
+}
+
 /// Where the lake lives: `$XDG_DATA_HOME/wowdps/history/v1`, else
 /// `~/.local/share/wowdps/history/v1` — the daemon's default too.
 pub fn default_dir() -> Option<PathBuf> {

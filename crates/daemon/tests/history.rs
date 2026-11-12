@@ -3115,6 +3115,150 @@ fn a_daemon_following_two_editions_stores_and_regrades_from_both_folders() {
     stop(d);
 }
 
+/// R29: a Forever replay an older build stored has no posts (it read the
+/// log's UiMap 0 as nowhere). Its file is format 6 like any other, so the
+/// rewrite queue leaves it; a regrade of Forever's boss pulls — `Regrade {
+/// kind: encounter, edition: forever }`, what `wowdps history regrade
+/// --kind encounter --edition forever` sends — recuts it from its log with
+/// every post, as an import cuts it today, and leaves Retail's replays as
+/// they were, byte for byte.
+#[test]
+fn a_regrade_by_edition_gives_a_forever_replay_its_posts() {
+    use wowdps_model::Edition;
+    use wowdps_model::replay::EventKind;
+    use wowdps_proto::replay;
+    let tmp = Temp::new("forever-posts");
+    let retail = tmp.join("retail");
+    let forever = tmp.join("forever");
+    std::fs::create_dir_all(&retail).unwrap();
+    std::fs::create_dir_all(&forever).unwrap();
+    std::fs::write(
+        retail.join("WoWCombatLog-072726.txt"),
+        std::fs::read_to_string(SAMPLE).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        forever.join("WoWCombatLog-110126.txt"),
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../core/fixtures/forever.txt"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let hist = tmp.join("history");
+    let opts = || {
+        let mut opts = options(&tmp, SourceSpec::Dir(retail.clone()), hist.clone());
+        opts.editions = wowdps_daemon::Followed {
+            source: Some(Edition::Retail),
+            more: vec![(Edition::Forever, forever.clone())],
+        };
+        opts
+    };
+    let replay_at = |id: &str| hist.join("replay").join(format!("{id}.bin"));
+    let d = start(opts());
+    wait_for_fights(&d.socket, 3);
+    let cards = Store::open(DirBackend::new(hist.clone()), Retention::default())
+        .cards()
+        .to_vec();
+    let geilhast = cards
+        .iter()
+        .find(|c| c.edition() == Edition::Forever)
+        .unwrap()
+        .id
+        .clone();
+    let retail_ids: Vec<String> = cards
+        .iter()
+        .filter(|c| c.edition() == Edition::Retail)
+        .map(|c| c.id.clone())
+        .collect();
+    assert_eq!(retail_ids.len(), 2);
+    // Every kill keeps a replay: each lands beside its card.
+    let deadline = Instant::now() + DEADLINE;
+    while !retail_ids
+        .iter()
+        .chain([&geilhast])
+        .all(|id| replay_at(id).exists())
+    {
+        assert!(Instant::now() < deadline, "the kills' replays never landed");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let fresh = replay::decode(&std::fs::read(replay_at(&geilhast)).unwrap()).unwrap();
+    assert_eq!(fresh.posts(), 16, "this build posts the Forever pull");
+    stop(d);
+
+    // The same store as an older build left it: the Forever cut with no
+    // post, and so no hit placed.
+    let mut old = fresh.clone();
+    for u in &mut old.units {
+        u.posts.clear();
+    }
+    old.events.retain(|e| e.kind != EventKind::Hit);
+    std::fs::write(replay_at(&geilhast), replay::encode(&old)).unwrap();
+    let retail_bytes: Vec<Vec<u8>> = retail_ids
+        .iter()
+        .map(|id| std::fs::read(replay_at(id)).unwrap())
+        .collect();
+    let store = Store::open(DirBackend::new(hist.clone()), Retention::default());
+    assert!(store.has_replay(&geilhast));
+    assert!(
+        store.recuts().is_empty(),
+        "a format-6 file: the rewrite queue leaves it"
+    );
+    drop(store);
+
+    let d = start(opts());
+    wait_for_fights(&d.socket, 3);
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    client.send(&ClientMsg::Regrade {
+        req_id: 1,
+        fight_id: None,
+        encounter: None,
+        difficulty: None,
+        kind: Some(FightKind::Encounter),
+        edition: Some(Edition::Forever),
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let mut queued = None;
+    while queued.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                req_id: 1,
+                answer: HistoryAnswer::Regraded { queued: n },
+            } = msg
+            {
+                queued = Some(n);
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(queued, Some(1), "Forever's one boss pull alone");
+    let deadline = Instant::now() + DEADLINE;
+    let recut = loop {
+        let cut = std::fs::read(replay_at(&geilhast))
+            .ok()
+            .and_then(|b| replay::decode(&b));
+        if let Some(cut) = cut.filter(|c| c.posts() > 0) {
+            break cut;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the Forever replay was not recut"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(recut, fresh, "recut from its log as an import cuts it");
+    for (id, bytes) in retail_ids.iter().zip(&retail_bytes) {
+        assert_eq!(
+            &std::fs::read(replay_at(id)).unwrap(),
+            bytes,
+            "Retail's replay {id} untouched"
+        );
+    }
+    stop(d);
+}
+
 /// A key's card lists its member bosses, and `GetFight { boss }` parses one
 /// from the log on demand — its own rows and breakdown, nothing stored.
 #[test]
