@@ -13,17 +13,21 @@
 //!   `<m>/`, so a module split into files stays covered.
 //!
 //! What is not: test code — a top-level `#[cfg(test)] mod x { … }` block
-//! (cut only when it is formatted as rustfmt writes one, its lines indented
-//! up to a `}` alone in the first column, so production code is never cut),
-//! and the file of a `#[cfg(test)] mod x;` — and dot-files and entries that
-//! are not regular files (an editor's lock, a dangling link). Only `.rs`
-//! files count: the packages' source filter keeps those and leaves
-//! Markdown out, so every build of one revision agrees.
+//! that is its file's last item, formatted as rustfmt writes one (lines
+//! indented up to a `}` alone in the first column, nothing but blank lines
+//! after it), and the file of a `#[cfg(test)] mod x;` — and dot-files and
+//! entries that are not regular files (an editor's lock, a dangling link).
+//! Only `.rs` files count: the packages' source filter keeps those and
+//! leaves Markdown out, so every build of one revision agrees. The cut reads
+//! lines, not Rust: it could take production text only from an item
+//! rustfmt leaves alone (a `macro_rules!` body, a `#[rustfmt::skip]` one)
+//! that closes its file and holds first-column `#[cfg(test)]` and `mod x {`
+//! lines of its own (`build/fingerprint.rs`, `strip_tests`).
 //!
 //! The build fails when a unit or a left-out file is missing (a rename the
-//! lists must follow), or when a function in [`DECIDING`] is not defined in
-//! the hashed code — code that decides what a read stores moved somewhere
-//! the fingerprint cannot see.
+//! lists must follow), or when a definition in [`DECIDING`] is not in the
+//! hashed code — code that decides what a read stores, an entry point or a
+//! helper of one, moved somewhere the fingerprint cannot see.
 
 use std::path::PathBuf;
 
@@ -85,6 +89,16 @@ const DECIDING: &[&str] = &[
     "fn is_progression(",
     "fn owner_in(",
     "pub fn rules(",
+    // daemon: the helpers they decide through — a log's identity, the
+    // configured characters' matching, retention's groups and kept-whole
+    // set, the tailed test, the sweep itself.
+    "impl LogFacts",
+    "fn name_matches(",
+    "fn group_key(",
+    "fn kept_whole(",
+    "fn keeps_whole(",
+    "fn same_file(",
+    "fn sweep(",
 ];
 
 fn main() -> Result<(), String> {

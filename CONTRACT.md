@@ -1107,10 +1107,14 @@ and install discovery (`cli.rs`), live tailing (`tail.rs`: a tailed log is never
 and test kit; proto's history module; and the daemon's history store, loader, index cache
 and manifest modules, each a module's file and everything under its folder, so a module
 split into files stays hashed. Test code is not hashed (a top-level `#[cfg(test)] mod x
-{ … }` block as rustfmt writes one, and the file of a `#[cfg(test)] mod x;`), nor
-dot-files, entries that are not regular files, or files that are not `.rs`. The build
-fails when a listed module or tree holds no source, an exclusion names no hashed file, or
-one of the definitions that decide (the scan, the import, the store's wants, retention;
+{ … }` block that is its file's last item, as rustfmt writes one, and the file of a
+`#[cfg(test)] mod x;`), nor dot-files, entries that are not regular files, or files that
+are not `.rs`. The cut reads lines, not Rust: it could take production text only from an
+item rustfmt leaves alone (a `macro_rules!` body, one under `#[rustfmt::skip]`) that closes
+its file and holds first-column `#[cfg(test)]` and `mod x {` lines of its own, and no
+hashed file has one. The build fails when a listed module or tree holds no source or
+cannot be listed, an exclusion names no hashed file, or one of the definitions that decide
+(the scan, the import, the store's wants, retention, and the helpers they decide through;
 `build.rs`'s `DECIDING`) is not in the hashed source. The fingerprint adds the
 keys that decide what a read stores and keeps: `history_store_trash`,
 `history_keep_per_encounter`, `history_keep_kills_whole`, `history_keep_progression_whole`,

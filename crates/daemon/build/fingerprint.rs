@@ -132,8 +132,12 @@ fn dotted(path: &Path) -> bool {
 /// Every `.rs` regular file under `dir`, dot-entries and directory links
 /// skipped; whether any was found.
 fn collect(dir: &Path, out: &mut BTreeSet<PathBuf>) -> Result<bool, String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(false);
+    // Only a folder that is not there is absent: one that cannot be read
+    // fails, rather than leaving its sources out unseen.
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("swept: cannot list {}: {e}", dir.display())),
     };
     let mut any = false;
     for entry in entries {
@@ -165,11 +169,19 @@ fn module_dir(file: &Path) -> PathBuf {
     }
 }
 
-/// `text` less its top-level `#[cfg(test)] mod x { … }` blocks, and the
-/// names of its `#[cfg(test)] mod x;` declarations. A block is cut only
-/// when every line between its head and a `}` alone in the first column is
-/// blank or indented, as rustfmt writes one: a block that ends any other
-/// way is kept whole (more hashed, never less).
+/// `text` less a top-level `#[cfg(test)] mod x { … }` block that is the
+/// file's last item, and the names of its `#[cfg(test)] mod x;`
+/// declarations. The block is cut only as rustfmt writes one: every line
+/// between its head and a `}` alone in the first column blank or indented,
+/// and nothing but blank lines after that `}` (clippy's
+/// `items_after_test_module` holds every test module there). Any other
+/// block is kept whole.
+///
+/// This reads lines, not Rust. A production string or comment cannot be
+/// cut (its closing quote or `*/` would follow the `}`). What could be is
+/// the end of an item rustfmt leaves alone — a `macro_rules!` body, an item
+/// under `#[rustfmt::skip]` — that closes the file and holds first-column
+/// `#[cfg(test)]` and `mod x {` lines of its own. No hashed file has one.
 pub fn strip_tests(text: &str) -> (String, Vec<String>) {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let mut kept = String::with_capacity(text.len());
@@ -190,7 +202,10 @@ pub fn strip_tests(text: &str) -> (String, Vec<String>) {
                 {
                     j += 1;
                 }
-                if lines.get(j).is_some_and(|l| l.trim_end() == "}") {
+                let last = lines
+                    .get(j + 1..)
+                    .is_some_and(|rest| rest.iter().all(|l| l.trim().is_empty()));
+                if last && lines.get(j).is_some_and(|l| l.trim_end() == "}") {
                     i = j + 1;
                     continue;
                 }

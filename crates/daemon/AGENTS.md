@@ -72,8 +72,11 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   out what decides nothing (`LEFT_OUT`, test code), and fails the build
   when a listed unit or exclusion names nothing or a definition in
   `DECIDING` is outside the hashed set. A new function that decides what
-  a read yields or keeps joins `DECIDING`; code moving into a module the
-  list does not cover joins `SOURCES`. `tests/sweep.rs` holds the rule,
+  a read yields or keeps joins `DECIDING`, and so does a helper of a
+  `DECIDING` function that moves out of the hashed set (or the module it
+  moves to joins `SOURCES`); code moving into a module the list does not
+  cover joins `SOURCES`. A test module stays its file's last item, or it
+  is hashed. `tests/sweep.rs` holds the rule,
   `tests/fingerprint.rs` the fingerprint; the ignored `measured` test
   prints what three starts over forty logs cost.
 - **Retention runs after every write.** The protected set is kept whole:

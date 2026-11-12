@@ -107,6 +107,14 @@ fn a_unit_or_an_exclusion_that_names_nothing_fails() {
     assert!(gone.is_err_and(|e| e.contains("src/loader")));
     let gone = hashed(&t.0, &[Unit::Tree("model/src")], &[]);
     assert!(gone.is_err_and(|e| e.contains("model/src")));
+    // A module folder that cannot be listed (here a file stands where it
+    // goes) fails rather than leaving its sources out unseen.
+    t.write("src/loader.rs", "fn load_for() {}\n");
+    t.write("src/loader", "not a folder\n");
+    let unlisted = hashed(&t.0, &[Unit::Module("src/loader")], &[])
+        .err()
+        .unwrap_or_default();
+    assert!(unlisted.contains("cannot list"), "{unlisted}");
     // A tree of no `.rs` file holds no source either.
     t.write("empty/src/README.md", "words\n");
     assert!(hashed(&t.0, &[Unit::Tree("empty/src")], &[]).is_err());
@@ -139,18 +147,22 @@ fn deciding_code_outside_the_hashed_set_fails_the_build() {
 
 #[test]
 fn test_code_is_cut_and_production_code_never_is() {
-    // A formatted test module, mid-file and at the end: both cut, the
-    // production code around them kept.
-    let text = "fn a() {}\n\n#[cfg(test)]\nmod inner {\n    #[test]\n    fn t() {\n        let x = 1;\n\n    }\n}\n\nfn b() {}\n\n#[cfg(test)]\nmod tests {\n    fn u() {}\n}\n";
+    // A formatted test module as the file's last item: cut, the production
+    // code before it kept.
+    let text = "fn a() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        let x = 1;\n\n    }\n}\n\n";
     let (kept, out) = strip_tests(text);
-    assert_eq!(kept, "fn a() {}\n\n\nfn b() {}\n\n");
+    assert_eq!(kept, "fn a() {}\n\n\n");
     assert!(out.is_empty());
 
-    // A line in the first column inside the block (a raw string, an
-    // unformatted file): kept whole, and what follows it too.
+    // Anything after its `}` keeps it whole: a test module mid-file (which
+    // clippy refuses anyway), a production string or comment shaped like
+    // one, a block whose `}` is indented, a first-column line inside.
     for text in [
-        "#[cfg(test)]\nmod tests {\n    const S: &str = r\"\nfn looks_like_code() {}\n\";\n}\nfn b() {}\n",
+        "#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n\nfn b() {}\n",
+        "const S: &str = r\"\n#[cfg(test)]\nmod x {\n    fn deciding() {}\n}\n\";\n",
+        "/*\n#[cfg(test)]\nmod x {\n    fn deciding() {}\n}\n*/\n",
         "#[cfg(test)]\nmod tests {\n    fn t() {}\n    }\nfn production() {}\n}\n",
+        "#[cfg(test)]\nmod tests {\n    const S: &str = r\"\nfn looks_like_code() {}\n\";\n}\n",
     ] {
         assert_eq!(strip_tests(text).0, text);
     }
@@ -164,6 +176,12 @@ fn test_code_is_cut_and_production_code_never_is() {
     ] {
         assert_eq!(strip_tests(text).0, text);
     }
+
+    // The one shape lines cannot tell (build.rs says so): an item rustfmt
+    // leaves alone that closes the file with first-column test-module lines
+    // of its own. Pinned, so a lexer that closes it changes this on purpose.
+    let text = "macro_rules! m {\n#[cfg(test)]\nmod t {\n    () => {};\n    }\n    pub fn deciding() {}\n}\n";
+    assert_eq!(strip_tests(text).0, "macro_rules! m {\n");
 
     // An out-of-line test module: its name, so its file is left out.
     let (kept, out) = strip_tests("fn a() {}\n#[cfg(test)]\nmod tests;\n");
