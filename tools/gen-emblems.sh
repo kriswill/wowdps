@@ -9,14 +9,13 @@
 # are copied as they are into $XDG_DATA_HOME/wowdps/edition-emblems.bin, a
 # PER-MACHINE cache the GUI reads at runtime and rasterizes at the size it
 # draws. A game whose emblem the launcher's cache does not hold is left
-# out, and the switch names it alone.
+# out, and the window draws wowdps's own mark for it.
 #
 # No network, no game files: the launcher's cache is read and nothing
 # else. Rerun it when the launcher shows a new emblem (a new expansion).
 #
 # Like class-icons.bin this is Blizzard's art and lives OUTSIDE the
-# repository on purpose; a machine without it draws each game's name
-# alone.
+# repository on purpose; a machine without it draws wowdps's own marks.
 #
 # usage: tools/gen-emblems.sh [wow-dir] [--launcher DIR] [-o FILE]
 #   wow-dir: folder holding .build.info; the launcher's folder is found

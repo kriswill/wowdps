@@ -115,6 +115,7 @@ pub fn paint_glyph_at(
                 let b = Bounds::new(at(top), gpui_kit::size(k * size.0, k * size.1));
                 rounded_rect(&mut curves, b, k * radius);
             }
+            Shape::Loop(_) | Shape::Solid(_) => {}
             Shape::Path(segs) => {
                 let mut pen: Option<Point<Pixels>> = None;
                 let mut start: Option<Point<Pixels>> = None;
@@ -161,6 +162,19 @@ pub fn paint_glyph_at(
                     }
                 }
             }
+        }
+    }
+    // A loop is one stroke and a solid one fill, each a single subpath, so
+    // their segments meet with no seam, cap or notch between them.
+    for shape in glyph.shapes() {
+        let (segs, mut path) = match shape {
+            Shape::Loop(segs) => (segs, PathBuilder::stroke(width)),
+            Shape::Solid(segs) => (segs, PathBuilder::fill()),
+            _ => continue,
+        };
+        trace(&mut path, &segs, &at, k);
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color);
         }
     }
     let mut strokes = PathBuilder::stroke(width);
@@ -223,6 +237,41 @@ pub fn glyph_ink(glyph: Glyph, side: Pixels) -> impl IntoElement {
     )
     .size(side)
     .flex_none()
+}
+
+/// `segs` as one subpath of `path`, each segment going on from where the
+/// last ended: an arc starts the subpath at its own first point when it
+/// leads, and turns clockwise or back by its angles' order.
+fn trace(
+    path: &mut PathBuilder,
+    segs: &[Seg],
+    at: &impl Fn((f32, f32)) -> Point<Pixels>,
+    k: Pixels,
+) {
+    let mut started = false;
+    for s in segs {
+        match *s {
+            Seg::Move(p) => {
+                path.move_to(at(p));
+                started = true;
+            }
+            Seg::Line(p) => path.line_to(at(p)),
+            Seg::Cubic(c1, c2, to) => path.cubic_bezier_to(at(to), at(c1), at(c2)),
+            Seg::Arc {
+                radius, start, end, ..
+            } => {
+                if let Some((a, b, large)) = s.arc_ends() {
+                    if !started {
+                        path.move_to(at(a));
+                        started = true;
+                    }
+                    let r = k * radius;
+                    path.arc_to(point(r, r), px(0.), large, end > start, at(b));
+                }
+            }
+            Seg::Close => path.close(),
+        }
+    }
 }
 
 /// A filled dot `d` across.

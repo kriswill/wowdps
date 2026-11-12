@@ -127,6 +127,18 @@ impl EditionsLink {
         }
     }
 
+    /// Retail's log cut mid-pull (`MockDaemon::fixture_live`): its last
+    /// fight still open and the game running, so the pill says "Live".
+    /// `characters` owned, Forever's fights stored, as [`Self::owned`].
+    pub fn with_retail_live(mut self, characters: &[&str]) -> Self {
+        let names: Vec<String> = characters.iter().map(|c| c.to_string()).collect();
+        self.retail = MockDaemon::fixture_live()
+            .with_characters(&names)
+            .with_history()
+            .with_history_of(&Self::fixture("forever.txt"));
+        self
+    }
+
     /// Forever's `forever.txt` followed as well.
     pub fn with_forever_source(self) -> Self {
         self.with_forever_log(&Self::fixture("forever.txt"))

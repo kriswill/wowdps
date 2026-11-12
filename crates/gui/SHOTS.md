@@ -21,7 +21,9 @@ frame mid-glide. Run each test by its name:
 | Test | What it renders | Writes |
 | --- | --- | --- |
 | `window::shots::window_shots` | the window's states at the prototype's three sizes | `<size>-<state>.png` |
-| `window::shots::edition_shots` | the window over two editions: the edition switch, its menu, Forever shown, its menu then, Forever's Home | `<size>-editions*.png` |
+| `window::shots::edition_shots` | the window over two editions: the switch's chips and dropdown, its menu, each game shown and played, a class chrome, an empty game | `<size>-editions*.png` |
+| `window::shots::mark_sheet` | every game's badge at four sizes, bare and on its fill | `marks-sheet.png` |
+| `window::shots::marks_render_guard` | the marks and the switch, without the art, against the committed pictures | (checks) |
 | `window::shots::the_chrome_budget_holds_on_the_log` | (measures; no picture) the chrome budget over a real log | — |
 | `overlay::panel::tests::overlay_shots` | the overlay's states, with this machine's art caches | `overlay-<state>.png` |
 | `overlay::panel::tests::overlay_render_guard` | the same states, without the art, against the committed pictures | (checks) |
@@ -52,19 +54,52 @@ pictures are `navy`'s.
 ## Edition shots — `window::shots::edition_shots`
 
 The window over a daemon of two editions (`testkit::EditionsLink`: the
-committed `sample.txt` and `forever.txt`, both followed, both stored,
-Retail the game being played), at the three frames: `editions` (the switch
-beside the places on the game played, its live dot), `editions-menu` (its
-menu: the games, "Playing now" beside Retail), `editions-forever` (Forever
-shown: its own pull on the stage, its rail, no dot), `editions-forever-menu`
-(the menu while Forever is shown) and `editions-forever-home` (Forever's
-Home). Over the committed fixtures only, so they hold no real names; with
-this machine's `edition-emblems.bin` (`tools/gen-emblems.sh`) each game
-wears its emblem, which is the launcher's art: keep those pictures off the
-repository. The window shots above are one edition's and draw no switch.
-`window::editions::tests::an_emblem_keeps_the_bar_s_rhythm` holds the
-switch's layout with an emblem on every `cargo test`, a drawn disc standing
-in for the art.
+committed `sample.txt` and `forever.txt`, both followed, both stored), at
+the three frames; the wide frame draws the switch as a row of named
+chips, the tile frame as the compact chips (the game shown named, the
+other its round badge), the narrow one as the dropdown's badge alone (the
+form is the width's, the bar at its widest for either game):
+
+- `editions`: Retail shown and played (its chip filled, the live pip on its badge);
+- `editions-menu`: the dropdown's menu, at the narrow frame (the chips
+  have none to open);
+- `editions-forever`: Forever shown while Retail is played: its own pull on
+  the stage, its rail, the pip on Retail's badge, the fight's tag;
+- `editions-forever-menu`, `editions-forever-home`: that, with the menu
+  open, and on Forever's Home;
+- `editions-playing-forever`, `editions-forever-playing-forever`: Forever
+  played, with Retail shown and with Forever shown;
+- `editions-forever-class`: Forever shown in a Warlock's class chrome, the
+  one chrome that takes Midnight's mark to the bar's ink;
+- `editions-forever-empty`: Forever known by a log with no pull and no
+  stored fight: the empty stage under its badge.
+
+Over the committed fixtures only, so they hold no real names. With this
+machine's `edition-emblems.bin` (`tools/gen-emblems.sh`) each game's badge
+holds its emblem, which is the launcher's art: keep those pictures off the
+repository. `WOWDPS_SHOTS_ART=off` keeps every art cache out, so the badges
+hold our marks. The window shots above are one edition's and draw no
+switch. `window::editions::tests::a_badge_keeps_the_switch_s_rhythm` holds
+the switch's layout, emblem or mark, on every `cargo test`, a drawn disc
+standing in for the art.
+
+## The marks — `window::shots::mark_sheet` and `marks_render_guard`
+
+`mark_sheet` draws every game's badge at 13, 16, 19 and 64 px on the
+theme's bar, bare and on its chip's fill, as `marks-sheet.png`
+(`WOWDPS_SHOTS_THEME`, `WOWDPS_SHOTS_ART=off` as above). Our marks are our
+own art, so `marks_render_guard` holds their pictures as the overlay's are
+held (`crate::guard`, `snapshots/marks/`): the sheet, the chips at the wide
+frame (Retail shown and played; Forever shown), the compact chips at the
+tile frame (Forever shown), the narrow frame's dropdown, and its menu —
+each cropped to the switch or the menu alone —
+in `navy`, without the art caches. Run it by name; `WOWDPS_BLESS=1`
+re-blesses an intended change.
+
+```sh
+WOWDPS_SHOTS_ART=off WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui -- --ignored edition_shots mark_sheet
+cargo test -p wowdps-gui marks_render_guard -- --ignored
+```
 
 ## Window shots — `window::shots::window_shots`
 

@@ -166,6 +166,35 @@ pub fn contrast(a: Color, b: Color) -> f32 {
     (hi + 0.05) / (lo + 0.05)
 }
 
+/// A color in OKLab — lightness, then the green–red and blue–yellow axes —
+/// where a distance reads as how unlike two colors look (Björn Ottosson's
+/// matrices, from linear sRGB). Alpha is ignored.
+pub fn oklab(c: Color) -> (f32, f32, f32) {
+    let lin = |x: f32| {
+        if x <= 0.04045 {
+            x / 12.92
+        } else {
+            ((x + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let (r, g, b) = (lin(c.r), lin(c.g), lin(c.b));
+    let l = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+    let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+    let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+    (
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    )
+}
+
+/// How unlike two colors look: their distance in [`oklab`] (0 the same;
+/// about 0.1 a near neighbour, 0.3 another hue).
+pub fn difference(a: Color, b: Color) -> f32 {
+    let (x, y) = (oklab(a), oklab(b));
+    ((x.0 - y.0).powi(2) + (x.1 - y.1).powi(2) + (x.2 - y.2).powi(2)).sqrt()
+}
+
 /// WCAG AA for normal text: what every word the window draws owes the
 /// ground it sits on, and what ink on the accent owes the accent.
 pub const AA_CONTRAST: f32 = 4.5;

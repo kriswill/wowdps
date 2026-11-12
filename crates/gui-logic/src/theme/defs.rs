@@ -118,6 +118,14 @@ pub struct WindowTokens: Color {
     /// The sub-dial's tick track round the inspector's player
     /// (`effects.dial`), and the ribbon's fine ticks (`effects.fine_ticks`).
     dial,
+    /// The games' own colors (`editions::Tone`): Midnight's violet and
+    /// Forever's teal. A game's mark wears it, and so does the game shown's
+    /// chip in the edition switch, its fill; nothing else does. Each
+    /// clears 3:1 on the bar and on a menu, they differ in lightness as
+    /// well as hue, and both keep clear of the chrome, of red, of green
+    /// and of gold.
+    midnight,
+    forever,
 }
 }
 
