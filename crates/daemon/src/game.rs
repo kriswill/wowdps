@@ -5,7 +5,8 @@
 //!
 //! Every edition's client is a `Wow.exe` (`Wow` on macOS), so the pattern
 //! finds them all; the product folder in a matched process's command line
-//! (`_retail_`, `_forever_`: `wowdps_core::cli::PRODUCTS`) names which.
+//! (`_retail_`, `_forever_`: `wowdps_core::cli::PRODUCTS`) names which, by
+//! model's `product_of`, which the overlay names a game window's process by.
 
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -16,6 +17,8 @@ use std::path::Path;
 
 use wowdps_core::cli::PRODUCTS;
 use wowdps_model::Edition;
+/// Model's, where the overlay reads a game window's process by it too.
+pub use wowdps_model::product_of;
 
 use crate::hub::HubMsg;
 
@@ -78,18 +81,6 @@ impl Running {
             None => self.unnamed = true,
         }
     }
-}
-
-/// The edition a command line names by a product folder among its path
-/// components (`…\_retail_\Wow.exe`, `/…/_forever_/…`), case-insensitively;
-/// `None` when it names none of [`PRODUCTS`].
-pub fn product_of(cmdline: &[u8]) -> Option<Edition> {
-    let hay = String::from_utf8_lossy(cmdline).to_ascii_lowercase();
-    let parts: Vec<&str> = hay.split(['\\', '/', '\0']).collect();
-    PRODUCTS.into_iter().find(|e| {
-        e.product_dir()
-            .is_some_and(|dir| parts.iter().any(|p| p.trim() == dir))
-    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -196,30 +187,6 @@ mod tests {
         assert!(matches("WOW.EXE", b"", cmdline));
         assert!(!matches("wow.exe", b"wineserver", b"/usr/bin/wineserver\0"));
         assert!(!matches("", b"anything", b"anything"));
-    }
-
-    /// v49: the product folder among the command line's path components
-    /// names the edition — wine's and macOS's spellings, any case — and a
-    /// folder that merely contains the word, or none at all, names nothing.
-    #[test]
-    fn the_product_folder_names_the_edition() {
-        assert_eq!(
-            product_of(b"Z:\\Games\\World of Warcraft\\_retail_\\Wow.exe\0-launch\0"),
-            Some(Edition::Retail)
-        );
-        assert_eq!(
-            product_of(b"C:\\Program Files (x86)\\World of Warcraft\\_FOREVER_\\Wow.exe\0"),
-            Some(Edition::Forever)
-        );
-        assert_eq!(
-            product_of(
-                b"/Applications/World of Warcraft/_retail_/World of Warcraft.app/Contents/MacOS/World of Warcraft"
-            ),
-            Some(Edition::Retail)
-        );
-        assert_eq!(product_of(b"Z:\\wow\\Wow.exe\0"), None);
-        assert_eq!(product_of(b"Z:\\wow\\_retail_old\\Wow.exe\0"), None);
-        assert_eq!(product_of(b"Z:\\wow\\_classic_beta_\\Wow.exe\0"), None);
     }
 
     /// Forever's client as it runs under wine, its command line ending in

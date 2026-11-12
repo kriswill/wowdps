@@ -986,7 +986,22 @@ it, whatever number a later answer's card carries; its header reads the
 answered card's own. The daemon following several editions moves a following
 client by sending it the new live edition's frames (another edition, or
 another log), nothing more: the overlay, a following client, re-pins to the
-live edition's live segment on the reset as it does on a rotation.
+live edition's live segment on the reset as it does on a rotation. Client rule
+(GUI, not wire): under Hyprland with `follow_game`, the overlay's game window is
+the live edition's — the state's `edition()` — when two games' windows are open:
+of the windows `game_match` names, one whose process's command line names that
+edition (`product_of` over `/proc/<pid>/cmdline`) outranks every other, the best
+match among several; with no edition known, or no such window (no pid, an unread
+command line), the best match listed first, as with one game. The overlay shows
+and hides by that window's workspace, re-asked when the edition changes; after a
+change, once that window is found, an output not pinned (`monitor`,
+`WOWDPS_OVERLAY_OUTPUT`) reopens on its monitor when the display the surface is
+on (the compositor's, else the one asked for) is another (`output::Home::rehome`):
+one already on the game's display is never recreated, and one whose display cannot
+be told is never moved. It is born before the session names an edition, so on the
+first listed's monitor, or where the system chose when no game window had mapped;
+so on a desk of several monitors the overlay of one game, too, moves to that game's
+monitor once, when the session first names the edition, if it was born elsewhere.
 
 Ability tree (v36, R26): `ClientState::drill_tree()` is the drilled snapshot's
 tree, empty with no drill and until the drilled snapshot arrives. The state
@@ -1124,6 +1139,10 @@ before its log's header carried the id, and an import); the payloads mean someth
 it — a key names a family (every Classic client shares `classic`, every unlisted id
 `unknown`), never a bookkeeping group; `product_dir()` / `product()` are the install's folder
 and `.build.info` product (`_retail_` / `wow`, `_forever_` / `wowf`, `None` where not known).
+model `PRODUCTS` lists the editions with a product folder (Retail, Forever; `cli::PRODUCTS`
+re-exports it), and `product_of(cmdline)` names the edition a process's command line names by
+a product folder among its path components, in any case (`None` for none): the game watcher
+names a running client by it, and the overlay a game window's process.
 `FightCard::edition()` reads a card's. Editions share encounter, difficulty and map ids with no
 promise that one id means one fight, so the store's bookkeeping keys on `Edition::counts_as()`
 — `Unknown(0)` counts as Retail, every other edition as itself (each Classic client apart, and

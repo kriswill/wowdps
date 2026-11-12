@@ -31,6 +31,48 @@ pub fn output_uuid(name: &str) -> [u8; 16] {
     uuid
 }
 
+/// Whether the overlay's output is the game's monitor: no output named by
+/// hand (`WOWDPS_OVERLAY_OUTPUT`, `pinned_by_env`) or by the config's
+/// `monitor`, and `follow_game` on. Only then is it born on the game's
+/// monitor and moved to the live game's ([`Home::rehome`]).
+pub fn follows_game(cfg: &crate::config::Config, pinned_by_env: bool) -> bool {
+    !pinned_by_env && cfg.monitor.is_none() && cfg.follow_game
+}
+
+/// Where the overlay's surface opens, a reopen (another edge, a rehome)
+/// included: the output asked for by name and its display `D` (GPUI's
+/// `DisplayId`; `None` for each when the system chose), and whether the
+/// game's monitor may move it ([`follows_game`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Home<D> {
+    pub output: Option<String>,
+    pub display: Option<D>,
+    pub follows_game: bool,
+}
+
+impl<D: Copy + PartialEq> Home<D> {
+    /// The live game's window is on output `name`, which is display `there`
+    /// (`None`: no display answers to it), and the surface is on display
+    /// `on` (`None`: not known yet; the display asked for then stands in).
+    /// Whether to reopen the surface there: only when its output follows
+    /// the game and it is on another display, so an overlay already on the
+    /// game's is never destroyed and recreated, whatever it was asked for.
+    /// Either way, once both are known `name` is home: a later reopen (an
+    /// edge change) opens there.
+    pub fn rehome(&mut self, name: &str, there: Option<D>, on: Option<D>) -> bool {
+        let (true, Some(there)) = (self.follows_game, there) else {
+            return false;
+        };
+        let Some(on) = on.or(self.display) else {
+            // Where the surface is cannot be told: never move it blind.
+            return false;
+        };
+        self.output = Some(name.to_string());
+        self.display = Some(there);
+        on != there
+    }
+}
+
 /// SHA-1 (FIPS 180-4), for the one short message a UUIDv5 hashes.
 fn sha1(message: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
@@ -104,6 +146,84 @@ mod tests {
             )),
             "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
         );
+    }
+
+    /// The output follows the game only when nothing names one and
+    /// `follow_game` is on.
+    #[test]
+    fn the_output_follows_the_game_unless_pinned() {
+        let cfg = crate::config::Config::default();
+        assert!(cfg.follow_game && cfg.monitor.is_none(), "the defaults");
+        assert!(follows_game(&cfg, false));
+        assert!(!follows_game(&cfg, true), "WOWDPS_OVERLAY_OUTPUT");
+        let monitor = crate::config::Config {
+            monitor: Some("DP-3".into()),
+            ..cfg.clone()
+        };
+        assert!(!follows_game(&monitor, false), "config monitor");
+        let off = crate::config::Config {
+            follow_game: false,
+            ..cfg
+        };
+        assert!(!follows_game(&off, false), "follow_game off");
+    }
+
+    /// A rehome reopens the surface only when its output follows the game
+    /// and it sits on another display than the game's; one already on the
+    /// game's display stays, whether it was asked for that output, for
+    /// another, or for none (the system chose). A display it cannot tell,
+    /// or a name no display answers to, moves nothing. Home learns the
+    /// game's output either way, for the next reopen.
+    #[test]
+    fn a_rehome_reopens_only_off_the_games_display() {
+        let home = |output: Option<&str>, display: Option<u8>, follows_game| Home {
+            output: output.map(str::to_string),
+            display,
+            follows_game,
+        };
+        let moved = |name: &str, display| home(Some(name), Some(display), true);
+
+        // Born on DP-1 by the first-listed window; the live game is on DP-2.
+        let mut h = home(Some("DP-1"), Some(1), true);
+        assert!(h.rehome("DP-2", Some(2), Some(1)));
+        assert_eq!(h, moved("DP-2", 2), "an edge change reopens on DP-2 now");
+        // Already there: never reopened.
+        assert!(!h.rehome("DP-2", Some(2), Some(2)));
+        assert_eq!(h, moved("DP-2", 2));
+
+        // Born where the system chose, which is the game's display: stays,
+        // and learns its name.
+        let mut h = home(None, None, true);
+        assert!(!h.rehome("DP-1", Some(1), Some(1)));
+        assert_eq!(h, moved("DP-1", 1));
+        // Asked for DP-1 but on DP-2's display, the game's: stays too.
+        let mut h = home(Some("DP-1"), Some(1), true);
+        assert!(!h.rehome("DP-2", Some(2), Some(2)));
+        // The system chose another display than the game's (one game on a
+        // two-monitor desk, born before its window mapped): moved, once.
+        let mut h = home(None, None, true);
+        assert!(h.rehome("DP-2", Some(2), Some(1)));
+        assert!(!h.rehome("DP-2", Some(2), Some(2)));
+
+        // Where the surface is not known: the display asked for stands in,
+        // and with none asked for nothing moves.
+        let mut h = home(Some("DP-1"), Some(1), true);
+        assert!(!h.rehome("DP-1", Some(1), None));
+        assert!(h.rehome("DP-2", Some(2), None));
+        let mut h = home(None, None, true);
+        assert!(!h.rehome("DP-2", Some(2), None));
+        assert_eq!(h, home(None, None, true), "nothing learned blind");
+
+        // A name no display answers to, or a pinned output: nothing moves
+        // and nothing is learned.
+        let mut h = home(Some("DP-1"), Some(1), true);
+        assert!(!h.rehome("HDMI-9", None, Some(1)));
+        assert_eq!(h, home(Some("DP-1"), Some(1), true));
+        let mut pinned = home(Some("DP-1"), Some(1), false);
+        assert!(!pinned.rehome("DP-2", Some(2), Some(1)));
+        assert_eq!(pinned, home(Some("DP-1"), Some(1), false));
+        let mut pinned = home(None, None, false);
+        assert!(!pinned.rehome("DP-2", Some(2), Some(1)));
     }
 
     /// Python's documented example: uuid5(NAMESPACE_DNS, "python.org").

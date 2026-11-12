@@ -309,6 +309,26 @@ impl Edition {
     }
 }
 
+/// The editions whose product folder an install is known to keep them in
+/// ([`Edition::product_dir`]): what a running client can be named by
+/// ([`product_of`]), and what an install may hold beside Retail. In this
+/// order wherever several are listed.
+pub const PRODUCTS: [Edition; 2] = [Edition::Retail, Edition::Forever];
+
+/// The edition a process's command line names by a product folder among
+/// its path components (`…\_retail_\Wow.exe`, `/…/_forever_/…`),
+/// case-insensitively; `None` when it names none of [`PRODUCTS`]. The
+/// daemon's game watcher names each running client by it, and the overlay
+/// the process behind each game window.
+pub fn product_of(cmdline: &[u8]) -> Option<Edition> {
+    let hay = String::from_utf8_lossy(cmdline).to_ascii_lowercase();
+    let parts: Vec<&str> = hay.split(['\\', '/', '\0']).collect();
+    PRODUCTS.into_iter().find(|e| {
+        e.product_dir()
+            .is_some_and(|dir| parts.iter().any(|p| p.trim() == dir))
+    })
+}
+
 /// A spec's role, as the game's group finder classifies it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -2701,6 +2721,34 @@ mod tests {
                 !key.is_empty() && key.bytes().all(|b| b.is_ascii_lowercase()),
                 "{key:?}"
             );
+        }
+    }
+
+    /// The product folder among a command line's path components names
+    /// the edition — wine's and macOS's spellings, any case — and a folder
+    /// that merely contains the word, or none at all, names nothing.
+    #[test]
+    fn the_product_folder_names_the_edition() {
+        assert_eq!(
+            product_of(b"Z:\\Games\\World of Warcraft\\_retail_\\Wow.exe\0-launch\0"),
+            Some(Edition::Retail)
+        );
+        assert_eq!(
+            product_of(b"C:\\Program Files (x86)\\World of Warcraft\\_FOREVER_\\Wow.exe\0"),
+            Some(Edition::Forever)
+        );
+        assert_eq!(
+            product_of(
+                b"/Applications/World of Warcraft/_retail_/World of Warcraft.app/Contents/MacOS/World of Warcraft"
+            ),
+            Some(Edition::Retail)
+        );
+        assert_eq!(product_of(b"Z:\\wow\\Wow.exe\0"), None);
+        assert_eq!(product_of(b"Z:\\wow\\_retail_old\\Wow.exe\0"), None);
+        assert_eq!(product_of(b"Z:\\wow\\_classic_beta_\\Wow.exe\0"), None);
+        assert_eq!(product_of(b""), None, "an unread command line");
+        for e in PRODUCTS {
+            assert!(e.product_dir().is_some(), "{e:?} has a folder");
         }
     }
 
