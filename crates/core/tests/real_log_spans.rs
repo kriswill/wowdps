@@ -7,11 +7,20 @@
 //! Σ externals given = Σ received, a census of the role-table ids actually
 //! seen, and the wall time of the parse.
 //!
-//! Retail's alone: R18 reads a role-span table, which Forever has none of
-//! yet, so a Forever log is passed over (`real_log/mod.rs`).
+//! Its Forever variant holds a Forever log (`WOWDPS_REAL_LOG_FOREVER`,
+//! `real_log/mod.rs`) to the same by Forever's own role-span table, naming
+//! no player and no fight by name: a unit by its place in the segment's
+//! sorted roster, a span by its spell and times.
 //!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_spans -- --ignored --nocapture`
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 mod real_log;
 
@@ -22,7 +31,7 @@ use std::time::Instant;
 use wowdps_core::index::{load_segment_text, scan};
 use wowdps_core::meter::SegmentKind;
 use wowdps_core::parser::{Event, parse_line};
-use wowdps_model::MarkKind;
+use wowdps_model::{Mark, MarkKind};
 
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
@@ -30,7 +39,23 @@ fn spans_balance_on_every_real_segment() {
     let Some(path) = real_log::retail_log() else {
         return;
     };
-    let mut file = std::fs::File::open(&path).expect("open the log");
+    gate(&path, false);
+}
+
+#[test]
+#[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
+fn spans_balance_on_every_real_forever_segment() {
+    let Some(path) = real_log::forever_log() else {
+        return;
+    };
+    gate(&path, true);
+}
+
+/// The gate over `path`; `anon` prints no name and no guid: a segment by
+/// its place in the log, a unit by its place in the roster, a span by its
+/// spell and times.
+fn gate(path: &str, anon: bool) {
+    let mut file = std::fs::File::open(path).expect("open the log");
     let idx = scan(&mut file);
     let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();
     assert!(!metas.is_empty(), "a real log has segments");
@@ -48,8 +73,8 @@ fn spans_balance_on_every_real_segment() {
     let mut trash_tail_spans = 0usize;
     let mut casters: BTreeMap<String, u32> = BTreeMap::new();
 
-    for meta in &metas {
-        let text = load_segment_text(Path::new(&path), meta).expect("load the segment");
+    for (seg_n, meta) in metas.iter().enumerate() {
+        let text = load_segment_text(Path::new(path), meta).expect("load the segment");
         let t = Instant::now();
         let lines: Vec<_> = text
             .seeds()
@@ -85,8 +110,27 @@ fn spans_balance_on_every_real_segment() {
         }
         let mut keys: Vec<&String> = players.iter().collect();
         keys.sort();
+        let who = |k: &str| {
+            if anon {
+                real_log::place(&keys, k)
+            } else {
+                k.to_string()
+            }
+        };
+        let span = |s: &Mark| {
+            if anon {
+                format!("spell {} at {} ms for {} ms", s.spell_id, s.at_ms, s.dur_ms)
+            } else {
+                format!("{s:?}")
+            }
+        };
 
         for seg in meter.segments() {
+            let here = if anon {
+                real_log::fight(seg_n, seg)
+            } else {
+                seg.name.clone()
+            };
             segments += 1;
             if seg.kind == SegmentKind::Encounter {
                 pulls += 1;
@@ -111,12 +155,13 @@ fn spans_balance_on_every_real_segment() {
                 // the uncapped rollup.
                 let mut listed: BTreeMap<(u32, String), (u32, i64)> = BTreeMap::new();
                 for s in &spans {
-                    assert!(s.dur_ms >= 0, "{}: {k} {s:?}", seg.name);
-                    assert!(s.at_ms >= 0, "{}: {k} {s:?}", seg.name);
+                    assert!(s.dur_ms >= 0, "{here}: {} {}", who(k), span(s));
+                    assert!(s.at_ms >= 0, "{here}: {} {}", who(k), span(s));
                     assert!(
                         s.at_ms + s.dur_ms <= bound.max(s.at_ms),
-                        "{}: {k} span past the end: {s:?} (duration {duration})",
-                        seg.name
+                        "{here}: {} span past the end: {} (duration {duration})",
+                        who(k),
+                        span(s)
                     );
                     if s.at_ms + s.dur_ms > duration {
                         trash_tail_spans += 1;
@@ -140,11 +185,11 @@ fn spans_balance_on_every_real_segment() {
                         .unwrap_or((0, 0));
                     assert!(
                         n <= u.count && ms <= u.total_ms,
-                        "{}: {k} spell {} by {}: listed {n} spans / {ms} ms exceed the rollup's \
+                        "{here}: {} spell {} by {}: listed {n} spans / {ms} ms exceed the rollup's \
                          {} / {}",
-                        seg.name,
+                        who(k),
                         u.spell_id,
-                        u.src,
+                        who(&u.src),
                         u.count,
                         u.total_ms
                     );
@@ -154,8 +199,9 @@ fn spans_balance_on_every_real_segment() {
                 }
                 assert!(
                     listed.is_empty(),
-                    "{}: {k} listed cells absent from the rollup: {listed:?}",
-                    seg.name
+                    "{here}: {} {} listed cells absent from the rollup",
+                    who(k),
+                    listed.len()
                 );
                 let am = seg.am_uptime_ms(k);
                 let am_sum: i64 = seg
@@ -166,15 +212,15 @@ fn spans_balance_on_every_real_segment() {
                     .sum();
                 assert!(
                     am >= 0 && am <= am_sum,
-                    "{}: {k} am {am} > Σ {am_sum}",
-                    seg.name
+                    "{here}: {} am {am} > Σ {am_sum}",
+                    who(k)
                 );
                 // Unconditional on every kind: the union is clamped to the
                 // segment's clock even where a span may pass it (Trash).
                 assert!(
                     am <= duration,
-                    "{}: {k} am {am} > duration {duration}",
-                    seg.name
+                    "{here}: {} am {am} > duration {duration}",
+                    who(k)
                 );
                 if am > 0 {
                     am_players += 1;
@@ -192,7 +238,7 @@ fn spans_balance_on_every_real_segment() {
                     supporters += 1;
                 }
             }
-            assert_eq!(given, received, "{}: externals given vs received", seg.name);
+            assert_eq!(given, received, "{here}: externals given vs received");
             externals = (externals.0 + given.0, externals.1 + given.1);
         }
     }

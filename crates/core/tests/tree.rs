@@ -8,6 +8,8 @@
 //! and the R10 merge. Every fixture in `FIXTURES` must exist — a missing
 //! one fails, never skips.
 
+mod real_log;
+
 use std::path::Path;
 
 use wowdps_core::index::{load_segment_text, scan};
@@ -602,12 +604,17 @@ fn an_overall_sums_its_members_casts_and_parts() {
 /// its shape (each meta names a row, parts sum to it, groups named and
 /// listed), and the tree's casts on the rows never exceed the player's.
 ///
+/// Retail's alone: it labels rows by their players' names, so a Forever log
+/// is passed over (`real_log/mod.rs`).
+///
 /// Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 /// -p wowdps-core --test tree -- --ignored --nocapture`
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn every_real_tree_keeps_its_shape() {
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
     let text = std::fs::read_to_string(&path).expect("read the log");
     let meter = replay(&text);
     let (mut trees, mut groups, mut split) = (0, 0, 0);

@@ -516,6 +516,14 @@ mod tests {
                 "forever/role_signals.rs",
                 include_str!("forever/role_signals.rs"),
             ),
+            (
+                "forever/absorb_spells.rs",
+                include_str!("forever/absorb_spells.rs"),
+            ),
+            (
+                "forever/role_spells.rs",
+                include_str!("forever/role_spells.rs"),
+            ),
         ];
         // Every generated table of either edition is held here: one added
         // without joining a list above would not hold the patch.

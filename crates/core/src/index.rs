@@ -1852,6 +1852,20 @@ mod tests {
     #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
     fn real_log_scans_at_speed() {
         let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
+        // A Retail gate passes a Forever log over, as the gates under
+        // `tests/` do (`tests/real_log/mod.rs`): their variants read it.
+        let mut head = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(std::fs::File::open(&path).unwrap()),
+            &mut head,
+        )
+        .unwrap();
+        if let Some(crate::parser::Event::Version { project_id: 18, .. }) =
+            parse_line(head.trim_end()).map(|l| l.event)
+        {
+            println!("WOWDPS_REAL_LOG is a Forever log: the Forever variants read it");
+            return;
+        }
         let mut file = std::fs::File::open(&path).unwrap();
         let size = file.metadata().unwrap().len();
 

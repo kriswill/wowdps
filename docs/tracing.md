@@ -165,7 +165,7 @@ test of the scanner and a full parse, and one per ruling the fixtures
 cannot settle alone (deaths, taken, stacks, power, spans, shields,
 support, the ability tree). Every gate's name holds `real`, and libtest
 filters on a test's own name, never its file's, so `real` runs them all
-(`real_log` runs three):
+(`real_log` runs two):
 
 ```sh
 WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored real --nocapture
@@ -177,9 +177,9 @@ the log format. Note it expects at least one *closed* segment, so a log
 captured mid-first-pull fails its non-empty assertion by design.
 
 Forever's logs have their own variants of the gates whose rules that
-edition has (deaths, taken, stacks, power), and three gates of Forever's
-alone: the roles it infers, `real_log_segments` (the scan and the
-replay cut alike, every fight lazy = full, Forever's tables read), and
+edition has (deaths, taken, stacks, power, shields, spans), and three gates
+of Forever's alone: the roles it infers, `real_log_segments` (the scan and
+the replay cut alike, every fight lazy = full, Forever's tables read), and
 `real_log_posts` (every boss pull's replay posts each credited player, on
 the instance's map, from its first seconds to its end: the client names no
 UiMap inside a dungeon, R29). Each one's name holds `forever`:
