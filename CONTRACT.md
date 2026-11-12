@@ -1187,7 +1187,8 @@ then every line read, kept through a rotation (a new log, still empty or older, 
 an open pull is `Engine::pull_open` (lines having arrived since the backlog: a boss fight begun
 and not ended — while the watcher NAMES its edition's client running, however quiet, else until
 no line has come for five minutes, `ENCOUNTER_QUIET` — or any other open segment with lines within
-the trash gap); a move is the live edition changing from one started source to another, and
+the trash gap); a move is the live edition changing from one started source that had a rank (a
+line time or a modified time: not one whose first index has yet to land) to another, and
 `HANDOFF_QUIET` is ten seconds; the watcher names a client running by its product folder
 (`Running`); a log's modified time is `Engine::written` (its modified time when opened, then each
 batch of fresh lines); ties keep the live edition. A line's time (`engine::line_utc_ms`) is the
@@ -1199,13 +1200,19 @@ it was shown (`engine::LINE_AHEAD`). It is chosen on every tick and every game r
 lines that land within one tick are judged together; with one source it never moves. A source not
 yet holding a log is never live.
 The rule rests on two premises: **a game writes no line after its player logs out, and both logs'
-line times are on one clock.** Under them a game left behind, flushing late or on exit, shows no
-line newer than what the game the player moved to has logged, and takes nothing, whatever pull its
-lines open or hold open; a game moved to that has logged nothing yet takes nothing until it does;
-two logs written in turn never move the live edition twice within `HANDOFF_QUIET`. Where they
-fail, the rule follows the line times as written: a line the old game writes after the logout
-takes the live edition; a second client in the world (another account) writes current lines and
-takes it at its flushes, the game played taking it back at its own. The cap bounds only a live log
+line times are on one clock**; and on a fact of the game's: one account is in the world in one
+edition at a time, so going from one game to the other logs the first out. Under them a game left
+behind, flushing late or on exit, shows no line newer than what the game the player moved to has
+logged, and takes nothing, whatever pull its lines open or hold open; a game moved to that has
+logged nothing yet takes nothing until it does; two logs written in turn never move the live
+edition twice within `HANDOFF_QUIET`. Where they fail, the rule follows the line times as
+written: a line the old game writes after the logout takes the live edition; a second client in
+the world, such as another account's, writes current lines and takes it at its flushes, the game
+played taking it back at its own. When a second client starts after the watcher's one-game pick,
+the rank decides again once the hold lapses, and the newest line shown may be the other game's
+last session until the game played writes its first lines. An encounter its game never ended (a
+disconnect mid-pull) is an open pull while that game's client runs, so it holds the live edition
+until that client quits, or its log ends the encounter or rotates. The cap bounds only a live log
 read AHEAD (a clock run fast, a log from another host, an offset the game kept across a spring
 forward): it holds the live edition a minute at most. It lifts nothing else: an old game read
 ahead still takes the live edition with its late flush, and a game read BEHIND (an offset kept

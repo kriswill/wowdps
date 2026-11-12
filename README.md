@@ -140,16 +140,23 @@ stderr, and in the ⚙ menu) and skipped; the rest of the theme still applies.
 
 The window shows one game at a time, and by default the one you are
 playing: the one running, or with both running (or none seen), the one
-whose combat log shows the newest line. Tab from one game to the other and
-the next lines the other writes to its log move the window and the overlay
-to it. The game writes its log in bursts, so that can come a few minutes
-after you tab. A pull in the game shown keeps them where they are until it
-ends, and after a move they stay at least ten seconds. This rests on two
-things: a game writes nothing to its log after you log out of it, so lines
-it writes late, from before you left, move nothing; and both games' logs
-keep time by one clock. A second client in the world at the same time
-(another account) moves them each time it writes its log, and a game whose
-log keeps time behind the other's is not followed until its lines catch up.
+whose combat log shows the newest line. Your account is in the world in one
+game at a time, so switching to the other game logs you out of the first;
+the next lines the other game writes to its log then move the window and
+the overlay to it. The game writes its log in bursts, so that can come a
+few minutes after you switch. A pull in the game shown keeps them where
+they are until it ends, and after a move they stay at least ten seconds,
+unless only one game is left running. This rests on two things: a game
+writes nothing to its log after you log out of it, so lines it writes late,
+from before you left, move nothing; and both games' logs keep time by one
+clock.
+
+Launching the second game can show the game played last until the one you
+play writes its log. A boss fight the game never ended (a disconnect
+mid-pull) keeps them on that game until you quit that client. A second
+client in the world at the same time, such as another account's, moves them
+each time it writes its log, and a game whose log keeps time behind the
+other's is not followed until its lines catch up.
 
 When this machine has more than one edition of the game (a log
 followed or a fight stored of each), the window's top bar shows the games

@@ -2781,6 +2781,14 @@ mod tests {
         ])));
         assert_eq!(hub.sources.live(), 0, "both running: the move holds it");
         assert!(drain(&follower).is_empty());
+        // Retail's log shows a line on the clock both share, newer than
+        // Forever's: the hold over, nothing moves without Forever's pull.
+        hub.handle(HubMsg::Tail(0, TailEvent::Lines(retail_buff(300))));
+        hub.sources.age_for_test(QUIET);
+        hub.tick();
+        assert_eq!(hub.sources.live(), 0, "Retail's line is the newest");
+        drain(&follower);
+        drain(&retail);
         // The hold over, a Forever pull opening, its lines the newest, moves
         // the live edition there on the tick: the follower is sent
         // Forever's list, which moves it, and then Forever's live fight; the
@@ -3163,6 +3171,7 @@ mod tests {
                 (100, 101, true),
                 (100, 101, false),
                 (100, 100, true),
+                (100, 100, false),
             ] {
                 let (mut hub, _follower) = playing_forever(both);
                 let lines = [
@@ -3563,6 +3572,85 @@ mod tests {
             assert_eq!(hub.sources.live(), 0, "both={both}: not held the hour");
             assert!(moved_to(&drain(&follower), Edition::Retail));
         }
+    }
+
+    /// R4-1: at start-up a tick lands between Retail's `Switched` and its
+    /// index, Retail started but with nothing to rank it by yet: the live
+    /// edition goes to Forever, but that is no move, so it holds nothing —
+    /// Retail's index lands, its line the newest, and the next tick has it.
+    #[test]
+    fn a_tick_before_a_source_s_first_index_holds_nothing() {
+        let sample = std::fs::read_to_string(FIXTURE).unwrap();
+        let (dir, newer) = scratch_log(
+            "unindexed",
+            "WoWCombatLog-110226_100000.txt",
+            &format!("{sample}{}\n", retail_buff(0)[0]),
+        );
+        for both in [true, false] {
+            let mut hub = two_editions();
+            let follower = hub.connect(1, ClientKind::Window);
+            hub.client(1, ClientMsg::watch(seg_cursor(SegmentRef::Live)));
+            if both {
+                hub.handle(HubMsg::Game(Running::of(&[
+                    Edition::Retail,
+                    Edition::Forever,
+                ])));
+            }
+            deliver_log_to(&mut hub, 1, FOREVER, 0);
+            hub.handle(HubMsg::Tail(1, TailEvent::CaughtUp));
+            let (switched, index, seeds) = log_parts(&newer);
+            hub.handle(switched);
+            hub.tick();
+            assert_eq!(hub.sources.live(), 1, "both={both}: Retail has no rank yet");
+            hub.handle(index);
+            hub.handle(seeds);
+            hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+            hub.tick();
+            assert_eq!(
+                hub.sources.live(),
+                0,
+                "both={both}: no hold, the newest line"
+            );
+            assert!(moved_to(&drain(&follower), Edition::Retail));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R4-4: the rule's fourth sentence. A source whose log has shown no
+    /// timed line (an empty log) is ranked by its log's modified time
+    /// against the other's newest line time: modified before Forever's last
+    /// line, Forever is live; modified after it, Retail is.
+    #[test]
+    fn a_source_with_no_timed_line_is_ranked_by_its_modified_time() {
+        let (dir, empty) = scratch_log("untimed", "WoWCombatLog-110226_100000.txt", "");
+        let forever_ms = std::fs::read_to_string(FOREVER)
+            .unwrap()
+            .lines()
+            .last()
+            .and_then(crate::engine::line_utc_ms)
+            .unwrap();
+        // Ages that put Retail's modified time an hour before Forever's last
+        // line, and now.
+        let before = u64::try_from(now_ms() - forever_ms + 3_600_000).unwrap();
+        for both in [true, false] {
+            for (age, live) in [(before, 1), (0, 0)] {
+                let mut hub = two_editions();
+                if both {
+                    hub.handle(HubMsg::Game(Running::of(&[
+                        Edition::Retail,
+                        Edition::Forever,
+                    ])));
+                }
+                deliver_log_to(&mut hub, 1, FOREVER, 0);
+                hub.handle(HubMsg::Tail(1, TailEvent::CaughtUp));
+                deliver_log_to(&mut hub, 0, &empty, age);
+                hub.handle(HubMsg::Tail(0, TailEvent::CaughtUp));
+                hub.tick();
+                assert_eq!(hub.sources.engine(0).line_ms(), None, "no timed line");
+                assert_eq!(hub.sources.live(), live, "both={both} age={age}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The bound: lines alone, no pull opening — two logs written in turn,

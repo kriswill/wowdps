@@ -22,20 +22,23 @@
 //! and UTC offset (`engine::line_utc_ms`), kept through a rotation, and a
 //! time read ahead of now believed at most `engine::LINE_AHEAD` past the
 //! clock; an open pull is `Engine::pull_open`; a move is the live edition
-//! changing from one started source to another ([`HANDOFF_QUIET`]); its
-//! modified time is `Engine::written`. Ties keep the live edition. It is
+//! changing from one started source with a rank (a line time or a modified
+//! time) to another ([`HANDOFF_QUIET`]); its modified time is
+//! `Engine::written`. Ties keep the live edition. It is
 //! chosen on every tick and every game report ([`Sources::choose_live`]),
 //! so the lines that land within one tick are judged together; with one
 //! source it never moves.
 //!
 //! It rests on two premises: a game writes no line after its player logs
-//! out, and both logs' line times are on one clock. Under them a game left
+//! out, and both logs' line times are on one clock — and on the game's own
+//! fact that one account is in the world in one edition at a time, so going
+//! from one game to the other logs the first out. Under them a game left
 //! behind, flushing late or on exit, shows no line newer than the game the
 //! player moved to has shown, and takes nothing; a game moved to that has
 //! logged nothing yet takes nothing until it does. Where they fail, the
 //! rule follows the line times: a line written after the logout takes the
-//! live edition; a second client in the world writes current lines and
-//! takes it at its flushes. The cap bounds only a live log read ahead,
+//! live edition; a second client in the world, such as another account's,
+//! writes current lines and takes it at its flushes. The cap bounds only a live log read ahead,
 //! holding the live edition a minute at most: an old game read ahead still
 //! takes it with a late flush, and a log read behind is not followed until
 //! its lines pass the other's newest. Only the live
@@ -98,8 +101,9 @@ pub struct Sources {
     more: Vec<Source>,
     ids: Ids,
     live: usize,
-    /// When the live edition last moved from one started source to another
-    /// (`None` before it has): the move holds it for [`HANDOFF_QUIET`].
+    /// When the live edition last moved from one started source with a rank
+    /// to another (`None` before it has): the move holds it for
+    /// [`HANDOFF_QUIET`].
     moved_at: Option<Instant>,
     running: Running,
     /// Whether the sources are named by their folders: from when a second
@@ -369,8 +373,9 @@ impl Sources {
                 .unwrap_or(old),
         };
         self.live = new;
-        // A pick from a source that never held a log (at start) is no move.
-        if new != old && self.started(old) {
+        // A pick from a source that never held a log, or that has shown
+        // nothing to rank it by yet (its index not landed), is no move.
+        if new != old && self.started(old) && self.rank(old).is_some() {
             self.moved_at = Some(Instant::now());
         }
         new != old
