@@ -160,28 +160,34 @@ only").
 
 ## Real-log gates
 
-`crates/core` has an ignored perf test that runs the scanner + a full parse
-against any real combat log:
+`crates/core` has ignored gates that run over a real combat log: a perf
+test of the scanner and a full parse, and one per ruling the fixtures
+cannot settle alone (deaths, taken, stacks, power, spans, shields,
+support, the ability tree). Every gate's name holds `real`, and libtest
+filters on a test's own name, never its file's, so `real` runs them all
+(`real_log` runs three):
 
 ```sh
-WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored real_log --nocapture
+WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored real --nocapture
 ```
 
-It asserts a sub-second scan and sub-second biggest-encounter load, and prints
-segment counts — a quick health check when Blizzard changes the log format.
-Note it expects at least one *closed* segment, so a log captured mid-first-pull
-fails its non-empty assertion by design.
+The perf test asserts a sub-second scan and sub-second biggest-encounter
+load, and prints segment counts — a quick health check when Blizzard changes
+the log format. Note it expects at least one *closed* segment, so a log
+captured mid-first-pull fails its non-empty assertion by design.
 
 Forever's logs have their own variants of the gates whose rules that
-edition has, named `*_forever_*`, plus `real_log_segments` (the scan and
-the replay cut alike, every fight lazy = full, Forever's tables read):
+edition has (deaths, taken, stacks, power), and two gates of Forever's
+alone: the roles it infers, and `real_log_segments` (the scan and the
+replay cut alike, every fight lazy = full, Forever's tables read). Each
+one's name holds `forever`:
 
 ```sh
 WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored forever --nocapture
 ```
 
 They print no player's name or guid, a failure included. Set both variables
-to check a log of each edition in one run.
+and filter on `real` to check a log of each edition in one run.
 
 ## Combat-log flush latency (context for "is it frozen?")
 

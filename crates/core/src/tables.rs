@@ -462,6 +462,27 @@ mod tests {
                 include_str!("forever/role_signals.rs"),
             ),
         ];
+        // Every generated table of either edition is held here: one added
+        // without joining a list above would not hold the patch.
+        let listed: Vec<&str> = retail.iter().chain(&forever).map(|(f, _)| *f).collect();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for sub in ["", "forever"] {
+            for entry in std::fs::read_dir(src.join(sub)).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_none_or(|x| x != "rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                if text.lines().any(|l| l.starts_with("//! Source:")) {
+                    let rel = path.strip_prefix(&src).unwrap().to_string_lossy();
+                    let rel = rel.replace('\\', "/");
+                    assert!(
+                        listed.contains(&rel.as_str()),
+                        "{rel}: a generated table this test does not hold to the tables' patch"
+                    );
+                }
+            }
+        }
         for (edition, files) in [
             (Edition::Retail, &retail[..]),
             (Edition::Forever, &forever[..]),

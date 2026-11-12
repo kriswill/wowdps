@@ -101,7 +101,7 @@ fn lazy_equals_full(path: &str, label: &str, seg: &Segment, meta: &SegmentMeta) 
 
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
-fn real_log_roles() {
+fn roles_are_inferred_on_every_real_forever_fight() {
     // The header names the edition: a log of one that reads its specs (a
     // Retail log, the other gates' usual) is passed over before it is read.
     let Some(path) = real_log::forever_log() else {

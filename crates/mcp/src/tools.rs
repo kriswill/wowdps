@@ -126,7 +126,9 @@ pub fn catalog() -> Vec<Tool> {
                           from (`tables_build`) and the patch of its newest stored fight's log \
                           (`log_build`); `newer_than_tables` and `notice` say when the game is \
                           newer, so some of its newer spells may be missing or unnamed until \
-                          wowdps updates (known once a fight of the new patch is stored).",
+                          wowdps updates (known once a fight of the new patch is stored). \
+                          Those builds are one store read per edition, so while the store \
+                          is busy importing, status answers more slowly.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {},
@@ -1198,28 +1200,13 @@ fn newer_notice(edition: Edition, build: (u16, u16, u16)) -> String {
     )
 }
 
-/// The build of `edition`'s newest fight stored from this machine's logs,
-/// one card asked of the store; `None` with no such fight, a fight whose
-/// log named no build, or a store that cannot answer, so `status` still
-/// answers.
-fn newest_build(bridge: &mut Bridge, edition: Edition) -> Option<(u16, u16, u16)> {
-    let query = HistoryQuery::Fights {
-        encounter: None,
-        difficulty: None,
-        guid: None,
-        since_utc_ms: None,
-        kind: None,
-        sort: FightSort::Newest,
-        limit: 1,
-        after_id: None,
-        role: None,
-        origin: OriginFilter::Local,
-        edition: Some(edition),
-    };
-    match bridge.history(query) {
-        Ok(HistoryAnswer::Fights { cards, .. }) => {
-            cards.first().map(|c| c.build).filter(|b| *b != (0, 0, 0))
-        }
+/// The build of `edition`'s newest fight stored from this machine's logs
+/// whose log named one, a few newest cards asked of the store
+/// (`history::newest_build_query`); `None` with no such fight or a store
+/// that cannot answer, so `status` still answers.
+fn newest_build(bridge: &mut Bridge, edition: Edition) -> Option<Patch> {
+    match bridge.history(wowdps_proto::history::newest_build_query(edition)) {
+        Ok(HistoryAnswer::Fights { cards, .. }) => wowdps_proto::history::newest_build(&cards),
         _ => None,
     }
 }

@@ -5,8 +5,12 @@
 //!
 //! ```sh
 //! WOWDPS_REAL_LOG=<Retail log> WOWDPS_REAL_LOG_FOREVER=<Forever log> \
-//!   cargo test --release -p wowdps-core -- --ignored real_log --nocapture
+//!   cargo test --release -p wowdps-core -- --ignored real --nocapture
 //! ```
+//!
+//! libtest filters on a test's own name, never its file's: every gate's
+//! name holds `real`, and every Forever variant's `forever` (`-- --ignored
+//! forever` runs Forever's alone); `real_log` selects only three.
 //!
 //! A real log carries real names. A Forever variant prints and asserts on
 //! no name and no guid, a failure included: a fight is named by its kind,

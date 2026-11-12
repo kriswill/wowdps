@@ -24,8 +24,8 @@ use wowdps_core::cli::{Cmd, SourceSpec, parse_args};
 use wowdps_daemon::{DaemonOptions, config::Config, spec_display};
 use wowdps_model::Edition;
 use wowdps_proto::{
-    ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, EditionRef, FightSort,
-    HistoryAnswer, HistoryQuery, OriginFilter, Reconnect, SourceArg,
+    ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, EditionRef, HistoryAnswer,
+    Reconnect, SourceArg,
 };
 
 const USAGE: &str = "\
@@ -338,10 +338,11 @@ fn tables_line(edition: Edition, build: Patch) -> Option<String> {
 }
 
 /// The build of each source's edition's newest fight stored from this
-/// machine's logs, one card asked of the store per edition (an edition
-/// two sources name is asked once); `None` for a source whose log names
-/// no edition, an edition with no such fight, a log that named no build,
-/// or a store that does not answer within the wait.
+/// machine's logs whose log named one, a few newest cards asked of the
+/// store per edition (`history::newest_build_query`; an edition two sources
+/// name is asked once); `None` for a source whose log names no edition, an
+/// edition with no such fight, or a store that does not answer within the
+/// wait.
 fn newest_builds(
     client: &mut DaemonClient,
     editions: &[wowdps_proto::EditionSource],
@@ -358,23 +359,11 @@ fn newest_builds(
             req_id += 1;
             client.send(&ClientMsg::GetHistory {
                 req_id,
-                query: HistoryQuery::Fights {
-                    encounter: None,
-                    difficulty: None,
-                    guid: None,
-                    since_utc_ms: None,
-                    kind: None,
-                    sort: FightSort::Newest,
-                    limit: 1,
-                    after_id: None,
-                    role: None,
-                    origin: OriginFilter::Local,
-                    edition: Some(edition),
-                },
+                query: wowdps_proto::history::newest_build_query(edition),
             });
             let build = match wait_history(client, req_id) {
                 Some(HistoryAnswer::Fights { cards, .. }) => {
-                    cards.first().map(|c| c.build).filter(|b| *b != (0, 0, 0))
+                    wowdps_proto::history::newest_build(&cards)
                 }
                 _ => None,
             };

@@ -963,8 +963,11 @@ BUILD_VERSION is a later patch (`Edition::newer_than_tables`; the log names no
 build number, so a later build of one patch is never newer) may name spells,
 items and maps the tables never saw. No message carries a log's build but a
 stored card, so what is held against the tables is the edition's newest card
-of this machine's logs (`OriginFilter::Local`), and the notice appears only
-once a fight of the newer patch has been stored. The window says it on Home in
+of this machine's logs (`OriginFilter::Local`) whose log named a build, a
+card of `0.0.0` passed over for the next (the window's census keeps the
+newest such card it has read; the status paths read the edition's
+`history::BUILD_CARDS` newest, `history::newest_build`), and the notice
+appears only once a fight of the newer patch has been stored. The window says it on Home in
 one quiet line for the game it shows (`editions::newer_notice`, from the
 census's newest card, no question of its own), `wowdps status` on a `tables:`
 line under the edition's, and the MCP `status` per edition; each says what it
@@ -1309,7 +1312,8 @@ carry `edition` (the key, named off `project_id`; `players` carries `project_id`
 row's `role` is `Row::role` (the spec's, else the inferred one, unmarked, as a card's `role` is);
 (v49) its live fights and list rows say `edition`, `status` lists `editions` and names the `live_edition`
 (each edition with its `tables_build`, its newest stored fight's `log_build`, `newer_than_tables` and the
-player's `notice` when newer: one `Fights` card asked per edition, only when `status` is), and
+player's `notice` when newer: one `Fights` question per edition, `history::newest_build_query`, only when
+`status` is, so a store busy importing slows the answer), and
 every tool that takes an edition takes it in one shape (`retail`, `forever` or a PROJECT_ID). The
 history tools (`history`, `progression`, `trend`, `role_night`, `regrade_fights`) filter by it;
 without it they answer every edition, each card naming its own, but count and rank each edition's
@@ -1436,7 +1440,7 @@ of one source prints the one pair it always did; with several, the `game:` line 
 the editions whose game runs; under an edition whose newest stored fight is known, a
 `tables:` line holds that fight's patch against the patch its tables were made from,
 `from 12.1.0, log from 12.1.5`, with `: newer; …` and what it means when it is later,
-one `Fights` card asked per edition), `wowdps stop`,
+one `Fights` question per edition, `history::newest_build_query`), `wowdps stop`,
 `wowdps addon [status | install]` (v31: the wowdps addon in the game's AddOns folder —
 `status` needs no daemon and reports install / interface / state / each account's
 SavedVariables, its players and creatures counted; `install` writes it),

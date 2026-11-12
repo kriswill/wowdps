@@ -74,15 +74,19 @@ rulings, §Fixtures). Read the ruling before changing what it governs.
 crates/core/fixtures/verify.sh                 # every gated fixture vs its TSV
 crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt   # must FAIL
 cargo test -p wowdps-core
-WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored real_log --nocapture
+WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt \
+  cargo test --release -p wowdps-core -- --ignored real --nocapture    # every gate, both editions
 WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored forever --nocapture
 ```
 
 The real-log gates need a log with at least one closed segment
-(`docs/tracing.md`, "Real-log gates"). Each gate whose rule Forever has
-(deaths, taken, stacks, power, roles, and `real_log_segments`' cut and
-totals) has a Forever variant over `WOWDPS_REAL_LOG_FOREVER`
-(`tests/real_log/mod.rs`); a variant prints and asserts on no name and no
-guid, a failure included, and a Retail gate passes a Forever log over. A frozen live meter is usually the
+(`docs/tracing.md`, "Real-log gates"). libtest filters on a test's own
+name, never its file's: every gate's name holds `real`, and every Forever
+variant's `forever`; `real_log` selects three. Each gate whose rule
+Forever has (deaths, taken, stacks, power, and roles and
+`real_log_segments`' cut and totals, which are Forever's alone) has a
+Forever variant over `WOWDPS_REAL_LOG_FOREVER` (`tests/real_log/mod.rs`);
+a variant prints and asserts on no name and no guid, a failure included,
+and a Retail gate passes a Forever log over. A frozen live meter is usually the
 game's multi-minute flush: check the log's mtime before debugging
 `tail.rs`.
