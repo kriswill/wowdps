@@ -18,13 +18,18 @@
 //! while it has a pull open or its log is still being written, until the
 //! other's log grows. A log growing ([`Engine::grew`]: lines the game
 //! appends, or a log it creates, while the daemon watches) moves the live
-//! edition to it on the next tick, once the live one has been live, and its
-//! log quiet, for [`HANDOFF_QUIET`]: one account plays one game at a time,
-//! so the other log growing is the other game being played, while two logs
-//! written in turn do not move a following client on every line, and two
-//! growing in one tick move nothing. It is chosen again on every tail
-//! event, game report and tick, so a pull, a log growing or a log going
-//! quiet takes effect within a tick. Only the live engine's
+//! edition to it on the next tick when its newest line is later, by the
+//! line's own time, than the newest the live log has shown, once the live
+//! one has been live, and its log quiet, for [`HANDOFF_QUIET`]: one account
+//! plays one game at a time, so the other log growing with lines newer
+//! than the live one's is the other game being played. A game left that
+//! flushes late or on exit writes lines older than that, and moves
+//! nothing; two logs written in turn do not move a following client on
+//! every line, and two growing in one tick move nothing. A second client in
+//! the world, though, writes current lines: it moves the live edition at
+//! its flushes. It is chosen again on every tail event, game report and
+//! tick, so a pull, a log growing or a log going quiet takes effect within
+//! a tick. Only the live engine's
 //! trailing segment is what a follower is shown: a stale open pull in
 //! another edition's log draws no one.
 //!
@@ -48,15 +53,17 @@ use wowdps_proto::{Cursor, EditionRef, EditionSource, LoadError, SegmentRef};
 use crate::engine::{Engine, EngineEvent, Ids, ListKey};
 use crate::game::Running;
 
-/// How long the live edition must have been live, and its log quiet, before
-/// another edition's log growing moves the live edition there, with no pull
-/// open on either side. It bounds the flapping: lines alone — two logs
-/// written in turn, however they alternate — never move it twice within
-/// this interval (no move on lines comes sooner than this after the last
-/// move), and lines landing in both within one tick move nothing. A change
-/// of game logs out of one client before the other enters the world, so
-/// the old log is quiet from then on: the first batch of the new one's
-/// lines to land this long after that moves the live edition.
+/// How long the live edition must have been live, and its log quiet (by
+/// when its lines arrived), before another edition's log growing moves the
+/// live edition there, with no pull open on either side. It bounds the
+/// flapping: lines alone — two logs written in turn, however they
+/// alternate — never move it twice within this interval (no move on lines
+/// comes sooner than this after the last move), and lines landing in both
+/// within one tick move nothing. A change of game logs out of one client
+/// before the other enters the world: the first batch of the new one's
+/// lines to land this long after the old one's last moves the live
+/// edition, and the old one's lines landing later, written before the
+/// logout, move nothing (their time is older).
 pub const HANDOFF_QUIET: Duration = Duration::from_secs(10);
 
 /// v49: one followed source as the hub is told of it: how `Status` words
@@ -79,6 +86,15 @@ pub struct Source {
     /// Its log grew ([`Engine::grew`]) since the last tick, which reads and
     /// clears it ([`Sources::tick`]).
     grew: bool,
+    /// The newest line time of that growth ([`Engine::grew_ms`]), `None`
+    /// when none of it carried one.
+    grew_ms: Option<i64>,
+    /// Its last growth, while another source was live, was no later by its
+    /// lines' time than the live log had already shown, or carried no time:
+    /// lines written before — a late or exit flush of a game left — so its
+    /// log is not written last by that arrival. Cleared by a later growth,
+    /// any growth while it is live, and a log opened.
+    stale: bool,
 }
 
 /// Every followed source, the first the one `--file`, `--logs` or the
@@ -91,10 +107,10 @@ pub struct Sources {
     more: Vec<Source>,
     ids: Ids,
     live: usize,
-    /// When the live edition last moved off a source holding a log, `None`
-    /// before it has (the start-up pick from the first source to hold one
-    /// is no such move): lines alone — a log growing, or the live one's
-    /// gone quiet — move it again only once this is [`HANDOFF_QUIET`] old.
+    /// When the live edition last moved off a source holding a log — every
+    /// move but one from a source that has never held one, at start —
+    /// `None` before it has: lines alone (a log growing, or the live one's
+    /// gone quiet) move it again only once this is [`HANDOFF_QUIET`] old.
     moved_at: Option<Instant>,
     running: Running,
     /// Whether the sources are named by their folders: from when a second
@@ -114,6 +130,8 @@ impl Sources {
             last_list: ListKey::default(),
             folder: setup.edition,
             grew: false,
+            grew_ms: None,
+            stale: false,
         };
         let primary = make(setups.first().unwrap_or(&SourceSetup::default()));
         let more = setups.iter().skip(1).map(make).collect();
@@ -260,9 +278,17 @@ impl Sources {
     /// another source's edition may have moved with no event of its own
     /// (an unread log, a header naming none), and its list with it.
     pub fn on_tail(&mut self, i: usize, ev: TailEvent, out: &mut Vec<EngineEvent>) -> bool {
+        let opened_log = matches!(ev, TailEvent::Index { .. });
         if let Some(src) = self.source_mut(i) {
             src.engine.on_tail(ev, out);
-            src.grew |= src.engine.grew();
+            if src.engine.grew() {
+                src.grew = true;
+                src.grew_ms = src.grew_ms.max(src.engine.grew_ms());
+            }
+            // A log opened is written as of its modified time, by no flush.
+            if opened_log {
+                src.stale = false;
+            }
         }
         let named = self.name_by_folder();
         // A source's edition may have just been named or changed: whether
@@ -341,21 +367,37 @@ impl Sources {
     }
 
     /// The tick's choice: as [`Sources::choose_live`], and the logs grown
-    /// since the last tick may move the live edition — to one of them, when
-    /// the live one's did not grow and it has been live, and its log quiet,
-    /// for [`HANDOFF_QUIET`]. Two logs growing within one tick, the live
-    /// one's among them, move nothing whichever landed first.
+    /// since the last tick may move the live edition — to one of them whose
+    /// growth's newest line is later, by its own time
+    /// (`engine::line_utc_ms`), than the newest the live log has shown
+    /// (`Engine::line_ms`), when the live one's did not grow and it has been
+    /// live, and its log quiet, for [`HANDOFF_QUIET`]. Two logs growing
+    /// within one tick, the live one's among them, move nothing whichever
+    /// landed first. A growth no later than the live log, or with no time,
+    /// is lines written before (a game left flushing late, or on exit): it
+    /// moves nothing, and marks its source stale for the fallback to the
+    /// log written last.
     pub fn tick(&mut self) -> bool {
-        let grew: Vec<usize> = (0..self.len())
-            .filter(|i| {
-                self.source_mut(*i)
-                    .is_some_and(|src| std::mem::take(&mut src.grew))
-            })
-            .collect();
-        self.choose(None, &grew)
+        let live = self.live;
+        let live_ms = self.engine(live).line_ms();
+        let mut later = Vec::new();
+        for i in 0..self.len() {
+            let Some(src) = self.source_mut(i) else {
+                continue;
+            };
+            if !std::mem::take(&mut src.grew) {
+                continue;
+            }
+            let newer = src.grew_ms.take().is_some_and(|t| Some(t) > live_ms);
+            src.stale = i != live && !newer;
+            if i != live && newer {
+                later.push(i);
+            }
+        }
+        self.choose(None, &later)
     }
 
-    fn choose(&mut self, opened: Option<usize>, grew: &[usize]) -> bool {
+    fn choose(&mut self, opened: Option<usize>, later: &[usize]) -> bool {
         if self.len() < 2 {
             return false;
         }
@@ -378,10 +420,10 @@ impl Sources {
             [one] => *one,
             // None does: the log written last, kept while its pull is open
             // or it is still being written, until the other's log grows.
-            [] => self.keep_or_move(old, &started, opened, grew, Move::WrittenLast),
+            [] => self.keep_or_move(old, &started, opened, later, Move::WrittenLast),
             // Both do: the one with a pull open, kept while it has one; with
             // neither open, kept until the other opens one or its log grows.
-            several => self.keep_or_move(old, several, opened, grew, Move::OnPull),
+            several => self.keep_or_move(old, several, opened, later, Move::OnPull),
         };
         self.live = new;
         if new != old && self.started(old) {
@@ -393,23 +435,26 @@ impl Sources {
     /// Among `candidates`: the live one stays while it is one of them and
     /// has a pull open. Otherwise the candidate with a pull open is live —
     /// the one that just opened it (`opened`) first. With none open, a
-    /// candidate whose log grew since the last tick (`grew`, the tick's
-    /// alone) is live once the live one has been live, and its log quiet,
-    /// for [`HANDOFF_QUIET`] ([`Sources::handed_off`]): the one written
-    /// last when several did. Else the live one stays: while both games run
+    /// candidate whose log grew since the last tick with lines later than
+    /// the live log's (`later`, the tick's alone) is live once the live one
+    /// has been live, and its log quiet, for [`HANDOFF_QUIET`]
+    /// ([`Sources::handed_off`]): the one whose lines are latest when
+    /// several did. Else the live one stays: while both games run
     /// ([`Move::OnPull`]), or with none running while its log is still being
-    /// written (`Engine::being_written`) or it has been live less than
-    /// [`HANDOFF_QUIET`]; then it gives way to the one whose log was written
-    /// last ([`Move::WrittenLast`], and whenever the live one is no
-    /// candidate) — a log grown since the last tick only on the tick. So
-    /// with no pull opening, two moves are at least [`HANDOFF_QUIET`] apart,
-    /// and two logs growing within one tick move nothing.
+    /// written (`Engine::being_written`), a log of it just switched to awaits
+    /// its index, or it has been live less than [`HANDOFF_QUIET`]; then it
+    /// gives way to the one whose log was written last
+    /// ([`Move::WrittenLast`], and whenever the live one is no candidate) —
+    /// never one stale ([`Source::stale`]), and a log grown since the last
+    /// tick only on the tick. So with no pull opening, two moves are at
+    /// least [`HANDOFF_QUIET`] apart, and two logs growing within one tick
+    /// move nothing.
     fn keep_or_move(
         &self,
         old: usize,
         candidates: &[usize],
         opened: Option<usize>,
-        grew: &[usize],
+        later: &[usize],
         mode: Move,
     ) -> usize {
         let is_candidate = candidates.contains(&old);
@@ -426,27 +471,35 @@ impl Sources {
         {
             return p;
         }
-        if let Some(x) = grew
+        if let Some(x) = later
             .iter()
             .copied()
             .filter(|x| *x != old && candidates.contains(x))
-            .max_by_key(|x| self.engine(*x).written())
+            .max_by_key(|x| self.engine(*x).line_ms())
             && (!is_candidate || self.handed_off(old))
         {
             return x;
         }
+        let engine = self.engine(old);
         if is_candidate
-            && (mode == Move::OnPull || self.engine(old).being_written() || !self.settled())
+            && (mode == Move::OnPull
+                || engine.being_written()
+                || engine.awaiting_index()
+                || !self.settled())
         {
             return old;
         }
         // A log grown since the last tick is not written last before the
         // tick: whether the live one's grew within the same tick is the
-        // tick's to see.
+        // tick's to see. Nor is a log written last only by a flush of lines
+        // older than the live one's (stale).
         candidates
             .iter()
             .copied()
-            .filter(|i| !is_candidate || *i == old || !self.source(*i).grew)
+            .filter(|i| {
+                let src = self.source(*i);
+                !is_candidate || *i == old || !(src.grew || src.stale)
+            })
             .max_by_key(|i| (self.engine(*i).written(), *i == old))
             .unwrap_or(old)
     }

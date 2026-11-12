@@ -4,7 +4,8 @@
 //! `index`/`loaded`/`load_pending` happens here, once.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
@@ -12,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime};
 use wowdps_core::index::SegmentMeta;
 use wowdps_core::meter::Visit;
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
+use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::TailEvent;
 use wowdps_model::{Edition, Loadout, View};
 use wowdps_proto::{
@@ -218,6 +220,12 @@ pub struct Engine {
     /// start, nor the same file re-read after a truncation. Its index says
     /// whether the game created it just now ([`Engine::grew`]).
     new_log: bool,
+    /// The newest line time this source's log has shown ([`Engine::line_ms`]).
+    line_ms: Option<i64>,
+    /// The newest line time of the growth the tail event last fed, `None`
+    /// when it grew none or its lines carry no comparable time
+    /// ([`Engine::grew_ms`]).
+    grew_ms: Option<i64>,
     /// v35: the account's characters as the history thread last resolved
     /// them (`HistoryLink::mine`), set by the hub each tick — what every
     /// answer's rows are marked `mine` from.
@@ -255,6 +263,51 @@ pub struct ListKey {
 /// How recently lines must have arrived for an open segment to count as a
 /// fight in progress without the game-process signal.
 const FRESH_WINDOW: Duration = Duration::from_secs(10);
+
+/// How much of a log's end is read for its last line's time when its index
+/// lands ([`last_line_ms`]): more than any one line, so one ends in it.
+const TAIL_WINDOW: u64 = 64 * 1024;
+
+/// A line's time as the log writes it, on one clock for every log: its
+/// date and time (`parse_line`'s `ts_ms`: the year and the day it names,
+/// so midnight is just the next day) less the UTC offset the line itself
+/// writes (`tz_offset_min`), so two logs' lines compare across a daylight
+/// saving change. `None` for a line with no time, or one in the legacy
+/// format with no year and no offset: no time comparable with another
+/// log's.
+pub fn line_utc_ms(line: &str) -> Option<i64> {
+    let parsed = parse_line(line)?;
+    utc_ms(parsed.ts_ms, line)
+}
+
+/// [`line_utc_ms`] for a line already parsed to `ts_ms`.
+fn utc_ms(ts_ms: i64, line: &str) -> Option<i64> {
+    let offset = tz_offset_min(line)?;
+    Some(ts_ms - i64::from(offset) * 60_000)
+}
+
+/// The time ([`line_utc_ms`]) of the last complete line with one among
+/// those ending at byte `end` of the log at `path`, read from at most its
+/// last [`TAIL_WINDOW`] bytes. `None` when the file cannot be read or no
+/// such line ends there.
+fn last_line_ms(path: &Path, end: u64) -> Option<i64> {
+    let start = end.saturating_sub(TAIL_WINDOW);
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(end - start).read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = text.split('\n').collect();
+    // The window's first piece is half a line unless it starts the file;
+    // its last, after the final newline, is no complete line.
+    let complete = lines.len().saturating_sub(1);
+    let first = usize::from(start > 0);
+    lines
+        .get(first..complete)?
+        .iter()
+        .rev()
+        .find_map(|line| line_utc_ms(line))
+}
 
 impl Default for Engine {
     fn default() -> Self {
@@ -301,6 +354,8 @@ impl Engine {
             grew: false,
             waiting: false,
             new_log: false,
+            line_ms: None,
+            grew_ms: None,
             mine: Arc::default(),
             source_edition: None,
             index_project_id: 0,
@@ -367,6 +422,23 @@ impl Engine {
         self.grew
     }
 
+    /// The newest line time this source's log has shown ([`line_utc_ms`]):
+    /// its last complete line when its index landed, then each line read
+    /// since. `None` before any, or for lines that carry no comparable time.
+    /// What another log's growth must be later than to move the live
+    /// edition (`sources::Sources::tick`).
+    pub fn line_ms(&self) -> Option<i64> {
+        self.line_ms
+    }
+
+    /// The newest line time of the growth the tail event last fed: its
+    /// batch's last line, or a new log's last line. `None` when it grew
+    /// nothing, or its lines carry no comparable time — such growth never
+    /// moves the live edition.
+    pub fn grew_ms(&self) -> Option<i64> {
+        self.grew_ms
+    }
+
     /// v49: this source's log has a pull open now, lines of it having
     /// arrived since the backlog (a stale log's forever-open last segment
     /// is none): a boss fight begun and not ended — while the watcher names
@@ -425,6 +497,7 @@ impl Engine {
 
     pub fn on_tail(&mut self, ev: TailEvent, out: &mut Vec<EngineEvent>) {
         self.grew = false;
+        self.grew_ms = None;
         match ev {
             // State only (owners, classes, visits): a seed opens no segment,
             // so there is nothing to number or announce.
@@ -444,11 +517,20 @@ impl Engine {
                     self.written = Some(SystemTime::now());
                     self.grew = true;
                 }
+                // The batch's last line with a time: how far the log has
+                // reached, and the growth's own time.
+                let mut newest: Option<(i64, &str)> = None;
                 for line in &lines {
                     if let Some(parsed) = parse_line(line) {
+                        newest = Some((parsed.ts_ms, line.as_str()));
                         self.now_ms = self.now_ms.max(parsed.ts_ms);
                         self.meter.feed(parsed);
                     }
+                }
+                let batch_ms = newest.and_then(|(ts, line)| utc_ms(ts, line));
+                self.line_ms = self.line_ms.max(batch_ms);
+                if self.grew {
+                    self.grew_ms = batch_ms;
                 }
                 while self.live_ids.len() < self.meter.segments().len() {
                     let id = self.fresh_id();
@@ -507,6 +589,7 @@ impl Engine {
                     None => self.waiting,
                 };
                 self.waiting = false;
+                self.line_ms = None;
                 // A different log file is a different session: reset all
                 // per-file state. Ids keep counting — that is the whole
                 // point of daemon-lifetime monotonicity.
@@ -546,12 +629,20 @@ impl Engine {
                 // the daemon follows runs.
                 self.written = file_age_ms
                     .and_then(|age| SystemTime::now().checked_sub(Duration::from_millis(age)));
+                // How far the log had reached when it was scanned: its last
+                // complete line's time.
+                self.line_ms = self
+                    .source_path
+                    .as_deref()
+                    .and_then(|path| last_line_ms(path, index.scanned));
                 // A new log modified just now is the game writing it: its
-                // source grew. One switched back to, older, is not.
+                // source grew, as far as its last line. One switched back
+                // to, older, is not.
                 if std::mem::take(&mut self.new_log)
                     && file_age_ms.is_some_and(|age| Duration::from_millis(age) < FRESH_WINDOW)
                 {
                     self.grew = true;
+                    self.grew_ms = self.line_ms;
                 }
                 // v49: the scan read the header; the log's edition is
                 // known now, not only once the seed lines replay it.

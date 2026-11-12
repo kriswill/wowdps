@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use wowdps_core::model::{Edition, Role, SegmentId, Spec, View};
 use wowdps_core::tail::{SourceSpec, TailEvent, Tailer};
-use wowdps_daemon::engine::{Engine, EngineEvent};
+use wowdps_daemon::engine::{Engine, EngineEvent, line_utc_ms};
 use wowdps_daemon::history::{Backend, ClosedFight, LogFacts, MemBackend, Retention, Store};
 use wowdps_daemon::mock::{MockDaemon, pump};
 use wowdps_proto::history::{Affiliation, CardPlayer, FightCard};
@@ -1621,11 +1621,22 @@ fn only_the_game_writing_now_grows_a_log() {
     let mut engine = Engine::new();
     assert!(!settle(&mut tailer, &mut engine), "the log opened at start");
     assert!(engine.source_path.is_some());
+    // How far the log had reached: its last line, read when its index
+    // landed (the scan leaves no line for the tail when nothing is open).
+    let last = std::fs::read_to_string(FOREVER_LOG)
+        .unwrap()
+        .lines()
+        .last()
+        .and_then(line_utc_ms);
+    assert!(last.is_some());
+    assert_eq!(engine.line_ms(), last);
 
     append(&first, BUFF);
     assert!(!settle(&mut tailer, &mut engine), "half a line");
     append(&first, "\n");
     assert!(settle(&mut tailer, &mut engine), "the line completed");
+    assert_eq!(engine.grew_ms(), line_utc_ms(BUFF), "the growth's own time");
+    assert_eq!(engine.line_ms(), line_utc_ms(BUFF));
     assert!(!settle(&mut tailer, &mut engine), "nothing since");
 
     let text = std::fs::read_to_string(FOREVER_LOG).unwrap();
@@ -1639,6 +1650,7 @@ fn only_the_game_writing_now_grows_a_log() {
     std::fs::copy(FOREVER_LOG, &second).unwrap();
     assert!(settle(&mut tailer, &mut engine), "a new log");
     assert_eq!(engine.source_path.as_deref(), Some(second.as_path()));
+    assert_eq!(engine.line_ms(), last, "the new log's last line");
 
     std::fs::remove_file(&second).unwrap();
     let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
@@ -1658,4 +1670,39 @@ fn only_the_game_writing_now_grows_a_log() {
     assert!(engine.source_path.is_none());
     std::fs::copy(FOREVER_LOG, empty.join("WoWCombatLog-110126_220000.txt")).unwrap();
     assert!(settle(&mut tailer, &mut engine), "the folder's first log");
+}
+
+/// A line's time for comparing two logs: its date and time less the offset
+/// the line writes, so midnight and the year roll over as the clock does and
+/// a daylight saving change keeps the order; no time for the legacy format
+/// (no year, no offset) or a line with none.
+#[test]
+fn line_times_compare_across_midnight_the_year_and_daylight_saving() {
+    let at = |stamp: &str| {
+        line_utc_ms(&format!(
+            "{stamp}  {}",
+            "ZONE_CHANGE,48,\"Blackfathom Deeps\",1"
+        ))
+    };
+    let ms = |stamp: &str| at(stamp).unwrap();
+    assert_eq!(
+        ms("11/2/2026 00:00:01.000-8") - ms("11/1/2026 23:59:59.000-8"),
+        2_000
+    );
+    assert_eq!(
+        ms("1/1/2027 00:00:00.000-8") - ms("12/31/2026 23:59:59.500-8"),
+        500
+    );
+    // Fall back: 1:10 standard time is after 1:30 daylight time.
+    assert_eq!(
+        ms("11/1/2026 01:10:00.000-8") - ms("11/1/2026 01:30:00.000-7"),
+        40 * 60_000
+    );
+    assert_eq!(
+        ms("11/1/2026 20:00:00.000-8"),
+        ms("11/1/2026 23:00:00.000-5"),
+        "one moment, two zones"
+    );
+    assert_eq!(at("11/2 10:00:00.000"), None, "the legacy format");
+    assert_eq!(line_utc_ms("no time here"), None);
 }
