@@ -1180,20 +1180,49 @@ edition's while it follows that log (its rows and frames name the header's editi
 is answered from it, the history files its fights by it); the folder names a source only until
 its header is read, and only once more than one source has held a log, so a daemon over an install
 with no Forever log sends every frame a daemon of one source sends. The LIVE edition (what a
-following session is answered from, `Status`'s `live`): with one followed edition's game running
-(`Running`: by name), that one; with both, the one with a pull open (`Engine::pull_open`, lines
-having arrived since the backlog: a boss fight begun and not ended — while the watcher NAMES
-its edition's client running, however quiet, else (no game, or only one it cannot name or of an
-edition no source follows) until no line has come for five minutes (`ENCOUNTER_QUIET`: the game
-crashed or stopped logging) — or any other open segment with lines within the trash gap), kept while it
-has one, and while neither has, until the other OPENS one — two games writing in turn never move
-a follower on every line; with none running, the one whose log was written last (its modified
-time when opened, then each batch of fresh lines), kept too while it has a pull open or is still
-being written (`Engine::being_written`: written within the trash gap) — so with no pull open on
-either side it moves only on a pull opening in the other, or once it has gone quiet and the other
-is written. It is chosen again on every tail event, every game report and every tick, so a pull
-or a log going quiet moves it within a tick; with one source it never moves. A source not yet
-holding a log is never live.
+following session is answered from, `Status`'s `live`) follows one rule (`Sources::choose_live`):
+**The live edition is the started source whose log shows the newest line time. An open pull in
+the live edition holds it, and so does a move made less than HANDOFF_QUIET ago. When the watcher
+names exactly one followed game running, that game is live. A source with no timed line is ranked
+by its log's modified time.** In its terms: a started source is one whose folder has held a log;
+its log's newest line time is `Engine::line_ms` — a log's last complete line when its index lands,
+then every line read, kept through a rotation (a new log, still empty or older, never lowers it);
+an open pull is `Engine::pull_open` (lines having arrived since the backlog: a boss fight begun
+and not ended — while the watcher NAMES its edition's client running, however quiet, else until
+no line has come for five minutes, `ENCOUNTER_QUIET` — or any other open segment with lines within
+the trash gap); a move is the live edition changing from one started source that had a rank (a
+line time or a modified time: not one whose first index has yet to land) to another, and
+`HANDOFF_QUIET` is ten seconds; the watcher names a client running by its product folder
+(`Running`); a log's modified time is `Engine::written` (its modified time when opened, then each
+batch of fresh lines); ties keep the live edition. A line's time (`engine::line_utc_ms`) is the
+date and time it writes, as the engine reads every line's (`parse_line`'s `ts_ms`: the year and
+the day it names, so midnight and New Year are the next day), less the UTC offset the line itself
+writes; a line with no time, or in the legacy format with no year and no offset, has none. A line
+time read ahead of now counts, as a log's newest, as at most a minute past the daemon's clock when
+it was shown (`engine::LINE_AHEAD`). It is chosen on every tick and every game report, so the
+lines that land within one tick are judged together; with one source it never moves. A source not
+yet holding a log is never live.
+The rule rests on two premises: **a game writes no line after its player logs out, and both logs'
+line times are on one clock**; and on a fact of the game's: one account is in the world in one
+edition at a time, so going from one game to the other logs the first out. Under them a game left
+behind, flushing late or on exit, shows no line newer than what the game the player moved to has
+logged, and takes nothing, whatever pull its lines open or hold open; a game moved to that has
+logged nothing yet takes nothing until it does; two logs written in turn never move the live
+edition twice within `HANDOFF_QUIET`. Where they fail, the rule follows the line times as
+written: a line the old game writes after the logout takes the live edition; a second client in
+the world, such as another account's, writes current lines and takes it at its flushes, the game
+played taking it back at its own. When a second client starts after the watcher's one-game pick,
+the rank decides again once the hold lapses, and the newest line shown may be the other game's
+last session until the game played writes its first lines. An encounter its game never ended (a
+disconnect mid-pull) is an open pull while that game's client runs, so it holds the live edition
+until that client quits, or its log ends the encounter or rotates. The cap bounds only a live log
+read AHEAD (a clock run fast, a log from another host, an offset the game kept across a spring
+forward): it holds the live edition a minute at most. It lifts nothing else: an old game read
+ahead still takes the live edition with its late flush, and a game read BEHIND (an offset kept
+across a fall back, a client under another time zone) is not followed by its lines until they
+pass the other's newest — its pulls included — though the watcher naming it alone still makes it
+live. The offset each line writes is taken as the one in force; that the game writes it so across
+a daylight saving change is not verified.
 Only the live source's trailing segment is a follower's: another edition's open pull, stale or
 not, draws no follower and announces no `SegmentOpened` to one. A source's game runs
 (`Engine::game_running`, its liveness) when its edition's client is named running, or a game runs

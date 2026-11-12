@@ -29,8 +29,16 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   editions paragraph). Every answer goes through `Sources`: an id to the
   engine holding it, `Live` and the list to the session's edition's, the
   live edition by its rule there. A session no source serves acts on
-  nothing. Over the hub's one-source scenario a daemon of one source queues
-  the wire bytes it queued before editions were followed:
+  nothing. The live edition is one rule, `Sources::choose_live` (its
+  words are in `sources.rs` and CONTRACT.md): the started source whose log
+  shows the newest line time (`Engine::line_ms`), held by its open pull or
+  a move under `HANDOFF_QUIET`, the watcher naming one game overriding,
+  modified time for a source with no timed line. It is chosen on the tick
+  and on game reports, never on a tail event. Keep it one argmax: a new
+  reason to move belongs in the rule's words first. Tests stand in for the
+  clock with `Sources::age_for_test` and time their lines on one clock.
+  Over the hub's one-source scenario a daemon of one source queues the
+  wire bytes it queued before editions were followed:
   `one_source_frames_are_the_daemon_s_before_editions` holds them to
   `tests/golden/one_source_frames.txt`, made by the daemon before. Re-bless
   it (`WOWDPS_BLESS=1`, which rewrites it and fails) only for a change every

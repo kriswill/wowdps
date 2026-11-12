@@ -4,7 +4,8 @@
 //! `index`/`loaded`/`load_pending` happens here, once.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
@@ -12,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime};
 use wowdps_core::index::SegmentMeta;
 use wowdps_core::meter::Visit;
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
+use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::TailEvent;
 use wowdps_model::{Edition, Loadout, View};
 use wowdps_proto::{
@@ -58,8 +60,7 @@ impl Ids {
 }
 
 /// How long a trash pull stays open, for the live edition's choice, with no
-/// line arriving: the meter's own trash gap (60 s), on the wall clock. Also
-/// how long after its last line a log still counts as being written.
+/// line arriving: the meter's own trash gap (60 s), on the wall clock.
 const PULL_QUIET: Duration = Duration::from_secs(60);
 
 /// How long a boss fight with no END stays open, for the live edition's
@@ -167,9 +168,11 @@ pub struct Engine {
     first_id_of_file: u64,
     /// When this source's log was last written, as far as the daemon saw:
     /// the file's modified time when it was opened, then the moment each
-    /// batch of fresh lines arrived. `None` before a log. What the live
-    /// edition is chosen by when no followed game runs.
+    /// batch of fresh lines arrived. `None` before a log. What a source with
+    /// no timed line is ranked by for the live edition.
     written: Option<SystemTime>,
+    /// The newest line time this source's logs have shown ([`Engine::line_ms`]).
+    line_ms: Option<i64>,
     /// Lazily parsed historical segments, LRU by touch, capped at LOADED_CAP.
     loaded: Vec<(SegmentId, Meter)>,
     /// Loads already handed to the loader pool.
@@ -246,6 +249,72 @@ pub struct ListKey {
 /// fight in progress without the game-process signal.
 const FRESH_WINDOW: Duration = Duration::from_secs(10);
 
+/// How much of a log's end is read for its last line's time when its index
+/// lands ([`last_line_ms`]): more than any one line, so one ends in it.
+const TAIL_WINDOW: u64 = 64 * 1024;
+
+/// How far past the daemon's own clock a line's time is believed, as the
+/// newest a log has shown ([`Engine::line_ms`]): a line read ahead of now
+/// (a clock run fast, a log from another host) counts as this far past the
+/// clock when it was shown, so it holds the live edition this long at most
+/// once the other log's lines pass it. It bounds only a log read AHEAD;
+/// one read behind is not lifted (CONTRACT.md: the premises).
+pub const LINE_AHEAD: Duration = Duration::from_secs(60);
+
+/// A line's time as the log writes it, on one clock for every log: its
+/// date and time (`parse_line`'s `ts_ms`: the year and the day it names,
+/// so midnight is just the next day) less the UTC offset the line itself
+/// writes (`tz_offset_min`), so two logs' lines compare across a daylight
+/// saving change when each line writes the offset in force. `None` for a
+/// line with no time, or one in the legacy format with no year and no
+/// offset: no time comparable with another log's.
+pub fn line_utc_ms(line: &str) -> Option<i64> {
+    let parsed = parse_line(line)?;
+    utc_ms(parsed.ts_ms, line)
+}
+
+/// [`line_utc_ms`] for a line already parsed to `ts_ms`.
+fn utc_ms(ts_ms: i64, line: &str) -> Option<i64> {
+    let offset = tz_offset_min(line)?;
+    Some(ts_ms - i64::from(offset) * 60_000)
+}
+
+/// `t` as a log's newest line time ([`Engine::line_ms`]): at most
+/// [`LINE_AHEAD`] past the daemon's clock now.
+fn shown(t: Option<i64>) -> Option<i64> {
+    let cap = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from((d + LINE_AHEAD).as_millis()).ok());
+    match cap {
+        Some(cap) => t.map(|t| t.min(cap)),
+        None => t,
+    }
+}
+
+/// The time ([`line_utc_ms`]) of the last complete line with one among
+/// those ending at byte `end` of the log at `path`, read from at most its
+/// last [`TAIL_WINDOW`] bytes. `None` when the file cannot be read or no
+/// such line ends there.
+fn last_line_ms(path: &Path, end: u64) -> Option<i64> {
+    let start = end.saturating_sub(TAIL_WINDOW);
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(end - start).read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = text.split('\n').collect();
+    // The window's first piece is half a line unless it starts the file;
+    // its last, after the final newline, is no complete line.
+    let complete = lines.len().saturating_sub(1);
+    let first = usize::from(start > 0);
+    lines
+        .get(first..complete)?
+        .iter()
+        .rev()
+        .find_map(|line| line_utc_ms(line))
+}
+
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
@@ -273,6 +342,7 @@ impl Engine {
             ids,
             first_id_of_file: 0,
             written: None,
+            line_ms: None,
             loaded: Vec::new(),
             loading: HashSet::new(),
             history_pending: HashSet::new(),
@@ -322,14 +392,24 @@ impl Engine {
         self.written = self.written.and_then(|t| t.checked_sub(by));
     }
 
-    /// v49: whether this source's log is being written: lines of it landed
-    /// within the meter's trash gap (or, before any did, the file was
-    /// modified within it). What keeps the live edition where it is, no
-    /// pull open on either side, while two logs are written in turn.
-    pub fn being_written(&self) -> bool {
-        self.written
-            .and_then(|t| SystemTime::now().duration_since(t).ok())
-            .is_some_and(|age| age < PULL_QUIET)
+    /// Test hook: as if this source's newest line time had been shown `by`
+    /// earlier — the [`LINE_AHEAD`] cap it was read under lowered by `by`,
+    /// as the clock passing would.
+    #[cfg(test)]
+    pub(crate) fn line_shown_for_test(&mut self, by: Duration) {
+        let by = i64::try_from(by.as_millis()).unwrap_or(i64::MAX);
+        self.line_ms = self.line_ms.map(|t| t.saturating_sub(by));
+    }
+
+    /// The newest line time this source's logs have shown ([`line_utc_ms`]):
+    /// a log's last complete line when its index lands, then each line read
+    /// — kept through a rotation, so a new log still empty, or older, never
+    /// lowers it — each as at most [`LINE_AHEAD`] past the daemon's own
+    /// clock when it was shown. `None` before any, or when no line carried a
+    /// comparable time. What the live edition is ranked by
+    /// (`sources::Sources::choose_live`).
+    pub fn line_ms(&self) -> Option<i64> {
+        self.line_ms
     }
 
     /// v49: this source's log has a pull open now, lines of it having
@@ -407,12 +487,18 @@ impl Engine {
                     self.last_fresh = Some(Instant::now());
                     self.written = Some(SystemTime::now());
                 }
+                // The batch's last line with a time: how far the log has
+                // reached.
+                let mut newest: Option<(i64, &str)> = None;
                 for line in &lines {
                     if let Some(parsed) = parse_line(line) {
+                        newest = Some((parsed.ts_ms, line.as_str()));
                         self.now_ms = self.now_ms.max(parsed.ts_ms);
                         self.meter.feed(parsed);
                     }
                 }
+                let batch_ms = newest.and_then(|(ts, line)| utc_ms(ts, line));
+                self.line_ms = self.line_ms.max(shown(batch_ms));
                 while self.live_ids.len() < self.meter.segments().len() {
                     let id = self.fresh_id();
                     self.live_ids.push(id);
@@ -500,6 +586,15 @@ impl Engine {
                 // the daemon follows runs.
                 self.written = file_age_ms
                     .and_then(|age| SystemTime::now().checked_sub(Duration::from_millis(age)));
+                // How far the log had reached when it was scanned: its last
+                // complete line's time, raising the source's newest (kept
+                // through the switch: a new log still empty, or older, never
+                // lowers it).
+                let last = self
+                    .source_path
+                    .as_deref()
+                    .and_then(|path| last_line_ms(path, index.scanned));
+                self.line_ms = self.line_ms.max(shown(last));
                 // v49: the scan read the header; the log's edition is
                 // known now, not only once the seed lines replay it.
                 self.index_project_id = index.checkpoint.project_id;

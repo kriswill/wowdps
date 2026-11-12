@@ -16,8 +16,8 @@
 use std::path::{Path, PathBuf};
 
 use wowdps_core::model::{Edition, Role, SegmentId, Spec, View};
-use wowdps_core::tail::TailEvent;
-use wowdps_daemon::engine::{Engine, EngineEvent};
+use wowdps_core::tail::{SourceSpec, TailEvent, Tailer};
+use wowdps_daemon::engine::{Engine, EngineEvent, line_utc_ms};
 use wowdps_daemon::history::{Backend, ClosedFight, LogFacts, MemBackend, Retention, Store};
 use wowdps_daemon::mock::{MockDaemon, pump};
 use wowdps_proto::history::{Affiliation, CardPlayer, FightCard};
@@ -1573,4 +1573,155 @@ fn a_source_named_zero_is_named_nothing() {
         Some(Edition::Forever),
         "as its number names it"
     );
+}
+
+// ---- the live edition is the log showing the newest line ----------------------
+
+/// Every event the tailer has now, fed to `engine` poll after poll until a
+/// poll has none (the backlog read, then caught up); the source's newest
+/// line time after them (`Engine::line_ms`).
+fn settle(tailer: &mut Tailer, engine: &mut Engine) -> Option<i64> {
+    for _ in 0..64 {
+        let events = tailer.poll();
+        if events.is_empty() {
+            return engine.line_ms();
+        }
+        for ev in events {
+            engine.on_tail(ev, &mut Vec::new());
+        }
+    }
+    panic!("the tailer never settled");
+}
+
+fn append(path: &Path, text: &str) {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    f.write_all(text.as_bytes()).unwrap();
+}
+
+const BUFF: &str = "11/1/2026 20:50:00.000-8  SPELL_AURA_APPLIED,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,71,\"Defensive Stance\",0x1,BUFF";
+
+/// The newest line time a source's logs show, what the live edition is
+/// ranked by, through a real tailer over a logs folder: the log's last
+/// line when it is opened, at start or as the folder's first; then each
+/// complete line appended, a half-written one not until it is complete;
+/// and kept through every switch — the same log re-read after a
+/// truncation, a newer log whose lines are older, a switch back to an
+/// older log — never lowered by one.
+#[test]
+fn a_source_shows_its_newest_line_time_through_a_real_tailer() {
+    let tmp = Temp::new("lines");
+    let dir = tmp.0.join("Logs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("WoWCombatLog-110126_200000.txt");
+    std::fs::copy(FOREVER_LOG, &first).unwrap();
+    let mut tailer = Tailer::new(SourceSpec::Dir(dir.clone()));
+    let mut engine = Engine::new();
+    // How far the log had reached: its last line, read when its index
+    // landed (the scan leaves no line for the tail when nothing is open).
+    let last = std::fs::read_to_string(FOREVER_LOG)
+        .unwrap()
+        .lines()
+        .last()
+        .and_then(line_utc_ms);
+    assert!(last.is_some());
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        last,
+        "the log opened at start"
+    );
+    assert!(engine.source_path.is_some());
+
+    append(&first, BUFF);
+    assert_eq!(settle(&mut tailer, &mut engine), last, "half a line");
+    append(&first, "\n");
+    let buff = line_utc_ms(BUFF);
+    assert!(buff > last);
+    assert_eq!(settle(&mut tailer, &mut engine), buff, "the line completed");
+
+    let text = std::fs::read_to_string(FOREVER_LOG).unwrap();
+    let half: String = text.lines().take(4).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&first, half).unwrap();
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        buff,
+        "the same log re-read"
+    );
+    append(&first, &format!("{BUFF}\n"));
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        buff,
+        "a line after the re-read"
+    );
+
+    let second = dir.join("WoWCombatLog-110126_210000.txt");
+    std::fs::copy(FOREVER_LOG, &second).unwrap();
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        buff,
+        "a newer log whose last line is older"
+    );
+    assert_eq!(engine.source_path.as_deref(), Some(second.as_path()));
+
+    std::fs::remove_file(&second).unwrap();
+    let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&first)
+        .and_then(|f| f.set_modified(hour_ago))
+        .unwrap();
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        buff,
+        "back to an older log"
+    );
+    assert_eq!(engine.source_path.as_deref(), Some(first.as_path()));
+
+    let empty = tmp.0.join("Empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let mut tailer = Tailer::new(SourceSpec::Dir(empty.clone()));
+    let mut engine = Engine::new();
+    assert_eq!(settle(&mut tailer, &mut engine), None, "no log yet");
+    assert!(engine.source_path.is_none());
+    std::fs::copy(FOREVER_LOG, empty.join("WoWCombatLog-110126_220000.txt")).unwrap();
+    assert_eq!(
+        settle(&mut tailer, &mut engine),
+        last,
+        "the folder's first log"
+    );
+}
+
+/// A line's time for comparing two logs: its date and time less the offset
+/// the line writes, so midnight and the year roll over as the clock does and
+/// a daylight saving change keeps the order; no time for the legacy format
+/// (no year, no offset) or a line with none.
+#[test]
+fn line_times_compare_across_midnight_the_year_and_daylight_saving() {
+    let at = |stamp: &str| {
+        line_utc_ms(&format!(
+            "{stamp}  {}",
+            "ZONE_CHANGE,48,\"Blackfathom Deeps\",1"
+        ))
+    };
+    let ms = |stamp: &str| at(stamp).unwrap();
+    assert_eq!(
+        ms("11/2/2026 00:00:01.000-8") - ms("11/1/2026 23:59:59.000-8"),
+        2_000
+    );
+    assert_eq!(
+        ms("1/1/2027 00:00:00.000-8") - ms("12/31/2026 23:59:59.500-8"),
+        500
+    );
+    // Fall back: 1:10 standard time is after 1:30 daylight time.
+    assert_eq!(
+        ms("11/1/2026 01:10:00.000-8") - ms("11/1/2026 01:30:00.000-7"),
+        40 * 60_000
+    );
+    assert_eq!(
+        ms("11/1/2026 20:00:00.000-8"),
+        ms("11/1/2026 23:00:00.000-5"),
+        "one moment, two zones"
+    );
+    assert_eq!(at("11/2 10:00:00.000"), None, "the legacy format");
+    assert_eq!(line_utc_ms("no time here"), None);
 }
