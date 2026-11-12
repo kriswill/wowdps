@@ -1181,10 +1181,16 @@ fn bar_games(
 }
 
 /// One game's bar over `MockDaemon`'s fixture, a character picked, at
-/// `width`, drawn `unfolded` as main drew it or folded as it must: how far
-/// its last piece runs past the window (0 inside it), and how often it
-/// folded.
-fn one_game_at(cx: &mut gpui_kit::HeadlessAppContext, width: f32, unfolded: bool) -> (f32, usize) {
+/// `width`, drawn `unfolded` as main drew it or folded as it must, after a
+/// paint that folded it `folded` times (as a narrower window would have):
+/// how far its last piece runs past the window (0 inside it), and how
+/// often it folded.
+fn one_game_at(
+    cx: &mut gpui_kit::HeadlessAppContext,
+    width: f32,
+    unfolded: bool,
+    folded: Option<usize>,
+) -> (f32, usize) {
     use super::super::shots::Shot;
     super::super::top_bar::unfolded(unfolded);
     let path = own_config();
@@ -1217,6 +1223,12 @@ fn one_game_at(cx: &mut gpui_kit::HeadlessAppContext, width: f32, unfolded: bool
         session: held.expect("the session was built"),
     };
     shot.settle(cx);
+    if folded.is_some() {
+        cx.update_entity(&shot.gui, |g, cx| {
+            g.bar_fold.set(folded);
+            cx.notify();
+        });
+    }
     let over = cx
         .update_window(window, |_, window, cx| {
             window.render_frame(cx);
@@ -1240,7 +1252,11 @@ fn one_game_at(cx: &mut gpui_kit::HeadlessAppContext, width: f32, unfolded: bool
 /// only at a width where, drawn unfolded as main draws it, it runs past
 /// the window — and there it folds to fit. Each swept width is held to the
 /// unfolded bar drawn at it, and so are the widths at the unfolded bar's
-/// own edge, measured from its layout (its jump glyph's room taken in).
+/// least window, measured from its layout (its jump glyph's room taken
+/// in), with its right padding whole and with its help button at the
+/// edge. A fold drawn holds until the bar unfolded fits with room to
+/// spare, so a clock a pixel wider one second than the next never blinks
+/// it.
 #[test]
 #[cfg_attr(
     target_os = "macos",
@@ -1249,9 +1265,11 @@ fn one_game_at(cx: &mut gpui_kit::HeadlessAppContext, width: f32, unfolded: bool
 fn one_game_folds_only_where_its_bar_would_run_past() {
     crate::images::without_art(true);
     let mut cx = super::super::shots::app();
-    // The unfolded narrow bar's own width: at 800 px, the window less the
-    // room its jump glyph leaves free between the places and the glyph.
-    let edge = {
+    // The unfolded narrow bar's least window, from its layout at 800 px
+    // less the room its jump glyph leaves free after the places: `padded`
+    // with its right padding whole, `edge` its help button at the window's
+    // edge (main's bar gives up the padding first, every piece still in).
+    let (edge, padded) = {
         super::super::top_bar::unfolded(true);
         let path = own_config();
         std::fs::write(&path, "zoom = 1.0\nhome_on_start = false\n").expect("the config");
@@ -1275,34 +1293,35 @@ fn one_game_folds_only_where_its_bar_would_run_past() {
                 break;
             }
         }
-        let free = cx
+        let (free, help) = cx
             .update_window(window, |_, window, cx| {
                 window.render_frame(cx);
                 window.render_frame(cx);
                 let fights = window.find("place-fights").bounds();
                 let jump = window.find("top-jump").bounds();
-                f32::from(jump.left()) - f32::from(fights.right()) - 2.0
+                let help = window.find("top-help").bounds();
+                (
+                    f32::from(jump.left()) - f32::from(fights.right()) - 2.0,
+                    f32::from(help.right()),
+                )
             })
             .expect("the window");
         let _ = cx.update_window(window, |_, window, _| window.remove_window());
         super::super::top_bar::unfolded(false);
-        800.0 - free
+        (help - free, 800.0 - free)
     };
     assert!(
-        edge > 320.0 && edge < 800.0,
-        "the unfolded bar's width: {edge}"
+        edge > 320.0 && edge < padded && padded < 800.0,
+        "the unfolded bar's least window: {edge}, padded {padded}"
     );
     let mut widths: Vec<f32> = (8..=37).map(|w| w as f32 * 40.0).collect();
     widths.push(1500.0);
-    widths.extend([
-        edge.floor() - 1.0,
-        edge.floor(),
-        edge.ceil(),
-        edge.ceil() + 1.0,
-    ]);
+    for at in [edge, padded] {
+        widths.extend([at.floor() - 1.0, at.floor(), at.ceil(), at.ceil() + 1.0]);
+    }
     for width in widths {
-        let (main, _) = one_game_at(&mut cx, width, true);
-        let (over, fold) = one_game_at(&mut cx, width, false);
+        let (main, _) = one_game_at(&mut cx, width, true, None);
+        let (over, fold) = one_game_at(&mut cx, width, false, None);
         if main == 0.0 {
             assert_eq!(fold, 0, "{width}: main's bar fits, yet it folded");
             assert_eq!(over, 0.0, "{width}");
@@ -1311,5 +1330,21 @@ fn one_game_folds_only_where_its_bar_would_run_past() {
             assert_eq!(over, 0.0, "{width}: folded, it still runs past");
         }
     }
+    // A fold drawn holds as the window widens past the unfolded bar's edge,
+    // inside the window, until the bar unfolded fits with room to spare;
+    // past that the bar is main's again.
+    let spare = wowdps_gui_logic::editions::UNFOLD_SPARE;
+    for width in [edge.ceil() + 1.0, edge.ceil() + spare - 2.0] {
+        let (over, fold) = one_game_at(&mut cx, width, false, Some(1));
+        assert_eq!(fold, 1, "{width}: the fold gave way inside its spare");
+        assert_eq!(over, 0.0, "{width}");
+    }
+    let width = edge.ceil() + spare + 1.0;
+    let (over, fold) = one_game_at(&mut cx, width, false, Some(1));
+    assert_eq!(
+        (fold, over),
+        (0, 0.0),
+        "{width}: the fold held past its spare"
+    );
     crate::images::without_art(false);
 }

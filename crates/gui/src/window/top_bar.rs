@@ -193,11 +193,14 @@ pub(crate) const FOLDS: usize = 3;
 /// an hour and a half long.
 const CLOCK_WIDEST: &str = "88:88";
 /// The room a form of the switch keeps spare beyond the bar's measured
-/// width, for the layout's rounding.
+/// width, for the layout's rounding of its pieces' bounds.
 const FIT_MARGIN: f32 = 1.0;
-/// How far past the window one game's bar may measure before it folds:
-/// the layout's rounding, so it folds only where it truly runs past.
-const RUN_PAST: f32 = 0.5;
+/// How far past the window one game's bar may measure before it folds, so
+/// that it folds only where main's would draw a piece past the window: its
+/// right padding, which main's bar gives up before its help button meets
+/// the edge, and the rounding of the pieces' bounds (the words are
+/// measured as laid out).
+const RUN_PAST: f32 = PAD_RIGHT + 0.5;
 
 impl Parts {
     /// The bar at its widest for whichever game it shows: the pill and the
@@ -387,9 +390,11 @@ fn name_slot(w: &W, window: &mut Window, entries: &[Entry], face: &Face, narrow:
         .min(cap)
 }
 
-/// One line of words' width at `size` in `family` and `weight`, as it is
-/// painted, in zoom-1 pixels: the shaper's own, so a sum of them is the
-/// laid-out line's.
+/// One line of words' width at `size` in `family` and `weight`, as the
+/// text element lays it out, in zoom-1 pixels: the shaper's width rounded
+/// up to a whole window pixel (gpui's text element sizes a line so), so a
+/// sum of them is the laid-out bar's. A box this wide drawn at the zoom
+/// (`W::z`) holds the words whole (`holding`).
 fn words_width(
     w: &W,
     window: &mut Window,
@@ -416,7 +421,20 @@ fn words_width(
         window
             .text_system()
             .shape_line(SharedString::from(s.to_string()), w.z(size), &[run], None);
-    f32::from(shaped.width) / w.zoom
+    holding(w.zoom, f32::from(shaped.width).ceil())
+}
+
+/// The zoom-1 width whose box, drawn at `zoom` (`W::z`), is at least
+/// `room` window pixels. `room / zoom` alone can come back an ulp short
+/// once multiplied again, and gpui truncates words whose shaped width is
+/// past their box's by any amount, so a name in a slot of its own width
+/// would read cut short at some zooms.
+fn holding(zoom: f32, room: f32) -> f32 {
+    let mut width = room / zoom;
+    while width * zoom < room {
+        width = width.next_up();
+    }
+    width
 }
 
 #[cfg(test)]
@@ -500,20 +518,21 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         gui.edition_form.set(Some(chosen));
         chosen
     });
-    let fold = if form.is_some() {
-        let folds: Vec<f32> = (0..=FOLDS)
-            .map(|fold| parts.total(w, form, fold) + FIT_MARGIN)
-            .collect();
-        richest_fit(&folds, w.width, gui.bar_fold.get())
+    // The folds keep the switch's hysteresis: a fold drawn holds until the
+    // bar a fold richer fits with room to spare, so a live clock a pixel
+    // wider one second than the next never blinks the clock or the help
+    // button at the edge. One game's bar is main's wherever main's keeps
+    // every piece inside the window, from a fresh window, and folds the
+    // moment a piece would pass its edge.
+    let margin = if form.is_some() {
+        FIT_MARGIN
     } else {
-        // One game: main's bar wherever it fits, folded only where it would
-        // run past the window, with no hysteresis to hold a fold where it
-        // would fit.
-        let folds: Vec<f32> = (0..=FOLDS)
-            .map(|fold| parts.total(w, None, fold) - RUN_PAST)
-            .collect();
-        richest_fit(&folds, w.width, None)
+        -RUN_PAST
     };
+    let folds: Vec<f32> = (0..=FOLDS)
+        .map(|fold| parts.total(w, form, fold) + margin)
+        .collect();
+    let fold = richest_fit(&folds, w.width, gui.bar_fold.get());
     #[cfg(test)]
     let fold = if UNFOLDED.with(std::cell::Cell::get) {
         0
@@ -1036,4 +1055,35 @@ fn picker(
                 this.toggle_menu(super::cards::Menu::Picker, window, cx)
             }),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::holding;
+
+    /// Every zoom the window steps through (from 1 by its chords, as they
+    /// add up in f32, and as a config writes them) and every width a name
+    /// is laid out at, in quarters and whole pixels: a box of `holding`'s
+    /// width drawn at the zoom is never narrower than the room asked, so a
+    /// name in a slot of its own laid-out width is never truncated.
+    #[test]
+    fn a_slot_drawn_at_any_zoom_holds_its_words() {
+        let mut zooms = vec![];
+        let (mut up, mut down) = (1.0f32, 1.0f32);
+        for _ in 0..20 {
+            up += 0.1;
+            down -= 0.1;
+            zooms.extend([up, down]);
+        }
+        zooms.extend((5..=30).map(|tenths| tenths as f32 / 10.0));
+        zooms.retain(|z| (0.5..=3.0).contains(z));
+        for zoom in zooms {
+            for quarter in 1..=4 * 400 {
+                let room = quarter as f32 / 4.0;
+                let width = holding(zoom, room);
+                assert!(width * zoom >= room, "{room} at {zoom}: {width}");
+                assert!(width * zoom - room < 0.001, "{room} at {zoom}: {width}");
+            }
+        }
+    }
 }
