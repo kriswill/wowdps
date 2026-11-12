@@ -5,7 +5,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use wowdps_history::{Lake, Table, default_dir};
+use wowdps_history::{Lake, Table, default_dir, edition_filter};
+use wowdps_model::Edition;
 use wowdps_proto::json::Json;
 use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg, HistoryAnswer};
 
@@ -23,9 +24,12 @@ Usage:
                                                  (the day_utc_ms `progression` lists)
   wowdps history materialize                     write cache.duckdb beside the lake
   wowdps history import <log|dir>                ask the daemon to import a log
-  wowdps history regrade <fight_id | --encounter N [--difficulty D] | --kind K>
+  wowdps history regrade <fight_id | --encounter N [--difficulty D] | --kind K> [--edition E]
                                                  rewrite stored cards from their logs
-                                                 (pins + annotations kept; before/after)
+                                                 (pins + annotations kept; before/after;
+                                                 a replay slot's fight is recut beside its
+                                                 card); --edition retail|forever keeps that
+                                                 game's cards, with the other filters
   wowdps history export <fight_id>               one fight as one JSON document
   wowdps history replay-export <fight_id> -o <dir>
                                                  one fight's replay tier as the seven files a
@@ -327,7 +331,14 @@ fn run(args: Vec<String>) -> Result<String, String> {
             if fight_id.is_none() && encounter.is_none() && kind.is_none() {
                 return Err("regrade needs a fight id, --encounter N or --kind K".to_string());
             }
-            regrade(&dir, fight_id, encounter, difficulty, kind)
+            let edition = match after("--edition") {
+                Some(name) => Some(edition_arg(name)?),
+                None if flag("--edition") => {
+                    return Err("--edition needs a name: retail or forever".to_string());
+                }
+                None => None,
+            };
+            regrade(&dir, fight_id, encounter, difficulty, kind, edition)
         }
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
@@ -374,12 +385,24 @@ fn import(path: &std::path::Path) -> Result<String, String> {
 
 /// Ask the daemon to rewrite the selected cards from their logs, wait for
 /// the queue to drain, and show what changed — before/after per card.
+/// `--edition`'s name: an edition an install keeps a product folder of
+/// (`wowdps_model::PRODUCTS`), by its key in any case, as the dispatcher's
+/// `--edition` takes it.
+fn edition_arg(name: &str) -> Result<Edition, String> {
+    let want = name.trim().to_lowercase();
+    wowdps_model::PRODUCTS
+        .into_iter()
+        .find(|e| e.key() == want)
+        .ok_or_else(|| format!("unknown edition {name:?}: retail or forever"))
+}
+
 fn regrade(
     dir: &std::path::Path,
     fight_id: Option<String>,
     encounter: Option<u32>,
     difficulty: Option<u32>,
     kind: Option<wowdps_proto::history::FightKind>,
+    edition: Option<Edition>,
 ) -> Result<String, String> {
     let selection = match &fight_id {
         Some(id) => format!("id = '{}'", id.replace('\'', "''")),
@@ -399,6 +422,10 @@ fn regrade(
             }
             clauses.join(" AND ")
         }
+    };
+    let selection = match edition {
+        Some(e) => format!("({selection}) AND {}", edition_filter(e)),
+        None => selection,
     };
     let snapshot = |lake: &Lake| -> Result<Vec<(String, String, String, String)>, String> {
         let t = lake.sql(&format!(
@@ -434,7 +461,7 @@ fn regrade(
         encounter,
         difficulty,
         kind,
-        edition: None,
+        edition,
     });
     // The answer comes once every picked card is queued, which costs an
     // index scan per log — so wait while the daemon lives, not a fixed 15 s
@@ -542,4 +569,23 @@ fn configured_history_dir() -> Option<PathBuf> {
         }
     }
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--edition` takes the two games an install keeps, by name in any
+    /// case, and refuses anything else with the names it takes.
+    #[test]
+    fn regrade_takes_an_edition_by_name() {
+        assert_eq!(edition_arg("forever"), Ok(Edition::Forever));
+        assert_eq!(edition_arg(" Retail "), Ok(Edition::Retail));
+        assert!(
+            edition_arg("classic")
+                .unwrap_err()
+                .contains("retail or forever")
+        );
+        assert!(edition_arg("18").is_err());
+    }
 }

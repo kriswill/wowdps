@@ -22,7 +22,8 @@ use wowdps_daemon::{DaemonOptions, run};
 use wowdps_history::Lake;
 use wowdps_mcp::grade::grade;
 use wowdps_model::{
-    Encounter, Mark, MarkKind, MissKind, Mitigation, PowerSeries, Role, Row, Spec, UptimeCell, View,
+    Edition, Encounter, Mark, MarkKind, MissKind, Mitigation, PowerSeries, Role, Row, Spec,
+    UptimeCell, View,
 };
 use wowdps_proto::history::{
     CardPlayer, FightCard, FightKind, FightRows, PlayerCoarse, PlayerMitigation, PlayerShields,
@@ -1040,6 +1041,29 @@ fn sql_names_editions_and_keeps_progression_apart_as_the_daemon_does() {
     let mut progression = progression;
     progression.sort_unstable();
     assert_eq!(progression, ["c19-wipe", "f-wipe", "x-wipe"]);
+    // `wowdps history regrade --edition`'s snapshot keeps the cards the
+    // daemon's regrade picks: Retail's with the card that names none,
+    // Forever's alone.
+    for edition in [Edition::Retail, Edition::Forever] {
+        let sql = format!(
+            "SELECT id FROM fights WHERE {} ORDER BY id",
+            wowdps_history::edition_filter(edition)
+        );
+        let got: Vec<String> = lake
+            .sql(&sql)
+            .unwrap()
+            .rows
+            .iter()
+            .filter_map(|r| r.first().and_then(Json::as_str).map(str::to_string))
+            .collect();
+        let mut want: Vec<String> = cards
+            .iter()
+            .filter(|c| c.of_edition(Some(edition)))
+            .map(|c| c.id.clone())
+            .collect();
+        want.sort_unstable();
+        assert_eq!(got, want, "{edition:?}");
+    }
 }
 
 #[test]
