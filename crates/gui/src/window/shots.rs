@@ -788,7 +788,8 @@ fn crop(
 /// (`crate::guard`), drawn in `navy` without the art caches — the marks
 /// alone, never an emblem. The contact sheet; the chips at the wide frame,
 /// Retail shown and played; Forever shown with the game played's pip on
-/// Retail's badge; the narrow frame's dropdown; and its menu, open.
+/// Retail's badge; the compact chips at the tile frame, Forever shown; the
+/// narrow frame's dropdown; and its menu, open.
 /// `WOWDPS_BLESS=1` re-blesses an intended change.
 #[test]
 #[ignore = "needs a wgpu adapter; run by name"]
@@ -804,6 +805,7 @@ fn marks_render_guard() {
     for (name, at, forever, menu_open) in [
         ("chips", (1440.0, 900.0), false, false),
         ("chips-forever", (1440.0, 900.0), true, false),
+        ("chips-compact", (960.0, 880.0), true, false),
         ("dropdown", (460.0, 860.0), false, false),
         ("menu", (460.0, 860.0), false, true),
     ] {

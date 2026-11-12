@@ -146,10 +146,12 @@ expansion's name (Midnight), Forever by its own. The game shown is the chip
 filled with its color, the live dot sits on the badge of the game being
 played, and the build is in the tooltip. Press another to look at it; the
 window goes back to the game you play once you pick it again or that game
-moves on. Where the window is too narrow for the chips (about 1,020 px with
-two games) they fold into a dropdown that lists the same games, "Playing
-now" beside the one running; which of the two is drawn depends on the
-window's width alone, never on the game shown or a pull going live.
+moves on. A little narrower (below about 1,020 px with two games), every
+game but the one shown keeps its badge alone, its name in the tooltip;
+narrower still (below about 955 px) the chips fold into a dropdown that
+lists the same games, "Playing now" beside the one running. Which is
+drawn depends on the window's width alone, never on the game shown or a
+pull going live.
 
 Each game has one mark and one color, the same everywhere it is named: a
 violet crescent for Midnight and a teal loop for Forever (Classic and a game

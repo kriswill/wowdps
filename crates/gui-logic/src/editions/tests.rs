@@ -630,6 +630,11 @@ fn the_switch_is_chips_while_they_fit() {
     assert_eq!(chip_tip(&retail), retail.tip);
     retail.note = Some(PLAYING_NOW);
     assert_eq!(chip_tip(&retail), format!("{}, playing now", retail.tip));
+    // A compact chip, drawn without its name, says it first.
+    assert_eq!(
+        compact_tip(&retail),
+        format!("Midnight: {}, playing now", retail.tip)
+    );
 }
 
 /// With several games known, the game a header would lead its words with
@@ -677,11 +682,12 @@ fn a_fight_header_tags_its_game_once_several_are_known() {
 /// width or a name's length wavers there.
 #[test]
 fn the_switch_folds_when_it_must_and_unfolds_with_room() {
-    let needs = [1100.0, 900.0, 820.0, 700.0];
+    let needs = [1100.0, 900.0, 860.0, 820.0, 700.0];
     let pick = |width, last| switch_form(needs, width, last, true);
     assert_eq!(pick(1440.0, None), Form::Chips);
     assert_eq!(pick(1100.0, None), Form::Chips, "fits exactly");
     assert_eq!(pick(1099.0, None), Form::ChipsGlyph);
+    assert_eq!(pick(880.0, None), Form::ChipsCompact);
     assert_eq!(pick(850.0, None), Form::Dropdown);
     assert_eq!(pick(760.0, None), Form::DropdownBadge);
     assert_eq!(
@@ -701,18 +707,25 @@ fn the_switch_folds_when_it_must_and_unfolds_with_room() {
         pick(1100.0 + UNFOLD_SPARE, Some(Form::ChipsGlyph)),
         Form::Chips
     );
+    assert_eq!(pick(900.0, Some(Form::ChipsCompact)), Form::ChipsCompact);
+    assert_eq!(
+        pick(900.0 + UNFOLD_SPARE, Some(Form::ChipsCompact)),
+        Form::ChipsGlyph
+    );
     // A width wavering at a threshold settles and stays.
     let mut last = None;
     let mut seen = Vec::new();
-    for width in [901.0, 899.0, 901.0, 899.5, 900.5, 899.0, 901.0] {
+    for width in [861.0, 859.0, 861.0, 859.5, 860.5, 859.0, 861.0] {
         let form = pick(width, last);
         seen.push(form);
         last = Some(form);
     }
     let flips = seen.windows(2).filter(|w| w[0] != w[1]).count();
     assert!(flips <= 1, "{seen:?}");
-    assert!(Form::Chips.chips() && Form::ChipsGlyph.chips());
+    assert!(Form::Chips.chips() && Form::ChipsGlyph.chips() && Form::ChipsCompact.chips());
     assert!(!Form::Dropdown.chips() && !Form::DropdownBadge.chips());
+    assert!(Form::ChipsCompact.compact() && !Form::ChipsGlyph.compact());
+    assert_eq!(Form::ALL.iter().filter(|f| f.chips()).count(), Form::CHIPS);
     // Without the chips, the dropdown's two forms by the same rule.
     assert_eq!(
         switch_form(needs, 760.0, Some(Form::DropdownBadge), false),

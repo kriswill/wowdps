@@ -899,10 +899,11 @@ fn measure_in(
 /// A game's badge holds its emblem where one is cached, else our mark,
 /// and the bar is the same either way at each of the three frames: the
 /// switch, its chips and the menu's rows keep their every pixel of place.
-/// The games sit side by side where the bar has room (the wide frame) —
-/// two chips as tall as the live pill, on the jump box's line — and
-/// elsewhere the dropdown's menu lists them; the bar's other pieces and
-/// the meter keep their line.
+/// The games sit side by side where the bar has room — named at the wide
+/// frame, compact at the tile frame (the game shown named, the other its
+/// round badge), every chip as tall as the live pill and on the jump
+/// box's line — and at the narrow frame the dropdown's menu lists them;
+/// the bar's other pieces and the meter keep their line.
 #[test]
 #[cfg_attr(
     target_os = "macos",
@@ -940,13 +941,23 @@ fn a_badge_keeps_the_switch_s_rhythm() {
             }
         }
         assert!(marks.bar.len() >= 2, "{frame}: the places at least");
-        if frame == "wide" {
-            assert!(
-                marks
-                    .form
-                    .is_some_and(wowdps_gui_logic::editions::Form::chips),
-                "the wide frame has room for the games side by side"
-            );
+        use wowdps_gui_logic::editions::Form;
+        match frame {
+            "wide" => assert_eq!(marks.form, Some(Form::Chips), "the wide frame"),
+            "tile" => {
+                assert_eq!(marks.form, Some(Form::ChipsCompact), "the tile frame");
+                // The game not shown is its badge alone: a round chip.
+                let quiet = marks.chips[1];
+                assert_eq!(quiet.size.width, quiet.size.height, "a round chip");
+                assert!(
+                    marks.chips[0].size.width > quiet.size.width,
+                    "the named chip"
+                );
+            }
+            _ => assert!(
+                !marks.form.is_some_and(Form::chips),
+                "{frame}: the dropdown"
+            ),
         }
     }
 }
@@ -954,10 +965,12 @@ fn a_badge_keeps_the_switch_s_rhythm() {
 /// The switch holds still: its form is the window's width's alone, so
 /// neither a pick nor a pull going live changes it. At every width from
 /// the narrow frame to the wide one, with each game shown and with
-/// Retail's last pull going or over, the form, the switch's place and
-/// size and every chip's are the same — the dropdown keeps room for the
-/// longest name — and beside the chips the search box keeps its place.
-/// Only the fill and the pip move, and the pill's own words.
+/// Retail's last pull going or over, the form and the switch's place and
+/// size are the same — the dropdown keeps room for the longest name, the
+/// compact row for its named chip — every chip's too but where the
+/// compact row's named chip follows a pick, and beside the chips the
+/// search box keeps its place. Only the fill, the pip and that name move,
+/// and the pill's own words.
 #[test]
 #[cfg_attr(
     target_os = "macos",
@@ -978,7 +991,16 @@ fn the_switch_holds_still_whatever_is_shown_or_played() {
             let what = format!("{width}, Forever shown {forever}, live {live}");
             assert_eq!(m.form, first.form, "{what}: the form moved");
             assert_eq!(m.switch, first.switch, "{what}: the switch moved");
-            assert_eq!(m.chips, first.chips, "{what}: a chip moved");
+            // Compact, a pick moves the name within the row: the row holds,
+            // and each game shown has its own chips, live or not.
+            let compact = m
+                .form
+                .is_some_and(wowdps_gui_logic::editions::Form::compact);
+            if !compact || !forever {
+                assert_eq!(m.chips, first.chips, "{what}: a chip moved");
+            } else {
+                assert_eq!(m.chips, states[1].0.chips, "{what}: a chip moved");
+            }
             if m.form.is_some_and(wowdps_gui_logic::editions::Form::chips) {
                 assert_eq!(
                     m.bar[2].origin.x, first.bar[2].origin.x,
@@ -1010,7 +1032,7 @@ fn bar_at(
     link: impl crate::session::Link + 'static,
     cards: &[wowdps_proto::history::FightCard],
     width: f32,
-) -> (f32, bool) {
+) -> (f32, bool, Option<wowdps_gui_logic::editions::Form>) {
     use super::super::shots::Shot;
     let path = own_config();
     std::fs::write(
@@ -1056,7 +1078,8 @@ fn bar_at(
         })
         .expect("the window");
     let _ = cx.update_window(window, |_, window, _| window.remove_window());
-    measured
+    let form = shot.gui.read_with(cx, |g, _| g.edition_form.get());
+    (measured.0, measured.1, form)
 }
 
 /// The bar never runs past the window while it holds the switch: at every
@@ -1104,13 +1127,22 @@ fn the_bar_never_runs_past_the_window_with_the_switch() {
         ),
     ];
     for (what, games, cards) in configs {
+        let mut forms = std::collections::BTreeSet::new();
         for width in &widths {
             let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
             link.playing.set(Some(Edition::Retail));
-            let (over, overlap) = bar_at(&mut cx, link, &cards, *width);
+            let (over, overlap, form) = bar_at(&mut cx, link, &cards, *width);
             assert!(!overlap, "{what} at {width}: two pieces overlap");
             assert_eq!(over, 0.0, "{what} at {width}: the bar runs past");
+            forms.extend(form);
         }
+        // Every form is reached somewhere from the least width to the
+        // widest.
+        assert_eq!(
+            forms.len(),
+            wowdps_gui_logic::editions::Form::ALL.len(),
+            "{what}: {forms:?}"
+        );
         let link = EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]).with_forever_source();
         let known = bar_games(&mut cx, link, &cards);
         assert_eq!(known, games, "{what}");

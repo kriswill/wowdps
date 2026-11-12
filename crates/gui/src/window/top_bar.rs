@@ -20,7 +20,7 @@ use gpui_kit::{
     Window, canvas, div, img, px, relative,
 };
 use wowdps_gui_logic::editions::{
-    Entry, Face, Form, chip_tip, chips, ink_on, richest_fit, switch_form,
+    Entry, Face, Form, chip_tip, chips, compact_tip, ink_on, richest_fit, switch_form,
 };
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_model::fmt::duration;
@@ -81,6 +81,9 @@ const PICKER_GAP: f32 = 4.0;
 /// The least room the whole jump box takes beside the chips, its margins
 /// included: less, and the chips stand beside its glyph.
 const JUMP_ROOM: f32 = 2.0 * JUMP_MARGIN + 200.0;
+/// The jump glyph's margin beside the compact chips: the switch's own gap,
+/// where every pixel is the row's.
+const JUMP_MARGIN_COMPACT: f32 = SWITCH_GAP;
 /// The wordmark's sides (`.mark{padding-inline:6px 12px}`), the switch's
 /// dropdown face's and the gap inside it, the pill's and the picker's.
 const MARK_PAD: (f32, f32) = (6.0, 12.0);
@@ -179,7 +182,7 @@ struct Parts {
     picker: Option<f32>,
     /// The switch in each form (`Form::ALL`'s order), its spacer
     /// included; `None` with one game known.
-    switch: Option<[f32; 4]>,
+    switch: Option<[f32; 5]>,
 }
 
 /// How often the bar folds, at most, beyond the switch's own forms: the
@@ -287,10 +290,19 @@ impl Parts {
                 })
                 .sum::<f32>()
                 + CHIP_GAP * entries.len().saturating_sub(1) as f32;
+            // Compact: the game shown named in the room of the longest name,
+            // every other game a round chip of its badge.
+            let others = entries.len().saturating_sub(1) as f32;
+            let compact = (PILL_H - CHIP_BADGE) / 2.
+                + CHIP_BADGE
+                + CHIP_INNER_GAP
+                + chip_slot(w, window, entries)
+                + CHIP_PAD_RIGHT
+                + others * (PILL_H + CHIP_GAP);
             let badge_only = SWITCH_PAD.0 + place_px + SWITCH_INNER_GAP + caret + SWITCH_PAD.1;
             let dropdown =
                 badge_only + name_slot(w, window, entries, face, narrow) + SWITCH_INNER_GAP;
-            [chips, chips, dropdown, badge_only].map(|width| SWITCH_GAP + width)
+            [chips, chips, compact, dropdown, badge_only].map(|width| SWITCH_GAP + width)
         });
         Parts {
             narrow,
@@ -338,11 +350,23 @@ impl Parts {
             (true, _) => 0.0,
             (false, Some(Form::Chips)) => JUMP_ROOM,
             (false, Some(Form::ChipsGlyph)) => JUMP_MARGIN + w.pitch.icon_button,
+            (false, Some(Form::ChipsCompact)) => JUMP_MARGIN_COMPACT + w.pitch.icon_button,
             (false, _) if self.narrow => w.pitch.icon_button,
             (false, _) => 2.0 * JUMP_MARGIN,
         };
         width + GAP * children.saturating_sub(1) as f32
     }
+}
+
+/// The room of the compact row's named chip: the longest of the games'
+/// names on a chip, at most a chip name's cap, so the row keeps its width
+/// whichever game is named.
+fn chip_slot(w: &W, window: &mut Window, entries: &[Entry]) -> f32 {
+    entries
+        .iter()
+        .map(|e| words_width(w, window, &e.name, PILL_PX, &w.ui, MEDIUM))
+        .fold(0.0, f32::max)
+        .min(SWITCH_NAME_W)
 }
 
 /// The dropdown's room for a game's name: the longest of the games'
@@ -500,7 +524,8 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
     if let (Some((entries, face)), Some(form)) = (switch, form) {
         line = line.child(div().w(w.z(SWITCH_GAP)).flex_none());
         line = if form.chips() {
-            line.child(edition_chips(w, entries, cx))
+            let slot = form.compact().then(|| chip_slot(w, window, &entries));
+            line.child(edition_chips(w, entries, slot, cx))
         } else {
             let slot = name_slot(w, window, &entries, &face, narrow);
             line.child(edition_switch(
@@ -520,14 +545,21 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
     // game is shown (the pill and the picker after it are that game's, of
     // their own widths); where the chips take its room it is the glyph
     // there. At the bar's last fold the room is empty.
-    let glyph_jump = narrow || form == Some(Form::ChipsGlyph);
+    let glyph_jump = narrow || matches!(form, Some(Form::ChipsGlyph | Form::ChipsCompact));
     line = line.child(if fold >= FOLDS {
         div().flex_1()
     } else if glyph_jump {
         div()
             .flex_1()
             .flex()
-            .when(chipped, |d| d.justify_start().pl(w.z(JUMP_MARGIN)))
+            .when(chipped, |d| {
+                let margin = if form == Some(Form::ChipsCompact) {
+                    JUMP_MARGIN_COMPACT
+                } else {
+                    JUMP_MARGIN
+                };
+                d.justify_start().pl(w.z(margin))
+            })
             .when(!chipped, |d| d.justify_end())
             .child(tip(
                 icon_button(w, "top-jump", Glyph::Search, true).on_mouse_down(
@@ -608,7 +640,12 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
 /// The live dot is a pip on the badge of the game being played. A press
 /// shows that game; the tooltip is its build, and says when it is the game
 /// being played.
-fn edition_chips(w: &W, entries: Vec<Entry>, cx: &mut Context<Gui>) -> impl IntoElement {
+fn edition_chips(
+    w: &W,
+    entries: Vec<Entry>,
+    compact: Option<f32>,
+    cx: &mut Context<Gui>,
+) -> impl IntoElement {
     let mut row = div()
         .id("top-edition")
         .test_support()
@@ -618,17 +655,24 @@ fn edition_chips(w: &W, entries: Vec<Entry>, cx: &mut Context<Gui>) -> impl Into
         .items_center()
         .gap(w.z(CHIP_GAP));
     for e in entries {
-        row = row.child(chip(w, e, cx));
+        row = row.child(chip(w, e, compact, cx));
     }
     row
 }
 
-/// One game's chip in the row. Its geometry is the same in every state —
-/// the same paddings filled or quiet, the playing pip over its badge's edge
-/// rather than a slot of its own — so neither a pick nor the game played
-/// moves anything in the bar.
-fn chip(w: &W, e: Entry, cx: &mut Context<Gui>) -> impl IntoElement {
+/// One game's chip in the row. Named, its geometry is the same in every
+/// state — the same paddings filled or quiet, the playing pip over its
+/// badge's edge rather than a slot of its own. Compact (`compact`, the
+/// room of the longest name), the game shown is named in that room and
+/// every other game is its badge alone, a round chip as tall, its name in
+/// the tooltip: a pick moves the name within the row, and the row keeps
+/// its width. Either way neither a pick nor the game played moves
+/// anything outside the row.
+fn chip(w: &W, e: Entry, compact: Option<f32>, cx: &mut Context<Gui>) -> impl IntoElement {
     let on = e.on;
+    // Compact, the game shown is named in the room of the longest name,
+    // and every other game is its badge alone, a round chip as tall.
+    let named = compact.is_none() || on;
     let fill = e.mark.tone.fill(&w.t);
     let ink = hsla(ink_on(fill, &w.t));
     let seat = if on {
@@ -646,7 +690,8 @@ fn chip(w: &W, e: Entry, cx: &mut Context<Gui>) -> impl IntoElement {
         e.note.is_some(),
     );
     let edition = e.edition;
-    let tip_words = chip_tip(&e);
+    let tip_words = if named { chip_tip(&e) } else { compact_tip(&e) };
+    let pad = (PILL_H - CHIP_BADGE) / 2.;
     let chip = div()
         .id(ElementId::Name(SharedString::from(e.id.clone())))
         .aria_label(SharedString::from(e.name.clone()))
@@ -657,8 +702,8 @@ fn chip(w: &W, e: Entry, cx: &mut Context<Gui>) -> impl IntoElement {
         .flex()
         .items_center()
         .gap(w.z(CHIP_INNER_GAP))
-        .pl(w.z((PILL_H - CHIP_BADGE) / 2.))
-        .pr(w.z(CHIP_PAD_RIGHT))
+        .pl(w.z(pad))
+        .pr(w.z(if named { CHIP_PAD_RIGHT } else { pad }))
         .rounded(w.pill(PILL_H / 2.))
         .font_family(w.ui.clone())
         .font_weight(MEDIUM)
@@ -672,14 +717,17 @@ fn chip(w: &W, e: Entry, cx: &mut Context<Gui>) -> impl IntoElement {
                 .hover(|s| s.text_color(w.c(|t| t.ink)))
         })
         .child(mark)
-        .child(
-            div()
-                .max_w(w.z(SWITCH_NAME_W))
-                .min_w_0()
-                .truncate()
-                .line_height(relative(1.3))
-                .child(e.name),
-        );
+        .when(named, |d| {
+            d.child(
+                div()
+                    .when_some(compact, |d, slot| d.w(w.z(slot)))
+                    .when(compact.is_none(), |d| d.max_w(w.z(SWITCH_NAME_W)))
+                    .min_w_0()
+                    .truncate()
+                    .line_height(relative(1.3))
+                    .child(e.name),
+            )
+        });
     tip(chip, tip_words).on_mouse_down(
         MouseButton::Left,
         cx.listener(move |this, _, window, cx| {

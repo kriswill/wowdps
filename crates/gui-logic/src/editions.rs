@@ -250,13 +250,16 @@ pub fn chips(games: usize, narrow: bool) -> bool {
     !narrow && games <= CHIPS_MAX
 }
 
-/// The forms the switch takes, richest first: the chips beside the whole
-/// search box, the chips beside the search glyph, the dropdown with the
-/// game's name, and the dropdown with its badge alone.
+/// The forms the switch takes, richest first: the named chips beside the
+/// whole search box, the named chips beside the search glyph, the compact
+/// chips (the game shown named, every other its badge alone) beside the
+/// glyph, the dropdown with the game's name, and the dropdown with its
+/// badge alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Form {
     Chips,
     ChipsGlyph,
+    ChipsCompact,
     Dropdown,
     DropdownBadge,
 }
@@ -264,16 +267,26 @@ pub enum Form {
 impl Form {
     /// Every form, richest first: the order [`switch_form`] reads its
     /// needs in.
-    pub const ALL: [Form; 4] = [
+    pub const ALL: [Form; 5] = [
         Form::Chips,
         Form::ChipsGlyph,
+        Form::ChipsCompact,
         Form::Dropdown,
         Form::DropdownBadge,
     ];
 
+    /// How many of [`Form::ALL`] are chips: the richest, before the
+    /// dropdown's.
+    pub const CHIPS: usize = 3;
+
     /// The games side by side.
     pub fn chips(self) -> bool {
-        matches!(self, Form::Chips | Form::ChipsGlyph)
+        matches!(self, Form::Chips | Form::ChipsGlyph | Form::ChipsCompact)
+    }
+
+    /// The games side by side, the game shown alone named.
+    pub fn compact(self) -> bool {
+        self == Form::ChipsCompact
     }
 }
 
@@ -289,8 +302,8 @@ pub const UNFOLD_SPARE: f32 = 24.0;
 /// its row no longer fits, unfolds only once it fits with room, and a
 /// width at the threshold — or a name a pixel longer one frame than the
 /// next — never flips it back and forth. The poorest form when none fits.
-pub fn switch_form(needs: [f32; 4], width: f32, last: Option<Form>, chips_allowed: bool) -> Form {
-    let skip = if chips_allowed { 0 } else { 2 };
+pub fn switch_form(needs: [f32; 5], width: f32, last: Option<Form>, chips_allowed: bool) -> Form {
+    let skip = if chips_allowed { 0 } else { Form::CHIPS };
     let rest = needs.get(skip..).unwrap_or(&[]);
     let last = last.and_then(|l| (l as usize).checked_sub(skip));
     Form::ALL
@@ -327,6 +340,12 @@ pub fn chip_tip(e: &Entry) -> String {
         Some(note) => format!("{}, {}", e.tip, note.to_lowercase()),
         None => e.tip.clone(),
     }
+}
+
+/// A compact chip's tooltip, its badge drawn without its name: the name,
+/// then [`chip_tip`]'s words.
+pub fn compact_tip(e: &Entry) -> String {
+    format!("{}: {}", e.name, chip_tip(e))
 }
 
 /// A build as the game words it: "12.1.5". `None` for no build (0.0.0:

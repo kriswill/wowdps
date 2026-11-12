@@ -99,9 +99,12 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   (`editions::tests::one_game_folds_only_where_its_bar_would_run_past`).
   The switch takes the richest form whose bar, at its widest for either
   game (the pill and the picker at their caps: `top_bar::Parts::widest`),
-  fits the window (`editions::switch_form`): a row of chips after the
-  places beside the whole jump box, the chips beside its glyph, the
-  dropdown, the dropdown's badge alone. So the width alone sets the form,
+  fits the window (`editions::switch_form`): a row of named chips after
+  the places beside the whole jump box, the named chips beside its glyph,
+  the compact chips (the game shown named in the room of the longest
+  name, every other game a round chip of its badge, its name in the
+  tooltip) beside the glyph, the dropdown, the dropdown's badge alone.
+  So the width alone sets the form,
   never a pick or a pull going live. The chips need up to three games and
   a bar that is not narrow; a form richer than the last must fit with
   room to spare (`UNFOLD_SPARE`), so the switch never flips at a
@@ -112,10 +115,11 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   (`editions::tests::the_bar_never_runs_past_the_window_with_the_switch`). The shown
   game's chip is filled with its color, the live dot is a pip on the
   played game's badge, and `Gui::edition_chips` keeps the menu shut (and
-  out of `modal`) while the chips are drawn. A chip's geometry is the same
-  in every state, the dropdown keeps room for the longest name, and beside
-  the chips the jump box starts right after them, so a pick, the game
-  played or a pull going live moves nothing in the switch
+  out of `modal`) while the chips are drawn. A named chip's geometry is
+  the same in every state, the compact row and the dropdown keep room for
+  the longest name, and beside the chips the jump box starts right after
+  them, so a pick, the game played or a pull going live moves nothing
+  outside the switch's row
   (`editions::tests::the_switch_holds_still_whatever_is_shown_or_played`).
   Two games of one name (two Classic clients) read apart by their builds
   (`editions::switch_name`). Each game has one mark and one color (gui-logic's

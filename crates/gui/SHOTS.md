@@ -55,14 +55,14 @@ pictures are `navy`'s.
 
 The window over a daemon of two editions (`testkit::EditionsLink`: the
 committed `sample.txt` and `forever.txt`, both followed, both stored), at
-the three frames; the wide frame draws the switch as a row of chips, the
-tile frame as the dropdown with the game's name, the narrow one as the
-dropdown's badge alone (the form is the width's, the bar at its widest for
-either game):
+the three frames; the wide frame draws the switch as a row of named
+chips, the tile frame as the compact chips (the game shown named, the
+other its round badge), the narrow one as the dropdown's badge alone (the
+form is the width's, the bar at its widest for either game):
 
 - `editions`: Retail shown and played (its chip filled, the live pip on its badge);
-- `editions-menu`: the dropdown's menu, at the tile and narrow frames (the
-  chips have none to open);
+- `editions-menu`: the dropdown's menu, at the narrow frame (the chips
+  have none to open);
 - `editions-forever`: Forever shown while Retail is played: its own pull on
   the stage, its rail, the pip on Retail's badge, the fight's tag;
 - `editions-forever-menu`, `editions-forever-home`: that, with the menu
@@ -90,8 +90,9 @@ theme's bar, bare and on its chip's fill, as `marks-sheet.png`
 (`WOWDPS_SHOTS_THEME`, `WOWDPS_SHOTS_ART=off` as above). Our marks are our
 own art, so `marks_render_guard` holds their pictures as the overlay's are
 held (`crate::guard`, `snapshots/marks/`): the sheet, the chips at the wide
-frame (Retail shown and played; Forever shown), the narrow frame's
-dropdown, and its menu — each cropped to the switch or the menu alone —
+frame (Retail shown and played; Forever shown), the compact chips at the
+tile frame (Forever shown), the narrow frame's dropdown, and its menu —
+each cropped to the switch or the menu alone —
 in `navy`, without the art caches. Run it by name; `WOWDPS_BLESS=1`
 re-blesses an intended change.
 
