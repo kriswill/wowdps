@@ -8,8 +8,22 @@
 //! slice holds; every power series is a player's own, no longer than the
 //! segment's seconds, and of a type the advanced block reported for them.
 //!
+//! Its Forever variant holds a Forever log (`WOWDPS_REAL_LOG_FOREVER`) to the
+//! same, naming no player and no fight by name (`real_log/mod.rs`): a
+//! player by their place in the segment's roster. That edition has no
+//! empowered spells, so its empower counts hold at zero.
+//!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_power -- --ignored --nocapture`
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
+mod real_log;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -34,17 +48,40 @@ struct Report {
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn heal_absorbs_empowers_and_power_hold_on_every_real_segment() {
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
-    let mut file = std::fs::File::open(&path).expect("open the log");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
+    gate(&path, false);
+}
+
+#[test]
+#[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
+fn heal_absorbs_and_power_hold_on_every_real_forever_segment() {
+    let Some(path) = real_log::forever_log() else {
+        return;
+    };
+    gate(&path, true);
+}
+
+/// The gate over `path`; `anon` prints no name and no guid: a segment by
+/// its place in the log, a player by their place in its roster, a row by
+/// its place in its view.
+fn gate(path: &str, anon: bool) {
+    let mut file = std::fs::File::open(path).expect("open the log");
     let idx = scan(&mut file);
     let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();
     assert!(!metas.is_empty(), "a real log has segments");
     let mut r = Report::default();
 
-    for meta in &metas {
-        let text = load_segment_text(Path::new(&path), meta).expect("load the segment");
+    for (n, meta) in metas.iter().enumerate() {
+        let text = load_segment_text(Path::new(path), meta).expect("load the segment");
         let meter = text.meter();
-        assert_eq!(meter.segments().len(), 1, "{}: one segment", meta.name);
+        let here = if anon {
+            format!("segment #{n}")
+        } else {
+            meta.name.clone()
+        };
+        assert_eq!(meter.segments().len(), 1, "{here}: one segment");
         let seg = &meter.segments()[0];
         r.segments += 1;
 
@@ -74,11 +111,21 @@ fn heal_absorbs_empowers_and_power_hold_on_every_real_segment() {
         r.empower_lines += empower_lines;
 
         // R2: the eaten part is inside the healing, and the drill agrees.
-        for row in seg.rows(View::Healing) {
-            assert!(row.heal_absorbed <= row.amount, "{}: {row:?}", meta.name);
+        for (i, row) in seg.rows(View::Healing).into_iter().enumerate() {
+            let shown = if anon {
+                format!("healing row #{i}")
+            } else {
+                format!("{row:?}")
+            };
+            assert!(
+                row.heal_absorbed <= row.amount,
+                "{here}: {shown}: {} eaten of {}",
+                row.heal_absorbed,
+                row.amount
+            );
             let (spells, _) = seg.breakdown(&row.key, View::Healing);
             let parts: u64 = spells.iter().map(|s| s.heal_absorbed).sum();
-            assert_eq!(parts, row.heal_absorbed, "{}: {}", meta.name, row.label);
+            assert_eq!(parts, row.heal_absorbed, "{here}: {shown}");
             r.healing += row.amount;
             r.heal_absorbed += row.heal_absorbed;
         }
@@ -90,6 +137,15 @@ fn heal_absorbs_empowers_and_power_hold_on_every_real_segment() {
                 players.extend(seg.rows(view).into_iter().map(|row| row.key));
             }
         }
+        let mut roster: Vec<&String> = players.iter().collect();
+        roster.sort();
+        let who = |p: &str| {
+            if anon {
+                real_log::place(&roster, p)
+            } else {
+                p.to_string()
+            }
+        };
         let seconds = (seg.duration_ms(seg.last_combat_ms()) / 1000 + 2) as usize;
         let mut released = 0;
         let mut cancelled = 0;
@@ -100,24 +156,25 @@ fn heal_absorbs_empowers_and_power_hold_on_every_real_segment() {
             for view in [View::Damage, View::Healing] {
                 for m in seg.spell_tree(p, view).rows {
                     for (row, all) in m.empower.stages.iter().zip(e.stages) {
-                        assert!(*row <= all, "{}: {} on {}", meta.name, m.key, p);
+                        let spell = if anon { String::new() } else { m.key.clone() };
+                        assert!(*row <= all, "{here}: {spell} on {}", who(p));
                     }
                     assert!(m.empower.cancelled <= e.cancelled);
                 }
             }
             for s in seg.power(p) {
-                assert!(p.starts_with("Player-"), "{}: {p} has a pool", meta.name);
+                assert!(p.starts_with("Player-"), "{here}: {} has a pool", who(p));
                 assert!(
                     reported.contains(&(p.clone(), s.power_type)),
-                    "{}: {p} type {} never reported",
-                    meta.name,
+                    "{here}: {} type {} never reported",
+                    who(p),
                     s.power_type
                 );
                 assert!(
                     s.per_sec.len() <= seconds.max(1) + 120,
-                    "{}: {} seconds for {p}",
-                    meta.name,
-                    s.per_sec.len()
+                    "{here}: {} seconds for {}",
+                    s.per_sec.len(),
+                    who(p)
                 );
                 assert!(s.max > 0 && s.reported() > 0);
                 r.series += 1;
@@ -126,8 +183,7 @@ fn heal_absorbs_empowers_and_power_hold_on_every_real_segment() {
         }
         assert!(
             released + cancelled <= empower_lines,
-            "{}: {released} + {cancelled} counted of {empower_lines} lines",
-            meta.name
+            "{here}: {released} + {cancelled} counted of {empower_lines} lines"
         );
         r.empower_released += released;
         r.empower_cancelled += cancelled;

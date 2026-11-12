@@ -17,8 +17,13 @@
 //! friends who dealt nothing) writes none. The census above proves every
 //! support line that is there parses, so a dropped family never passes.
 //!
+//! Retail's alone: no Forever log carries a `_SUPPORT` line, so a Forever
+//! log is passed over (`real_log/mod.rs`).
+//!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_support -- --ignored --nocapture`
+
+mod real_log;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -622,7 +627,9 @@ fn check_segment(seg: &Segment, raws: &[&str], lines: &[LogLine], r: &mut Report
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn support_partitions_damage_on_every_real_segment() {
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
     let mut file = std::fs::File::open(&path).expect("open the log");
     let idx = scan(&mut file);
     let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();

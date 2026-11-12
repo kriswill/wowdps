@@ -4,15 +4,27 @@
 //! and the wall time of the Taken-bearing parse so a regression shows up
 //! beside the numbers in a PR.
 //!
+//! Its Forever variant holds a Forever log (`WOWDPS_REAL_LOG_FOREVER`) to the
+//! same, naming no player and no fight by name (`real_log/mod.rs`).
+//!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_taken -- --ignored --nocapture`
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
+mod real_log;
 
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
 use wowdps_core::index::{load_segment_text, scan};
-use wowdps_core::meter::{SegmentKind, View};
+use wowdps_core::meter::{Segment, SegmentKind, View};
 use wowdps_core::parser::{Event, parse_line};
 use wowdps_model::MissKind;
 
@@ -27,8 +39,25 @@ const MISSED: [&str; 5] = [
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn taken_equals_dealt_on_every_real_boss_pull() {
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
-    let mut file = std::fs::File::open(&path).expect("open the log");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
+    gate(&path, |_, seg| seg.name.clone());
+}
+
+#[test]
+#[ignore = "needs WOWDPS_REAL_LOG_FOREVER pointing at a Forever combat log"]
+fn taken_equals_dealt_on_every_real_forever_boss_pull() {
+    let Some(path) = real_log::forever_log() else {
+        return;
+    };
+    gate(&path, real_log::fight);
+}
+
+/// The gate over `path`: `fight` names a pull by its place in the log in
+/// every line it prints.
+fn gate(path: &str, fight: impl Fn(usize, &Segment) -> String) {
+    let mut file = std::fs::File::open(path).expect("open the log");
     let idx = scan(&mut file);
     let pulls: Vec<_> = idx
         .segments
@@ -47,8 +76,8 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
     let mut orphan_total = 0u64;
     let mut checked = 0usize;
 
-    for meta in &pulls {
-        let text = load_segment_text(Path::new(&path), meta).expect("load the pull");
+    for (n, meta) in pulls.iter().enumerate() {
+        let text = load_segment_text(Path::new(path), meta).expect("load the pull");
         let t = Instant::now();
         let lines: Vec<_> = text
             .seeds()
@@ -153,7 +182,7 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
                 taken + ticked + orphaned,
                 "{}: dealt to friendlies (+self {selfed}, +friendly fire {ff}) vs taken (+ticked {ticked}, \
                  +unowned pets {orphaned})",
-                seg.name
+                fight(n, seg)
             );
             orphan_total += orphaned;
             self_total += selfed;

@@ -7,8 +7,13 @@
 //! Σ externals given = Σ received, a census of the role-table ids actually
 //! seen, and the wall time of the parse.
 //!
+//! Retail's alone: R18 reads a role-span table, which Forever has none of
+//! yet, so a Forever log is passed over (`real_log/mod.rs`).
+//!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_spans -- --ignored --nocapture`
+
+mod real_log;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -22,7 +27,9 @@ use wowdps_model::MarkKind;
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn spans_balance_on_every_real_segment() {
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
     let mut file = std::fs::File::open(&path).expect("open the log");
     let idx = scan(&mut file);
     let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();

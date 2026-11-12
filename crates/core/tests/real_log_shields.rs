@@ -11,8 +11,13 @@
 //! balance (one on a shield already drained to 0 is a recast the log never
 //! wrote, counted apart); and the wall time.
 //!
+//! Retail's alone: R20 reads a shield table, which Forever has none of yet,
+//! so a Forever log is passed over (`real_log/mod.rs`).
+//!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_shields -- --ignored --nocapture`
+
+mod real_log;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -72,7 +77,9 @@ struct Census {
 #[test]
 #[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
 fn shields_balance_on_every_real_segment() {
-    let path = std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG");
+    let Some(path) = real_log::retail_log() else {
+        return;
+    };
     let mut file = std::fs::File::open(&path).expect("open the log");
     let idx = scan(&mut file);
     let metas: Vec<_> = idx.segments.iter().chain(idx.open.as_ref()).collect();

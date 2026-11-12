@@ -172,6 +172,17 @@ segment counts — a quick health check when Blizzard changes the log format.
 Note it expects at least one *closed* segment, so a log captured mid-first-pull
 fails its non-empty assertion by design.
 
+Forever's logs have their own variants of the gates whose rules that
+edition has, named `*_forever_*`, plus `real_log_segments` (the scan and
+the replay cut alike, every fight lazy = full, Forever's tables read):
+
+```sh
+WOWDPS_REAL_LOG_FOREVER=/path/to/_forever_/Logs/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored forever --nocapture
+```
+
+They print no player's name or guid, a failure included. Set both variables
+to check a log of each edition in one run.
+
 ## Combat-log flush latency (context for "is it frozen?")
 
 The game buffers combat-log writes and flushes in large bursts — measured on
