@@ -1097,17 +1097,30 @@ rules below are unchanged, even when what retention keeps moves since (a pin, an
 learned, a newer fight deleted); `wowdps history import` of its log, which reads what it
 names whatever the manifest says, offers it to retention again. The manifest describes one
 store: it records the store's identity (`store.id` at the store's root, a random 64-bit id
-in hex written the first time the daemon opens the store), and a manifest of another (a
+in hex written the first time the sweep's manifest is loaded for the store, by a daemon with
+an index cache), and a manifest of another (a
 `history_dir` moved, a store deleted and begun again) is discarded whole, so every log is
 read again. And it answers to one fingerprint (`swept::rules`): the daemon's build hashes
-every Rust source that decides which fights a read yields and the store keeps — all of
-model and core, proto's history codec, and the daemon's history store, loader, index cache
-and manifest (`crates/daemon/build.rs`, `swept::SOURCES`) — and the fingerprint adds the
+the Rust source that decides which fights a read yields and the store keeps
+(`crates/daemon/build.rs`, `swept::SOURCES`) — all of model and core but core's dispatcher
+and install discovery (`cli.rs`), live tailing (`tail.rs`: a tailed log is never recorded)
+and test kit; proto's history module; and the daemon's history store, loader, index cache
+and manifest modules, each a module's file and everything under its folder, so a module
+split into files stays hashed. Test code is not hashed (a top-level `#[cfg(test)] mod x
+{ … }` block that is its file's last item, as rustfmt writes one, and the file of a
+`#[cfg(test)] mod x;`), nor dot-files, entries that are not regular files, or files that
+are not `.rs`. The cut reads lines, not Rust: it could take production text only from an
+item rustfmt leaves alone (a `macro_rules!` body, one under `#[rustfmt::skip]`) that closes
+its file and holds first-column `#[cfg(test)]` and `mod x {` lines of its own, and no
+hashed file has one. The build fails when a listed module or tree holds no source or
+cannot be listed, an exclusion names no hashed file, or one of the definitions that decide
+(the scan, the import, the store's wants, retention, and the helpers they decide through;
+`build.rs`'s `DECIDING`) is not in the hashed source. The fingerprint adds the
 keys that decide what a read stores and keeps: `history_store_trash`,
 `history_keep_per_encounter`, `history_keep_kills_whole`, `history_keep_progression_whole`,
 `history_characters`. A build that changed any of those sources, or a change to any of
 those keys, voids every entry, and its first start reads every log once; a build that
-changed none (the hub, the engine, a client) reads nothing again. An entry whose file is
+changed none (the hub, the engine, a client, a test) reads nothing again. An entry whose file is
 gone or changed drops out at the next load or write, and at most 4096 are kept. Deleting
 the cache costs one read of every log. And the **history store** (roadmap
 item 1, the history store's spec): per-fight JSON documents under
