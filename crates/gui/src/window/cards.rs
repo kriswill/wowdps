@@ -110,7 +110,10 @@ impl Gui {
     /// Is a menu up — the sheet, the ⚙ card or the character menu? Then
     /// the keys are its: any key closes it and does nothing else.
     pub(crate) fn modal(&self) -> bool {
-        self.cards.options || self.cards.sheet || self.cards.picker || self.cards.edition
+        // The edition menu holds the keys only while it is drawn: a window
+        // widened under it to the chips shows no menu to close.
+        let edition = self.cards.edition && !self.edition_chips();
+        self.cards.options || self.cards.sheet || self.cards.picker || edition
     }
 
     /// Close every menu.
@@ -132,6 +135,9 @@ impl Gui {
             Menu::Picker => self.cards.picker,
             Menu::Edition => self.cards.edition,
         };
+        // The edition menu is the dropdown's: with the games side by side
+        // on the bar there is nothing to open.
+        let open = open && !(menu == Menu::Edition && self.edition_chips());
         self.cards.options = open && menu == Menu::Options;
         self.cards.sheet = open && menu == Menu::Sheet;
         self.cards.picker = open && menu == Menu::Picker;

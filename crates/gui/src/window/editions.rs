@@ -70,6 +70,14 @@ impl Gui {
         editions::entries(&self.hist.store.census, self.hist.edition)
     }
 
+    /// Whether the switch is a row of chips — the games fit side by side
+    /// on the bar, as the bar last drew it — rather than the dropdown and
+    /// its menu.
+    pub(crate) fn edition_chips(&self) -> bool {
+        self.edition_entries().is_some()
+            && self.edition_form.get().is_some_and(editions::Form::chips)
+    }
+
     /// The switch's face: the game shown.
     pub(crate) fn edition_face(&self) -> Face {
         editions::face(&self.hist.store.census, self.hist.edition)
@@ -139,7 +147,7 @@ impl Gui {
         }
         // A menu whose entries went away closes rather than hold the keys
         // invisibly.
-        if self.cards.edition && self.edition_entries().is_none() {
+        if self.cards.edition && (self.edition_entries().is_none() || self.edition_chips()) {
             self.cards.edition = false;
             cx.notify();
         }

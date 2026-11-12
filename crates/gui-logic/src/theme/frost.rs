@@ -37,6 +37,9 @@ pub static FROST: LazyLock<Def> = LazyLock::new(|| Def {
         glass: Color::hex(0x101923),
         bracket: Color::hex(0x31465C),
         dial: Color::hex(0x687C90),
+        // The games' colors: a violet and a teal for this theme's bar.
+        midnight: Color::hex(0x9A7EFF),
+        forever: Color::hex(0x50BFBE),
         ..NAVY.window
     },
     talents: TALENTS_FROST,

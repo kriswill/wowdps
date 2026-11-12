@@ -1,9 +1,10 @@
-//! The edition menu, opened from the top bar's edition switch: one row per
-//! game the window knows — its name ("Midnight", "Forever"), "Playing now"
-//! in quieter words beside the game being played, the build in its
-//! tooltip — the game shown lit. Nothing else: no mode to learn. Drawn at
-//! the window's root over a scrim that takes the press that closes it,
-//! hung under the switch, as the character menu hangs under the picker.
+//! The edition menu, opened from the top bar's edition switch where its
+//! chips do not fit: one row per game the window knows — its badge, its
+//! name ("Midnight", "Forever"), "Playing now" in quieter words beside the
+//! game being played, the build in its tooltip — the game shown lit.
+//! Nothing else: no mode to learn. Drawn at the window's root over a scrim
+//! that takes the press that closes it, hung under the switch, as the
+//! character menu hangs under the picker.
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -13,29 +14,34 @@ use wowdps_gui_logic::editions::Entry;
 
 use super::super::Gui;
 use super::super::chrome::tip;
+use super::super::marks::{Seat, badge};
 use super::super::w::Floating;
 use super::super::w::{REGULAR, SEMIBOLD, W};
 use super::menu::{GAP, PAD_Y, RADIUS, ROW_GAP, SIDE, row};
 use super::{BORDER, enter};
-use crate::images;
 
 /// The menu's width: narrower than the character menu's, its rows being a
 /// word or two.
 const MENU_W: f32 = 230.0;
 
-/// One game's line: its emblem when one is cached, its name, its note.
+/// One game's line: its badge, its name, its note.
 fn line(e: &Entry, w: &W) -> gpui_kit::Div {
-    let emblem = images::edition_emblem(e.edition, w.device(w.z(w.size.body)));
+    let under = if e.on {
+        w.c(|t| t.raise)
+    } else {
+        w.c(|t| t.surface)
+    };
     div()
         .flex()
         .items_center()
         .gap(w.z(GAP))
-        .children(emblem.map(|tile| {
-            gpui_kit::img(tile)
-                .size(w.z(w.size.body))
-                .flex_none()
-                .into_any_element()
-        }))
+        .child(badge(
+            w,
+            e.edition,
+            e.mark,
+            w.z(w.size.body),
+            Seat::Bare { under },
+        ))
         .child(div().flex_1().min_w_0().overflow_hidden().child(w.text(
             e.name.clone(),
             w.size.body,
@@ -50,7 +56,7 @@ fn line(e: &Entry, w: &W) -> gpui_kit::Div {
 
 /// The menu over the window, under the switch.
 pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> AnyElement {
-    let Some(entries) = gui.edition_entries() else {
+    let Some(entries) = gui.edition_entries().filter(|_| !gui.edition_chips()) else {
         return div().into_any_element();
     };
     let mut list = div()
