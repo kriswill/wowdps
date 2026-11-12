@@ -8,7 +8,7 @@
 //! round them is ours either way (`editions::Tone`).
 
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Bounds, Hsla, Pixels, canvas, div, img};
+use gpui_kit::{AnyElement, Bounds, Hsla, Pixels, TestSupportExt as _, canvas, div, img};
 use wowdps_gui_logic::editions::{Mark, ink_on};
 use wowdps_gui_logic::theme::Color;
 use wowdps_model::Edition;
@@ -54,19 +54,23 @@ pub fn badge(w: &W, edition: Edition, mark: Mark, side: Pixels, seat: Seat) -> A
         .then(|| images::edition_emblem(edition, w.device(inset)))
         .flatten();
     if let Some(tile) = emblem {
+        // Named, so a test can tell an emblem drawn from our mark.
+        let frame = div()
+            .id("badge-emblem")
+            .test_support()
+            .size(side)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center();
         return match seat {
-            Seat::Bare { .. } => img(tile).size(side).flex_none().into_any_element(),
-            Seat::Fill { .. } => div()
-                .size(side)
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
+            Seat::Bare { .. } => frame.child(img(tile).size(side).flex_none()),
+            Seat::Fill { .. } => frame
                 .rounded_full()
                 .bg(w.c(|t| t.surface))
-                .child(img(tile).size(inset).flex_none())
-                .into_any_element(),
-        };
+                .child(img(tile).size(inset).flex_none()),
+        }
+        .into_any_element();
     }
     let (disc, cut) = match seat {
         Seat::Bare { under } => (hsla(mark.tone.mark_color(&w.t, w.accent.base)), under),

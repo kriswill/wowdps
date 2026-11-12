@@ -110,7 +110,10 @@ impl Gui {
     /// Is a menu up — the sheet, the ⚙ card or the character menu? Then
     /// the keys are its: any key closes it and does nothing else.
     pub(crate) fn modal(&self) -> bool {
-        self.cards.options || self.cards.sheet || self.cards.picker || self.cards.edition
+        // The edition menu holds the keys only while it is drawn: a window
+        // widened under it to the chips shows no menu to close.
+        let edition = self.cards.edition && !self.edition_chips();
+        self.cards.options || self.cards.sheet || self.cards.picker || edition
     }
 
     /// Close every menu.

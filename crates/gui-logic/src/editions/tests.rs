@@ -536,6 +536,20 @@ fn the_games_colors_read_on_every_theme() {
         }
         let muted = contrast(Tone::Muted.color(t), t.surface);
         assert!(muted >= 3.0, "{name} muted: {muted}");
+        // A mark on the menu's lit row and on the stage under a fight's
+        // header, and the bar's ink a mark yields to.
+        for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
+            let c = tone.color(t);
+            for (on, under) in [("a lit row", t.raise), ("the stage", t.ground)] {
+                let ratio = contrast(c, under);
+                assert!(ratio >= 3.0, "{name} {tone:?} on {on}: {ratio}");
+            }
+        }
+        let yielded = contrast(t.ink_2, t.surface);
+        assert!(yielded >= 3.0, "{name} ink_2: {yielded}");
+        // The built-in themes' tokens are drawn as they are.
+        assert_eq!(Tone::Midnight.color(t), t.midnight, "{name}");
+        assert_eq!(Tone::Forever.color(t), t.forever, "{name}");
     }
 }
 
@@ -575,7 +589,11 @@ fn a_chrome_too_like_a_game_s_color_takes_its_mark_to_ink() {
         assert!(difference(warlock, t.midnight) < NEAR);
         assert_eq!(Tone::Midnight.mark_color(t, warlock), t.ink_2);
         assert_eq!(Tone::Forever.mark_color(t, warlock), t.forever);
-        assert_eq!(Tone::Muted.mark_color(t, t.ink_3), t.ink_3, "{name}");
+        assert_eq!(
+            Tone::Muted.mark_color(t, t.ink_3),
+            Tone::Muted.color(t),
+            "{name}: the muted ink is never swapped"
+        );
     }
 }
 
@@ -651,4 +669,125 @@ fn a_fight_header_tags_its_game_once_several_are_known() {
         header_parts(String::new(), None, Some(Edition::Forever), b),
         (None, String::new())
     );
+}
+
+/// The switch takes the richest form whose bar fits, the chips only where
+/// they are allowed; it folds as soon as a form no longer fits, unfolds
+/// only with room to spare, and so never flips at a threshold, however the
+/// width or a name's length wavers there.
+#[test]
+fn the_switch_folds_when_it_must_and_unfolds_with_room() {
+    let needs = [1100.0, 900.0, 820.0, 700.0];
+    let pick = |width, last| switch_form(needs, width, last, true);
+    assert_eq!(pick(1440.0, None), Form::Chips);
+    assert_eq!(pick(1100.0, None), Form::Chips, "fits exactly");
+    assert_eq!(pick(1099.0, None), Form::ChipsGlyph);
+    assert_eq!(pick(850.0, None), Form::Dropdown);
+    assert_eq!(pick(760.0, None), Form::DropdownBadge);
+    assert_eq!(
+        pick(320.0, None),
+        Form::DropdownBadge,
+        "the poorest when none fits"
+    );
+    assert_eq!(
+        switch_form(needs, 1440.0, None, false),
+        Form::Dropdown,
+        "no chips where they are not allowed"
+    );
+    // Folding needs no margin; unfolding does.
+    assert_eq!(pick(1099.0, Some(Form::Chips)), Form::ChipsGlyph);
+    assert_eq!(pick(1100.0, Some(Form::ChipsGlyph)), Form::ChipsGlyph);
+    assert_eq!(
+        pick(1100.0 + UNFOLD_SPARE, Some(Form::ChipsGlyph)),
+        Form::Chips
+    );
+    // A width wavering at a threshold settles and stays.
+    let mut last = None;
+    let mut seen = Vec::new();
+    for width in [901.0, 899.0, 901.0, 899.5, 900.5, 899.0, 901.0] {
+        let form = pick(width, last);
+        seen.push(form);
+        last = Some(form);
+    }
+    let flips = seen.windows(2).filter(|w| w[0] != w[1]).count();
+    assert!(flips <= 1, "{seen:?}");
+    assert!(Form::Chips.chips() && Form::ChipsGlyph.chips());
+    assert!(!Form::Dropdown.chips() && !Form::DropdownBadge.chips());
+    // Without the chips, the dropdown's two forms by the same rule.
+    assert_eq!(
+        switch_form(needs, 760.0, Some(Form::DropdownBadge), false),
+        Form::DropdownBadge,
+        "the badge unfolds to the name only with room to spare"
+    );
+    assert_eq!(
+        switch_form(
+            needs,
+            820.0 + UNFOLD_SPARE,
+            Some(Form::DropdownBadge),
+            false
+        ),
+        Form::Dropdown
+    );
+    // The rule itself, over any list.
+    assert_eq!(richest_fit(&[300.0, 200.0, 100.0], 250.0, None), 1);
+    assert_eq!(
+        richest_fit(&[300.0, 200.0, 100.0], 50.0, None),
+        2,
+        "the poorest"
+    );
+    assert_eq!(richest_fit(&[300.0, 200.0], 310.0, Some(1)), 1);
+    assert_eq!(richest_fit(&[], 310.0, None), 0);
+}
+
+/// A theme of the user's own with a light bar keeps its games' marks
+/// readable: a color that does not clear 3:1 there is darkened until it
+/// does, and the words on its fill still reach AA.
+#[test]
+fn a_light_bar_darkens_a_game_s_color_until_it_reads() {
+    use crate::theme::{AA_CONTRAST, Color, contrast};
+    let mut t = crate::theme::NAVY.window;
+    t.surface = Color::hex(0xF4F4F6);
+    t.ground = Color::hex(0xFFFFFF);
+    t.ink = Color::hex(0x15171C);
+    for tone in [Tone::Midnight, Tone::Forever, Tone::Muted] {
+        let c = tone.color(&t);
+        let ratio = contrast(c, t.surface);
+        assert!(ratio >= MARK_CONTRAST, "{tone:?}: {ratio}");
+        let fill = tone.fill(&t);
+        assert!(
+            contrast(ink_on(fill, &t), fill) >= AA_CONTRAST,
+            "{tone:?}'s fill"
+        );
+    }
+    assert_ne!(Tone::Forever.color(&t), t.forever, "the teal darkened");
+}
+
+/// Two games of one name — two Classic clients — read apart in the
+/// switch: each with its build beside its name, or its client's number
+/// while no build is known. A name of its own is left alone.
+#[test]
+fn two_games_of_one_name_read_apart() {
+    let mut census = Census::new();
+    census.learn(&[
+        card(Edition::Retail, (12, 1, 5), 3),
+        card(Edition::Classic(2), (1, 15, 7), 1),
+        card(Edition::Classic(5), (2, 5, 4), 2),
+    ]);
+    let names: Vec<String> = entries(&census, Edition::Retail)
+        .expect("a switch")
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+    assert_eq!(names, vec!["Midnight", "Classic 1.15.7", "Classic 2.5.4"]);
+    assert_eq!(face(&census, Edition::Classic(5)).name, "Classic 2.5.4");
+    let mut bare = Census::new();
+    let source = |e: Option<Edition>| EditionSource {
+        edition: e,
+        ..EditionSource::default()
+    };
+    bare.on_sources(&[
+        source(Some(Edition::Classic(2))),
+        source(Some(Edition::Classic(11))),
+    ]);
+    assert_eq!(switch_name(&bare, Edition::Classic(11)), "Classic 11");
 }

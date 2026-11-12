@@ -224,6 +224,13 @@ pub struct Gui {
     pub(crate) edition: EditionRef,
     /// The switch's bounds at its last paint: where its menu hangs.
     pub(crate) edition_at: Rc<Cell<Bounds<Pixels>>>,
+    /// The form the edition switch was drawn in last (`editions::Form`):
+    /// what the next frame's choice keeps its hysteresis against, and what
+    /// says whether its menu is there to open.
+    pub(crate) edition_form: Cell<Option<wowdps_gui_logic::editions::Form>>,
+    /// How often the top bar folded at its last paint (`top_bar::FOLDS`):
+    /// the hysteresis of the least widths.
+    pub(crate) bar_fold: Cell<Option<usize>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -290,6 +297,8 @@ impl Gui {
             hist,
             edition: EditionRef::Follow,
             edition_at: Rc::new(Cell::new(Bounds::default())),
+            edition_form: Cell::new(None),
+            bar_fold: Cell::new(None),
             _subscriptions: vec![changes, typed],
         }
     }

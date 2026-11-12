@@ -93,15 +93,25 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
   follows again once its game has been live and moved on. It rides
   `ClientState::set_edition` for the meter and, only once the census knows
   more than one edition, every history read (`Store::rescope`). With one
-  edition known nothing is drawn or asked differently. The switch is a
-  row of chips after the places while the games fit (`editions::chips`:
-  up to three, a bar that is not narrow), the shown game's chip filled
-  with its color and the live dot a pip on the played game's badge; else a
-  dropdown and its menu (`Gui::edition_chips` keeps the menu shut while
-  the chips are drawn). A chip's geometry is the same in every state, and
-  beside the chips the jump box starts right after them (its glyph at the
-  tile frame), so a pick or the game played moves nothing in the bar
-  (`editions::tests::the_switch_holds_still_whatever_is_shown_or_played`). Each game has one mark and one color (gui-logic's
+  edition known nothing is drawn or asked differently. The switch takes
+  the richest form whose bar fits the window (`editions::switch_form`,
+  the bar's pieces measured in `top_bar::Parts`): a row of chips after the
+  places beside the whole jump box, the chips beside its glyph, the
+  dropdown, the dropdown's badge alone. The chips need up to three games
+  and a bar that is not narrow; a form richer than the last must fit with
+  room to spare (`UNFOLD_SPARE`), so the switch never flips at a
+  threshold. Where even the badge leaves the bar too wide, the bar folds
+  the same way: the pill's clock, the help button, the jump glyph. No
+  width from the window's least runs the bar past it
+  (`editions::tests::the_bar_never_runs_past_the_window`). The shown
+  game's chip is filled with its color, the live dot is a pip on the
+  played game's badge, and `Gui::edition_chips` keeps the menu shut (and
+  out of `modal`) while the chips are drawn. A chip's geometry is the same
+  in every state, and beside the chips the jump box starts right after
+  them, so a pick or the game played moves nothing in the bar
+  (`editions::tests::the_switch_holds_still_whatever_is_shown_or_played`).
+  Two games of one name (two Classic clients) read apart by their builds
+  (`editions::switch_name`). Each game has one mark and one color (gui-logic's
   `editions::Mark` and `Tone`, the marks glyphs of the `glyph` table),
   worn in one round badge (`marks.rs`) wherever the game is named: a
   chip, the dropdown and its menu, a fight's tag (`head-edition`, once

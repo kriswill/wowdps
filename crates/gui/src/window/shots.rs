@@ -787,8 +787,8 @@ fn crop(
 /// committed (`snapshots/marks/`) and held like the overlay's
 /// (`crate::guard`), drawn in `navy` without the art caches — the marks
 /// alone, never an emblem. The contact sheet; the chips at the wide frame,
-/// Retail shown and played; Forever shown with the game played's dot on
-/// Retail's chip; and the narrow frame's dropdown with its menu open.
+/// Retail shown and played; Forever shown with the game played's pip on
+/// Retail's badge; the narrow frame's dropdown; and its menu, open.
 /// `WOWDPS_BLESS=1` re-blesses an intended change.
 #[test]
 #[ignore = "needs a wgpu adapter; run by name"]
@@ -804,7 +804,8 @@ fn marks_render_guard() {
     for (name, at, forever, menu_open) in [
         ("chips", (1440.0, 900.0), false, false),
         ("chips-forever", (1440.0, 900.0), true, false),
-        ("dropdown-menu", (460.0, 860.0), false, true),
+        ("dropdown", (460.0, 860.0), false, false),
+        ("menu", (460.0, 860.0), false, true),
     ] {
         let (mut cx, shot) = edition_window(at, Retail, Window::Plain);
         if forever {
@@ -815,13 +816,14 @@ fn marks_render_guard() {
             menu(&mut cx, &shot, Menu::Edition);
         }
         cx.run_until_parked();
+        // The switch alone, or the menu alone: nothing of the bar's other
+        // pieces, so only a change to the marks or the switch moves them.
         let area = cx
             .update_window(shot.window, |_, window, cx| {
                 window.render_frame(cx);
-                let switch = window.find("top-edition").bounds();
                 match window.try_find("edition-menu") {
-                    Some(menu) => switch.union(&menu.bounds()),
-                    None => switch,
+                    Some(menu) => menu.bounds(),
+                    None => window.find("top-edition").bounds(),
                 }
             })
             .expect("the window");

@@ -163,14 +163,24 @@ pub fn mark(edition: Edition, build: Option<(u16, u16, u16)>) -> Mark {
 /// would read as the same color.
 pub const NEAR: f32 = 0.085;
 
+/// What a game's mark owes the bar it sits on.
+pub const MARK_CONTRAST: f32 = 3.0;
+
 impl Tone {
-    /// The game's color on theme `t`.
+    /// The game's color on theme `t`: its token, moved toward black or
+    /// white only as far as it must go to clear [`MARK_CONTRAST`] on every
+    /// surface a mark sits on (the bar, a menu's lit row, the stage) — as
+    /// a class color is lifted to read as text — so a theme of the user's
+    /// own with a light bar still shows its games' marks. The built-in
+    /// themes' game colors clear it as they are; Onyx's muted ink is lifted
+    /// a touch for its lit row.
     pub fn color(self, t: &WindowTokens) -> Color {
-        match self {
+        let own = match self {
             Tone::Midnight => t.midnight,
             Tone::Forever => t.forever,
             Tone::Muted => t.ink_3,
-        }
+        };
+        readable(own, t.surface, &[t.surface, t.raise, t.ground])
     }
 
     /// The fill of the game shown's chip: its color, or for a game with
@@ -196,6 +206,24 @@ impl Tone {
     }
 }
 
+/// `c`, darkened (where `bar` is light) or lightened (where it is dark)
+/// 2 % at a time until it clears [`MARK_CONTRAST`] on each of `unders`; as
+/// it is where it does.
+fn readable(c: Color, bar: Color, unders: &[Color]) -> Color {
+    let reads = |x: Color| unders.iter().all(|u| contrast(x, *u) >= MARK_CONTRAST);
+    if reads(c) {
+        return c;
+    }
+    let darken = bar.luminance() > crate::theme::LIGHT_THRESHOLD;
+    (1..=50)
+        .map(|step| {
+            let t = step as f32 * 0.02;
+            if darken { c.darken(t) } else { c.lighten(t) }
+        })
+        .find(|x| reads(*x))
+        .unwrap_or(if darken { Color::BLACK } else { Color::WHITE })
+}
+
 /// The words and mark on a chip filled with `fill`: the theme's ground or
 /// its ink, whichever reads better there.
 pub fn ink_on(fill: Color, t: &WindowTokens) -> Color {
@@ -215,11 +243,81 @@ pub fn reads_on(fill: Color, t: &WindowTokens) -> bool {
 /// dropdown.
 pub const CHIPS_MAX: usize = 3;
 
-/// Whether the switch is a row of chips (every game in sight) rather than
-/// the dropdown: while it fits, `games` at most [`CHIPS_MAX`] and the bar
-/// not narrow.
+/// Whether the switch may be a row of chips at all: `games` at most
+/// [`CHIPS_MAX`] and a bar that is not narrow. Whether the row fits is
+/// [`switch_form`]'s.
 pub fn chips(games: usize, narrow: bool) -> bool {
     !narrow && games <= CHIPS_MAX
+}
+
+/// The forms the switch takes, richest first: the chips beside the whole
+/// search box, the chips beside the search glyph, the dropdown with the
+/// game's name, and the dropdown with its badge alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Form {
+    Chips,
+    ChipsGlyph,
+    Dropdown,
+    DropdownBadge,
+}
+
+impl Form {
+    /// Every form, richest first: the order [`switch_form`] reads its
+    /// needs in.
+    pub const ALL: [Form; 4] = [
+        Form::Chips,
+        Form::ChipsGlyph,
+        Form::Dropdown,
+        Form::DropdownBadge,
+    ];
+
+    /// The games side by side.
+    pub fn chips(self) -> bool {
+        matches!(self, Form::Chips | Form::ChipsGlyph)
+    }
+}
+
+/// The room a richer form must have to spare, in zoom-1 pixels, before the
+/// switch takes it over the form drawn last.
+pub const UNFOLD_SPARE: f32 = 24.0;
+
+/// The switch's form: the richest whose bar fits `width`, `needs` the
+/// bar's whole width in each form (in [`Form::ALL`]'s order, zoom-1
+/// pixels), the chips only where `chips_allowed`. A form richer than the
+/// one drawn last (`last`) must fit with [`UNFOLD_SPARE`] to spare; the
+/// last and every poorer one need only fit. So the switch folds the moment
+/// its row no longer fits, unfolds only once it fits with room, and a
+/// width at the threshold — or a name a pixel longer one frame than the
+/// next — never flips it back and forth. The poorest form when none fits.
+pub fn switch_form(needs: [f32; 4], width: f32, last: Option<Form>, chips_allowed: bool) -> Form {
+    let skip = if chips_allowed { 0 } else { 2 };
+    let rest = needs.get(skip..).unwrap_or(&[]);
+    let last = last.and_then(|l| (l as usize).checked_sub(skip));
+    Form::ALL
+        .get(skip + richest_fit(rest, width, last))
+        .copied()
+        .unwrap_or(Form::DropdownBadge)
+}
+
+/// The richest of several ways to lay a thing out, `needs` its width in
+/// each, richest first: the first that fits `width`, where one richer than
+/// the one drawn last (`last`, an index into `needs`) must fit with
+/// [`UNFOLD_SPARE`] to spare and the last and poorer ones need only fit.
+/// The poorest when none fits. What [`switch_form`] and the bar's folds
+/// (the pill's clock, the help button, the jump glyph at the least widths)
+/// both choose by, so neither flips back and forth at a threshold.
+pub fn richest_fit(needs: &[f32], width: f32, last: Option<usize>) -> usize {
+    needs
+        .iter()
+        .enumerate()
+        .find(|(i, need)| {
+            let spare = match last {
+                Some(last) if *i < last => UNFOLD_SPARE,
+                _ => 0.0,
+            };
+            *need + spare <= width
+        })
+        .map_or(needs.len().saturating_sub(1), |(i, _)| i)
 }
 
 /// A chip's tooltip: the game's build, and that it is the game being
@@ -784,7 +882,7 @@ pub fn entries(census: &Census, shown: Edition) -> Option<Vec<Entry>> {
             .into_iter()
             .map(|e| Entry {
                 edition: e,
-                name: census.name(e),
+                name: switch_name(census, e),
                 mark: census.mark(e),
                 note: census.playing(e).then_some(PLAYING_NOW),
                 tip: census.tip(e),
@@ -795,12 +893,31 @@ pub fn entries(census: &Census, shown: Edition) -> Option<Vec<Entry>> {
     )
 }
 
+/// What the switch calls `edition`: its [`name`], and where another game
+/// it lists goes by the same name (two Classic clients), that name with
+/// its build beside it — else its client's number — so no two of the
+/// switch's games read alike.
+pub fn switch_name(census: &Census, edition: Edition) -> String {
+    let edition = edition.counts_as();
+    let name = census.name(edition);
+    let twin = census
+        .known()
+        .into_iter()
+        .any(|other| other != edition && census.name(other) == name);
+    if !twin {
+        return name;
+    }
+    let tell =
+        build_words(census.build(edition)).unwrap_or_else(|| edition.project_id().to_string());
+    format!("{name} {tell}")
+}
+
 /// The switch's face for the game `shown`.
 pub fn face(census: &Census, shown: Edition) -> Face {
     let edition = shown.counts_as();
     Face {
         edition,
-        name: census.name(edition),
+        name: switch_name(census, edition),
         mark: census.mark(edition),
         tip: census.tip(edition),
         playing: census.playing(edition),

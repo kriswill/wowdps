@@ -71,11 +71,11 @@ impl Gui {
     }
 
     /// Whether the switch is a row of chips — the games fit side by side
-    /// on the bar — rather than the dropdown and its menu.
+    /// on the bar, as the bar last drew it — rather than the dropdown and
+    /// its menu.
     pub(crate) fn edition_chips(&self) -> bool {
-        let narrow = super::w::Fit::of(self.width) == super::w::Fit::Narrow;
-        self.edition_entries()
-            .is_some_and(|e| editions::chips(e.len(), narrow))
+        self.edition_entries().is_some()
+            && self.edition_form.get().is_some_and(editions::Form::chips)
     }
 
     /// The switch's face: the game shown.

@@ -88,9 +88,10 @@ theme's bar, bare and on its chip's fill, as `marks-sheet.png`
 (`WOWDPS_SHOTS_THEME`, `WOWDPS_SHOTS_ART=off` as above). Our marks are our
 own art, so `marks_render_guard` holds their pictures as the overlay's are
 held (`crate::guard`, `snapshots/marks/`): the sheet, the chips at the wide
-frame (Retail shown and played; Forever shown), and the narrow frame's
-dropdown with its menu, in `navy`, without the art caches. Run it by name;
-`WOWDPS_BLESS=1` re-blesses an intended change.
+frame (Retail shown and played; Forever shown), the narrow frame's
+dropdown, and its menu — each cropped to the switch or the menu alone —
+in `navy`, without the art caches. Run it by name; `WOWDPS_BLESS=1`
+re-blesses an intended change.
 
 ```sh
 WOWDPS_SHOTS_ART=off WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui -- --ignored edition_shots mark_sheet
