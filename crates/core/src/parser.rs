@@ -3260,20 +3260,20 @@ mod tests {
     #[test]
     fn parses_a_scripted_kill() {
         let e = parse(
-            r#"SPELL_INSTAKILL,Creature-0-3884-3004-61178-257361-000014F96F,"Vexhul",0xa48,0x80000000,Player-60-0FC45984,"Mehna-Stormrage-US",0x514,0x80000000,1292348,"Eternal Venom",0x8,0"#,
+            r#"SPELL_INSTAKILL,Creature-0-3884-3004-61178-257361-000014F96F,"Vexhul",0xa48,0x80000000,Player-1-0A0B0D01,"Ysolde-Nebula-US",0x514,0x80000000,1292348,"Eternal Venom",0x8,0"#,
         );
         let Event::InstaKill { src, dst, spell } = e else {
             panic!("{e:?}")
         };
         assert_eq!(src.name, "Vexhul");
-        assert_eq!(dst.name, "Mehna-Stormrage-US");
+        assert_eq!(dst.name, "Ysolde-Nebula-US");
         assert!(dst.is_player());
         assert_eq!(spell.id, 1_292_348);
         assert_eq!(spell.name, "Eternal Venom");
 
         // A cheat death expiring is the same event, self-cast.
         let e = parse(
-            r#"SPELL_INSTAKILL,Player-60-0FC45984,"Mehna-Stormrage-US",0x514,0x80000008,Player-60-0FC45984,"Mehna-Stormrage-US",0x514,0x80000008,123982,"Purgatory",0x1,0"#,
+            r#"SPELL_INSTAKILL,Player-1-0A0B0D01,"Ysolde-Nebula-US",0x514,0x80000008,Player-1-0A0B0D01,"Ysolde-Nebula-US",0x514,0x80000008,123982,"Purgatory",0x1,0"#,
         );
         let Event::InstaKill { src, dst, spell } = e else {
             panic!("{e:?}")
@@ -3298,13 +3298,13 @@ mod tests {
     #[test]
     fn parses_a_real_resurrect() {
         let e = parse(
-            r#"SPELL_RESURRECT,Player-5-0DF58486,"Gimmedembuns-Proudmoore-US",0x512,0x80000000,Player-1175-0EF5FBF9,"Swampert-GrizzlyHills-US",0x514,0x80000000,61999,"Raise Ally",0x20"#,
+            r#"SPELL_RESURRECT,Player-1-0A0B0D02,"Tamsin-Nebula-US",0x512,0x80000000,Player-2-0A0B0D03,"Merrow-Halcyon-US",0x514,0x80000000,61999,"Raise Ally",0x20"#,
         );
         let Event::Resurrect { src, dst, spell } = e else {
             panic!("{e:?}")
         };
-        assert_eq!(src.name, "Gimmedembuns-Proudmoore-US");
-        assert_eq!(dst.guid, "Player-1175-0EF5FBF9");
+        assert_eq!(src.name, "Tamsin-Nebula-US");
+        assert_eq!(dst.guid, "Player-2-0A0B0D03");
         assert!(dst.is_player());
         assert_eq!((spell.id, spell.name.as_str()), (61999, "Raise Ally"));
         // A self-rez names the same unit twice; the meter drops the clause.
@@ -3321,12 +3321,12 @@ mod tests {
     #[test]
     fn parses_real_unit_died_shape() {
         let e = parse(
-            r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-5-0BC007E0,"Dawgoneefour-Proudmoore-US",0x2114,0x80000000,0"#,
+            r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-1-0A0B0D04,"Odran-Nebula-US",0x2114,0x80000000,0"#,
         );
         let Event::Death { unit } = e else {
             panic!("{e:?}")
         };
-        assert_eq!(unit.name, "Dawgoneefour-Proudmoore-US");
+        assert_eq!(unit.name, "Odran-Nebula-US");
         assert_eq!(unit.flags, 0x2114);
     }
 
@@ -3337,14 +3337,14 @@ mod tests {
     #[test]
     fn feign_death_is_no_death() {
         let feign = parse(
-            r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-60-0F5EEDCE,"Kyarrix-Stormrage-US",0x514,0x80000000,1"#,
+            r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-2-0A0B0D05,"Ilvane-Halcyon-US",0x514,0x80000000,1"#,
         );
         // v45 (R29): no death, and no longer `Other` either — the replay cut
         // reads a creature's as down.
         let Event::Unconscious { unit } = &feign else {
             panic!("{feign:?}")
         };
-        assert_eq!(unit.guid, "Player-60-0F5EEDCE");
+        assert_eq!(unit.guid, "Player-2-0A0B0D05");
         let missing = parse(&format!("UNIT_DIED,{NIL_UNIT},{PLAYER}"));
         assert!(matches!(missing, Event::Death { .. }), "no field, a death");
     }
@@ -3494,12 +3494,12 @@ mod tests {
     #[test]
     fn summon_can_target_a_creature_guid() {
         let e = parse(
-            r#"SPELL_SUMMON,Player-3676-0EC8A6B9,"Knothot-Area52-US",0x514,0x80000000,Creature-0-3881-2913-77155-47649-00006827C1,"Efflorescence",0xa28,0x80000000,145205,"Efflorescence",0x8"#,
+            r#"SPELL_SUMMON,Player-2-0A0B0D06,"Bramble-Halcyon-US",0x514,0x80000000,Creature-0-3881-2913-77155-47649-00006827C1,"Efflorescence",0xa28,0x80000000,145205,"Efflorescence",0x8"#,
         );
         let Event::Summon { owner, pet, .. } = e else {
             panic!("{e:?}")
         };
-        assert_eq!(owner.guid, "Player-3676-0EC8A6B9");
+        assert_eq!(owner.guid, "Player-2-0A0B0D06");
         assert!(pet.guid.starts_with("Creature-"));
         assert!(
             !pet.is_pet_or_guardian(),
@@ -3536,8 +3536,8 @@ mod tests {
     #[test]
     fn names_carry_realm_suffixes_apostrophes_and_non_ascii() {
         for (raw, want) in [
-            (r#""Fidèle-Tichondrius-US""#, "Fidèle-Tichondrius-US"),
-            (r#""Swegbert-Kil'jaeden-US""#, "Swegbert-Kil'jaeden-US"),
+            (r#""Ysèlle-Nebula-US""#, "Ysèlle-Nebula-US"),
+            (r#""Corvane-Vel'dara-US""#, "Corvane-Vel'dara-US"),
             (r#""L'ura""#, "L'ura"),
         ] {
             let e = parse(&format!(

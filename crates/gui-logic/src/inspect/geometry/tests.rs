@@ -54,7 +54,7 @@ fn span(at_ms: i64, dur_ms: i64) -> Span {
         at_ms,
         dur_ms,
         label: "Heroism".into(),
-        caster: Some("Vingsham".into()),
+        caster: Some("Halvric".into()),
         color: Color::WHITE,
         whose: None,
         second: false,
@@ -155,7 +155,7 @@ fn hovering_names_a_span_or_reads_the_curve() {
     );
     let words = p.tip_words(Hover::Span(0, 0), w);
     assert_eq!(words[0].0, "Heroism");
-    assert_eq!(words[1].0, "0:02, 1s, from Vingsham");
+    assert_eq!(words[1].0, "0:02, 1s, from Halvric");
     let Some(Hover::Plot(x)) = p.hover_at(LEFT + 210.0, 40.0, w) else {
         panic!("the plot answers the pointer");
     };
@@ -271,7 +271,7 @@ fn a_pair_s_lanes_split_the_track_between_the_two() {
     assert_eq!(p.hover_at(x, b.center_y(), w), Some(Hover::Span(0, 1)));
     assert_eq!(
         p.tip_words(Hover::Span(0, 1), w)[1].0,
-        "B, 0:01, 1s, from Vingsham"
+        "B, 0:01, 1s, from Halvric"
     );
     assert!(!owned((0, 4_000), one_lane(vec![span(0, 1)])).plot().split());
 }
@@ -289,13 +289,13 @@ fn death_words_keep_a_band_over_the_curves() {
     o.dead.push(Dead {
         at_ms: 1_000,
         back_ms: None,
-        words: "Tranqlock died 0:01".into(),
+        words: "Brannoc died 0:01".into(),
         back_words: String::new(),
     });
     o.dead.push(Dead {
         at_ms: 1_200,
         back_ms: None,
-        words: "Swampert died 0:01".into(),
+        words: "Merrow died 0:01".into(),
         back_words: String::new(),
     });
     let p = o.plot();

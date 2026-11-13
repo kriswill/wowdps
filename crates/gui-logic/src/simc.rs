@@ -412,11 +412,11 @@ mod tests {
     use super::*;
 
     const PASTE: &str = r#"
-warlock="Tranqlock"
+warlock="Brannoc"
 level=80
 race=orc
 region=us
-server=proudmoore
+server=nebula
 role=spell
 professions=alchemy=100/herbalism=75
 spec=demonology
@@ -456,7 +456,7 @@ main_hand=,id=222442,enchant_id=7460
     #[test]
     fn a_full_paste_parses() {
         let p = parse(PASTE).unwrap();
-        assert_eq!(p.name.as_deref(), Some("Tranqlock"));
+        assert_eq!(p.name.as_deref(), Some("Brannoc"));
         assert_eq!(p.class_token.as_deref(), Some("warlock"));
         assert_eq!(p.spec.as_deref(), Some("demonology"));
         assert_eq!(p.level, Some(80));
@@ -508,8 +508,8 @@ main_hand=,id=222442,enchant_id=7460
         assert!(parse("").is_err());
         assert!(parse("once upon a time\nthere was no gear\n").is_err());
         // A recognizable core survives surrounding junk.
-        let p = parse("nonsense\nmage=\"Frosty\"\nwhat=ever\nhead=,id=abc\n").unwrap();
-        assert_eq!(p.name.as_deref(), Some("Frosty"));
+        let p = parse("nonsense\nmage=\"Kestrel\"\nwhat=ever\nhead=,id=abc\n").unwrap();
+        assert_eq!(p.name.as_deref(), Some("Kestrel"));
         assert!(p.equipped.is_empty(), "id=abc must not parse");
     }
 
@@ -525,16 +525,13 @@ main_hand=,id=222442,enchant_id=7460
     fn store_path_keeps_the_realm_and_sanitizes() {
         // The realm is part of the key: same-named characters on different
         // realms must not share a file.
-        let p = store_path("Tranqlock-Proudmoore").unwrap();
+        let p = store_path("Brannoc-Nebula").unwrap();
         assert!(
-            p.ends_with("wowdps/simc/tranqlock_proudmoore.simc"),
+            p.ends_with("wowdps/simc/brannoc_nebula.simc"),
             "{}",
             p.display()
         );
-        assert_ne!(
-            store_path("Tranqlock-Proudmoore"),
-            store_path("Tranqlock-Illidan")
-        );
+        assert_ne!(store_path("Brannoc-Nebula"), store_path("Brannoc-Halcyon"));
         let p = store_path("Wëïrd Nàme").unwrap();
         assert!(p.to_string_lossy().ends_with(".simc"), "{}", p.display());
     }

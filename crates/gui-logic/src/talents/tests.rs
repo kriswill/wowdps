@@ -315,8 +315,8 @@ fn open_without_a_player_shows_nothing() {
 #[test]
 fn open_on_a_meter_row_draws_the_bare_spec_tree() {
     let _sb = Sandbox::new("open-row");
-    let ui = Viewer::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
-    assert_eq!(ui.player.as_deref(), Some("Frosty-Proudmoore"));
+    let ui = Viewer::open(Some(("Kestrel-Nebula".to_string(), Some(62))));
+    assert_eq!(ui.player.as_deref(), Some("Kestrel-Nebula"));
     assert_eq!(ui.spec_id, Some(62));
     let b = ui.build.as_ref().expect("the spec id alone lays out");
     assert_eq!(
@@ -338,20 +338,17 @@ fn open_on_a_meter_row_draws_the_bare_spec_tree() {
 #[test]
 fn open_restores_a_stored_paste() {
     let sb = Sandbox::new("open-stored");
-    let paste = simc_paste("Frosty", Some("proudmoore"), &[&full_string()], true);
-    save_stored("Frosty-Proudmoore", &paste);
-    assert_eq!(
-        sb.stored("Frosty-Proudmoore").as_deref(),
-        Some(paste.as_str())
-    );
+    let paste = simc_paste("Kestrel", Some("nebula"), &[&full_string()], true);
+    save_stored("Kestrel-Nebula", &paste);
+    assert_eq!(sb.stored("Kestrel-Nebula").as_deref(), Some(paste.as_str()));
     assert!(
-        sb.dir.join("simc/frosty_proudmoore.simc").is_file(),
+        sb.dir.join("simc/kestrel_nebula.simc").is_file(),
         "the store lives under the sandbox, never the real data home"
     );
 
-    let ui = Viewer::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+    let ui = Viewer::open(Some(("Kestrel-Nebula".to_string(), Some(62))));
     let p = ui.profile.as_ref().expect("the stored paste is parsed");
-    assert_eq!(p.name.as_deref(), Some("Frosty"));
+    assert_eq!(p.name.as_deref(), Some("Kestrel"));
     assert_eq!(p.equipped.len(), 2);
     assert_eq!(selected_ids(&ui), vec![1, 2, 3, 4, 5]);
     assert_eq!(ui.hero, Some(77));
@@ -393,7 +390,7 @@ fn a_pasted_string_decodes_and_round_trips() {
 fn the_viewer_reads_its_game_s_trees() {
     let _sb = Sandbox::new("edition-trees");
     use_dataset_in_on_this_thread(wowdps_model::Edition::Forever, forever_dataset());
-    let player = || Some(("Frosty-Proudmoore".to_string(), Some(62)));
+    let player = || Some(("Kestrel-Nebula".to_string(), Some(62)));
 
     let retail = Viewer::open(player());
     assert_eq!(retail.edition, wowdps_model::Edition::Retail);
@@ -438,32 +435,32 @@ fn each_game_keeps_its_own_pastes() {
     use wowdps_model::Edition::{Classic, Forever, Retail};
     let sb = Sandbox::new("paste-per-game");
     use_dataset_in_on_this_thread(Forever, forever_dataset());
-    let row = || Some(("Frosty-Proudmoore".to_string(), Some(62)));
-    let retail_paste = simc_paste("Frosty", Some("proudmoore"), &[&full_string()], true);
+    let row = || Some(("Kestrel-Nebula".to_string(), Some(62)));
+    let retail_paste = simc_paste("Kestrel", Some("nebula"), &[&full_string()], true);
     let one = string_for(&[r#"{"node_id": 1, "ranks": 1}"#]);
-    let forever_paste = simc_paste("Frosty", Some("proudmoore"), &[&one], false);
+    let forever_paste = simc_paste("Kestrel", Some("nebula"), &[&one], false);
 
     // Retail first: Forever's viewer on the same row opens bare.
     Viewer::open_in(Retail, row()).ingest(&retail_paste);
     assert!(
-        sb.dir.join("simc/frosty_proudmoore.simc").is_file(),
+        sb.dir.join("simc/kestrel_nebula.simc").is_file(),
         "Retail's paste where it always was"
     );
     let forever = Viewer::open_in(Forever, row());
     assert!(forever.profile.is_none(), "Retail's paste stays Retail's");
     assert_eq!(selected_ids(&forever), Vec::<u64>::new());
-    assert_eq!(load_stored_in(Forever, "Frosty-Proudmoore"), None);
+    assert_eq!(load_stored_in(Forever, "Kestrel-Nebula"), None);
 
     // Then Forever's: Retail's paste is untouched.
     Viewer::open_in(Forever, row()).ingest(&forever_paste);
-    assert!(sb.dir.join("forever/simc/frosty_proudmoore.simc").is_file());
+    assert!(sb.dir.join("forever/simc/kestrel_nebula.simc").is_file());
     assert_eq!(
-        sb.stored("Frosty-Proudmoore").as_deref(),
+        sb.stored("Kestrel-Nebula").as_deref(),
         Some(retail_paste.trim()),
         "Forever's paste never overwrites Retail's"
     );
     assert_eq!(
-        load_stored_in(Forever, "Frosty-Proudmoore").as_deref(),
+        load_stored_in(Forever, "Kestrel-Nebula").as_deref(),
         Some(forever_paste.trim())
     );
 
@@ -482,10 +479,10 @@ fn each_game_keeps_its_own_pastes() {
     );
 
     // A game wowdps keeps no trees for keeps no pastes either.
-    assert_eq!(store_path_in(Classic(2), "Frosty-Proudmoore"), None);
+    assert_eq!(store_path_in(Classic(2), "Kestrel-Nebula"), None);
     Viewer::open_in(Classic(2), row()).ingest(&retail_paste);
     assert_eq!(
-        sb.stored("Frosty-Proudmoore").as_deref(),
+        sb.stored("Kestrel-Nebula").as_deref(),
         Some(retail_paste.trim())
     );
 }
@@ -512,7 +509,7 @@ fn decode_warnings_ride_into_the_build() {
 #[test]
 fn clicks_take_ranks_open_pickers_and_stop_at_the_cap() {
     let _sb = Sandbox::new("clicks");
-    let mut ui = Viewer::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+    let mut ui = Viewer::open(Some(("Kestrel-Nebula".to_string(), Some(62))));
 
     ui.click_node(1);
     assert_eq!(ui.sels.get(&1).map(|s| s.ranks), Some(1));
@@ -583,7 +580,7 @@ fn clicks_take_ranks_open_pickers_and_stop_at_the_cap() {
 #[test]
 fn a_gated_choice_cannot_be_picked_early() {
     let _sb = Sandbox::new("gated-choice");
-    let mut ui = Viewer::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+    let mut ui = Viewer::open(Some(("Kestrel-Nebula".to_string(), Some(62))));
     ui.click_node(2);
     assert_eq!(ui.picker, None, "unavailable octagon: no picker");
     ui.pick_choice(2, 0);
@@ -696,7 +693,7 @@ fn adopt_logged_installs_the_combat_log_build() {
     fresh.adopt_logged(&Loadout::default());
     assert!(!fresh.logged && fresh.build.is_none() && fresh.error.is_none());
     // The viewer's own spec fills in for a loadout without one.
-    let mut fresh = Viewer::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+    let mut fresh = Viewer::open(Some(("Kestrel-Nebula".to_string(), Some(62))));
     fresh.adopt_logged(&Loadout {
         spec_id: None,
         talents: vec![pick(1, 101, 1)],
@@ -725,20 +722,17 @@ fn adopt_logged_installs_the_combat_log_build() {
 fn a_simc_paste_persists_under_both_keys_and_switches_loadouts() {
     let sb = Sandbox::new("simc");
     let (a, b) = (full_string(), string_for(&[r#"{"node_id": 3}"#]));
-    let paste = simc_paste("Frosty", Some("proudmoore"), &[&a, &b], true);
+    let paste = simc_paste("Kestrel", Some("nebula"), &[&a, &b], true);
 
     // Opened on a meter row whose realm spelling differs from the paste.
-    let mut ui = Viewer::open(Some(("Frosty-Area52".to_string(), Some(62))));
+    let mut ui = Viewer::open(Some(("Kestrel-Halcyon".to_string(), Some(62))));
     ui.ingest(&paste);
     assert_eq!(ui.error, None);
     let p = ui.profile.as_ref().expect("profile");
     assert_eq!(p.loadouts.len(), 2);
-    assert!(
-        sb.stored("Frosty-proudmoore").is_some(),
-        "the paste's own key"
-    );
-    assert!(sb.stored("Frosty-Area52").is_some(), "the row's key too");
-    assert_eq!(ui.player.as_deref(), Some("Frosty-Area52"), "row wins");
+    assert!(sb.stored("Kestrel-nebula").is_some(), "the paste's own key");
+    assert!(sb.stored("Kestrel-Halcyon").is_some(), "the row's key too");
+    assert_eq!(ui.player.as_deref(), Some("Kestrel-Halcyon"), "row wins");
     assert_eq!(selected_ids(&ui), vec![1, 2, 3, 4, 5]);
 
     // The second chip decodes the saved loadout.
@@ -761,22 +755,22 @@ fn a_simc_paste_persists_under_both_keys_and_switches_loadouts() {
 
     // Someone else's paste never shadows the row's player.
     let mut other = Viewer::open(Some(("Other-Realm".to_string(), Some(62))));
-    other.ingest(&simc_paste("Frosty", None, &[&a], false));
+    other.ingest(&simc_paste("Kestrel", None, &[&a], false));
     assert!(sb.stored("Other-Realm").is_none());
-    assert!(sb.stored("Frosty").is_some());
+    assert!(sb.stored("Kestrel").is_some());
     assert_eq!(other.player.as_deref(), Some("Other-Realm"));
 
     // Opened on nobody: the paste's character becomes the viewed player.
     let mut anon = Viewer::open(None);
-    anon.ingest(&simc_paste("Frosty", None, &[&a], false));
-    assert_eq!(anon.player.as_deref(), Some("Frosty"));
+    anon.ingest(&simc_paste("Kestrel", None, &[&a], false));
+    assert_eq!(anon.player.as_deref(), Some("Kestrel"));
     assert!(anon.profile.as_ref().is_some_and(|p| p.equipped.is_empty()));
     anon.on_msg(Msg::ToggleTab);
     assert_eq!(anon.tab, Tab::Inventory, "a profile flips even when empty");
 
     // A paste without strings and one that is not a paste at all.
     let mut bare = Viewer::open(None);
-    bare.ingest(&simc_paste("Frosty", None, &[], true));
+    bare.ingest(&simc_paste("Kestrel", None, &[], true));
     assert_eq!(
         bare.error.as_deref(),
         Some("the paste carried no talent strings")
@@ -909,26 +903,26 @@ fn a_failed_save_costs_recall_not_data() {
     let sb = Sandbox::new("save-fail");
     // The store root is a plain file: the directory cannot be created.
     std::fs::write(&sb.dir, b"in the way").unwrap();
-    save_stored("Frosty-Proudmoore", "paste");
-    assert!(sb.stored("Frosty-Proudmoore").is_none());
+    save_stored("Kestrel-Nebula", "paste");
+    assert!(sb.stored("Kestrel-Nebula").is_none());
     std::fs::remove_file(&sb.dir).unwrap();
     // The file's own slot is a directory: the write fails, quietly.
-    let path = store_path("Frosty-Proudmoore").unwrap();
+    let path = store_path("Kestrel-Nebula").unwrap();
     std::fs::create_dir_all(&path).unwrap();
-    save_stored("Frosty-Proudmoore", "paste");
-    assert!(sb.stored("Frosty-Proudmoore").is_none());
+    save_stored("Kestrel-Nebula", "paste");
+    assert!(sb.stored("Kestrel-Nebula").is_none());
     // And a viewer opened on that player simply gets the bare tree.
-    let ui = Viewer::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+    let ui = Viewer::open(Some(("Kestrel-Nebula".to_string(), Some(62))));
     assert!(ui.profile.is_none() && ui.build.is_some());
     // The paste's own realm-qualified key names the viewed player.
     let mut anon = Viewer::open(None);
     anon.ingest(&simc_paste(
-        "Frosty",
-        Some("proudmoore"),
+        "Kestrel",
+        Some("nebula"),
         &[&full_string()],
         false,
     ));
-    assert_eq!(anon.player.as_deref(), Some("Frosty-proudmoore"));
+    assert_eq!(anon.player.as_deref(), Some("Kestrel-nebula"));
 }
 
 // ---- geometry ----------------------------------------------------------------
@@ -1170,10 +1164,10 @@ fn the_inventory_words_are_honest() {
     assert_eq!(extras(true, 2), "enchanted · 2 gems");
     assert_eq!(extras(false, 1), "1 gem");
     assert_eq!(extras(false, 0), "");
-    let p = crate::simc::parse(&simc_paste("Frosty", Some("proudmoore"), &["x"], true)).unwrap();
+    let p = crate::simc::parse(&simc_paste("Kestrel", Some("nebula"), &["x"], true)).unwrap();
     assert_eq!(
         identity(&p),
-        "level 80 · arcane · mage · proudmoore · WoW 12.1.0.69497"
+        "level 80 · arcane · mage · nebula · WoW 12.1.0.69497"
     );
     assert_eq!(item_name(&p.equipped[0]), "Abyssal Hood");
     assert_eq!(item_name(&p.equipped[1]), "item 252009");

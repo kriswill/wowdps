@@ -1141,7 +1141,7 @@ pub mod samples {
             log_id: Some(LOG),
             watched: None,
             cards,
-            owner: Some((Some("Tranqlock-Proudmoore-US".to_string()), Class::Warlock)),
+            owner: Some((Some("Brannoc-Nebula-US".to_string()), Class::Warlock)),
             tonight,
         })
     }
