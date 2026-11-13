@@ -320,6 +320,21 @@ where
     K: PartialEq,
     L: AsRef<str>,
 {
+    find_reach(query, floor, players).0
+}
+
+/// [`find`], and the reach it settled at: what tells a pick by a first
+/// name or the start of a name, which an answer says it made, from one by
+/// the name or more. `None` when nobody answers.
+pub fn find_reach<K, L>(
+    query: &str,
+    floor: Named,
+    players: impl IntoIterator<Item = (K, L, Edition)>,
+) -> (Found<K>, Option<Named>)
+where
+    K: PartialEq,
+    L: AsRef<str>,
+{
     let mut best: Option<Named> = None;
     let mut hits: Vec<K> = Vec::new();
     for (key, label, edition) in players {
@@ -344,11 +359,12 @@ where
         }
     }
     let mut hits = hits.into_iter();
-    match (hits.next(), hits.next()) {
+    let found = match (hits.next(), hits.next()) {
         (None, _) => Found::Nobody,
         (Some(one), None) => Found::One(one),
         (Some(a), Some(b)) => Found::Several([a, b].into_iter().chain(hits).collect()),
-    }
+    };
+    (found, best)
 }
 
 #[cfg(test)]
@@ -545,6 +561,19 @@ mod tests {
         assert_eq!(
             find("Brannoc", Named::Prefix, longer),
             Found::One("Player-1-G")
+        );
+        // The reach a pick settled at.
+        assert_eq!(
+            find_reach("Corwinna", Named::First, longer),
+            (Found::One("Player-6101-H"), Some(Named::First))
+        );
+        assert_eq!(
+            find_reach("Corwinna Vale", Named::First, longer),
+            (Found::One("Player-6101-H"), Some(Named::Name))
+        );
+        assert_eq!(
+            find_reach("Nobody", Named::First, longer),
+            (Found::Nobody, None)
         );
         // A Forever first name is a stored lookup's loosest reach.
         assert_eq!(

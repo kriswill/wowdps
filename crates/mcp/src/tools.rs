@@ -63,8 +63,10 @@ pub fn catalog() -> Vec<Tool> {
          character's \"First Last\", case aside, a space or a dash alike), or a Forever \
          first name";
     const SEVERAL: &str = "A name several players answer to is answered for the account's \
-         own character when exactly one of them is (the answer's player_note says which label \
-         was taken), else refused, naming each.";
+         own character when exactly one of them is, else refused, naming each. The answer's \
+         player_note (a_note, b_note, peer_note; null when unset) names the label and GUID \
+         taken whenever the pick was not by the name itself: the account's own among \
+         several, or a lone player reached by a first name or the start of a name.";
     let player = |what: &str| {
         obj! {
             "type": Json::str("string"),
@@ -406,7 +408,8 @@ pub fn catalog() -> Vec<Tool> {
                              all: every row, with role and the owner flagged me. \
                              none: neither. A player name or GUID, as `player` takes one: \
                              that player's row in the me shape as `peer`, next to me \
-                             (peer_note says which label a shared name was taken for).",
+                             (peer_note names the label taken when the pick was not by \
+                             the name itself; null otherwise).",
                         ),
                     },
                     "after_id": obj! {
@@ -1284,9 +1287,10 @@ fn arg_player<'a>(args: &'a Json, key: &str) -> Result<&'a str, String> {
 type Named<'a> = (&'a str, &'a str, Edition);
 
 /// Who a name lookup answered for: the guid, the label, and — when the
-/// name was one several players answer to and the account's own character
-/// was taken among them — the words that say so, which the answer carries
-/// as its `player_note` (`a_note` and `b_note` on a comparison).
+/// pick was not by the name itself (a Forever first name, the start of a
+/// name, or the account's own character among several a name answers to)
+/// — the words that say so, which the answer carries as its `player_note`
+/// (`a_note`, `b_note`, `peer_note`), null otherwise.
 struct Pick<'a> {
     guid: &'a str,
     label: &'a str,
@@ -1303,7 +1307,9 @@ struct Pick<'a> {
 /// stamped owner, a row the daemon marked `mine`) it is that one, and the
 /// answer says which label was taken; otherwise it is refused with each
 /// named (`whose` says where they were looked for). Two players who share
-/// a first name are two.
+/// a first name are two. Nothing is picked silently: a lone player reached
+/// only by a first name or the start of a name is answered with a note
+/// naming the label and guid taken, as the account's own is.
 fn one_player<'a>(
     who: &str,
     players: &[Named<'a>],
@@ -1311,20 +1317,36 @@ fn one_player<'a>(
     floor: names::Named,
     own: impl Fn(&str) -> bool,
 ) -> Result<Option<Pick<'a>>, String> {
-    use wowdps_model::names::{Found, find};
+    use wowdps_model::names::{Found, find_reach};
     let label_of = |g: &str| {
         players
             .iter()
             .find(|(pg, _, _)| *pg == g)
             .map_or("", |(_, l, _)| *l)
     };
-    match find(who, floor, players.iter().copied()) {
+    let (found, reach) = find_reach(who, floor, players.iter().copied());
+    match found {
         Found::Nobody => Ok(None),
-        Found::One(guid) => Ok(Some(Pick {
-            guid,
-            label: label_of(guid),
-            note: None,
-        })),
+        Found::One(guid) => {
+            let label = label_of(guid);
+            // Below the name, the pick says what it took: a first name or
+            // the start of one may be a stranger's who alone still has it.
+            let by = match reach {
+                Some(names::Named::First) => Some("a first name alone"),
+                Some(names::Named::Prefix) => Some("the start of a name"),
+                _ => None,
+            };
+            Ok(Some(Pick {
+                guid,
+                label,
+                note: by.map(|by| {
+                    format!(
+                        "{who:?} matched {by}; answered for {label} ({guid}), the one player \
+                         {whose} who answers to it: pass the full name to be sure"
+                    )
+                }),
+            }))
+        }
         Found::Several(guids) => {
             let mut ours = guids.iter().copied().filter(|g| own(g));
             if let (Some(guid), None) = (ours.next(), ours.next()) {
@@ -1851,12 +1873,14 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ("count".to_string(), Json::u64(cards.len() as u64)),
         ("total".to_string(), Json::u64(u64::from(total))),
     ];
-    if let Some(n) = player_note {
-        out.push(("player_note".to_string(), Json::str(n)));
-    }
-    if let Some(n) = peer_note {
-        out.push(("peer_note".to_string(), Json::str(n)));
-    }
+    out.push((
+        "player_note".to_string(),
+        player_note.map_or(Json::Null, Json::str),
+    ));
+    out.push((
+        "peer_note".to_string(),
+        peer_note.map_or(Json::Null, Json::str),
+    ));
     // v49: the edition the fights are of; null for every edition, each
     // card naming its own.
     edition_label(&mut out, edition);
@@ -2314,9 +2338,10 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             // v49: whose game the points are of.
             Json::Obj(mut out) => {
                 edition_label(&mut out, edition);
-                if let Some(n) = note {
-                    out.push(("player_note".to_string(), Json::str(n)));
-                }
+                out.push((
+                    "player_note".to_string(),
+                    note.map_or(Json::Null, Json::str),
+                ));
                 Json::Obj(out)
             }
             other => other,
@@ -2702,9 +2727,10 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             )),
         }
     }
-    if let Some(n) = player_note {
-        o.push(("player_note".to_string(), Json::str(n)));
-    }
+    o.push((
+        "player_note".to_string(),
+        player_note.map_or(Json::Null, Json::str),
+    ));
     Ok(Json::Obj(o))
 }
 
@@ -4037,9 +4063,7 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ("b".to_string(), side(&b)),
     ];
     for (k, n) in notes {
-        if let Some(n) = n {
-            out.push((k.to_string(), Json::str(n)));
-        }
+        out.push((k.to_string(), n.map_or(Json::Null, Json::str)));
     }
     Ok(Json::Obj(out))
 }

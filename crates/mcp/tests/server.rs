@@ -3549,10 +3549,53 @@ fn stored_lookups_take_no_prefix_and_prefer_the_account_s_own() {
             reply.to_line()
         );
     }
-    // The whole name answers.
+    // The whole name answers, with no note.
     let trend = doc_of(&mut bridge, "trend", r#"{"player":"Velkrissa Moor"}"#);
     assert_eq!(str_of(&trend, "player"), "Player-6101-0000D003");
-    assert_eq!(trend.get("player_note"), None);
+    assert_eq!(trend.get("player_note"), Some(&Json::Null));
+    // A first name only one stored player has answers too, never silently:
+    // it may be a stranger's who alone still has it, so every stored tool
+    // names the label and guid it took.
+    let lone = |doc: &Json, key: &str| {
+        let note = str_of(doc, key);
+        assert!(
+            note.contains("a first name alone")
+                && note.contains("Velkrissa-Moor-Nebula-US (Player-6101-0000D003)"),
+            "{key}: {note}"
+        );
+    };
+    lone(
+        &doc_of(&mut bridge, "trend", r#"{"player":"Velkrissa"}"#),
+        "player_note",
+    );
+    lone(
+        &doc_of(&mut bridge, "history", r#"{"player":"Velkrissa"}"#),
+        "player_note",
+    );
+    lone(
+        &doc_of(
+            &mut bridge,
+            "history",
+            r#"{"edition":"forever","players":"Velkrissa"}"#,
+        ),
+        "peer_note",
+    );
+    lone(
+        &doc_of(
+            &mut bridge,
+            "stored_fight",
+            &format!(r#"{{"fight_id":"{fid}","player":"Velkrissa"}}"#),
+        ),
+        "player_note",
+    );
+    lone(
+        &doc_of(
+            &mut bridge,
+            "loadout",
+            &format!(r#"{{"fight_id":"{fid}","player":"Velkrissa"}}"#),
+        ),
+        "player_note",
+    );
 
     // A shared first name: the account's own character, said so.
     let trend = doc_of(&mut bridge, "trend", r#"{"player":"Tharokk"}"#);
@@ -3618,13 +3661,30 @@ fn a_live_lookup_takes_the_account_s_own_among_namesakes() {
         note.contains("Tharokk-Ironvale-Nebula-US") && note.contains("account's own"),
         "{note}"
     );
-    // The start of a name one player's name has answers live.
+    // The start of a name one player's name has answers live, and a first
+    // name one player alone has; neither silently: the note names the
+    // label and guid taken. The full name needs no note.
     let doc = doc_of(&mut bridge, "breakdown", r#"{"player":"Brindle"}"#);
     assert_eq!(
         str_of(doc.get("player").expect("player"), "name"),
         "Brindlewick-Fenn-Nebula-US"
     );
+    let note = str_of(&doc, "player_note");
+    assert!(
+        note.contains("the start of a name") && note.contains("Brindlewick-Fenn-Nebula-US"),
+        "{note}"
+    );
+    let doc = doc_of(&mut bridge, "loadout", r#"{"player":"Elowyn"}"#);
+    assert!(str_of(&doc, "player_note").contains("a first name alone"));
+    let doc = doc_of(&mut bridge, "breakdown", r#"{"player":"Elowyn Marsh"}"#);
     assert_eq!(doc.get("player_note"), Some(&Json::Null));
+    let doc = doc_of(
+        &mut bridge,
+        "compare",
+        r#"{"a":"Velkris","b":"Tharokk Emberfell"}"#,
+    );
+    assert!(str_of(&doc, "a_note").contains("Velkris-Duskmantle-Nebula-US"));
+    assert_eq!(doc.get("b_note"), Some(&Json::Null));
 }
 
 /// The history tools over a store holding two editions' pulls of one boss

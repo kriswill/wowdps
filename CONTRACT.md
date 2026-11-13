@@ -1088,7 +1088,13 @@ each surface writes:
   `mine` live), and the answer says so in `player_note` (`a_note`, `b_note`,
   `peer_note`): the name asked, how many players it named, and the label and
   guid taken. Otherwise they are refused, every one named with its guid, and none
-  picked: two players who share a first name are never one.
+  picked: two players who share a first name are never one. Nothing is picked
+  silently: a lone player reached only by a Forever first name or the start of a
+  name (`names::find_reach` says the reach) is answered with a note too, naming
+  the label and guid taken, since it may be a stranger who alone still has it
+  where the account's own character has aged out of the newest cards. Every tool
+  that resolves a player carries its note fields always, null when the pick was
+  by the name or closer.
 - A configured name (`history_characters`, the store's "me" on a card and per
   edition, `daemon::mine::Mine`, the window's fallback when nothing is marked, and
   Home's chips) names a character by its label whole, its name and realm, or its
