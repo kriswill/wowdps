@@ -1777,6 +1777,14 @@ pub fn visit_members(meter: &Meter, ord: u32) -> Vec<KeyBoss> {
         })
         .collect()
 }
+/// R31: the owner a rewrite of `card` keeps in the logger's place — its
+/// stamped owner, only when the fight's log is not trusted now
+/// ([`ClosedFight::own_log`]).
+fn kept_owner(card: Option<&FightCard>, fight: &ClosedFight) -> Option<String> {
+    card.filter(|_| !fight.own_log)
+        .and_then(|c| c.owner.clone())
+}
+
 /// R31: the character a fight's own unit flags name as the one writing its
 /// log ([`Segment::logger`](wowdps_core::meter::Segment::logger)) — trusted
 /// as the account's only for a log of the install's own
@@ -3369,7 +3377,9 @@ impl<B: Backend> Store<B> {
         // the install's folders, or read through `--file`) names no logger;
         // a rewrite of its card keeps the owner it was stamped with in the
         // logger's place, still on the roster and after a configured name.
-        let kept = self.card(&id).and_then(|c| c.owner.clone());
+        // A trusted log is read afresh, whether its fight names a logger or
+        // not: a regrade there can still clear a wrong stamp.
+        let kept = kept_owner(self.card(&id), fight);
         let logger = logger_of(fight).or(kept.as_deref());
         doc.card.owner = self.owner_of(&doc.card, logger);
         // A pin is the user's decision: a rewrite (aborted → real, or an
@@ -4584,7 +4594,7 @@ impl<B: Backend> Store<B> {
         let mut docs = extract(fight, facts, &id);
         // As a rewrite stamps it (`store_impl`): an untrusted log's card
         // keeps its stamped owner in the logger's place.
-        let kept = self.card(&id).and_then(|c| c.owner.clone());
+        let kept = kept_owner(self.card(&id), fight);
         let logger = logger_of(fight).or(kept.as_deref());
         docs.card.owner = self.owner_of(&docs.card, logger);
         let loadout = ask.drill.as_deref().and_then(|guid| {

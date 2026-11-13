@@ -94,6 +94,7 @@ const DECIDING: &[&str] = &[
     // follows, among the rest.
     "pub fn owner_of(",
     "pub fn logger_of(",
+    "fn kept_owner(",
     "fn follows(",
     "pub fn logger(",
     "pub fn rules(",

@@ -628,7 +628,9 @@ alone (no name, no guid printed):
   Retail trash fights and 164 of Forever's 205. A raid pull can hold none: one
   pull's 659 player blocks are its group's alone, the writer taking no part.
 - `Unit::is_logger` reads it (Mine, player-controlled, player, a `Player-`
-  guid), `Segment::logger` counts it per fight, and `check.awk` mirrors both.
+  guid, and neither a pet's nor a guardian's type, which a player the
+  writer controls could wear), `Segment::logger` counts it per fight, and
+  `check.awk` mirrors both.
 
 ## Player labels
 

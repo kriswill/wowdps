@@ -40,9 +40,10 @@ rulings, §Fixtures). Read the ruling before changing what it governs.
   constants in `roles.rs`; `check.awk`'s R30 block holds the same ones.
 - **R31's logger** (`Segment::logger`) is segment-local too: each unit
   block flagging the logging character (`Unit::is_logger`: Mine,
-  player-controlled, a `Player-` player) counts for the segment open once
-  its line is read, through the passive gate; never seeded, never carried,
-  never opening a segment. `check.awk`'s `logger` metric mirrors it.
+  player-controlled, a `Player-` player, no pet or guardian type) counts
+  for the segment open once its line is read, through the passive gate;
+  never seeded, never carried, never opening a segment. `check.awk`'s
+  `logger` metric mirrors it.
 - **The replay cut is passive** (`replay.rs`, R29): it moves no meter
   number and shares the meter's parse (`cut_and_meter`). Core cannot name
   proto's `placed` table; the daemon implements `PlacedTable` over it.

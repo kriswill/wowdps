@@ -2403,6 +2403,99 @@ mod tests {
     /// and nothing wider. `WOWDPS_BLESS=1` rewrites the golden and then
     /// fails, so no run passes by blessing; a re-bless changes what every
     /// Retail client is sent, and its commit says why.
+    /// Every "you" a frame marks — a meter row's key, a drill row's (keyed
+    /// by name there), a raid death's guid, a comparison side's guid — each
+    /// mark cleared as it is read, so the frames left compare as frames.
+    fn take_you(msg: &mut DaemonMsg, out: &mut Vec<String>) {
+        let rows = |rows: &mut [wowdps_core::model::Row], out: &mut Vec<String>| {
+            for r in rows.iter_mut().filter(|r| r.mine) {
+                out.push(r.key.clone());
+                r.mine = false;
+            }
+        };
+        match msg {
+            DaemonMsg::Snapshot {
+                rows: meter,
+                breakdown,
+                raid,
+                ..
+            } => {
+                rows(meter, out);
+                if let Some(b) = breakdown {
+                    rows(&mut b.by_spell, out);
+                    rows(&mut b.by_target, out);
+                    if let Some(t) = b.spell_targets.as_mut() {
+                        rows(t, out);
+                    }
+                }
+                for d in raid.iter_mut().flat_map(|r| r.deaths.iter_mut()) {
+                    if d.mine {
+                        out.push(d.guid.clone());
+                        d.mine = false;
+                    }
+                }
+            }
+            DaemonMsg::CompareSnapshot { a, b, .. } => {
+                for side in [a, b] {
+                    if side.total.mine {
+                        out.push(side.guid.clone());
+                        side.total.mine = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// R31, live: a source the install's config or discovery names
+    /// (`SourceSetup::own`) marks its fights' logger "you" — the fixture's
+    /// one player flagged MINE (`…2C01`, Thraxx in the log, Ana in the
+    /// live tail's trash) — on their meter rows, drill rows, raid deaths and
+    /// comparison side, and nobody else, with no store; the same scenario
+    /// over an untrusted source (`--file`, `--logs`) marks nobody. The mark
+    /// aside, the two runs' frames are the same.
+    #[test]
+    fn a_trusted_source_marks_its_logger_you_and_an_untrusted_one_nobody() {
+        let run = |own| {
+            let mut frames = one_source_scenario(Hub::with_sources(vec![SourceSetup {
+                spec: Some(RETAIL_SPEC.to_string()),
+                edition: Some(Edition::Retail),
+                own,
+            }]));
+            let mut you = Vec::new();
+            for f in &mut frames {
+                take_you(&mut f.msg, &mut you);
+            }
+            (frames, you)
+        };
+        let (untrusted, nobody) = run(false);
+        assert!(
+            nobody.is_empty(),
+            "an untrusted source marks nobody: {nobody:?}"
+        );
+        let (trusted, you) = run(true);
+        let logger = ["Player-1168-0A1B2C01", "Thraxx-Nebula-US", "Ana-Realm"];
+        assert!(
+            you.iter().all(|k| logger.contains(&k.as_str())),
+            "only the logger is marked: {you:?}"
+        );
+        let guid = |k: &&String| k.starts_with("Player-");
+        assert!(
+            you.iter().filter(guid).count() > 1,
+            "rows and deaths: {you:?}"
+        );
+        assert!(
+            trusted
+                .iter()
+                .any(|f| matches!(f.msg, DaemonMsg::CompareSnapshot { .. })),
+            "the scenario compares"
+        );
+        assert_eq!(trusted.len(), untrusted.len(), "the same frames");
+        for (t, u) in trusted.iter().zip(&untrusted) {
+            assert_eq!(t.msg, u.msg, "{}: only the mark differs", t.line());
+        }
+    }
+
     #[test]
     fn one_source_frames_are_the_daemon_s_before_editions() {
         let one = one_source_scenario(Hub::with_sources(vec![SourceSetup {

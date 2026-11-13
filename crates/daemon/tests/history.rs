@@ -1529,6 +1529,51 @@ fn a_regrade_without_the_logger_keeps_the_stamped_owner() {
     assert_eq!(fresh.card(&ids[0]).unwrap().owner, None);
 }
 
+/// R31: the kept owner is an untrusted log's alone. A trusted log is read
+/// afresh on a regrade, whether or not its fight names a logger, so a wrong
+/// stamp there clears: here a fight no line of the writer flags (its player
+/// a party member, 0x512), stamped Ana by a configured name since dropped,
+/// with the edition's owner now the alt Cora, not on the card. An untrusted
+/// regrade keeps Ana; a trusted one finds no one.
+#[test]
+fn a_trusted_regrade_reads_the_owner_afresh() {
+    let tmp = Temp::new("regrade-afresh");
+    let path = tmp.join("WoWCombatLog-a.txt");
+    std::fs::write(&path, boss_log(&[(60, false)]).replace("0x511", "0x512")).unwrap();
+    let facts = LogFacts::read(&path);
+    let configured = Retention {
+        characters: vec!["Ana-Realm".to_string()],
+        ..no_progression()
+    };
+    let mut store = mem(configured);
+    let ids = store_all(&mut store, &path, &own_fights(&path));
+    store_own_logs(
+        &tmp,
+        &mut store,
+        &[(
+            "WoWCombatLog-b.txt",
+            boss_log_of(&[(60, false)], 28, 1, "Player-1-C", "Cora-Realm"),
+        )],
+    );
+    let mut store = reopened(&store, no_progression());
+    assert_eq!(store.owner(), Some(("Player-1-C".to_string(), true)));
+    let stamped = |s: &Store<MemBackend>| s.card(&ids[0]).unwrap().owner.clone();
+    assert_eq!(stamped(&store).as_deref(), Some("Player-1-A"));
+    for f in closed_fights(&path) {
+        store.regrade(&f, facts).expect("rewritten");
+    }
+    assert_eq!(
+        stamped(&store).as_deref(),
+        Some("Player-1-A"),
+        "untrusted: kept"
+    );
+    for f in own_fights(&path) {
+        assert!(f.segment.logger().is_none(), "no line flags the writer");
+        store.regrade(&f, facts).expect("rewritten");
+    }
+    assert_eq!(stamped(&store), None, "trusted: read afresh");
+}
+
 #[test]
 fn opening_a_store_moves_unmarked_sigma_cards_to_their_marked_ids() {
     // Schema-1 stores filed a visit's Σ under the pull spelling, where a

@@ -116,6 +116,9 @@ A fight's own log names the character who wrote it, and the daemon takes
 that character for you, on its cards and as "you" in the window, only in
 the folders `logs_dir` or discovery names: a log you follow with `--file`
 or `--logs` may be someone else's, so its writer is never taken for you.
+Trust goes with the folder, not the file: a friend's log you copy into
+your own Logs folder is read as yours, and its writer becomes "you" in
+its fights.
 
 ### Themes
 
