@@ -223,18 +223,41 @@ impl Game {
         blte::decode(&self.store.read(&ekey)?, &self.keys)
     }
 
+    /// Whether local storage holds the bytes of the file with this content
+    /// key.
+    fn holds(&self, ckey: &[u8; 16]) -> bool {
+        tact::Encoding::new(&self.encoding)
+            .ok()
+            .and_then(|e| e.ekey(ckey))
+            .is_some_and(|ekey| self.store.holds(&ekey))
+    }
+
     /// Decoded bytes of a FileDataID, preferring `locale_mask` blocks: the
-    /// record `tact::root_find` picks, through the index.
+    /// record `tact::root_find` picks, through the index. When local
+    /// storage lacks that record's bytes, the next record in the same order
+    /// whose bytes it holds: another platform's copy, say, or a
+    /// high-resolution copy whose base copy is not there. An error names
+    /// the file and the flags of the record it read.
     pub fn fetch_fdid(&self, fdid: u32, locale_mask: u32) -> Result<Vec<u8>, String> {
         let index = self
             .index
             .get_or_init(|| tact::RootIndex::new(&self.root))
             .as_ref()
             .map_err(String::clone)?;
-        let m = index
-            .find(&self.root, fdid, locale_mask)
+        let records = index.find_all(&self.root, fdid, locale_mask);
+        let first = records
+            .first()
             .ok_or_else(|| format!("fdid {fdid} not found in root manifest"))?;
+        let held = records.iter().find(|m| self.holds(&m.ckey));
+        let m = held.unwrap_or(first);
         self.fetch_ckey(&m.ckey)
+            .map_err(|e| match (held, records.len()) {
+                (None, n) if n > 1 => format!(
+                    "fdid {fdid} (content {:#x}; none of its {n} records in local storage): {e}",
+                    m.content
+                ),
+                _ => format!("fdid {fdid} (content {:#x}): {e}", m.content),
+            })
     }
 }
 
@@ -470,13 +493,19 @@ mod tests {
     /// and Forever's `wowf`, their rows naming the one build config. As an
     /// install without the HighRes option has it, the manifest lists file
     /// 41's high-resolution copy first, and a high-resolution file 43 with
-    /// no base copy; neither copy's bytes are in the archive.
+    /// no base copy; neither copy's bytes are in the archive. File 44's
+    /// base copy is missing and its high-resolution copy is there; neither
+    /// of file 45's copies is.
     fn fake_install(wow: &Path) -> [u8; 16] {
         let (enc_ckey, enc_ekey) = (key(0x10), key(0xA0));
         let (root_ckey, root_ekey) = (key(0x20), key(0xB0));
         let (file_ckey, file_ekey) = (key(0x30), key(0xC0));
         let (high_ckey, high_ekey) = (key(0x40), key(0xD0));
         let (lone_ckey, lone_ekey) = (key(0x50), key(0xE0));
+        let (gone_ckey, gone_ekey) = (key(0x60), key(0xD1));
+        let (kept_ckey, kept_ekey) = (key(0x70), key(0xD2));
+        let (none_ckey, none_ekey) = (key(0x80), key(0xD3));
+        let (none_high_ckey, none_high_ekey) = (key(0x90), key(0xD4));
         let build_hash = "aabb".repeat(8);
         let keyring_hash = "ccdd".repeat(8);
 
@@ -517,16 +546,29 @@ mod tests {
                     (file_ckey, file_ekey),
                     (high_ckey, high_ekey),
                     (lone_ckey, lone_ekey),
+                    (gone_ckey, gone_ekey),
+                    (kept_ckey, kept_ekey),
+                    (none_ckey, none_ekey),
+                    (none_high_ckey, none_high_ekey),
                 ])),
             ),
             (
                 root_ekey,
                 blte_plain(&root(&[
-                    (0x1, &[(41, high_ckey), (43, lone_ckey)]),
-                    (0, &[(41, file_ckey)]),
+                    (
+                        0x1,
+                        &[
+                            (41, high_ckey),
+                            (43, lone_ckey),
+                            (44, kept_ckey),
+                            (45, none_high_ckey),
+                        ],
+                    ),
+                    (0, &[(41, file_ckey), (44, gone_ckey), (45, none_ckey)]),
                 ])),
             ),
             (file_ekey, blte_plain(b"hello file")),
+            (kept_ekey, blte_plain(b"high copy")),
         ];
         let mut archive = Vec::new();
         let mut entries = Vec::new();
@@ -575,6 +617,38 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// When local storage lacks the bytes of the record a lookup prefers,
+    /// the next record it holds is read: file 44's high-resolution copy,
+    /// its base copy missing. A file none of whose records it holds, or
+    /// whose only record it lacks, is named with that record's flags.
+    #[test]
+    fn a_record_local_storage_lacks_yields_to_the_next_it_holds() {
+        let dir = scratch("fallback");
+        let wow = dir.join("wow");
+        fake_install(&wow);
+        let lost = |ekey: u8| format!("ekey {} not in local storage", casc::hex(&key(ekey)));
+        for product in ["wow", "wowf"] {
+            let game = Game::open_product(&wow, product, None).unwrap();
+            let m = tact::root_find(game.root(), Some(44), None, 0x2)
+                .unwrap()
+                .unwrap();
+            assert_eq!((m.ckey, m.content), (key(0x60), 0), "the base copy first");
+            assert_eq!(game.fetch_fdid(44, 0x2).unwrap(), b"high copy");
+            assert_eq!(
+                game.fetch_fdid(45, 0x2).unwrap_err(),
+                format!(
+                    "fdid 45 (content 0x0; none of its 2 records in local storage): {}",
+                    lost(0xD3)
+                )
+            );
+            assert_eq!(
+                game.fetch_fdid(43, 0x2).unwrap_err(),
+                format!("fdid 43 (content 0x1): {}", lost(0xE0))
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn open_resolves_files_through_encoding_and_root() {
         let dir = scratch("open");
@@ -592,7 +666,7 @@ mod tests {
         assert_eq!(game.product, "wow");
         assert_eq!(game.build_label(), "12.0.0.1", "Retail's header as ever");
         assert_eq!(game.keys.len(), 4);
-        assert_eq!(game.root().len(), 24 + (12 + 2 * 28) + (12 + 28));
+        assert_eq!(game.root().len(), 24 + (12 + 4 * 28) + (12 + 3 * 28));
         assert_eq!(game.fetch_fdid(41, 0x2).unwrap(), b"hello file");
         assert_eq!(game.fetch_ckey(&file_ckey).unwrap(), b"hello file");
         assert!(
