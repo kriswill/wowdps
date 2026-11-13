@@ -28,6 +28,7 @@ use wowdps_daemon::history::{
     MemBackend, Retention, Store,
 };
 use wowdps_daemon::{DaemonOptions, run};
+use wowdps_model::Edition;
 use wowdps_proto::creatures::Creature;
 use wowdps_proto::history::{Affiliation, CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
@@ -175,7 +176,14 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
     assert!(raiders.iter().all(|p| p.logged && p.loadout.is_some()));
     assert!(raiders.iter().all(|p| p.class.is_some()));
     assert!(kill.players[0].dps > 0.0);
-    assert_eq!(kill.owner, None, "one log alone cannot name the logger");
+    // R31: the log's own flags name its writer, one log or not — the
+    // COMBATANT_INFO-logged raider the intersection names over two
+    // (`a_retail_owner_by_the_flag_is_the_one_combatant_info_names`).
+    assert_eq!(
+        kill.owner.as_deref(),
+        Some("Player-1168-0A1B2C01"),
+        "the logger"
+    );
     let facts = LogFacts::read(path);
     assert_eq!(
         kill.id,
@@ -788,7 +796,10 @@ fn a_flood_of_reads_cannot_drop_a_store() {
 
 /// A synthetic log: `n` pulls of one boss, each `dur_s` long, with one hit
 /// per pull by a named player; `kill[i]` decides the outcome. Timestamps
-/// advance 10 minutes per pull so ids and ordering are unambiguous.
+/// advance 10 minutes per pull so ids and ordering are unambiguous. The
+/// player is flagged a party member (0x512), not the logger (R31), so no
+/// card has an owner and no personal best is kept: retention's protected
+/// set is what these logs test.
 fn boss_log(pulls: &[(u32, bool)]) -> String {
     let mut out = String::from(
         "7/27/2026 20:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1\n\
@@ -803,7 +814,7 @@ fn boss_log(pulls: &[(u32, bool)]) -> String {
             ts(0)
         ));
         out.push_str(&format!(
-            "{}  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,{},{},0,0,0,0,0,nil,nil\n",
+            "{}  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x512,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,{},{},0,0,0,0,0,nil,nil\n",
             ts(1),
             1000 * (i as u64 + 1),
             1000 * (i as u64 + 1)
@@ -1219,6 +1230,148 @@ fn an_inferred_owner_survives_a_log_without_them() {
         card(3, 300, &[("G-alt", "Alt-Realm", true), ("G-c", "C", true)]),
     ];
     assert_eq!(store_of(&fresh, Retention::default()).owner(), None);
+}
+
+/// The store's cards opened again, as the next start opens them (which
+/// runs `Store::repair_owners`).
+fn reopened(store: &Store<MemBackend>, cfg: Retention) -> Store<MemBackend> {
+    let mut backend = MemBackend::new();
+    for dir in ["fights", "rows"] {
+        for name in store.backend().list(dir) {
+            backend
+                .write(dir, &name, &store.backend().read(dir, &name).unwrap())
+                .unwrap();
+        }
+    }
+    Store::open(backend, cfg)
+}
+
+/// Every card's owner, by id.
+fn owners(store: &Store<MemBackend>) -> Vec<(String, Option<String>)> {
+    store
+        .cards()
+        .iter()
+        .map(|c| (c.id.clone(), c.owner.clone()))
+        .collect()
+}
+
+/// R31 on Retail: where COMBATANT_INFO and the flag both speak, the owner
+/// the flag stamps is the one today's inference names. Two logs of one
+/// raider (the sample's, and the night after with two other raiders) leave
+/// exactly that raider in both logs' COMBATANT_INFO; read as logs this
+/// daemon does not follow (the flag unread, `own_log` false) the cards get
+/// their owner from the intersection, the first log's at the next start;
+/// read as its own, from the flag at once. Every card's owner and the
+/// store's owner agree.
+#[test]
+fn a_retail_owner_by_the_flag_is_the_one_combatant_info_names() {
+    let tmp = Temp::new("flag-ci");
+    let sample = std::fs::read_to_string(SAMPLE).unwrap();
+    let night = sample
+        .replace("7/27/2026", "7/28/2026")
+        .replace("0A1B2C02", "0A1B2C92")
+        .replace("0A1B2C03", "0A1B2C93");
+    let a = tmp.join("WoWCombatLog-a.txt");
+    let b = tmp.join("WoWCombatLog-b.txt");
+    std::fs::write(&a, &sample).unwrap();
+    std::fs::write(&b, &night).unwrap();
+    let read = |own_log: bool| {
+        let mut store = mem(Retention::default());
+        for path in [&a, &b] {
+            let facts = LogFacts::read(path);
+            for mut fight in closed_fights(path) {
+                fight.own_log = own_log;
+                store.store(&fight, facts);
+            }
+        }
+        reopened(&store, Retention::default())
+    };
+    let today = read(false);
+    let flagged = read(true);
+    let me = Some(("Player-1168-0A1B2C01".to_string(), true));
+    assert_eq!(today.owner(), me, "the intersection names the raider");
+    assert_eq!(flagged.owner(), me);
+    assert!(
+        today.cards().len() >= 4 && today.cards().iter().all(|c| c.owner.is_some()),
+        "{:?}",
+        owners(&today)
+    );
+    assert_eq!(owners(&flagged), owners(&today));
+}
+
+/// R31 on Forever, whose log carries no COMBATANT_INFO: with nothing
+/// configured, every card the logger fought on is theirs (`forever.txt`'s
+/// one pull; `roles.txt`'s, but for the two trash fights of other groups
+/// the log overheard), a log this daemon does not follow names no one, and
+/// a configured character on the roster wins over the flag.
+#[test]
+fn a_forever_card_is_owned_by_the_logger_its_flags_name() {
+    let fixture = |name: &str| {
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures")).join(name)
+    };
+    let cfg = || Retention {
+        store_trash: true,
+        ..Retention::default()
+    };
+    for (log, logger, owned) in [
+        ("forever.txt", "Player-6101-0A2B3C01", 1),
+        ("roles.txt", "Player-6101-0C1D2E01", 3),
+    ] {
+        let path = fixture(log);
+        let fights = closed_fights(&path);
+        let mut store = mem(cfg());
+        store_all(&mut store, &path, &fights);
+        let cards = store.cards();
+        assert!(cards.iter().all(|c| c.edition() == Edition::Forever));
+        for c in cards {
+            let on = c.players.iter().any(|p| p.guid == logger);
+            assert_eq!(
+                c.owner.as_deref(),
+                on.then_some(logger),
+                "{log}: {}",
+                c.name
+            );
+        }
+        assert_eq!(
+            cards.iter().filter(|c| c.owner.is_some()).count(),
+            owned,
+            "{log}: {:?}",
+            owners(&store)
+        );
+        assert_eq!(
+            store.owner_in(Edition::Forever),
+            Some((logger.to_string(), true))
+        );
+
+        // Read from a folder the daemon does not follow: nobody.
+        let mut elsewhere = mem(cfg());
+        for mut fight in fights.clone() {
+            fight.own_log = false;
+            elsewhere.store(&fight, LogFacts::read(&path));
+        }
+        assert!(elsewhere.cards().iter().all(|c| c.owner.is_none()), "{log}");
+    }
+
+    // A configured name on the roster is the owner, the logger beside it.
+    let path = fixture("roles.txt");
+    let mut store = mem(Retention {
+        characters: vec!["Mirela Vale".to_string()],
+        ..cfg()
+    });
+    store_all(&mut store, &path, &closed_fights(&path));
+    let mirela = "Player-6101-0C1D2E02";
+    let mut named = 0;
+    for c in store.cards() {
+        let has = |g: &str| c.players.iter().any(|p| p.guid == g);
+        let want = if has(mirela) {
+            named += 1;
+            Some(mirela)
+        } else {
+            Some("Player-6101-0C1D2E01").filter(|g| has(g))
+        };
+        assert_eq!(c.owner.as_deref(), want, "{}", c.name);
+    }
+    assert!(named > 0, "Mirela fought here");
 }
 
 #[test]
@@ -2428,34 +2581,46 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
     ));
 }
 
-/// One log alone cannot name the logger, so the mock's cards carry no
-/// owner — until a character is named, the way `history_characters` names
-/// one to the real daemon; then every card they were on is theirs.
+/// The mock stamps a card's owner as the real daemon does: with nothing
+/// configured, the character the log's own flags name its writer (R31,
+/// Thraxx in the fixture) on every card they are on; a character
+/// `history_characters` names wins wherever they fought, and the writer
+/// keeps the rest.
 #[test]
 fn the_mock_stamps_the_owner_the_config_would_name() {
     use wowdps_daemon::mock::MockDaemon;
 
+    let guid_of = |c: &FightCard, name: &str| {
+        c.players
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.guid.clone())
+    };
     let plain = MockDaemon::fixture().with_history();
-    assert!(!plain.history().cards().is_empty());
-    assert!(plain.history().cards().iter().all(|c| c.owner.is_none()));
-
-    let named = MockDaemon::fixture()
-        .with_characters(&["Thraxx-Nebula-US".to_string()])
-        .with_history();
-    let cards = named.history().cards();
-    assert_eq!(cards.len(), plain.history().cards().len());
+    let cards = plain.history().cards();
+    assert!(!cards.is_empty());
     for c in cards {
-        let thraxx = c.players.iter().find(|p| p.name == "Thraxx-Nebula-US");
-        assert_eq!(
-            c.owner.as_deref(),
-            thraxx.map(|p| p.guid.as_str()),
-            "{}",
-            c.name
-        );
+        assert_eq!(c.owner, guid_of(c, "Thraxx-Nebula-US"), "{}", c.name);
     }
     assert!(
         cards.iter().any(|c| c.owner.is_some()),
         "Thraxx fought here"
+    );
+
+    let named = MockDaemon::fixture()
+        .with_characters(&["Mírelle-Nebula-US".to_string()])
+        .with_history();
+    let cards = named.history().cards();
+    assert_eq!(cards.len(), plain.history().cards().len());
+    for c in cards {
+        let want = guid_of(c, "Mírelle-Nebula-US").or_else(|| guid_of(c, "Thraxx-Nebula-US"));
+        assert_eq!(c.owner, want, "{}", c.name);
+    }
+    assert!(
+        cards
+            .iter()
+            .any(|c| c.owner.is_some() && c.owner == guid_of(c, "Mírelle-Nebula-US")),
+        "Mírelle fought here"
     );
 }
 
@@ -4365,8 +4530,10 @@ fn a_daemon_updates_a_stale_addon_and_files_the_saved_variables_it_finds() {
         None,
         "never seen by the addon"
     );
-    // Spec §9a: the addon's own character is the owner, one log or not.
-    assert_eq!(c.owner.as_deref(), Some("Player-1168-0A1B2C02"));
+    // R31: the log's own flags name the character who wrote it, ahead of
+    // the addon's set (which names another of the account's characters
+    // here, one this log did not write).
+    assert_eq!(c.owner.as_deref(), Some("Player-1168-0A1B2C01"));
     stop(d);
 }
 
@@ -4417,8 +4584,8 @@ fn a_card_is_owned_by_the_account_character_on_it() {
             ..Retention::default()
         },
     );
-    assert_eq!(store.owner_of(&main).as_deref(), Some("Player-1-B"));
-    assert_eq!(store.owner_of(&alt_night), None);
+    assert_eq!(store.owner_of(&main, None).as_deref(), Some("Player-1-B"));
+    assert_eq!(store.owner_of(&alt_night, None), None);
     assert_eq!(
         store.owner(),
         Some(("Player-1-B".to_string(), false)),
@@ -4428,8 +4595,11 @@ fn a_card_is_owned_by_the_account_character_on_it() {
     // the configured name still wins where both are on a card.
     let mut store = store;
     store.merge_affiliations(vec![affiliation("Player-1-C", "Templars", true, 3_000)]);
-    assert_eq!(store.owner_of(&alt_night).as_deref(), Some("Player-1-C"));
-    assert_eq!(store.owner_of(&main).as_deref(), Some("Player-1-B"));
+    assert_eq!(
+        store.owner_of(&alt_night, None).as_deref(),
+        Some("Player-1-C")
+    );
+    assert_eq!(store.owner_of(&main, None).as_deref(), Some("Player-1-B"));
     // And the merge repaired the stored card in place.
     assert_eq!(
         store
@@ -4494,6 +4664,17 @@ fn opening_the_store_repairs_owners_not_on_the_roster() {
     assert_eq!(store.card(&orphan.id).unwrap().owner, None);
 }
 
+/// A live fight's raid timeline as the engine answers it over a store that
+/// holds only this log: R31's logger (`Segment::logger`) marked `mine`, its
+/// card's stamped owner.
+fn live_marked(fight: &ClosedFight, view: wowdps_model::View) -> wowdps_model::RaidTimeline {
+    let mut raid = fight.segment.raid_timeline(view);
+    for d in &mut raid.deaths {
+        d.mine = fight.segment.logger() == Some(d.guid.as_str());
+    }
+    raid
+}
+
 /// v35 (R25): a stored fight answers with its raid timeline, rebuilt from
 /// the tiers the store keeps — and it is the live one's: the same deaths in
 /// the same order with the same killing blows, rezzes (rezzer named) and
@@ -4518,7 +4699,7 @@ fn a_stored_fight_carries_the_live_raid_timeline() {
             };
             let has_details = store.details(&id).is_some();
             for view in [View::Damage, View::Healing, View::Taken, View::Deaths] {
-                let live = fight.segment.raid_timeline(view);
+                let live = live_marked(&fight, view);
                 let stored = store
                     .stored_fight(&id, view, None, None)
                     .and_then(|f| f.raid)
@@ -4702,11 +4883,7 @@ fn a_stored_fight_rebuilds_its_rezzes_as_live_has_them() {
             .stored_fight(&id, view, None, None)
             .and_then(|f| f.raid)
             .expect("a timeline");
-        assert_eq!(
-            stored.deaths,
-            fight.segment.raid_timeline(view).deaths,
-            "{view:?}"
-        );
+        assert_eq!(stored.deaths, live_marked(fight, view).deaths, "{view:?}");
     }
 }
 

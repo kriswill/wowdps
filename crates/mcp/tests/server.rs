@@ -1271,8 +1271,8 @@ fn history_tools_answer_over_the_store() {
     assert_eq!(str_of(&all[1], "result"), "kill");
     assert!(str_of(&all[0], "date").ends_with(" UTC"));
     assert_eq!(str_of(&all[0], "build"), "12.0.0");
-    // Default `players: me`: no roster, its size, and `me` — null here,
-    // since one log alone cannot name the owner (spec §9).
+    // Default `players: me`: no roster, its size, and `me` — R31: the
+    // character the log's own flags name its writer, one log or not.
     assert_eq!(doc.get("total").and_then(Json::as_u64), Some(2));
     assert_eq!(
         doc.get("next_after_id").and_then(Json::as_str),
@@ -1286,7 +1286,13 @@ fn history_tools_answer_over_the_store() {
     // holds four players, not three; Σ effective over a card must equal
     // Σ damage.
     assert_eq!(all[1].get("roster_size").and_then(Json::as_u64), Some(4));
-    assert_eq!(all[1].get("me"), Some(&Json::Null));
+    assert_eq!(
+        all[1]
+            .get("me")
+            .and_then(|m| m.get("key"))
+            .and_then(Json::as_str),
+        Some("Player-1168-0A1B2C01")
+    );
     // `players: all`: the roster, each row with a role.
     let reply = drive(
         &mut bridge,
@@ -1400,7 +1406,8 @@ fn history_tools_answer_over_the_store() {
     assert_eq!(fights(&tool_doc(&reply[2])).len(), 0);
     assert!(is_error(&reply[3]));
     // `me` follows `player`: with one named, every fight's `me` block is
-    // that player's graded row (the owner's — null in a lone log — otherwise).
+    // that player's graded row (the owner's otherwise: R31, the log's
+    // writer, Thraxx, one log or not).
     for f in fights(&tool_doc(&reply[1])) {
         let me = f.get("me").cloned().expect("me present");
         assert_eq!(str_of(&me, "name"), name, "{me:?}");
@@ -1408,7 +1415,13 @@ fn history_tools_answer_over_the_store() {
         assert!(me.get("dps_count").and_then(Json::as_u64).is_some());
         assert_eq!(f.get("peer"), Some(&Json::Null), "peer semantics unchanged");
     }
-    assert_eq!(fights(&tool_doc(&reply[0]))[0].get("me"), Some(&Json::Null));
+    assert_eq!(
+        fights(&tool_doc(&reply[0]))[0]
+            .get("me")
+            .and_then(|m| m.get("key"))
+            .and_then(Json::as_str),
+        Some("Player-1168-0A1B2C01")
+    );
 
     // The fixture's wipe is 45 s: under the 60 s details minimum, so a
     // damage drill says the details were never written, not demoted.
@@ -1955,10 +1968,14 @@ const TAKEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/taken
 /// Only the encounter is stored (`store_trash: false`), so the store settles
 /// at one card.
 fn taken_daemon(tag: &str, owner: Option<&str>) -> (Temp, Bridge) {
+    taken_daemon_over(tag, owner, TAKEN)
+}
+
+fn taken_daemon_over(tag: &str, owner: Option<&str>, log: &str) -> (Temp, Bridge) {
     let tmp = Temp::new(tag);
     let mut opts = history_opts(&tmp);
     opts.characters = owner.map(|o| vec![o.to_string()]).unwrap_or_default();
-    let socket = start_daemon_with(&tmp, TAKEN, |o| o.history = Some(opts));
+    let socket = start_daemon_with(&tmp, log, |o| o.history = Some(opts));
     let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
     wait_for_store(&mut bridge, 1);
     (tmp, bridge)
@@ -2290,9 +2307,17 @@ fn history_filters_fights_by_the_subjects_role() {
 
 /// Without an owner and without `player` there is no subject: the daemon
 /// skips the role filter, and the answer says so instead of pretending.
+/// The log is `taken.txt` with its writer flagged a party member (0x512),
+/// so nothing names an owner (R31): nothing configured, one log.
 #[test]
 fn history_role_without_a_subject_is_reported_not_applied() {
-    let (_tmp, mut bridge) = taken_daemon("taken-role-nosubject", None);
+    let dir = Temp::new("taken-role-nosubject-log");
+    let log = dir.0.join("taken-unflagged.txt");
+    let text = std::fs::read_to_string(TAKEN).expect("taken.txt");
+    assert!(text.contains(",0x511,"), "the fixture names its writer");
+    std::fs::write(&log, text.replace(",0x511,", ",0x512,")).expect("write");
+    let (_tmp, mut bridge) =
+        taken_daemon_over("taken-role-nosubject", None, log.to_str().expect("utf-8"));
     let reply = drive(
         &mut bridge,
         &[
@@ -2784,8 +2809,9 @@ fn the_fight_tool_carries_the_raid_timeline() {
 /// never takes: the history thread resolves the account's characters from
 /// its config (`history_characters`) and publishes them, the hub hands them
 /// to the engine each tick, and every snapshot's rows are marked from
-/// them. The `fight` tool says `mine: true` on that player's row alone,
-/// and on their deaths in the raid timeline.
+/// them. The `fight` tool says `mine: true` on that player's rows and on
+/// their deaths in the raid timeline — and (R31) on the log's own writer's,
+/// whom no configuration has to name.
 #[test]
 fn the_real_daemon_marks_the_configured_character_mine() {
     let tmp = Temp::new("mine");
@@ -2813,16 +2839,18 @@ fn the_real_daemon_marks_the_configured_character_mine() {
                 Some(Json::Arr(r)) => r.clone(),
                 other => panic!("no rows: {other:?}"),
             };
+            // R31: and the character the log's own flags name its writer
+            // (Thraxx): every character of the account is "you".
+            let ours = |p: &str| p.starts_with("Mírelle") || p.starts_with("Thraxx");
             for r in &rows {
                 let mine = r.get("mine") == Some(&Json::Bool(true));
-                let hers = str_of(r, "player").starts_with("Mírelle");
-                assert_eq!(mine, hers, "{view}: {r:?}");
-                marked += usize::from(mine);
+                assert_eq!(mine, ours(str_of(r, "player")), "{view}: {r:?}");
+                marked += usize::from(mine && str_of(r, "player").starts_with("Mírelle"));
             }
             if let Some(Json::Arr(deaths)) = doc.get("raid").and_then(|r| r.get("deaths")) {
                 for d in deaths {
                     let mine = d.get("mine") == Some(&Json::Bool(true));
-                    assert_eq!(mine, str_of(d, "player").starts_with("Mírelle"), "{d:?}");
+                    assert_eq!(mine, ours(str_of(d, "player")), "{d:?}");
                 }
             }
         }

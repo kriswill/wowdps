@@ -88,10 +88,16 @@ fn closed_fights(path: &Path) -> Vec<ClosedFight> {
         &mut events,
     );
     engine.on_tail(TailEvent::CaughtUp, &mut events);
+    // Read as a log this daemon does not follow (R31): its writer's
+    // flags name no owner, so the owner and every personal best are
+    // what each test sets up, as they were before the flag was read.
     events
         .iter()
         .filter_map(|e| match e {
-            EngineEvent::Closed(id) => engine.take_closed(*id),
+            EngineEvent::Closed(id) => engine.take_closed(*id).map(|mut f| {
+                f.own_log = false;
+                f
+            }),
             EngineEvent::Opened(_) => None,
         })
         .collect()

@@ -668,6 +668,8 @@ impl Engine {
                 byte_range: None,
                 aborted: false,
                 members: Vec::new(),
+                // R31: the engine follows its own source's log.
+                own_log: true,
             });
         }
         let ord = *self.visit_ids.iter().find(|(_, v)| **v == id)?.0;
@@ -698,6 +700,7 @@ impl Engine {
             byte_range: None,
             aborted: false,
             members,
+            own_log: true,
         })
     }
 
@@ -1712,14 +1715,15 @@ impl Engine {
                 let mut raid = seg.filter(|_| *with_raid).map(|s| s.raid_timeline(*view));
                 // v35: the account's characters are "you" — the meter's by
                 // guid (an enemy's rows are nobody's), a drill's players by
-                // the names this fight gives them, and their deaths.
+                // the names this fight gives them, and their deaths; R31:
+                // and the character the fight's own lines name its logger.
                 if let Some(s) = seg {
-                    let mine = self.mine.of(Edition::from_project_id(s.project_id));
+                    let mine = self.mine.in_segment(s);
                     if *view != View::EnemyTaken {
                         mine.mark_rows(&mut rows);
                     }
                     if let Some(b) = breakdown.as_mut() {
-                        mine.mark_breakdown(b, *view == View::EnemyTaken, &self.mine.names_in(s));
+                        mine.mark_breakdown(b, *view == View::EnemyTaken, &mine.names_in(s));
                     }
                     if let Some(r) = raid.as_mut() {
                         mine.mark_raid(r);
@@ -1749,9 +1753,13 @@ impl Engine {
                 let roles = seg.map(Roles::of).unwrap_or_default();
                 let edition =
                     seg.map_or(Edition::Retail, |s| Edition::from_project_id(s.project_id));
+                let logger = seg.and_then(|s| s.logger());
                 let side = |guid: &str| {
-                    let mut side =
-                        self.mine_side(compare_side(seg, guid, *view, *range, *spell), edition);
+                    let mut side = self.mine_side(
+                        compare_side(seg, guid, *view, *range, *spell),
+                        edition,
+                        logger,
+                    );
                     roles.mark_rows(std::slice::from_mut(&mut side.total));
                     Box::new(side)
                 };
@@ -1777,9 +1785,19 @@ impl Engine {
         }
     }
 
-    /// v35: a comparison's side is one of the account's characters, or not.
-    fn mine_side(&self, mut side: CompareSide, edition: Edition) -> CompareSide {
-        side.total.mine = self.mine.of(edition).owns(&side.guid, &side.total.label);
+    /// v35: a comparison's side is one of the account's characters, or not
+    /// (R31: the fight's logger is).
+    fn mine_side(
+        &self,
+        mut side: CompareSide,
+        edition: Edition,
+        logger: Option<&str>,
+    ) -> CompareSide {
+        side.total.mine = self
+            .mine
+            .of(edition)
+            .logged_by(logger)
+            .owns(&side.guid, &side.total.label);
         side
     }
 

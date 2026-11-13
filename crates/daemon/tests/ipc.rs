@@ -308,7 +308,16 @@ fn watching_live_serves_rows_identical_to_a_direct_replay() {
     assert_eq!(info.duration_ms, 45_000);
     assert_eq!(info.success, Some(false));
     assert!(!info.live, "history is never live");
-    assert_eq!(rows, want.rows(View::Damage), "byte-identical rows");
+    // R31: the daemon marks the pull's logger "you", store or none.
+    let mut direct = want.rows(View::Damage);
+    for r in &mut direct {
+        r.mine = want.logger() == Some(r.key.as_str());
+    }
+    assert!(
+        direct.iter().any(|r| r.mine),
+        "the fixture names its logger"
+    );
+    assert_eq!(rows, direct, "byte-identical rows");
     assert_eq!(segment_count, 5, "4 segments + the visit overall (R10)");
     assert_eq!(source.as_deref(), Some("sample.txt"));
     assert!(seq >= 1);

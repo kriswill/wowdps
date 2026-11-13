@@ -1,8 +1,9 @@
 //! v35: the daemon marks the reader's own characters `mine` — on the
 //! meter's rows, on the drill rows that name a player, on the raid
 //! timeline's deaths and on a stored fight's rows — from the account's
-//! characters as the history store knows them. Nobody is marked while the
-//! store knows nobody; nothing is ever stored with the flag.
+//! characters as the history store knows them, and (R31) each fight's own
+//! logger. While the store knows nobody the logger alone is marked; nothing
+//! is ever stored with the flag.
 
 use wowdps_core::model::View;
 use wowdps_daemon::history::Backend;
@@ -100,15 +101,23 @@ fn the_accounts_character_is_mine_wherever_the_answer_names_him() {
     assert!(healed, "somebody in the fixture heals Thraxx");
 }
 
-/// A store that knows nobody marks nobody.
+/// A store that knows nobody marks the fight's own logger alone (R31): the
+/// character its unit flags name as the one writing the log, Thraxx in the
+/// fixture, with nothing configured and no store to ask.
 #[test]
-fn nobody_is_mine_while_the_store_knows_nobody() {
+fn only_the_logger_is_mine_while_the_store_knows_nobody() {
     let mut mock = MockDaemon::fixture();
     for view in [View::Damage, View::Deaths] {
         let (rows, _, raid) = watch(&mut mock, view, None);
         assert!(!rows.is_empty());
-        assert!(mine(&rows).is_empty(), "{view:?}");
-        assert!(raid.is_some_and(|r| r.deaths.iter().all(|d| !d.mine)));
+        let there = rows.iter().any(|r| r.key == THRAXX);
+        let want: &[&str] = if there { &[THRAXX] } else { &[] };
+        assert_eq!(mine(&rows), want, "{view:?}");
+        let raid = raid.expect("a timeline");
+        assert!(
+            raid.deaths.iter().all(|d| d.mine == (d.guid == THRAXX)),
+            "{view:?}"
+        );
     }
 }
 

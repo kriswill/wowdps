@@ -149,6 +149,12 @@ pub struct ClosedFight {
     /// A keyed visit's member bosses (Encounter segments), pull order —
     /// listed on the key's card so a reader can drill into them.
     pub members: Vec<KeyBoss>,
+    /// R31: the log is one the daemon follows — a source's file, or a log
+    /// in a source's folder — so it was written on this machine, and the
+    /// character its unit flags name as the logger
+    /// (`Segment::logger`) is one of the account's. A log imported from
+    /// anywhere else (a friend's) is not: its logger is theirs.
+    pub own_log: bool,
 }
 
 /// One historical segment the import path asked the loader pool to parse.
@@ -916,8 +922,9 @@ impl<B: Backend> Worker<B> {
                     job.meta.kind == SegmentKind::Overall,
                 ));
                 if let Some(drill) = job.drill.clone() {
+                    let own = self.follows(&job.log.path);
                     let fight = result.ok().and_then(|loaded| {
-                        let fight = fight_from_import(&job, loaded.meter.as_deref()?)?;
+                        let fight = fight_from_import(&job, loaded.meter.as_deref()?, own)?;
                         let facts = self.facts(&fight.log.path);
                         Some(self.store.derived_fight_in(
                             &self.reply.mine(),
@@ -940,7 +947,8 @@ impl<B: Backend> Worker<B> {
                     Ok(loaded) => {
                         let mut changed = None;
                         if let Some(meter) = loaded.meter.as_deref()
-                            && let Some(fight) = fight_from_import(&job, meter)
+                            && let Some(fight) =
+                                fight_from_import(&job, meter, self.follows(&job.log.path))
                         {
                             let facts = self.facts(&fight.log.path);
                             changed = if job.regrade {
@@ -1037,6 +1045,17 @@ impl<B: Backend> Worker<B> {
         // of the account's characters. What the hub marks live rows by, and
         // what this thread's own stored answers are marked by.
         self.reply.set_mine(mine);
+    }
+
+    /// R31: whether `path` is a log this daemon follows — one of its
+    /// sources' files, or a combat log in one of its sources' folders — and
+    /// so one written on this machine, whose logger is the account's
+    /// character. A file imported from anywhere else is not.
+    fn follows(&self, path: &Path) -> bool {
+        self.sources.iter().any(|s| match s {
+            SourceSpec::File(p) => same_file(p, path),
+            SourceSpec::Dir(d) => path.parent().is_some_and(|dir| same_file(dir, d)),
+        })
     }
 
     fn facts(&mut self, path: &Path) -> LogFacts {
@@ -1744,9 +1763,17 @@ pub fn visit_members(meter: &Meter, ord: u32) -> Vec<KeyBoss> {
         })
         .collect()
 }
+/// R31: the character a fight's own unit flags name as the one writing its
+/// log ([`Segment::logger`](wowdps_core::meter::Segment::logger)) — trusted
+/// as the account's only for a log this daemon follows
+/// ([`ClosedFight::own_log`]).
+pub fn logger_of(fight: &ClosedFight) -> Option<&str> {
+    fight.own_log.then(|| fight.segment.logger()).flatten()
+}
+
 /// Reassemble a `ClosedFight` from an import job's parsed slice — the same
 /// meter the engine would show for that segment.
-fn fight_from_import(job: &ImportJob, meter: &Meter) -> Option<ClosedFight> {
+fn fight_from_import(job: &ImportJob, meter: &Meter, own_log: bool) -> Option<ClosedFight> {
     let mut members = Vec::new();
     let (segment, visit) = match job.meta.kind {
         SegmentKind::Overall => {
@@ -1779,6 +1806,7 @@ fn fight_from_import(job: &ImportJob, meter: &Meter) -> Option<ClosedFight> {
         byte_range: Some(job.meta.byte_range),
         aborted: job.aborted,
         members,
+        own_log,
     })
 }
 
@@ -3323,7 +3351,7 @@ impl<B: Backend> Store<B> {
             return None;
         }
         let mut doc = extract(fight, facts, &id);
-        doc.card.owner = self.owner_of(&doc.card);
+        doc.card.owner = self.owner_of(&doc.card, logger_of(fight));
         // A pin is the user's decision: a rewrite (aborted → real, or an
         // older schema) carries it forward.
         doc.card.pinned = self.card(&id).is_some_and(|c| c.pinned);
@@ -3425,19 +3453,22 @@ impl<B: Backend> Store<B> {
     }
 
     /// Who "me" is ON THIS CARD: a player of the card who is one of the
-    /// account's characters — the configured names first, then the
-    /// addon's own-character set, then the owner of the card's edition
-    /// ([`Store::owner_in`]) when they are on the roster — else `None`.
-    /// Never a guid the card does not list: that owner is one character,
-    /// and a night on an alt is the alt's night (spec §9).
-    pub fn owner_of(&self, card: &FightCard) -> Option<String> {
+    /// account's characters — the configured names first; then (R31)
+    /// `logger`, the character the fight's own unit flags name as the one
+    /// writing a log this daemon follows ([`logger_of`]); then the addon's
+    /// own-character set; then the owner of the card's edition
+    /// ([`Store::owner_in`]) — each only when they are on the roster —
+    /// else `None`. Never a guid the card does not list: that owner is one
+    /// character, and a night on an alt is the alt's night (spec §9). A
+    /// caller with no fight in hand (a card read back, a repair) passes no
+    /// logger: the flag is read from a log's lines, never stored.
+    pub fn owner_of(&self, card: &FightCard, logger: Option<&str>) -> Option<String> {
         let wanted = &self.cfg.characters;
-        let configured = card
-            .players
-            .iter()
-            .filter(|p| !p.enemy)
-            .find(|p| name_matches(wanted, &p.name, card.edition()));
-        if let Some(p) = configured {
+        let ours = || card.players.iter().filter(|p| !p.enemy);
+        if let Some(p) = ours().find(|p| name_matches(wanted, &p.name, card.edition())) {
+            return Some(p.guid.clone());
+        }
+        if let Some(p) = logger.and_then(|g| ours().find(|p| p.guid == g)) {
             return Some(p.guid.clone());
         }
         if let Some(p) = card
@@ -3469,7 +3500,7 @@ impl<B: Backend> Store<B> {
                     .is_none_or(|o| !c.players.iter().any(|p| p.guid == o))
             })
             .filter_map(|(i, c)| {
-                let new = self.owner_of(c);
+                let new = self.owner_of(c, None);
                 (c.owner != new).then_some((i, new))
             })
             .collect();
@@ -3975,7 +4006,7 @@ impl<B: Backend> Store<B> {
                 // v46: an import's owner is the import's to say: none stays
                 // none, as `GetFight` and its replay's "you" say.
                 if c.owner.is_none() && !c.is_imported() {
-                    c.owner = self.owner_of(&c);
+                    c.owner = self.owner_of(&c, None);
                 }
                 // Likewise the guilds: what the addon knows NOW, on a card
                 // written before its file landed.
@@ -4014,7 +4045,7 @@ impl<B: Backend> Store<B> {
         let first_kill = kills.iter().min_by_key(|c| c.start_utc_ms).map(|c| {
             let mut c = (*c).clone();
             if c.owner.is_none() {
-                c.owner = self.owner_of(&c);
+                c.owner = self.owner_of(&c, None);
             }
             Box::new(c)
         });
@@ -4513,7 +4544,7 @@ impl<B: Backend> Store<B> {
             fight.segment.kind == SegmentKind::Overall,
         );
         let mut docs = extract(fight, facts, &id);
-        docs.card.owner = self.owner_of(&docs.card);
+        docs.card.owner = self.owner_of(&docs.card, logger_of(fight));
         let loadout = ask.drill.as_deref().and_then(|guid| {
             let hash = docs.card.players.iter().find(|p| p.guid == guid)?.loadout?;
             docs.loadouts
@@ -5385,7 +5416,7 @@ fn answer(
                 .filter(|_| crate::engine::compare_windows(view) && pa.is_some() && pb.is_some());
             let side = |guid: &str, p: Option<&PlayerSeries>| {
                 let mut s = stored_side(rows_doc, details, p, &card, guid, window, ask);
-                s.total.mine = mine.of(card.edition()).owns(&s.guid, &s.total.label);
+                s.total.mine = mine_on(mine, &card).owns(&s.guid, &s.total.label);
                 roles.mark_rows(std::slice::from_mut(&mut s.total));
                 s
             };
@@ -5629,6 +5660,15 @@ fn stored_side(
     }
 }
 
+/// The account's characters on `card`: its edition's, and (R31) the card's
+/// own stamped owner — which a card the store holds already brings to
+/// [`Mine`], and a fight parsed for an answer alone (`derived_fight_in`)
+/// does not. An import's owner is the import's "you", never the account's.
+fn mine_on<'a>(mine: &'a Mine, card: &'a FightCard) -> crate::mine::In<'a> {
+    mine.of(card.edition())
+        .logged_by(card.owner.as_deref().filter(|_| !card.is_imported()))
+}
+
 /// v35: mark a stored answer's rows `mine` — the meter's by guid, a drill's
 /// player-naming lists by the names `card` gives the account's characters,
 /// the raid timeline's deaths by guid. Answer time only: `row_json` never
@@ -5640,7 +5680,7 @@ fn mark_mine(
     breakdown: Option<&mut Breakdown>,
     raid: &mut wowdps_model::RaidTimeline,
 ) {
-    let mine = mine.of(card.edition());
+    let mine = mine_on(mine, card);
     mine.mark_rows(rows);
     mine.mark_raid(raid);
     if let Some(b) = breakdown {

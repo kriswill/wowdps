@@ -7,7 +7,9 @@
 //!
 //! Resolved by the history thread (it holds the store and the addon's
 //! records) and read by the hub on every snapshot it builds; a daemon with
-//! no store knows nobody, and nothing is marked.
+//! no store knows nobody by these. R31 adds the fight's own word: the
+//! character its unit flags name as the one writing the log
+//! (`Segment::logger`) is "you" in it ([`In::logged_by`]), store or none.
 
 use std::collections::HashSet;
 
@@ -46,16 +48,16 @@ impl Mine {
         In {
             mine: self,
             edition,
+            logger: None,
         }
     }
 
-    /// The names a segment knows the account's guids by.
-    pub fn names_in(&self, seg: &Segment) -> Vec<String> {
-        self.guids
-            .iter()
-            .filter_map(|g| seg.name_of(g))
-            .map(str::to_string)
-            .collect()
+    /// R31: the account's characters in `seg`, its edition's and its own
+    /// logger (`Segment::logger`) beside them: the engine's fights are the
+    /// logs it follows, written on this machine.
+    pub fn in_segment<'a>(&'a self, seg: &'a Segment) -> In<'a> {
+        self.of(Edition::from_project_id(seg.project_id))
+            .logged_by(seg.logger())
     }
 }
 
@@ -64,19 +66,46 @@ impl Mine {
 pub struct In<'a> {
     mine: &'a Mine,
     edition: Edition,
+    /// R31: the fight's own logger, "you" in it whoever else is.
+    logger: Option<&'a str>,
 }
 
-impl In<'_> {
+impl<'a> In<'a> {
+    /// R31: the character the fight's log names as its writer is the
+    /// account's in it too: a live segment's [`Segment::logger`], a card's
+    /// stamped owner. `None` adds nobody.
+    pub fn logged_by(self, logger: Option<&'a str>) -> Self {
+        Self {
+            logger: logger.or(self.logger),
+            ..self
+        }
+    }
+
     /// Is the player `guid`, called `name`, one of the account's?
     pub fn owns(&self, guid: &str, name: &str) -> bool {
-        self.mine.guids.contains(guid) || name_matches(&self.mine.names, name, self.edition)
+        self.logger == Some(guid)
+            || self.mine.guids.contains(guid)
+            || name_matches(&self.mine.names, name, self.edition)
+    }
+
+    /// The names `seg` knows the account's guids by, its logger's among
+    /// them — what a drill row keyed by NAME is matched against.
+    pub fn names_in(&self, seg: &Segment) -> Vec<String> {
+        self.mine
+            .guids
+            .iter()
+            .map(String::as_str)
+            .chain(self.logger.filter(|g| !self.mine.guids.contains(*g)))
+            .filter_map(|g| seg.name_of(g))
+            .map(str::to_string)
+            .collect()
     }
 
     /// The names the account's characters wear among `players` (guid,
     /// name) — what a drill row keyed by NAME is matched against.
-    pub fn names_among<'a>(
+    pub fn names_among<'p>(
         &self,
-        players: impl IntoIterator<Item = (&'a str, &'a str)>,
+        players: impl IntoIterator<Item = (&'p str, &'p str)>,
     ) -> Vec<String> {
         players
             .into_iter()
