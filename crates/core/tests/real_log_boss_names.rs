@@ -7,18 +7,20 @@
 //! - in those cuts, the hostile names one edit from a title piece (a
 //!   transposition, an insertion, a deletion or a substitution; case and
 //!   punctuation folded; both 5+ letters): none, one or several, and where
-//!   one, whether the cut took it (its units the only bosses) or refused it
-//!   for the share (none of them a boss);
+//!   one, whether the cut took it (its units the only bosses) or refused
+//!   it as the rule says (the cut opens several encounters, or the name
+//!   is not the strongest posted hostile, read here from the lines);
 //! - how many units the cut calls bosses there;
 //! - two distinct hostiles one edit apart anywhere, and hostiles one edit
 //!   from a title the exact rule already matched.
 //!
-//! Held: where one near-miss name is found, the cut either took it alone
-//! or refused it whole. Measured over this machine's 87 logs on
-//! 2026-11-13, before the near miss existed: the exact rule named nobody
-//! in 510 of 1,456 Retail cuts with hostiles and 2 of 18 Forever pulls;
-//! the near miss found one name in those 2 (encounter 2914, inside the
-//! health share) and none in the 510; no two hostiles were one edit apart.
+//! Held: a near-miss name is either taken alone or refused for a reason
+//! the rule gives. The title pieces are the cut's own (`title_parts`).
+//! Measured over this machine's 87 logs on 2026-11-13, before the near
+//! miss existed: the exact rule named nobody in 510 of 1,456 Retail cuts
+//! with hostiles and 2 of 18 Forever pulls; the near miss found one name
+//! in those 2 (encounter 2914, the strongest hostile both times) and none
+//! in the 510; no two hostiles were one edit apart.
 //!
 //! A real log carries real names: nothing here prints a name or a guid.
 //!
@@ -35,35 +37,58 @@
 
 mod real_log;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use wowdps_core::index::{SegmentMeta, load_segment_text, scan};
 use wowdps_core::meter::SegmentKind;
 use wowdps_core::model::replay::{EventKind, UnitKind};
-use wowdps_core::replay::{NoPlaced, cut};
+use wowdps_core::parser::parse_line;
+use wowdps_core::replay::{NoPlaced, cut, title_parts};
 
-/// The title and its comma / lone "and" pieces, lowercased (a copy of the
-/// cut's `title_parts` for the measurement).
-fn title_parts(title: &str) -> Vec<String> {
-    let mut parts = vec![title.to_ascii_lowercase()];
-    let lower = title.to_ascii_lowercase();
-    let spaced = lower.replace(',', " , ");
-    let mut piece: Vec<&str> = Vec::new();
-    for w in spaced.split_whitespace() {
-        if w == "," || w == "and" {
-            if !piece.is_empty() {
-                parts.push(piece.join(" "));
+/// The hostiles of a slice as its own lines show them, read here apart
+/// from the cut: each guid's first name and its most health over the
+/// blocks that post it (a readable place, map 0 only where the edition
+/// takes it for one; a player, a creature or a vehicle).
+fn hostiles_of<'a>(
+    slice: impl Iterator<Item = &'a str>,
+    zero_is_a_place: bool,
+) -> Vec<(String, u64)> {
+    let mut name: HashMap<String, String> = HashMap::new();
+    let mut hostile: BTreeSet<String> = BTreeSet::new();
+    let mut most: HashMap<String, u64> = HashMap::new();
+    for raw in slice {
+        let Some(line) = parse_line(raw) else {
+            continue;
+        };
+        for u in line.event.units().into_iter().flatten() {
+            if !u.guid.contains('-') {
+                continue;
             }
-            piece.clear();
-        } else {
-            piece.push(w);
+            name.entry(u.guid.clone()).or_insert_with(|| u.name.clone());
+            if u.flags & 0x40 != 0 && !u.guid.starts_with("Player-") {
+                hostile.insert(u.guid.clone());
+            }
+        }
+        if let Some(h) = &line.hp_hint
+            && h.pos.is_some_and(|p| p.map != 0 || zero_is_a_place)
+            && ["Player-", "Creature-", "Vehicle-"]
+                .iter()
+                .any(|k| h.unit_guid.starts_with(k))
+        {
+            let m = most.entry(h.unit_guid.clone()).or_insert(0);
+            *m = (*m).max(h.max);
         }
     }
-    if !piece.is_empty() {
-        parts.push(piece.join(" "));
-    }
-    parts
+    hostile
+        .into_iter()
+        .map(|g| {
+            (
+                name.get(&g).cloned().unwrap_or_default(),
+                most.get(&g).copied().unwrap_or(0),
+            )
+        })
+        .collect()
 }
 
 /// Case and punctuation folded: letters and digits lowercased, one space
@@ -129,7 +154,13 @@ struct Tally {
     cases: Vec<String>,
 }
 
-fn measure(label: &str, encounter: u32, c: &wowdps_core::model::replay::Cut, t: &mut Tally) {
+fn measure(
+    label: &str,
+    encounter: u32,
+    c: &wowdps_core::model::replay::Cut,
+    seen: &[(String, u64)],
+    t: &mut Tally,
+) {
     t.cuts += 1;
     let titles: BTreeSet<String> = c
         .events
@@ -214,8 +245,26 @@ fn measure(label: &str, encounter: u32, c: &wowdps_core::model::replay::Cut, t: 
             t.took += 1;
             verdict = ", taken";
         } else if its_bosses == 0 {
-            t.refused += 1;
-            verdict = ", refused for the share";
+            // A refusal the rule explains: several encounters, or a name
+            // not the strongest posted hostile (read here from the lines).
+            let fc: Vec<Vec<char>> = cand.iter().map(|n| fold(n)).collect();
+            let strongest = seen
+                .iter()
+                .filter(|(n, _)| fc.contains(&fold(n)))
+                .map(|(_, hp)| *hp)
+                .max()
+                .unwrap_or(0);
+            let top = seen.iter().map(|(_, hp)| *hp).max().unwrap_or(0);
+            if titles.len() > 1 {
+                t.refused += 1;
+                verdict = ", refused: several encounters";
+            } else if strongest == 0 || strongest < top {
+                t.refused += 1;
+                verdict = ", refused: not the strongest posted hostile";
+            } else {
+                verdict = ", REFUSED THOUGH THE STRONGEST";
+                t.broken.push(format!("{label} (encounter {encounter})"));
+            }
         } else {
             verdict = ", NEITHER TAKEN NOR REFUSED";
             t.broken.push(format!("{label} (encounter {encounter})"));
@@ -245,16 +294,25 @@ fn check(path: &str, edition: &str) {
         .iter()
         .filter(|m| m.pars_ms.is_some() && m.end_ms.is_some())
         .collect();
+    let zero = edition == "forever";
     for (n, meta) in pulls.iter().enumerate() {
         let text = load_segment_text(p, meta).unwrap();
         let c = cut(text.seeds(), text.slice(), &NoPlaced, None);
+        let seen = hostiles_of(text.slice(), zero);
         let enc = meta.encounter.as_ref().map_or(0, |e| e.id);
-        measure(&format!("pull #{n}"), enc, &c, &mut t);
+        measure(&format!("pull #{n}"), enc, &c, &seen, &mut t);
     }
     for (n, meta) in keys.iter().enumerate() {
         let text = load_segment_text(p, meta).unwrap();
         let c = cut(text.seeds(), text.slice(), &NoPlaced, None);
-        measure(&format!("key #{n} (map {})", c.head.map), 0, &c, &mut t);
+        let seen = hostiles_of(text.slice(), zero);
+        measure(
+            &format!("key #{n} (map {})", c.head.map),
+            0,
+            &c,
+            &seen,
+            &mut t,
+        );
     }
     println!(
         "{edition}: {} cuts ({} pulls, {} keys), {} with hostiles; exact names someone in {}, nobody in {}",
@@ -266,7 +324,7 @@ fn check(path: &str, edition: &str) {
         t.nobody
     );
     println!(
-        "{edition}: near-miss where exact names nobody: {:?}; the one name taken {} times, refused for the share {}",
+        "{edition}: near-miss where exact names nobody: {:?}; the one name taken {} times, refused as the rule says {}",
         t.near, t.took, t.refused
     );
     println!(
@@ -282,7 +340,7 @@ fn check(path: &str, edition: &str) {
     }
     assert!(
         t.broken.is_empty(),
-        "a near-miss name neither taken alone nor refused whole: {:?}",
+        "a near-miss name taken with others, or refused though the rule takes it: {:?}",
         t.broken
     );
 }

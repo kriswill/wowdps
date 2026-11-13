@@ -387,7 +387,7 @@ fn a_near_miss_of_the_title_names_the_boss() {
 }
 
 /// A near miss names nobody, and the health rule decides, when the one
-/// name a single edit away is too weak for the share (the Egg, renamed
+/// name a single edit away is not the strongest (the Egg, renamed
 /// "Eggling" under "Egglnig"), when two names are each a single edit away
 /// ("Ulateq" from both "Ula'tek" and "Ulateg"), or when the names are
 /// short (under five letters: "Ulak" from "Ula'k").
@@ -428,6 +428,98 @@ fn a_weak_doubled_or_short_near_miss_falls_back_to_health() {
         kinds(&short),
         [("Ula'k", UnitKind::Boss), ("Egg", UnitKind::Boss)],
         "four letters: no near miss"
+    );
+}
+
+/// A near-miss name weaker than another hostile takes nothing from it: a
+/// singular add ("Eggling", 5000) under a plural title ("Egglings") is one
+/// deletion away, but the boss of another name (Ula'tek, 10000) is the
+/// strongest, so the near miss names nobody and health keeps both bosses.
+#[test]
+fn a_near_miss_weaker_than_the_strongest_names_nobody() {
+    let strong_egg = (
+        "Creature-0-1-2-3-501-BB,0000000000000000,1000,1000",
+        "Creature-0-1-2-3-501-BB,0000000000000000,5000,5000",
+    );
+    let c = respelled(&[
+        strong_egg,
+        ("\"Egg\"", "\"Eggling\""),
+        ("\"Ula'tek\",16,20", "\"Egglings\",16,20"),
+    ]);
+    assert_eq!(
+        kinds(&c),
+        [("Ula'tek", UnitKind::Boss), ("Eggling", UnitKind::Boss)],
+        "health decides, as before the near miss"
+    );
+}
+
+/// Every unit of the near-miss name is a boss, the weak one beside the
+/// strongest (the Egg renamed "Ula'tek" too, under "Ulta'ek"); and a name a
+/// single edit from two pieces of one title ("Ulta'ek, Ulatec") is still
+/// one name, taken.
+#[test]
+fn a_near_miss_takes_every_unit_of_its_name_and_any_piece() {
+    let both = respelled(&[
+        ("\"Egg\"", "\"Ula'tek\""),
+        ("\"Ula'tek\",16,20", "\"Ulta'ek\",16,20"),
+    ]);
+    assert_eq!(
+        kinds(&both),
+        [("Ula'tek", UnitKind::Boss), ("Ula'tek", UnitKind::Boss)]
+    );
+    let strong_egg = (
+        "Creature-0-1-2-3-501-BB,0000000000000000,1000,1000",
+        "Creature-0-1-2-3-501-BB,0000000000000000,5000,5000",
+    );
+    let two_pieces = respelled(&[
+        strong_egg,
+        ("\"Ula'tek\",16,20", "\"Ulta'ek, Ulatec\",16,20"),
+    ]);
+    assert_eq!(
+        kinds(&two_pieces),
+        [("Ula'tek", UnitKind::Boss), ("Egg", UnitKind::Add)]
+    );
+}
+
+/// A cut of several encounters (a keystone run's) pools their titles and
+/// takes no near miss: the same pull, cut with a wipe of another encounter
+/// before it, falls back to health, where cut alone it is named by its
+/// transposed title.
+#[test]
+fn a_cut_of_several_encounters_takes_no_near_miss() {
+    let strong_egg = (
+        "Creature-0-1-2-3-501-BB,0000000000000000,1000,1000",
+        "Creature-0-1-2-3-501-BB,0000000000000000,5000,5000",
+    );
+    let mut all: Vec<String> = lines(0, 30)
+        .into_iter()
+        .map(|l| l.replace(strong_egg.0, strong_egg.1))
+        .collect();
+    let title = "ENCOUNTER_START,3000,\"Ula'tek\"";
+    all[5] = all[5].replace(title, "ENCOUNTER_START,3001,\"Another Warden\"");
+    all[7] = all[7].replace(
+        "ENCOUNTER_END,3000,\"Ula'tek\"",
+        "ENCOUNTER_END,3001,\"Another Warden\"",
+    );
+    all[8] = all[8].replace(title, "ENCOUNTER_START,3000,\"Ulta'ek\"");
+    let at = |from: usize| {
+        let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+        cut(
+            refs[..from].to_vec(),
+            refs[from..].to_vec(),
+            &NoPlaced,
+            None,
+        )
+    };
+    assert_eq!(
+        kinds(&at(8)),
+        [("Ula'tek", UnitKind::Boss), ("Egg", UnitKind::Add)],
+        "one encounter: the near miss"
+    );
+    assert_eq!(
+        kinds(&at(5)),
+        [("Ula'tek", UnitKind::Boss), ("Egg", UnitKind::Boss)],
+        "two encounters: health"
     );
 }
 

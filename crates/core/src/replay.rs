@@ -1371,8 +1371,11 @@ impl Cutter {
             .copied()
             .filter(|&g| hostile_npc(g) && parts.contains(&name_of(g).to_ascii_lowercase()))
             .collect();
-        // Named by nobody: a near miss of a title piece, else health.
-        let named = if named.is_empty() {
+        // Named by nobody: a near miss of a title piece, else health. A cut
+        // of several encounters (a keystone run's) pools their titles, so
+        // it takes no near miss: one would decide for every encounter.
+        let encounters: HashSet<&str> = self.titles.iter().map(String::as_str).collect();
+        let named = if named.is_empty() && encounters.len() == 1 {
             near_miss(
                 order
                     .iter()
@@ -1615,15 +1618,18 @@ fn npc_id(g: &str) -> Option<u32> {
         .flatten()
 }
 
-/// R29: when no hostile is named as a title or a piece of one, the one
-/// hostile NAME a single edit from such a piece ([`within_one_edit`]; case
-/// and punctuation folded, [`folded`]; both of [`NEAR_MISS_LETTERS`]
-/// letters or more) names the boss — every hostile of that name — provided
-/// the strongest of them has at least [`BOSS_SHARE`] of the strongest
-/// posted hostile's health (`top`). Several such names, or one too weak or
-/// never posted, name nobody, and the health rule decides as before. The
-/// client can spell an encounter's title and its creature apart (two
-/// letters swapped); the share keeps a near miss from crowning an add.
+/// R29: when no hostile is named as a title or a piece of one, in a cut of
+/// one encounter, the one hostile NAME a single edit from such a piece
+/// ([`within_one_edit`]; case and punctuation folded, [`folded`]; both of
+/// [`NEAR_MISS_LETTERS`] letters or more) names the boss — every hostile
+/// of that name — provided the strongest of them IS the strongest posted
+/// hostile (its most health at least `top`, every posted hostile's). Two
+/// such names, one weaker than another hostile, or one never posted name
+/// nobody, and the health rule decides as before. The client can spell an
+/// encounter's title and its creature apart (two letters swapped); asking
+/// for the strongest keeps a near miss (a singular add under a plural
+/// title) from taking the boss kind from a stronger hostile of another
+/// name, which health alone would keep.
 fn near_miss<'a>(
     hostiles: impl Iterator<Item = (Gix, &'a str)>,
     parts: &HashSet<String>,
@@ -1636,22 +1642,27 @@ fn near_miss<'a>(
         .map(|p| folded(p))
         .filter(|p| long(p))
         .collect();
+    // Each distinct name folded and read once: its fold when near a piece.
+    let mut near: HashMap<&str, Option<Vec<char>>> = HashMap::new();
     let mut found: Option<Vec<char>> = None;
     let mut units: HashSet<Gix> = HashSet::new();
     for (g, name) in hostiles {
-        let f = folded(name);
-        if !long(&f) || !pieces.iter().any(|p| within_one_edit(&f, p)) {
+        let f = near.entry(name).or_insert_with(|| {
+            let f = folded(name);
+            (long(&f) && pieces.iter().any(|p| within_one_edit(&f, p))).then_some(f)
+        });
+        let Some(f) = f else {
             continue;
-        }
+        };
         match &found {
-            Some(other) if *other != f => return HashSet::new(),
-            _ => found = Some(f),
+            Some(other) if other != f => return HashSet::new(),
+            _ => found = Some(f.clone()),
         }
         units.insert(g);
     }
     let strongest = units.iter().filter_map(|g| max_hp.get(g)).max().copied();
     match strongest {
-        Some(hp) if top > 0 && hp as f64 >= BOSS_SHARE * top as f64 => units,
+        Some(hp) if top > 0 && hp >= top => units,
         _ => HashSet::new(),
     }
 }
@@ -1698,9 +1709,9 @@ fn within_one_edit(a: &[char], b: &[char]) -> bool {
     }
 }
 
-/// A title's parts: the whole, then each name a comma or a lone "and"
-/// divides it into, lowercased (ASCII only).
-fn title_parts(title: &str) -> Vec<String> {
+/// R29: a title's parts — the whole, then each name a comma or a lone
+/// "and" divides it into, lowercased (ASCII only) — what names a boss.
+pub fn title_parts(title: &str) -> Vec<String> {
     let b = title.as_bytes();
     let at = |i: usize| b.get(i).copied();
     let word = |i: usize| at(i).is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_');

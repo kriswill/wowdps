@@ -17,7 +17,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 check() {
     local log="$1" golden="$2" actual rc=0
-    actual="$(gawk -f "$here/check.awk" "$log" "$log")" || rc=$?
+    # The folding reads letters as the locale does (R29's boss names):
+    # a UTF-8 one, whatever the caller's.
+    actual="$(LC_ALL=C.UTF-8 gawk -f "$here/check.awk" "$log" "$log")" || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "FAIL: $(basename "$log") — check.awk self-check failed (exit $rc)"
         return 1

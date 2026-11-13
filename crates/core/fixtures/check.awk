@@ -677,17 +677,38 @@ function r_side(s, g, f) { if (g ~ /-/ && and(strtonum(f), 0x40)) rH[s SUBSEP g]
 function r_name(s, g, n) { if (g ~ /-/ && !((s SUBSEP g) in rNm)) rNm[s SUBSEP g] = strip(n) }
 # An encounter title a cut's own ENCOUNTER_START names.
 function r_title(s, t) { rTn[s]++; rT[s SUBSEP rTn[s]] = t }
-# ---- R29 the bosses (`replay_bosses`, the units cut `boss`). A hostile NPC
-# (flagged 0x40 on a modeled line, no `Player-` guid) is a boss when a title
-# the cut opens names it — the whole title, or a piece its commas and lone
-# "and"s divide it into, case aside. Else, when none is so named, when
-# exactly ONE name among the hostiles is a single edit from such a piece —
-# two neighbors swapped, one letter inserted, deleted or substituted — with
-# case and punctuation folded and both of 5 letters or more, and its
-# strongest unit has at least 30% of the strongest posted hostile's most
-# health: every unit of that name. Else by health: every hostile with at
-# least 30% of the strongest posted one's (none posted, none is a boss).
+# ---- R29 the bosses: `replay_bosses`, the units cut `boss`, and
+# `replay_boss_npcs`, their creature ids summed (which units, not only how
+# many). A hostile NPC (flagged 0x40 on a modeled line, no `Player-` guid) is
+# a boss when a title the cut opens names it — the whole title, or a piece
+# its commas and lone "and"s divide it into, ASCII case aside. Else, when
+# none is so named and the cut opens ONE encounter (a keystone run's pooled
+# titles take none), when exactly one name among the hostiles is a single
+# edit from such a piece — two neighbors swapped, one letter inserted,
+# deleted or substituted — with case and punctuation folded and both of 5
+# letters or more, and its strongest unit is the strongest posted hostile
+# (its most health at least every other's; one never posted is none): every
+# unit of that name. Else by health: every hostile with at least 30% of the
+# strongest posted one's (none posted, none is a boss). The folding reads
+# letters as the locale does: verify.sh pins a UTF-8 one.
 function r_npc(s, g) { return ((s SUBSEP g) in rH) && g !~ /^Player-/ }
+# Lowercase, ASCII letters alone (the exact rule's case).
+function r_ascii_lower(n,   up, lo, i, c, out) {
+    up = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; lo = "abcdefghijklmnopqrstuvwxyz"; out = ""
+    for (i = 1; i <= length(n); i++) {
+        c = substr(n, i, 1)
+        out = out (index(up, c) ? substr(lo, index(up, c), 1) : c)
+    }
+    return out
+}
+# A guid's creature id: its sixth field, where the first is a word and the
+# second to sixth whole numbers and a seventh follows; else 0.
+function r_creature(g,   f, n, i) {
+    n = split(g, f, "-")
+    if (n < 7 || f[1] !~ /^[A-Za-z0-9_]+$/) return 0
+    for (i = 2; i <= 6; i++) if (f[i] !~ /^[0-9]+$/) return 0
+    return f[6] + 0
+}
 function r_fold(n,   f) {
     f = tolower(n)
     gsub(/[^[:alnum:][:space:]]/, "", f)
@@ -719,41 +740,55 @@ function r_title_parts(t, parts, np,   u, n, pc, i) {
     for (i = 1; i <= n; i++) parts[++np] = tolower(pc[i])
     return np
 }
-function r_bosses(s,   k, kk, g, i, np, parts, named, top, cnt, f, cf, several, nc, best, hit) {
-    np = 0
-    for (i = 1; i <= rTn[s]; i++) np = r_title_parts(rT[s SUBSEP i], parts, np)
+# Cut s's bosses into rBoss[s SUBSEP g] (each a 1).
+function r_bosses(s,   k, kk, g, i, np, parts, named, top, any, f, cf, several, best, hit, titles, nt, fold, isnear) {
+    np = 0; nt = 0
+    for (i = 1; i <= rTn[s]; i++) {
+        np = r_title_parts(rT[s SUBSEP i], parts, np)
+        if (!(rT[s SUBSEP i] in titles)) { titles[rT[s SUBSEP i]] = 1; nt++ }
+    }
     for (i = 1; i <= np; i++) named[parts[i]] = 1
     top = 0
     for (k in rU) {
         split(k, kk, SUBSEP); g = kk[2]
         if (kk[1] == s && r_npc(s, g) && rMax[s SUBSEP g] > top) top = rMax[s SUBSEP g]
     }
-    cnt = 0
+    any = 0
     for (k in rU) {
         split(k, kk, SUBSEP); g = kk[2]
-        if (kk[1] == s && r_npc(s, g) && (tolower(rNm[s SUBSEP g]) in named)) cnt++
+        if (kk[1] == s && r_npc(s, g) && (r_ascii_lower(rNm[s SUBSEP g]) in named)) { rBoss[s SUBSEP g] = 1; any = 1 }
     }
-    if (cnt) return cnt
-    cf = ""; several = 0; nc = 0; best = 0
-    for (k in rU) {
-        split(k, kk, SUBSEP); g = kk[2]
-        if (kk[1] != s || !r_npc(s, g)) continue
-        f = r_fold(rNm[s SUBSEP g])
-        if (r_letters(f) < 5) continue
-        hit = 0
-        for (i = 1; i <= np; i++) if (r_letters(r_fold(parts[i])) >= 5 && r_one_edit(f, r_fold(parts[i]))) hit = 1
-        if (!hit) continue
-        if (cf != "" && cf != f) several = 1
-        cf = f; nc++
-        if (rMax[s SUBSEP g] > best) best = rMax[s SUBSEP g]
+    if (any) return
+    if (nt == 1) {
+        cf = ""; several = 0; best = 0
+        for (k in rU) {
+            split(k, kk, SUBSEP); g = kk[2]
+            if (kk[1] != s || !r_npc(s, g)) continue
+            # Each distinct name folded and read once.
+            if (!(rNm[s SUBSEP g] in fold)) {
+                f = r_fold(rNm[s SUBSEP g]); hit = 0
+                if (r_letters(f) >= 5)
+                    for (i = 1; i <= np; i++) if (r_letters(r_fold(parts[i])) >= 5 && r_one_edit(f, r_fold(parts[i]))) hit = 1
+                fold[rNm[s SUBSEP g]] = f; isnear[rNm[s SUBSEP g]] = hit
+            }
+            if (!isnear[rNm[s SUBSEP g]]) continue
+            f = fold[rNm[s SUBSEP g]]
+            if (cf != "" && cf != f) several = 1
+            cf = f
+            if (rMax[s SUBSEP g] > best) best = rMax[s SUBSEP g]
+        }
+        if (cf != "" && !several && top > 0 && best >= top) {
+            for (k in rU) {
+                split(k, kk, SUBSEP); g = kk[2]
+                if (kk[1] == s && r_npc(s, g) && isnear[rNm[s SUBSEP g]]) rBoss[s SUBSEP g] = 1
+            }
+            return
+        }
     }
-    if (nc && !several && top > 0 && best >= 0.3 * top) return nc
-    cnt = 0
     if (top > 0) for (k in rU) {
         split(k, kk, SUBSEP); g = kk[2]
-        if (kk[1] == s && r_npc(s, g) && rMax[s SUBSEP g] >= 0.3 * top) cnt++
+        if (kk[1] == s && r_npc(s, g) && rMax[s SUBSEP g] >= 0.3 * top) rBoss[s SUBSEP g] = 1
     }
-    return cnt
 }
 function r_unit(s, g) { if (!((s SUBSEP g) in rU)) { rU[s SUBSEP g] = 1; rv[s SUBSEP "replay_units"]++ } }
 function r_src(s, g) { if (g != "" && g != "0000000000000000") r_unit(s, g) }
@@ -934,7 +969,13 @@ function r_emit(s, head,   i, it, n2, k, kk, rpl, rmp) {
         else if (it[1] == "gone") { if ((s SUBSEP it[2]) in rSum) { r_unit(s, it[2]); r_count(s, "placed_gone") } }
     }
     rv[s SUBSEP "replay_floor"] = rFl[s]
-    rv[s SUBSEP "replay_bosses"] = r_bosses(s)
+    r_bosses(s)
+    for (k in rBoss) {
+        split(k, kk, SUBSEP)
+        if (kk[1] != s) continue
+        rv[s SUBSEP "replay_bosses"]++
+        rv[s SUBSEP "replay_boss_npcs"] += r_creature(kk[2])
+    }
     for (i = 1; i in rnames; i++)
         printf "%s\t*\treplay_%s\t%d\n", head, rnames[i], rv[s SUBSEP "replay_" rnames[i]] + 0
     n2 = 0
@@ -1684,7 +1725,7 @@ END {
     # R29: each closed boss pull's replay cut, then each finished keystone
     # run's ("K<n>", kind Key, its name and level, timed or over, its START to
     # its END) — `r_emit`'s rows.
-    split("units posts absorb pools pool_sum floor affixes affix_sum hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped buff_applied buff_removed buff_dose placed_cast placed_summon placed_touch placed_gone markers bosses", rnames, " ")
+    split("units posts absorb pools pool_sum floor affixes affix_sum hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped buff_applied buff_removed buff_dose placed_cast placed_summon placed_touch placed_gone markers bosses boss_npcs", rnames, " ")
     for (s = 1; s <= nseg; s++) {
         if (!(s in rEnc) || segEnd[s] == "") continue
         dur = segEnd[s] - segStart[s]

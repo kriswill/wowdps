@@ -1137,6 +1137,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_placed_gone	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_markers	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_bosses	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_boss_npcs	990011
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	0	replay_map_posts	40
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	replay_posts	9
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	replay_posts	6
@@ -1177,6 +1178,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_placed_gone	0
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_markers	0
 2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_bosses	1
+2	Encounter	Aku'mai	kill	40000	2910	1	*	replay_boss_npcs	990012
 2	Encounter	Aku'mai	kill	40000	2910	1	0	replay_map_posts	35
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	replay_posts	4
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	replay_posts	5

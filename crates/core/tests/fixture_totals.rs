@@ -571,11 +571,11 @@ fn roles_fixture_totals_match_expected() {
     );
 }
 
-/// R29's boss rule: a Forever log of three pulls — a title the client
+/// R29's boss rule: a Forever log of four pulls — a title the client
 /// spells two letters apart from its creature, adds over the share beside
-/// it; a title naming its creature exactly; a near miss too weak for the
-/// share — and every pre-existing metric beside them. A missing golden
-/// FAILS.
+/// it; a title naming its creature exactly; a near miss weaker than another
+/// hostile; an accented title one swap from its creature — and every
+/// pre-existing metric beside them. A missing golden FAILS.
 #[test]
 fn bosses_fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/bosses.txt", "fixtures/bosses.expected.tsv");

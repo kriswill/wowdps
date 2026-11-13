@@ -617,6 +617,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_placed_gone	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_markers	6
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_bosses	1
+1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_boss_npcs	500
 1	Encounter	Ula'tek	kill	30000	3000	16	2434	replay_map_posts	17
 1	Encounter	Ula'tek	kill	30000	3000	16	2435	replay_map_posts	2
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	replay_posts	3
@@ -656,6 +657,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_placed_gone	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_markers	2
 2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_bosses	1
+2	Encounter	Twin Venoms	wipe	20000	3001	16	*	replay_boss_npcs	600
 2	Encounter	Twin Venoms	wipe	20000	3001	16	2434	replay_map_posts	2
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	replay_posts	1
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_units	3
@@ -691,6 +693,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_placed_gone	0
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_markers	0
 4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_bosses	1
+4	Encounter	Frost Warden	kill	31000	3010	8	*	replay_boss_npcs	900
 4	Encounter	Frost Warden	kill	31000	3010	8	2095	replay_map_posts	4
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	replay_posts	1
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-B	replay_posts	2
@@ -727,6 +730,7 @@ K1	Key	The Glass Hollow +14	timed	119000			*	replay_placed_touch	1
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_placed_gone	0
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_markers	0
 K1	Key	The Glass Hollow +14	timed	119000			*	replay_bosses	1
+K1	Key	The Glass Hollow +14	timed	119000			*	replay_boss_npcs	900
 K1	Key	The Glass Hollow +14	timed	119000			2094	replay_map_posts	3
 K1	Key	The Glass Hollow +14	timed	119000			2095	replay_map_posts	4
 K1	Key	The Glass Hollow +14	timed	119000			Player-1-A	replay_posts	3

@@ -110,6 +110,16 @@ fn counts(seg: &str, c: &Cut, out: &mut Golden) {
         "bosses",
         c.units.iter().filter(|u| u.kind == UnitKind::Boss).count() as u64,
     );
+    // And which units: their creature ids summed.
+    put(
+        "*",
+        "boss_npcs",
+        c.units
+            .iter()
+            .filter(|u| u.kind == UnitKind::Boss)
+            .map(|u| u64::from(u.npc))
+            .sum(),
+    );
     for m in c.maps() {
         put(&m.map_id.to_string(), "map_posts", m.posts as u64);
     }
@@ -438,9 +448,11 @@ fn the_replay_fixtures_key_follows_the_party_down() {
 /// title the client spells two letters apart from its creature ("Thalgrim
 /// Ashvane" over "Thalgirm Ashvane") names that creature alone, though
 /// two acolytes at 40% of its health would be bosses by health; a title
-/// naming its creature exactly does as it always did; a near miss too
-/// weak for the share ("Morvesa" at 20% of the golem's health under
-/// "Morvessa") names nobody, and the health rule crowns the golem.
+/// naming its creature exactly does as it always did; a near miss weaker
+/// than another hostile ("Morvesa" at 20% of the golem's health under
+/// "Morvessa") names nobody, and the health rule crowns the golem; and an
+/// accented title ("Évara" over "Éavra", five letters with the É) is a
+/// near miss as the plain ones are, the wisp beside it at 50% an add.
 #[test]
 fn the_bosses_fixture_names_its_boss_by_a_near_miss() {
     let path = format!("{FIXTURES}/bosses.txt");
@@ -479,7 +491,8 @@ fn the_bosses_fixture_names_its_boss_by_a_near_miss() {
                 ("Kezran the Hollow", UnitKind::Boss),
                 ("Hollow Shade", UnitKind::Add),
             ]),
-            named(&[("Gate Golem", UnitKind::Boss), ("Morvesa", UnitKind::Add),]),
+            named(&[("Gate Golem", UnitKind::Boss), ("Morvesa", UnitKind::Add)]),
+            named(&[("Éavra", UnitKind::Boss), ("Pale Wisp", UnitKind::Add)]),
         ]
     );
 }

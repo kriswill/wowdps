@@ -812,6 +812,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	*	replay_placed_gone	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	*	replay_markers	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	*	replay_bosses	1
+2	Encounter	The Ashen Warden	kill	60000	3130	15	*	replay_boss_npcs	214502
 2	Encounter	The Ashen Warden	kill	60000	3130	15	2287	replay_map_posts	34
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	replay_posts	7
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	replay_posts	2
@@ -849,6 +850,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	*	replay_placed_gone	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	*	replay_markers	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	*	replay_bosses	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	*	replay_boss_npcs	214777
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	2287	replay_map_posts	18
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	replay_posts	5
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	replay_posts	1

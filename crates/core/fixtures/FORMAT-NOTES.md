@@ -648,15 +648,18 @@ alone (`tests/real_log_boss_names.rs`):
 - **Forever: the client can spell the two apart.** In 2 of its 18 pulls,
   both of encounter 2914, the creature's name and the title differ by two
   neighboring letters swapped. Exactly one hostile name is one edit from
-  the title there, and it is the strongest; in one pull the health rule
-  alone would have called four more units bosses.
+  the title there, and it is the strongest posted hostile; in one pull the
+  health rule alone would have called four more units bosses.
 - **No two hostiles of a cut are one edit apart** in either edition, so a
   single edit names no creature in place of another.
 
 R29's boss rule takes the near miss: when no hostile carries a title piece
-exactly, the one name a single edit from one (5 letters or more, case and
-punctuation folded) names the boss, provided it holds 30% of the strongest
-posted hostile's health; `bosses.txt` gates it.
+exactly, in a cut of one encounter, the one name a single edit from one (5
+letters or more, case and punctuation folded) names the boss, provided it
+is the strongest posted hostile, so it never takes the boss kind from a
+stronger hostile of another name (a singular add under a plural title).
+A keystone run pools its encounters' titles and takes none. `bosses.txt`
+gates it.
 
 ## Player labels
 
