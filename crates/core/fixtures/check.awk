@@ -380,17 +380,17 @@ function shield_absorb(dst, spell, ag, owner, amt,   k) {
 # amountMissed are PREVENTED damage. A miss with no open segment (cur == 0) is
 # dropped — R17: a miss never opens a segment.
 # ---- R31 the logger: per segment, the unit blocks that flag a `Player-` guid
-# MINE (0x1), player-controlled (0x100) and player (0x400) — the character
-# writing the log. The blocks are the parser's: a modelled two-unit line's
-# source and destination (RBOTH), an empower's source, a death's or a
-# destruction's destination. A line's blocks count once the line is read, for
+# MINE (0x1), player-controlled (0x100) and player (0x400), never pet (0x1000)
+# nor guardian (0x2000) — the character writing the log. The blocks are the
+# parser's: a modeled two-unit line's source and destination (RBOTH), an
+# empower's source, a death's or a destruction's destination. A line's blocks count once the line is read, for
 # the segment open then, through the passive gate (a closed segment, or a
 # trash fight past its gap, takes none). The logger is the guid flagged most,
 # a tie to the smaller.
 function is_logger(g, f,   v) {
     if (g !~ /^Player-/ || f !~ /^0x/) return 0
     v = strtonum(f)
-    return and(v, 0x501) == 0x501
+    return and(v, 0x501) == 0x501 && and(v, 0x3000) == 0
 }
 function logger_note() {
     npend = 0
@@ -942,7 +942,7 @@ BEGIN {
     # forever/role_spells.rs. Read only for a Forever log.
     ROLE_F[871] = "Defensive"   # Shield Wall (forever.txt)
     # The lines the parser models with a source and a destination: what R29
-    # learns hostility from (an unmodelled line — a swing's _LANDED twin, a
+    # learns hostility from (an unmodeled line — a swing's _LANDED twin, a
     # drain — teaches nothing).
     RBOTH = "^(SWING_DAMAGE|SPELL_DAMAGE|SPELL_PERIODIC_DAMAGE|RANGE_DAMAGE|SPELL_BUILDING_DAMAGE|DAMAGE_SHIELD|ENVIRONMENTAL_DAMAGE|SWING_MISSED|SPELL_MISSED|SPELL_PERIODIC_MISSED|RANGE_MISSED|DAMAGE_SHIELD_MISSED|SPELL_HEAL|SPELL_PERIODIC_HEAL|SPELL_ABSORBED|SPELL_INTERRUPT|SPELL_AURA_APPLIED|SPELL_AURA_REMOVED|SPELL_AURA_REFRESH|SPELL_AURA_APPLIED_DOSE|SPELL_AURA_REMOVED_DOSE|SPELL_DISPEL|SPELL_STOLEN|SPELL_CAST_SUCCESS|SPELL_CAST_START|SPELL_CAST_FAILED|SPELL_ENERGIZE|SPELL_PERIODIC_ENERGIZE|SPELL_CREATE|SPELL_RESURRECT|SPELL_INSTAKILL|SPELL_SUMMON|SPELL_DAMAGE_SUPPORT|SPELL_PERIODIC_DAMAGE_SUPPORT|RANGE_DAMAGE_SUPPORT|SWING_DAMAGE_LANDED_SUPPORT|SPELL_HEAL_SUPPORT|SPELL_PERIODIC_HEAL_SUPPORT)$"
 }

@@ -29,11 +29,7 @@ const FLAG_TYPE_PLAYER: u32 = 0x0000_0400;
 /// player-control bit beside it (FORMAT-NOTES, "Unit flags").
 const FLAG_AFFILIATION_MINE: u32 = 0x0000_0001;
 const FLAG_CONTROL_PLAYER: u32 = 0x0000_0100;
-// Only `is_pet_or_guardian` reads these, and that method is contract-mandated
-// public API rather than something this binary calls — see its comment below.
-#[allow(dead_code)]
 const FLAG_TYPE_PET: u32 = 0x0000_1000;
-#[allow(dead_code)]
 const FLAG_TYPE_GUARDIAN: u32 = 0x0000_2000;
 
 /// A parsed log line. `ts_ms` is monotonic within a file.
@@ -183,13 +179,18 @@ impl Unit {
     }
 
     /// R31: the character writing the log — a `Player-` guid whose flags say
-    /// MINE (0x1), player-controlled (0x100) and of the player type (0x400).
-    /// The bit names one character at a time: a unit of another player never
-    /// carries it, and the logger's own pets, guardians and vehicles carry it
-    /// with their own type, never a player's.
+    /// MINE (0x1), player-controlled (0x100) and of the player type (0x400),
+    /// and neither a pet's nor a guardian's type (a player the writer
+    /// mind-controls could wear those). The bit names one character at a
+    /// time: a unit of another player never carries it, and the logger's own
+    /// pets, guardians and vehicles carry it with their own type, never a
+    /// player's.
     pub fn is_logger(&self) -> bool {
         const LOGGER: u32 = FLAG_AFFILIATION_MINE | FLAG_CONTROL_PLAYER | FLAG_TYPE_PLAYER;
-        !self.is_nil() && self.guid.starts_with("Player-") && self.flags & LOGGER == LOGGER
+        !self.is_nil()
+            && self.guid.starts_with("Player-")
+            && self.flags & LOGGER == LOGGER
+            && self.flags & (FLAG_TYPE_PET | FLAG_TYPE_GUARDIAN) == 0
     }
 }
 

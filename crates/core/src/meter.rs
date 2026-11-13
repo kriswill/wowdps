@@ -6025,7 +6025,8 @@ impl Meter {
     /// it must never open a segment. Every seed kind but one is passive
     /// under `feed` already; the exception, an ENCOUNTER_START the scanner
     /// seeded because it opened or resumed a visit (R10), replays its visit
-    /// rule alone.
+    /// rule alone. A seed is state, never a fight's line: it counts toward
+    /// no segment's logger (R31), whatever segment is open.
     pub fn seed(&mut self, line: LogLine) {
         match &line.event {
             Event::EncounterStart {
@@ -6033,7 +6034,7 @@ impl Meter {
                 instance_id,
                 ..
             } => self.encounter_visit(line.ts_ms, *instance_id, *difficulty),
-            _ => self.feed(line),
+            _ => self.feed_line(&line),
         }
     }
 
@@ -12526,5 +12527,38 @@ mod tests {
         assert_eq!(m.segments().len(), 2);
         let sigma = m.overall(0).expect("the visit has a sum");
         assert_eq!(sigma.logger(), Some(ADA));
+    }
+
+    /// R31: a player under the writer's control — flagged MINE and
+    /// player-controlled as a player, a pet's or a guardian's type beside it
+    /// — is no logger; and a seed line, state ahead of a slice, counts toward
+    /// no segment's logger even while one is open.
+    #[test]
+    fn a_controlled_player_and_a_seed_count_toward_no_logger() {
+        let u = |flags| Unit {
+            guid: ADA.to_string(),
+            name: "Ada-Nebula-US".to_string(),
+            flags,
+        };
+        assert!(u(0x511).is_logger());
+        assert!(!u(0x1511).is_logger(), "a pet's type");
+        assert!(!u(0x2511).is_logger(), "a guardian's type");
+        assert!(!u(0x512).is_logger(), "a party member");
+        let pet = Unit {
+            guid: "Pet-0-1-2-3-4-0000000001".to_string(),
+            ..u(0x1111)
+        };
+        assert!(!pet.is_logger(), "the writer's pet");
+
+        let mut m = r31(&[(1, r31_hit(BRAM, "Bram-Nebula-US", "0x512"))]);
+        let seed = crate::parser::parse_line(&format!(
+            "7/27/2026 21:00:02.000-7  {}",
+            r31_cast(ADA, "Ada-Nebula-US", "0x511")
+        ))
+        .expect("a cast");
+        m.seed(seed);
+        assert_eq!(m.segments().len(), 1);
+        assert!(m.segments()[0].end_ms.is_none(), "the fight is open");
+        assert_eq!(m.segments()[0].logger(), None);
     }
 }
