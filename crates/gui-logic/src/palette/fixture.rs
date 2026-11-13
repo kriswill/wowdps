@@ -7,6 +7,7 @@ use wowdps_proto::history::{FightCard, FightKind, KeyInfo};
 
 use super::{Group, Item, items};
 use crate::home::{CharLine, parse_ymd};
+use crate::labels::Names;
 use crate::rail::{self, Rail};
 
 pub const H: i64 = 3_600_000;
@@ -119,7 +120,12 @@ pub fn chars() -> Vec<CharLine> {
 }
 
 pub fn all() -> Vec<Item> {
-    items(&rail_of(Vec::new()), &players(), &chars(), true)
+    items(
+        &rail_of(Vec::new()),
+        &players(),
+        &chars(),
+        Names::new(None, true),
+    )
 }
 
 pub fn titles(items: &[Item], group: Group) -> Vec<String> {

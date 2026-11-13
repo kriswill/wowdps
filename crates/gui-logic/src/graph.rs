@@ -294,12 +294,6 @@ pub fn mmss(ms: u32) -> String {
     format!("{}:{:02}", s / 60, s % 60)
 }
 
-/// "Keanucleavês-Proudmoore" → "Keanucleavês"; character names cannot
-/// contain a dash, so everything from the first one is realm noise.
-pub fn short_name(label: &str) -> String {
-    label.split('-').next().unwrap_or(label).to_string()
-}
-
 // ---- the comparison's words ---------------------------------------------------
 
 /// v29: a comparison table's title and its empty words, per metric — a
@@ -317,11 +311,12 @@ pub fn table_words(metric: View) -> (&'static str, &'static str) {
 }
 
 /// What a comparison says before it has two sides: the state the reader
-/// spends the most time in is one pick made.
-pub fn waiting_words(picks: &[(String, String)]) -> String {
+/// spends the most time in is one pick made. The pick is named as `names`
+/// writes a player alone.
+pub fn waiting_words(picks: &[(String, String)], names: crate::labels::Names) -> String {
     match (picks.len(), picks.first()) {
         (1, Some((_, label))) => {
-            format!("comparing {} — pick one more", short_name(label))
+            format!("comparing {} — pick one more", names.name(label))
         }
         (0, _) => "pick two players to compare".to_string(),
         _ => "loading comparison…".to_string(),

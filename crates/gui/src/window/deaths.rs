@@ -13,7 +13,7 @@ use gpui_kit::{
 use wowdps_gui_logic::deaths::{
     ENEMY, Pick, drawn, empty_words, is_mine, selected, total_words, words,
 };
-use wowdps_gui_logic::labels::display_name;
+use wowdps_gui_logic::labels::Names;
 use wowdps_gui_logic::table::TOTAL_INSET;
 use wowdps_model::fmt::{commas, duration};
 use wowdps_model::{RaidDeath, View};
@@ -49,7 +49,8 @@ pub struct Table {
     drawn: Vec<usize>,
     selected: Option<usize>,
     keys_away: bool,
-    hide_realms: bool,
+    /// How the table writes names: the fight's edition, realms as the option says.
+    names: Names,
     filter: String,
     owner: Option<String>,
 }
@@ -67,7 +68,7 @@ impl Table {
             drawn: drawn(raid, &gui.filter_text),
             selected: selected(app, raid),
             keys_away: app.inspecting(),
-            hide_realms: gui.cfg.hide_realms,
+            names: gui.names(cx),
             filter: gui.filter_text.clone(),
             owner: gui.death_owner(raid),
             all: raid.deaths.clone(),
@@ -201,11 +202,7 @@ fn line(
 ) -> impl IntoElement {
     let on = t.selected == Some(i);
     let hovered = gui.row_hover == Some(super::RowHover::Death(i));
-    let name = if t.hide_realms {
-        display_name(&d.name).to_string()
-    } else {
-        d.name.clone()
-    };
+    let name = t.names.shown(&d.name);
     let mine = is_mine(d, t.owner.as_deref());
     let mut who = div()
         .flex()
@@ -233,7 +230,7 @@ fn line(
     if d.enemy {
         who = who.child(w.text(ENEMY, w.size.small, w.c(|t| t.ink_3_text), REGULAR));
     }
-    let wd = words(d, t.hide_realms);
+    let wd = words(d, t.names);
     // The blow, then ONE quieter run after it, which gives way first: the
     // blow is what the column is about.
     let mut kb = div().flex().items_center().gap(w.z(KB_GAP)).child(

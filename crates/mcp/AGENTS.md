@@ -18,6 +18,9 @@ An MCP stdio server exposing the daemon's fight data as tools, reached as
   a Watch in another edition is fenced, `Bridge::watch`); the history
   tools answer every edition without one but never count, rank or look a
   player up across two.
+- **A player argument resolves through `one_player`** (`names::find`, by the
+  fight's edition): a name two players answer to is refused with each named,
+  never one picked. Two players sharing a Forever first name are two.
 - **Arguments before the daemon.** A tool reads and checks every argument
   (`arg_*` in `tools.rs`: types, edition, night or date, fight id shape)
   before its first `Bridge` call; only a check that needs the daemon's

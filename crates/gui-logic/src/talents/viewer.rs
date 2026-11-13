@@ -528,10 +528,11 @@ impl Viewer {
                         // `server` line; save under that name too, so the
                         // row's reopen finds it. Same character only — a
                         // paste for someone else must not shadow the row's
-                        // player.
+                        // player, and a Forever first name alone is not
+                        // one (two players often share it).
                         if let Some(player) = &self.player
-                            && player.split('-').next().unwrap_or(player).to_lowercase()
-                                == name.to_lowercase()
+                            && wowdps_model::names::Label::player(player, self.edition)
+                                .is_called(name)
                             && store_path_in(self.edition, player)
                                 != store_path_in(self.edition, &key)
                         {

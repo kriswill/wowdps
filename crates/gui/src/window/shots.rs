@@ -654,7 +654,7 @@ fn edition_window(
         std::fs::write(&log, format!("{header}\n")).expect("a log with no pull");
         testkit::EditionsLink::stored(&["Thraxx-Nebula-US"], false).with_forever_log(&log)
     } else {
-        testkit::EditionsLink::owned(&["Thraxx-Nebula-US", "Velkris-Nebula-US"])
+        testkit::EditionsLink::owned(&["Thraxx-Nebula-US", "Velkris-Duskmantle-Nebula-US"])
             .with_forever_source()
     };
     link.playing.set(Some(playing));

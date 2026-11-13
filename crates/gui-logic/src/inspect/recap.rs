@@ -6,7 +6,7 @@
 use wowdps_model::fmt::{commas, duration};
 use wowdps_model::{Class, Row};
 
-use crate::labels::display_name;
+use crate::labels::Names;
 use crate::table::split_pet;
 
 /// R9: a death's last events as the recap draws them.
@@ -20,6 +20,20 @@ pub struct Recap {
     pub who: String,
     pub yours: bool,
     pub class: Option<Class>,
+    /// How the pane writes names, which `who` and the sources were
+    /// written by.
+    pub names: Names,
+}
+
+impl Recap {
+    /// Whether an event's `source`, as the pane wrote it, is the player who
+    /// died: the same name, and the same realm wherever both show one.
+    /// Never a first name alone: two players sharing one are two.
+    pub fn is_own(&self, source: &str) -> bool {
+        let (a, b) = (self.names.label(source), self.names.label(&self.who));
+        a.name() == b.name()
+            && (a.realm().is_none() || b.realm().is_none() || a.realm() == b.realm())
+    }
 }
 
 /// R25: a death as the recap's head words it (the prototype's
@@ -27,8 +41,8 @@ pub struct Recap {
 /// ran out", "died 6:01, no damage logged" — then ", rezzed 2:03 by
 /// Soundscape" when someone raised them (their own spell's name for a
 /// self-rez: "by Reincarnation").
-pub fn died_words(d: &wowdps_model::RaidDeath, hide_realms: bool) -> String {
-    let w = crate::deaths::words(d, hide_realms);
+pub fn died_words(d: &wowdps_model::RaidDeath, names: Names) -> String {
+    let w = crate::deaths::words(d, names);
     let at = duration(d.at_ms);
     let mut words = if w.note {
         format!("died {at}, {}", w.blow.to_lowercase())
@@ -40,10 +54,8 @@ pub fn died_words(d: &wowdps_model::RaidDeath, hide_realms: bool) -> String {
     if let Some(rez) = &d.rez {
         let by = if rez.by == d.guid {
             rez.spell.clone()
-        } else if hide_realms {
-            display_name(&rez.by_name).to_string()
         } else {
-            rez.by_name.clone()
+            names.shown(&rez.by_name)
         };
         words.push_str(&format!(", rezzed {} by {by}", duration(rez.at_ms)));
     }
@@ -81,12 +93,7 @@ pub const INSIGHT_SOON_MS: i64 = 5_000;
 /// `None` when every hit was someone else's, or theirs was no matter.
 pub fn insight(r: &Recap) -> Option<Insight> {
     let oldest: Vec<&Row> = r.rows.iter().rev().collect();
-    let own = |e: &Row| {
-        !e.gain
-            && split_pet(&e.label)
-                .1
-                .is_some_and(|s| display_name(s) == display_name(&r.who))
-    };
+    let own = |e: &Row| !e.gain && split_pet(&e.label).1.is_some_and(|s| r.is_own(s));
     // The biggest; the latest of equals.
     let (at, hit) = oldest
         .iter()
@@ -111,7 +118,7 @@ pub fn insight(r: &Recap) -> Option<Insight> {
     let (whose, were) = if r.yours {
         ("Your own ".to_string(), "you were")
     } else {
-        (format!("{}'s own ", display_name(&r.who)), "they were")
+        (format!("{}'s own ", r.names.name(&r.who)), "they were")
     };
     let health = low
         .map(|l| format!(" while {were} at {:.1}% health", l * 100.0))

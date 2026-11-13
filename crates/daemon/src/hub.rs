@@ -2127,7 +2127,7 @@ mod tests {
         vec![
             format!("11/2/2026 10:{min:02}:00.000-8  ENCOUNTER_START,2914,\"Geilhast\",1,5,48"),
             format!(
-                "11/2/2026 10:{min:02}:01.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990001-0000A0B001,\"Geilhast\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990001-0000A0B001,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST"
+                "11/2/2026 10:{min:02}:01.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Duskmantle-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990001-0000A0B001,\"Geilhast\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990001-0000A0B001,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST"
             ),
         ]
     }
@@ -3006,7 +3006,7 @@ mod tests {
     /// The same in Forever's log.
     fn forever_buff(t: u32) -> Vec<String> {
         vec![format!(
-            "{}  SPELL_AURA_APPLIED,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,71,\"Defensive Stance\",0x1,BUFF",
+            "{}  SPELL_AURA_APPLIED,Player-6101-0A2B3C03,\"Tharokk-Emberfell-Nebula-US\",0x512,0x80000000,Player-6101-0A2B3C03,\"Tharokk-Emberfell-Nebula-US\",0x512,0x80000000,71,\"Defensive Stance\",0x1,BUFF",
             stamp(t)
         )]
     }
@@ -3015,7 +3015,7 @@ mod tests {
     /// encounter, a trash pull opened or kept open.
     fn forever_hit(t: u32) -> Vec<String> {
         vec![format!(
-            "{}  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990002-0000A0B002,\"Murloc\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990002-0000A0B002,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST",
+            "{}  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Duskmantle-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990002-0000A0B002,\"Murloc\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990002-0000A0B002,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST",
             stamp(t)
         )]
     }

@@ -52,6 +52,7 @@ use wowdps_gui_logic::config::Config;
 use wowdps_gui_logic::deaths::{Pick, any_mine, owner_rows};
 use wowdps_gui_logic::fight_head::{Seen, owner_among};
 use wowdps_gui_logic::keys::Zoom;
+use wowdps_gui_logic::labels::Names;
 use wowdps_gui_logic::table::{Col, filtered_indexed, meter_set, meter_step, step_in};
 use wowdps_gui_logic::theme::{Chrome, class_accent};
 use wowdps_model::{Action, RaidTimeline, Row, Screen, View};
@@ -524,9 +525,31 @@ impl Gui {
     }
 
     pub(crate) fn owner_of(&self, rows: &[Row]) -> Option<usize> {
-        rows.iter()
-            .position(|r| r.mine && !r.enemy)
-            .or_else(|| owner_among(rows, None, &self.cfg.history_characters()))
+        rows.iter().position(|r| r.mine && !r.enemy).or_else(|| {
+            owner_among(
+                rows,
+                None,
+                &self.cfg.history_characters(),
+                Some(self.hist.edition),
+            )
+        })
+    }
+
+    /// How the stage's panes write players' names: by the edition of the
+    /// fight on the stage (the window's while none is watched), realms as
+    /// the option says.
+    pub(crate) fn names(&self, cx: &App) -> Names {
+        let edition = self
+            .fight(cx)
+            .segment_edition()
+            .unwrap_or(self.hist.edition);
+        Names::new(Some(edition), self.cfg.hide_realms)
+    }
+
+    /// How Home, the rail, the menus and the top bar write names: by the
+    /// edition the window is in, whose characters they list.
+    pub(crate) fn window_names(&self) -> Names {
+        Names::new(Some(self.hist.edition), self.cfg.hide_realms)
     }
 
     /// A class chrome wears the owner's class, learned once and held — a

@@ -28,7 +28,7 @@ use wowdps_gui_logic::home::chart::{
 use wowdps_gui_logic::home::{
     NightPull, TrendPoint, axis_label, best_label, day_labels, hollow, par_x,
 };
-use wowdps_gui_logic::labels::shown_name;
+use wowdps_gui_logic::labels::Names;
 use wowdps_gui_logic::rail::{Pull, weekday};
 use wowdps_gui_logic::theme::WindowTokens;
 use wowdps_model::fmt::human;
@@ -290,7 +290,7 @@ fn paint_slope(
 pub fn trend(
     points: &[TrendPoint],
     unknown: Hsla,
-    hide_realms: bool,
+    names: Names,
     cw: f32,
     w: &W,
     cx: &mut Context<Gui>,
@@ -303,7 +303,7 @@ pub fn trend(
         .map(|p| {
             format!(
                 "{}, {} on {}",
-                shown_name(&p.who.name, hide_realms),
+                names.shown(&p.who.name),
                 human(p.value.round().max(0.0) as u64),
                 weekday(p.day)
             )

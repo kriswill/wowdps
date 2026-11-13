@@ -52,7 +52,7 @@ impl Gui {
             st: &self.insp,
             t: &w.t,
             data: &w.data,
-            hide: self.cfg.hide_realms,
+            names: self.names(cx),
             owner,
             owner_of: &owner_of,
             stored: self.hist.store.stored.as_ref().map(|s| s.offered()),
@@ -116,7 +116,7 @@ impl Gui {
         let app = super::history::fight_of(&self.hist, &self.session, cx);
         if app.view != View::EnemyTaken {
             let rows = app.rows();
-            self.insp.roster.observe(&rows);
+            self.insp.roster.observe(&rows, app.segment_edition());
         }
         if let Some((context, keys)) = stack_keys(app) {
             self.insp.stack_slots.observe(&context, &keys);

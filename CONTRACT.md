@@ -6,7 +6,9 @@ rulings below are the agreed interface.
 - `wowdps-model` — domain types only (`View`, `Row`, `Class`, `Spec`, `SegmentKind`,
   `SegmentId`, `SegmentInfo`, `ListRow`, `Screen`, `Pane`, `Drill`, `Action`, `fmt`,
   `Edition` — the game edition a log names, the Daemon section's editions paragraph —
-  and (v45, R29) `replay`: a fight as the replay draws it, `Cut`).
+  `names`, the one reading of a player's label by its edition ("Player names",
+  under Client state & behavior), and (v45, R29) `replay`: a fight as the replay
+  draws it, `Cut`).
   Zero dependencies, no I/O, no parser.
 - `wowdps-core` — the engine: `parser`, `meter`, `index`, `tail`, and (v45) `replay`, the
   replay cut (R29), with the generated tables they read, each edition's own (R8's
@@ -1028,6 +1030,58 @@ machine keeps `spell_sel` a by-ability ROW index; the window alone knows the
 tree's lines (groups and parts included) and keeps the line its keys rest on
 when that is not a row — so the TUI, which never draws the tree, is untouched.
 
+Player names. A player's label is the name field the log gives its `Player-`
+guid, carried on the wire (`Row.label`, `RaidDeath.name`, a drill's key) and in
+the store (`CardPlayer.name`) exactly as the log wrote it; no message, record or
+`PROTO_VERSION` moved for this, so a card stored before reads the same as one
+stored after. Retail writes `Name-Realm-Region` ("Durgan-Nebula-US"); Forever
+writes `First-Last-Realm-Region` ("Ada-Brightwater-Nebula-US"): a Forever
+character has a first and a last name, which the game shows with a space between
+(the measured shapes: `crates/core/fixtures/FORMAT-NOTES.md`, "Player labels").
+Both write a bare name now and then, on a stranger's buff. The shape alone does
+not tell the editions apart, so every reader splits a label in one place,
+`wowdps_model::names`, by the edition of the fight it came from (the segment's
+`project_id`, `SegmentInfo.edition`, `FightCard::edition`; Retail's rule for a
+label of no known edition and for every edition but Forever): `Label::player` (a
+label known to be a player's: the name before the realm, one word in Retail,
+every word before the realm in Forever; then the realm and region),
+`Label::shaped` (in a pane of players and creatures alike, only a label of three
+parts or more ending in a two-capital region, no part empty or holding a space,
+so a creature's dash, "Yogg-Saron", stays its name's), and `shown_any` (the same
+for a recap's "Spell (Source-Realm-Region)"). Nothing else splits a label at a
+dash. Rows, cards, sorting, dedup and every per-player ledger key on the guid,
+never a name. What each surface writes:
+- The window (gui-logic's `labels::Names`, by the stage's fight's edition, the
+  window's for Home, the rail and the menus) writes a player by the name as the
+  game shows it — "Durgan", "Ada Brightwater" — and, unless `hide_realms`, the
+  rest of the label as the log wrote it: "Durgan-Nebula-US" (Retail's label
+  itself, so nothing of Retail's moves) and "Ada Brightwater-Nebula-US". The
+  overlay writes the name alone, by its segment's game. The TUI, which hides no
+  realm, writes Retail's label as it is and Forever's "Ada
+  Brightwater-Nebula-US". A name too long for its column truncates from its end
+  as one string, the realm first, then the last name, the first name kept
+  whole: two players who share a first name stay apart by as much of the last
+  name as fits. The meter's filter finds a Forever name typed with a space.
+- A lookup by name (`names::find`: the MCP tools' `player`, `a` and `b`, over a
+  fight's rows or a card's players, or each edition's newest cards) takes, case
+  aside and a space and a dash alike, the label whole, the name with its realm
+  ("Durgan-Nebula", "Ada Brightwater-Nebula"), the name ("Durgan", "Ada
+  Brightwater", "Ada-Brightwater"), a Forever first name alone ("Ada"), or the
+  start of a name ("Kael"), and keeps the closest of those any player answers to.
+  At that reach exactly one player (one guid) resolves; two or more are refused,
+  every one named with its guid, and none picked: two players who share a first
+  name are never one. A first name or the start of a name therefore resolves only
+  where one player alone has it.
+- A configured name (`history_characters`, the store's "me" on a card and per
+  edition, `daemon::mine::Mine`, and the window's fallback when nothing is
+  marked) names a character by its label whole, its name and realm, or its name
+  (`Label::is_called`) — "Durgan", "Durgan-Nebula", "Ada Brightwater" — never a
+  Forever first name alone or the start of a name, since a stranger who shares it
+  would be marked "you". A configured "Name-Realm" names its character whatever
+  region the log writes after it. Forever's logs carry no COMBATANT_INFO, so its
+  owner inference has nothing to intersect, and a Forever "you" is a configured
+  name or the window's locked character.
+
 ## src/placed.rs (owner: proto; table generated by `tools/gen-placed-spells.sh`) — R29
 
 What players place in the room (totems, gateways, rings, zones, statues, sigils,
@@ -1093,7 +1147,9 @@ store's flat `history_enabled` / `history_dir` / `history_store_trash` /
 `history_keep_per_encounter` / `history_keep_details_per_encounter` /
 `history_details_min_wipe_secs` / `history_keep_kills_whole` / (v45)
 `history_keep_progression_whole` / `history_replay_mb` /
-`history_characters` (one comma-separated string — the reader has no list type).
+`history_characters` (one comma-separated string — the reader has no list type;
+each a name as "Player names" under Client state & behavior reads a configured
+one: "Durgan", "Durgan-Nebula", a Forever character's "Ada Brightwater").
 Gui keys belong to the gui, which writes the file with the real `toml` crate and
 carries every key it does not own through a save untouched.
 

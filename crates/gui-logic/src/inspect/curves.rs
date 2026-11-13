@@ -9,7 +9,6 @@ use wowdps_proto::ClientState;
 
 use super::{Roster, plot, stack};
 use crate::graph::mmss;
-use crate::labels::display_name;
 
 /// The rate curve's buckets: the prototype's 10 s ("per second, 10 s"),
 /// drawn through its spline — finer only when the stretch on show is too
@@ -19,7 +18,7 @@ pub const RATE_BUCKET_MS: u32 = 10_000;
 
 pub const RATE_POINTS: u32 = 40;
 
-/// "alive 6:02", "alive 6:02, rezzed by Gennar", "alive 6:02,
+/// "alive 6:02", "alive 6:02, rezzed by Corvane", "alive 6:02,
 /// Reincarnation" — the other end of an R23 death span, at `back_ms`, as
 /// its rule says it. `roster` names the rezzer.
 pub fn alive_words(m: &Mark, back_ms: i64, roster: &Roster) -> String {
@@ -31,8 +30,8 @@ pub fn alive_words(m: &Mark, back_ms: i64, roster: &Roster) -> String {
     if !m.src.is_empty() {
         // A rezzer no meter named (a pet's guid, someone never on screen)
         // goes unnamed: a guid's tail is no name a reader knows.
-        match roster.get(&m.src) {
-            Some((n, _)) => words.push_str(&format!(", rezzed by {}", display_name(n))),
+        match roster.name(&m.src) {
+            Some((n, _)) => words.push_str(&format!(", rezzed by {n}")),
             None => words.push_str(", rezzed"),
         }
     } else if let Some(spell) = spell {
@@ -221,11 +220,14 @@ mod tests {
     #[test]
     fn a_death_and_its_return_in_words() {
         let mut roster = Roster::default();
-        roster.observe(&[Row {
-            key: "Player-1-0P".into(),
-            label: "Gennar-Proudmoore-US".into(),
-            ..Row::default()
-        }]);
+        roster.observe(
+            &[Row {
+                key: "Player-1-0P".into(),
+                label: "Corvane-Nebula-US".into(),
+                ..Row::default()
+            }],
+            None,
+        );
         let t = Timeline {
             bucket_ms: 1000,
             buckets: Vec::new(),
@@ -252,15 +254,15 @@ mod tests {
             said,
             vec![
                 ("died 0:45", Some(50_100), "alive 0:50"),
-                ("died 2:00", Some(124_300), "alive 2:04, rezzed by Gennar"),
+                ("died 2:00", Some(124_300), "alive 2:04, rezzed by Corvane"),
                 ("died 3:20", Some(202_000), "alive 3:22, Reincarnation"),
                 ("died 4:10", None, ""),
                 ("died 4:40", None, ""),
             ]
         );
         // A comparison names whose death each rule is.
-        let pair = dead_spans(&t, 300_000, Some("Tranqlock"), &roster);
-        assert_eq!(pair[0].words, "Tranqlock died 0:45");
-        assert_eq!(pair[0].back_words, "Tranqlock alive 0:50");
+        let pair = dead_spans(&t, 300_000, Some("Brannoc"), &roster);
+        assert_eq!(pair[0].words, "Brannoc died 0:45");
+        assert_eq!(pair[0].back_words, "Brannoc alive 0:50");
     }
 }

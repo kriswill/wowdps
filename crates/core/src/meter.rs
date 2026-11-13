@@ -12282,11 +12282,11 @@ mod tests {
             .find(|l| l.contains("SPELL_HEAL,Player-6101-0C1D2E02"))
             .unwrap()
             .replace(
-                "Player-6101-0C1D2E02,\"Mirela-Nebula-US\",0x512",
+                "Player-6101-0C1D2E02,\"Mirela-Vale-Nebula-US\",0x512",
                 "Creature-0-6101-48-2001-990016-0000C0D006,\"Twilight Acolyte\",0xa48",
             )
             .replace(
-                "Player-6101-0C1D2E01,\"Garrond-Nebula-US\",0x511",
+                "Player-6101-0C1D2E01,\"Garrond-Stonebrook-Nebula-US\",0x511",
                 "Creature-0-6101-48-2001-990011-0000C0D001,\"Twilight Lord Kelris\",0xa48",
             );
         assert!(theirs.contains("SPELL_HEAL,Creature-"));
@@ -12320,10 +12320,9 @@ mod tests {
         const CORBIN: &str = "Player-6101-0C1D2E04";
         let text = include_str!("../fixtures/roles.txt");
         // His two casts: Judgement at the boss, Flash of Light at an ally.
-        let judgement = "SPELL_CAST_SUCCESS,Player-6101-0C1D2E04,\"Corbin-Nebula-US\",0x512,0x80000000,Creature-";
-        let flash =
-            "SPELL_CAST_SUCCESS,Player-6101-0C1D2E04,\"Corbin-Nebula-US\",0x512,0x80000000,Player-";
-        let ally = "Player-6101-0C1D2E03,\"Ashvel-Nebula-US\",0x512,0x80000000";
+        let judgement = "SPELL_CAST_SUCCESS,Player-6101-0C1D2E04,\"Corbin-Hollowell-Nebula-US\",0x512,0x80000000,Creature-";
+        let flash = "SPELL_CAST_SUCCESS,Player-6101-0C1D2E04,\"Corbin-Hollowell-Nebula-US\",0x512,0x80000000,Player-";
+        let ally = "Player-6101-0C1D2E03,\"Ashvel-Dunmore-Nebula-US\",0x512,0x80000000";
         let line = |needle: &str| text.lines().find(|l| l.contains(needle)).unwrap();
         let shock = |l: &str| {
             l.replace("20271,\"Judgement\"", "20473,\"Holy Shock\"")
@@ -12334,7 +12333,7 @@ mod tests {
         let at_nobody = at_ally.replace(ally, "0000000000000000,nil,0x80000000,0x80000000");
         let at_self = at_ally.replace(
             ally,
-            &format!("{CORBIN},\"Corbin-Nebula-US\",0x512,0x80000000"),
+            &format!("{CORBIN},\"Corbin-Hollowell-Nebula-US\",0x512,0x80000000"),
         );
         assert!(at_enemy.contains("20473,\"Holy Shock\"") && at_enemy.contains(",0xa48,"));
         // Each new line right after the one it was made from, so the clock

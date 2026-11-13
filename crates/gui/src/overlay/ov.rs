@@ -70,6 +70,18 @@ impl Ov {
         Self { game, ..self }
     }
 
+    /// How the overlay writes players' names: by the segment's game, and
+    /// never with a realm (its panel is narrow).
+    pub fn names(&self) -> wowdps_gui_logic::labels::Names {
+        wowdps_gui_logic::labels::Names::new(Some(self.game), true)
+    }
+
+    /// A player's name as the overlay writes it alone: "Durgan", "Ada
+    /// Brightwater".
+    pub fn name(&self, label: &str) -> String {
+        self.names().name(label)
+    }
+
     /// `d` (already zoomed) in device pixels: the size art is picked for.
     pub fn device(&self, d: Pixels) -> f32 {
         f32::from(d) * self.scale

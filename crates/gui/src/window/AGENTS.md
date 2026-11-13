@@ -64,9 +64,12 @@ are the `navy` theme (`crates/gui-logic/src/theme/navy.rs`).
 - **Class chrome wears the owner's class** (`Gui::learn_class`), never the
   selection's, which would recolor the window on every re-sort.
 - **Words** come from gui-logic's `labels`: sentence case, the prototype's
-  view names (`labels::WINDOW_VIEWS`), `hide_realms` honored in every pane
-  (`labels::realmless`). Icons are strokes from gui-logic's `glyph` table,
-  never SVG assets.
+  view names (`labels::WINDOW_VIEWS`). A player's name is written through
+  `labels::Names` (`Gui::names` for the stage, `Gui::window_names` for Home,
+  the rail and the menus): by the fight's edition, so a Forever player reads
+  "Ada Brightwater", and `hide_realms` honored in every pane. Never split a
+  label yourself (CONTRACT.md, "Player names"). Icons are strokes from
+  gui-logic's `glyph` table, never SVG assets.
 - **Type is bundled** (`crates/gui-logic/fonts/`): Barlow Semi Condensed
   Tabular for names and numbers, Marcellus for encounter titles and the
   wordmark alone.

@@ -13,7 +13,6 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::deaths::before;
 use wowdps_gui_logic::inspect::recap::{Recap, change_words, insight};
-use wowdps_gui_logic::labels::display_name;
 use wowdps_gui_logic::table::split_pet;
 use wowdps_gui_logic::theme as gl;
 use wowdps_model::Row;
@@ -198,7 +197,7 @@ fn line(r: &Recap, e: &Row, kill: bool, cols: &Cols, w: &W) -> Div {
         w.c(|t| t.bad)
     };
     let (what, from) = split_pet(&e.label);
-    let own = from.is_some_and(|s| display_name(s) == display_name(&r.who));
+    let own = from.is_some_and(|s| r.is_own(s));
     let mut label = div()
         .flex_1()
         .min_w_0()

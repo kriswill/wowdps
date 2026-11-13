@@ -157,11 +157,7 @@ pub fn recap(ov: &Ov, r: &Row, max: u64) -> Div {
         .items_center()
         .gap(px(4.))
         .px(px(8.))
-        .child(ov.words(
-            gd::compact_recap_label(&r.label),
-            12.,
-            ov.c(|t| t.recap_ink),
-        ))
+        .child(ov.words(ov.names().any_short(&r.label), 12., ov.c(|t| t.recap_ink)))
         .child(div().flex_1())
         .child(ov.metric(
             gd::recap_amount(r),
@@ -182,7 +178,7 @@ pub fn recap(ov: &Ov, r: &Row, max: u64) -> Div {
 /// v16: the ability drill's crumb — "Player ▸ ⬚ Spell [School]", the
 /// ability in its school's colour, the school as a chip on the right.
 pub fn crumb(ov: &Ov, player: &str, spell: &str, row: Option<&Row>) -> Div {
-    let name = player.split('-').next().unwrap_or(player).to_string();
+    let name = ov.names().any_short(player);
     let school = row.and_then(|r| school_color(r.school));
     let mut line = div()
         .flex()

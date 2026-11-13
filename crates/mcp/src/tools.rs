@@ -58,7 +58,11 @@ pub fn catalog() -> Vec<Tool> {
         obj! {
             "type": Json::str("string"),
             "description": Json::str(format!(
-                "{what}: a player name (as shown in fight rows) or GUID key."
+                "{what}: a player's GUID key, or their name: the label as fight rows \
+                 show it (Retail's Name-Realm-Region, Forever's First-Last-Realm-Region), \
+                 the name with its realm, or the name alone (a Forever character's \
+                 \"First Last\", or its first name when one player alone has it). A \
+                 name more than one player answers to is refused, naming each."
             )),
         }
     };
@@ -1253,6 +1257,43 @@ fn arg_player<'a>(args: &'a Json, key: &str) -> Result<&'a str, String> {
     arg_str(args, key)?.ok_or_else(|| format!("{key:?} is required: a player name or GUID"))
 }
 
+/// A player as a lookup reads one: its guid, its label, and the edition of
+/// the fight that wrote the label.
+type Named<'a> = (&'a str, &'a str, Edition);
+
+/// The one player among `players` (guid, label, the edition of the fight
+/// that wrote it) a `who` argument names, by `wowdps_model::names::find`:
+/// the label whole, the name with its realm, the name, or a Forever first
+/// name — the closest it reaches. A name two players answer to at that
+/// reach is refused with each named, never one picked: two players who
+/// share a first name are two (`whose` says where they were looked for).
+fn one_player<'a>(
+    who: &str,
+    players: &[Named<'a>],
+    whose: &str,
+) -> Result<Option<(&'a str, &'a str)>, String> {
+    use wowdps_model::names::{Found, find};
+    let label_of = |g: &str| {
+        players
+            .iter()
+            .find(|(pg, _, _)| *pg == g)
+            .map_or("", |(_, l, _)| *l)
+    };
+    match find(who, players.iter().copied()) {
+        Found::Nobody => Ok(None),
+        Found::One(g) => Ok(Some((g, label_of(g)))),
+        Found::Several(guids) => Err(format!(
+            "{who:?} names more than one player {whose} ({}): pass the full name (a Forever \
+             character's \"First Last\"), the name with its realm, or the GUID",
+            guids
+                .iter()
+                .map(|g| format!("{} {g}", label_of(g)))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )),
+    }
+}
+
 /// A history fight id (`fight_id`, `after_id`): `<log:016x>-<start_ms>`,
 /// with an `s` after a key's or an Overall's (`history::fight_id`, the
 /// one spelling the store files every card under, imported ones too). An
@@ -1489,11 +1530,7 @@ fn history_subject(
     if who.starts_with("Player-") {
         return Ok((who.to_string(), edition));
     }
-    let want = who.to_lowercase();
-    let named = |p: &&CardPlayer| {
-        p.name.to_lowercase() == want || p.name.to_lowercase().starts_with(&format!("{want}-"))
-    };
-    // Each edition's newest match: (edition, name, guid).
+    // Each edition's one match: (edition, name, guid).
     let mut found: Vec<(Edition, String, String)> = Vec::new();
     for window in name_windows(edition) {
         let cards = match bridge.history(HistoryQuery::Fights {
@@ -1512,13 +1549,27 @@ fn history_subject(
             HistoryAnswer::Fights { cards, .. } => cards,
             _ => Vec::new(),
         };
+        // The window's players, newest card first, by the edition their
+        // fights count as: each edition looked up alone.
+        let mut by_edition: Vec<(Edition, Vec<Named<'_>>)> = Vec::new();
         for c in &cards {
             let e = c.edition().counts_as();
             if found.iter().any(|(f, _, _)| *f == e) {
                 continue;
             }
-            if let Some(p) = c.players.iter().find(named) {
-                found.push((e, p.name.clone(), p.guid.clone()));
+            let players = c
+                .players
+                .iter()
+                .map(|p| (p.guid.as_str(), p.name.as_str(), e));
+            match by_edition.iter_mut().find(|(f, _)| *f == e) {
+                Some((_, list)) => list.extend(players),
+                None => by_edition.push((e, players.collect())),
+            }
+        }
+        for (e, players) in &by_edition {
+            let whose = format!("in {}'s stored fights", e.label());
+            if let Some((guid, name)) = one_player(who, players, &whose)? {
+                found.push((*e, name.to_string(), guid.to_string()));
             }
         }
     }
@@ -2281,18 +2332,16 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             let Some(f) = bridge.stored_fight(fight_id.clone(), view, None, None)? else {
                 return Err(not_stored(&fight_id));
             };
-            let want = who.to_lowercase();
-            let guid = f
+            let edition = f.card.edition();
+            let players: Vec<Named<'_>> = f
                 .card
                 .players
                 .iter()
-                .find(|p| {
-                    p.name.to_lowercase() == want
-                        || p.name.to_lowercase().starts_with(&format!("{want}-"))
-                })
-                .map(|p| p.guid.clone())
+                .map(|p| (p.guid.as_str(), p.name.as_str(), edition))
+                .collect();
+            let (guid, _) = one_player(who, &players, "in that fight")?
                 .ok_or_else(|| format!("no player named {who:?} in that fight"))?;
-            Some(guid)
+            Some(guid.to_string())
         }
     };
     let Some(f) = bridge.stored_fight_boss(
@@ -4315,16 +4364,16 @@ fn resolve_player(
     })?;
     in_scope(bridge.scope(), snap.id, &snap.info)?;
     let edition = snap.info.edition;
-    let found = snap
+    let players: Vec<Named<'_>> = snap
         .rows
         .iter()
-        .find(|r| r.key == who || r.label == who)
-        .or_else(|| {
-            let lower = who.to_lowercase();
-            snap.rows
-                .iter()
-                .find(|r| r.label.to_lowercase().starts_with(&lower))
-        });
+        .map(|r| (r.key.as_str(), r.label.as_str(), edition))
+        .collect();
+    let found = match snap.rows.iter().find(|r| r.key == who || r.label == who) {
+        Some(r) => Some(r),
+        None => one_player(who, &players, "in this fight")?
+            .and_then(|(key, _)| snap.rows.iter().find(|r| r.key == key)),
+    };
     let pinned = snap.id.map(SegmentRef::Id).unwrap_or(segment);
     match found {
         Some(r) => Ok((pinned, r.key.clone(), r.clone(), edition)),
@@ -5011,16 +5060,25 @@ fn stored_loadout(bridge: &mut Bridge, who: &str, fight_id: &str) -> Result<Json
     {
         return Err(wrong_edition(card_only.card.edition(), pin, "history"));
     }
-    let want = who.to_lowercase();
-    let p = card_only
-        .card
+    let card = &card_only.card;
+    let edition = card.edition();
+    let players: Vec<Named<'_>> = card
         .players
         .iter()
-        .find(|p| {
-            p.guid == who
-                || p.name.to_lowercase() == want
-                || p.name.to_lowercase().starts_with(&format!("{want}-"))
-        })
+        .map(|p| (p.guid.as_str(), p.name.as_str(), edition))
+        .collect();
+    let guid = match card.players.iter().find(|p| p.guid == who) {
+        Some(p) => p.guid.as_str(),
+        None => {
+            one_player(who, &players, &format!("in {fight_id}"))?
+                .ok_or_else(|| format!("no player named {who:?} in {fight_id}"))?
+                .0
+        }
+    };
+    let p = card
+        .players
+        .iter()
+        .find(|p| p.guid == guid)
         .ok_or_else(|| format!("no player named {who:?} in {fight_id}"))?
         .clone();
     let Some(f) = bridge.stored_fight(

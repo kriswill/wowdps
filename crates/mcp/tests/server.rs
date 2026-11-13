@@ -3187,7 +3187,7 @@ fn the_live_tools_follow_or_pin_an_edition() {
     let mut sec = 0;
     let mut write_forever = || {
         let line = format!(
-            "11/1/2026 20:01:{sec:02}.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990002-0000A0B002,\"Ashwing Acolyte\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990002-0000A0B002,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST\n"
+            "11/1/2026 20:01:{sec:02}.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Duskmantle-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990002-0000A0B002,\"Ashwing Acolyte\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990002-0000A0B002,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST\n"
         );
         sec += 1;
         let wrote = std::fs::OpenOptions::new()
@@ -3303,12 +3303,37 @@ fn the_live_tools_follow_or_pin_an_edition() {
     );
     assert_eq!(
         doc.get("player").map(|p| str_of(p, "name").to_string()),
-        Some("Velkris-Nebula-US".to_string())
+        Some("Velkris-Duskmantle-Nebula-US".to_string())
+    );
+    // A Forever player is named by both names as the game shows them, or
+    // by a first name one player alone has; two players sharing a first
+    // name are refused by it, each named, never one picked.
+    let doc = doc_of(
+        &mut bridge,
+        "breakdown",
+        &format!(r#"{{"segment_id":{geilhast},"player":"velkris duskmantle"}}"#),
+    );
+    assert_eq!(
+        doc.get("player").map(|p| str_of(p, "name").to_string()),
+        Some("Velkris-Duskmantle-Nebula-US".to_string())
+    );
+    let reply = call(
+        &mut bridge,
+        "breakdown",
+        &format!(r#"{{"segment_id":{geilhast},"player":"Tharokk"}}"#),
+    );
+    let text = error_text(&reply);
+    assert!(
+        text.contains("names more than one player")
+            && text.contains("Tharokk-Emberfell-Nebula-US")
+            && text.contains("Tharokk-Ironvale-Nebula-US"),
+        "{}",
+        reply.to_line()
     );
     let doc = doc_of(
         &mut bridge,
         "compare",
-        &format!(r#"{{"segment_id":{geilhast},"a":"Velkris","b":"Hollin"}}"#),
+        &format!(r#"{{"segment_id":{geilhast},"a":"Velkris","b":"Tharokk Ironvale"}}"#),
     );
     let fight = doc.get("fight").expect("fight");
     assert_eq!(str_of(fight, "edition"), "forever");

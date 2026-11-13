@@ -59,7 +59,10 @@ pub struct Config {
     /// retention may touch (the kept-whole set and pins are never dropped by
     /// it); 0 = no cap.
     pub history_replay_mb: u64,
-    /// "Name-Realm, …" that are "me"; empty = infer from COMBATANT_INFO.
+    /// The characters that are "me", comma-separated: "Name", "Name-Realm",
+    /// or a Forever character's "First Last" (never its first name alone:
+    /// `wowdps_model::names::Label::is_called`); empty = infer from
+    /// COMBATANT_INFO, which Forever's logs never carry.
     pub history_characters: Vec<String>,
 }
 

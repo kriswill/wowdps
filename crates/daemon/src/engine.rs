@@ -1714,12 +1714,12 @@ impl Engine {
                 // guid (an enemy's rows are nobody's), a drill's players by
                 // the names this fight gives them, and their deaths.
                 if let Some(s) = seg {
-                    let mine = &self.mine;
+                    let mine = self.mine.of(Edition::from_project_id(s.project_id));
                     if *view != View::EnemyTaken {
                         mine.mark_rows(&mut rows);
                     }
                     if let Some(b) = breakdown.as_mut() {
-                        mine.mark_breakdown(b, *view == View::EnemyTaken, &mine.names_in(s));
+                        mine.mark_breakdown(b, *view == View::EnemyTaken, &self.mine.names_in(s));
                     }
                     if let Some(r) = raid.as_mut() {
                         mine.mark_raid(r);
@@ -1747,8 +1747,11 @@ impl Engine {
             } => {
                 // v50 (R30): both sides' roles from one solve.
                 let roles = seg.map(Roles::of).unwrap_or_default();
+                let edition =
+                    seg.map_or(Edition::Retail, |s| Edition::from_project_id(s.project_id));
                 let side = |guid: &str| {
-                    let mut side = self.mine_side(compare_side(seg, guid, *view, *range, *spell));
+                    let mut side =
+                        self.mine_side(compare_side(seg, guid, *view, *range, *spell), edition);
                     roles.mark_rows(std::slice::from_mut(&mut side.total));
                     Box::new(side)
                 };
@@ -1775,8 +1778,8 @@ impl Engine {
     }
 
     /// v35: a comparison's side is one of the account's characters, or not.
-    fn mine_side(&self, mut side: CompareSide) -> CompareSide {
-        side.total.mine = self.mine.owns(&side.guid, &side.total.label);
+    fn mine_side(&self, mut side: CompareSide, edition: Edition) -> CompareSide {
+        side.total.mine = self.mine.of(edition).owns(&side.guid, &side.total.label);
         side
     }
 

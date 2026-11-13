@@ -110,8 +110,8 @@ pub fn peak_words(word: &str, peak: f64) -> String {
 /// What a skull says of its death after the name: "died 1:10, Venom
 /// Rupture" — and an arena's other team says so first — worded as the
 /// Deaths table words the blow (a cheat death "ran out").
-pub fn skull_words(d: &RaidDeath, hide_realms: bool) -> String {
-    let blow = crate::deaths::words(d, hide_realms).blow;
+pub fn skull_words(d: &RaidDeath, names: crate::labels::Names) -> String {
+    let blow = crate::deaths::words(d, names).blow;
     if d.enemy {
         format!("of the enemy team, died {}, {blow}", duration(d.at_ms))
     } else {

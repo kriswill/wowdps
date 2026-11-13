@@ -29,12 +29,6 @@ fn cumulative_is_monotonic_and_dps_is_not() {
 }
 
 #[test]
-fn names_lose_their_realm() {
-    assert_eq!(short_name("Keanucleavês-Proudmoore"), "Keanucleavês");
-    assert_eq!(short_name("Alice"), "Alice");
-}
-
-#[test]
 fn marker_colors_and_names_are_distinct_per_kind() {
     // R18: every kind has a name and a colour; the exhaustive list is
     // the model's ten, in code order. Names are all distinct; colours
@@ -503,9 +497,23 @@ fn a_comparison_words_its_tables_and_its_wait() {
     assert_eq!(table_words(View::Taken), ("hit by", "nothing landed"));
     assert_eq!(table_words(View::Damage), ("spell", "no damage recorded"));
     assert_eq!(table_words(View::Dispels).0, "dispel");
-    assert_eq!(waiting_words(&[]), "pick two players to compare");
+    let names = crate::labels::Names::default();
+    assert_eq!(waiting_words(&[], names), "pick two players to compare");
     let one = [("Player-1".to_string(), "Thraxx-Nebula-US".to_string())];
-    assert_eq!(waiting_words(&one), "comparing Thraxx — pick one more");
+    assert_eq!(
+        waiting_words(&one, names),
+        "comparing Thraxx — pick one more"
+    );
     let two = [one[0].clone(), one[0].clone()];
-    assert_eq!(waiting_words(&two), "loading comparison…");
+    assert_eq!(waiting_words(&two, names), "loading comparison…");
+    // A Forever pick is named by both names.
+    let forever = crate::labels::Names::new(Some(wowdps_model::Edition::Forever), false);
+    let ada = [(
+        "Player-2".to_string(),
+        "Ada-Brightwater-Nebula-US".to_string(),
+    )];
+    assert_eq!(
+        waiting_words(&ada, forever),
+        "comparing Ada Brightwater — pick one more"
+    );
 }

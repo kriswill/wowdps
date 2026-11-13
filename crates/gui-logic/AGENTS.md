@@ -7,6 +7,9 @@ serde/toml, no UI framework.
 
 ## Rules
 
+- **Names through `labels::Names`.** A pane writes a player's label by the
+  fight's edition and the `hide_realms` option; the reading itself is
+  `wowdps_model::names`, never a split here.
 - **Nothing here draws.** What the GUI computes without painting lives
   here, with its tests; the GUI brings a text measure and its paint.
 - **`config.rs` is the one writer** of `~/.config/wowdps/config.toml` for

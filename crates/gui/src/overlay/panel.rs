@@ -950,9 +950,14 @@ impl Overlay {
                 list.children(drill::targets(ov, &targets, view))
             };
         }
-        let who = d.label.split('-').next().unwrap_or(&d.label).to_string();
-        let mut list = list.child(drill::caption(ov, &who, view));
         let enemy = view == View::EnemyTaken;
+        // The enemies' view drills a creature, whose dashes are its name's.
+        let who = if enemy {
+            d.label.clone()
+        } else {
+            ov.name(&d.label)
+        };
+        let mut list = list.child(drill::caption(ov, &who, view));
         let recap = view == View::Deaths;
         let counts = wowdps_gui_logic::drill::counts(view);
         let (by_spell, by_target) = state.breakdown();

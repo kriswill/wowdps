@@ -453,7 +453,9 @@ impl Render for TalentViewer {
         if let Some(player) = &ui.player {
             top = top.child(
                 p.text(
-                    player.split('-').next().unwrap_or(player).to_string(),
+                    wowdps_model::names::Label::player(player, ui.edition)
+                        .name()
+                        .into_owned(),
                     14.,
                     ink,
                 )

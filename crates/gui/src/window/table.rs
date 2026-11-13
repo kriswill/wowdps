@@ -22,7 +22,7 @@ use gpui_kit::{
     div, linear_color_stop, linear_gradient, relative,
 };
 use wowdps_gui_logic::glyph::Glyph;
-use wowdps_gui_logic::labels::{display_name, plural, realmless};
+use wowdps_gui_logic::labels::plural;
 use wowdps_gui_logic::table::{
     Col, Grid, HEADS_INSET, METER_NARROW, TOTAL_INSET, enemy_split, meter_set, ordered, sort_of,
     total_cells,
@@ -90,27 +90,30 @@ pub struct Meter {
 }
 
 impl Meter {
+    /// The drawn rows' labels, in the drawn order: what a test reads of
+    /// the names the meter writes.
+    #[cfg(test)]
+    pub(crate) fn drawn_labels(&self) -> Vec<String> {
+        self.drawn.iter().map(|(_, r)| r.label.clone()).collect()
+    }
+
     pub fn of(gui: &Gui, w: &W, cx: &gpui_kit::App) -> Self {
         let app = gui.fight(cx);
         let all = app.rows();
         let enemies = app.view == View::EnemyTaken;
         let sort = gui.meter_sort(app.view, w.narrow());
-        let hide = gui.cfg.hide_realms;
+        let names = gui.names(cx);
         let drawn = ordered(all.clone(), &gui.filter_text, sort)
             .into_iter()
             .map(|(i, r)| {
-                let mut shown = if hide {
-                    Row {
-                        label: if enemies {
-                            realmless(&r.label)
-                        } else {
-                            display_name(&r.label).to_string()
-                        },
-                        ..r
-                    }
+                // A player by both names where the game gives two, realms
+                // as the option says; an enemy's dash is its name's.
+                let label = if enemies {
+                    names.any(&r.label)
                 } else {
-                    r
+                    names.shown(&r.label)
                 };
+                let mut shown = Row { label, ..r };
                 shown.enemy |= enemies;
                 (i, shown)
             })

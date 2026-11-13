@@ -589,6 +589,59 @@ type `0x400` Player / `0x800` NPC / `0x1000` Pet / `0x2000` Guardian.
 So `0x511` = Mine+Friendly+PlayerControlled+Player, `0x514` = Raid+...+Player,
 `0x1114` = Raid+Friendly+PlayerControlled+**Pet**, `0xa48` = Outsider+Hostile+NPC.
 
+## Player labels
+
+A `Player-` guid's name field is its **label**, and its shape is the edition's.
+Measured on 2026-11-12 over every log on one machine, by masked shape only (each
+letter read as its case, no name printed): every distinct (guid, label) pair a
+`Player-…,"…"` unit block carries, the third unit of `SPELL_ABSORBED` included.
+
+| | Retail (83 logs, `PROJECT_ID,1`) | Forever (3 logs, 1.60.1, `PROJECT_ID,18`) |
+|---|---|---|
+| distinct (guid, label) pairs / guids | 72 830 / 72 580 | 12 853 / 12 851 |
+| `Name-Realm-Region`, three parts | 72 810 | 0 |
+| `First-Last-Realm-Region`, four parts | 0 | 12 847 |
+| a bare name, no dash | 20 | 6 |
+| two, five or more parts | 0 | 0 |
+| realms / regions | 246 / 1 | 1 / 1 |
+
+- **Retail writes one name, then the realm and region.** The region is two
+  capitals and closes every dashed label of every log on hand: none is
+  `Name-Realm` alone. The realm is written as the game normalizes it, never
+  holding a dash or a space (an apostrophe or a digit is kept). A name is one
+  word, now and then starting lowercase.
+- **Forever writes a first and a last name** before its realm and region. The
+  game shows them with a space between ("Ada Brightwater"); the log writes the
+  space as a dash (`"Ada-Brightwater-Nebula-US"`). Every dashed Forever label has
+  exactly two name words: none has one, none three. Seven last names and two
+  whole names start lowercase (`Xx-x-…`, `x-x-…`). First names are shared often:
+  in one log, 8 918 players hold 7 472 first names, 691 of them worn by two
+  players or more, and no two players share a whole name.
+- **The shape alone is not the edition.** A label of four parts is a Forever
+  name or a Retail realm written with a dash (none seen, but the client could);
+  one of two parts is Retail's older `Name-Realm` or a Forever name with neither.
+  So a label is read by its fight's edition, in one place:
+  `wowdps_model::names` (CONTRACT.md, "Player names"). Rows, cards, sorting and
+  dedup key on the guid, never a name.
+- **A bare name is a stranger's buff.** Every bare label is on a line cast by a
+  player outside the group: Retail's on 0x518 (friendly outsider, 122 lines),
+  0x548 (hostile, 124) and 0x528 (neutral, 6); Forever's six are all
+  `SPELL_AURA_APPLIED` raid buffs (Blessing of Kings, Power Word: Fortitude, Mark
+  of the Wild, Arcane Intellect) from a 0x528 stranger onto a group member
+  (0x518). A Forever bare label is the first name alone. 16 of Retail's 20 bare
+  guids and 2 of Forever's 6 wear their whole label elsewhere in the same log.
+  The meter keeps the label a guid wore last (`Meter::learn`), so a bare line
+  after a whole one names that player by the bare name until the next whole one;
+  no row merges, since rows key on the guid.
+- **Nothing else names a Forever player.** Forever's logs carry no
+  `COMBATANT_INFO` (0 lines over three logs), so the roster is the labels alone,
+  and the owner inference, which intersects the players COMBATANT_INFO names
+  (`CardPlayer::logged`), finds no Forever owner: a Forever "you" is
+  `history_characters` by name, read by this rule. The wowdps addon records a
+  player's name and realm apart (`UnitFullName`), keyed by guid; the daemon reads
+  Retail's copy alone, and no Forever copy exists on the machine measured, so how
+  that client's `UnitFullName` spells a two-word name is not known yet.
+
 ---
 
 ## Double-counting hazards present in `sample.txt`

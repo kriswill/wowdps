@@ -165,19 +165,6 @@ pub fn crit_text(r: &Row) -> String {
     }
 }
 
-/// A recap line's label for the overlay's narrow panel: the attacker or
-/// healer in parens loses its realm, as the meter rows' names do.
-pub fn compact_recap_label(label: &str) -> String {
-    match label.split_once(" (") {
-        Some((head, tail)) => {
-            let who = tail.trim_end_matches(')');
-            let short = who.split('-').next().unwrap_or(who);
-            format!("{head} ({short})")
-        }
-        None => label.to_string(),
-    }
-}
-
 /// A recap line's health after the event, as a whole percent; empty when
 /// none was reported.
 pub fn recap_hp(r: &Row) -> String {
@@ -293,11 +280,14 @@ mod tests {
 
     #[test]
     fn a_recap_line_words_its_source_amount_and_health() {
+        // The overlay's narrow recap: the attacker or healer in parens
+        // loses its realm, as the meter rows' names do.
+        let names = crate::labels::Names::default();
         assert_eq!(
-            compact_recap_label("Melee (Grunk-Proudmoore-US)"),
-            "Melee (Grunk)"
+            names.any_short("Melee (Durgan-Nebula-US)"),
+            "Melee (Durgan)"
         );
-        assert_eq!(compact_recap_label("Fall"), "Fall");
+        assert_eq!(names.any_short("Fall"), "Fall");
         let hit = Row {
             amount: 1_500,
             hp: Some((250, 1_000)),

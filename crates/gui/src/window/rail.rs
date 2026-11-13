@@ -17,7 +17,7 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::home::dungeon_name;
-use wowdps_gui_logic::labels::shown_name;
+use wowdps_gui_logic::labels::Names;
 use wowdps_gui_logic::rail::{
     self as rl, EMPTY, KeyWord, Line, Mark, More, Pull, Rail, Sources, Visit, Who, clock,
 };
@@ -476,22 +476,14 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
                 .into_any_element(),
         );
         for (v, lines) in visits {
-            list.push(visit_line(v, w, gui.cfg.hide_realms).into_any_element());
+            list.push(visit_line(v, w, gui.window_names()).into_any_element());
             for l in lines {
                 if reveal.as_ref().is_some_and(|(p, _)| *p == l.pull) {
                     found = Some((list.len(), heading));
                 }
                 let current = at.as_ref() == Some(&l.pull);
                 let keyed = cursor.as_ref() == Some(&l.pull);
-                list.push(pull_line(
-                    l,
-                    row,
-                    current,
-                    keyed,
-                    w,
-                    gui.cfg.hide_realms,
-                    cx,
-                ));
+                list.push(pull_line(l, row, current, keyed, w, gui.window_names(), cx));
                 row += 1;
             }
         }
@@ -683,8 +675,8 @@ fn night_pad(w: &W) -> Div {
 }
 
 /// A character's dot, saying under the pointer whose it is.
-fn who_dot(who: &Who, id: impl Into<gpui_kit::ElementId>, w: &W, hide_realms: bool) -> AnyElement {
-    let name = SharedString::from(shown_name(&who.name, hide_realms));
+fn who_dot(who: &Who, id: impl Into<gpui_kit::ElementId>, w: &W, names: Names) -> AnyElement {
+    let name = SharedString::from(names.shown(&who.name));
     div()
         .id(id.into())
         .flex_none()
@@ -694,7 +686,7 @@ fn who_dot(who: &Who, id: impl Into<gpui_kit::ElementId>, w: &W, hide_realms: bo
 }
 
 /// A visit's line (`.visit`): the character's dot and what it was.
-fn visit_line(v: &Visit, w: &W, hide_realms: bool) -> Div {
+fn visit_line(v: &Visit, w: &W, names: Names) -> Div {
     div()
         .w_full()
         .flex()
@@ -709,7 +701,7 @@ fn visit_line(v: &Visit, w: &W, hide_realms: bool) -> Div {
                 who,
                 SharedString::from(format!("visit-dot-{}", v.title)),
                 w,
-                hide_realms,
+                names,
             )
         }))
         .child(div().flex_1().min_w_0().truncate().child(w.text(
@@ -730,7 +722,7 @@ fn pull_line(
     current: bool,
     keyed: bool,
     w: &W,
-    hide_realms: bool,
+    names: Names,
     cx: &mut Context<Gui>,
 ) -> AnyElement {
     let (px_, ink) = match (l.trash, l.mark) {
@@ -753,7 +745,7 @@ fn pull_line(
         None => {}
     }
     if let Some(who) = &l.dot {
-        right = right.child(who_dot(who, ("pull-dot", row), w, hide_realms));
+        right = right.child(who_dot(who, ("pull-dot", row), w, names));
     }
     right = right.child(quiet(clock(l.duration_ms)));
     let body = div()

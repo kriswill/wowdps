@@ -462,39 +462,38 @@ pub fn ordinal(n: usize) -> String {
     format!("{n}{suffix}")
 }
 
-/// A row label names the owner by one of their configured names: the
-/// "Name-Realm" whole, or a bare "Name" matching its name half — the way
-/// the daemon reads `history_characters`. Case aside.
-pub fn is_named(label: &str, name: &str) -> bool {
-    let (label, name) = (label.to_lowercase(), name.to_lowercase());
-    label == name
-        || label
-            .strip_prefix(&name)
-            .is_some_and(|rest| rest.starts_with('-'))
-}
-
 /// The owner's row among `rows` (our side's, never an enemy's), by the
 /// most certain thing that names it, over every row before a less certain
 /// one is asked: the locked character's `guid`, then one of `names` whole
-/// ("Name-Realm", case aside), then a bare name by its name half — and a
-/// bare name only when it names ONE row, since a namesake from another
-/// realm who out-ranks the owner would otherwise wear their tag, their
-/// chip and their chrome.
-pub fn owner_among(rows: &[Row], guid: Option<&str>, names: &[String]) -> Option<usize> {
+/// or with its realm ("Durgan-Nebula", case aside), then by the name alone
+/// ("Durgan", "Ada Brightwater") — and a name alone only when it names ONE
+/// row, since a namesake from another realm who out-ranks the owner would
+/// otherwise wear their tag, their chip and their chrome. A Forever first
+/// name alone names nobody (`wowdps_model::names::Label::is_called`): two
+/// players there often share one. The labels are read by `edition`, the
+/// fight's.
+pub fn owner_among(
+    rows: &[Row],
+    guid: Option<&str>,
+    names: &[String],
+    edition: Option<Edition>,
+) -> Option<usize> {
+    use wowdps_model::names::{Label, Named};
+    let edition = edition.unwrap_or(Edition::Retail);
     let ours = || rows.iter().enumerate().filter(|(_, r)| !r.enemy);
     if let Some(guid) = guid
         && let Some((i, _)) = ours().find(|(_, r)| r.key == guid)
     {
         return Some(i);
     }
-    if let Some((i, _)) = ours().find(|(_, r)| {
-        names
-            .iter()
-            .any(|n| r.label.to_lowercase() == n.to_lowercase())
-    }) {
+    let reach = |r: &Row| {
+        let label = Label::player(&r.label, edition);
+        names.iter().filter_map(|n| label.named_by(n)).max()
+    };
+    if let Some((i, _)) = ours().find(|(_, r)| reach(r) >= Some(Named::Realm)) {
         return Some(i);
     }
-    let mut bare = ours().filter(|(_, r)| names.iter().any(|n| is_named(&r.label, n)));
+    let mut bare = ours().filter(|(_, r)| reach(r) == Some(Named::Name));
     match (bare.next(), bare.next()) {
         (Some((i, _)), None) => Some(i),
         _ => None,

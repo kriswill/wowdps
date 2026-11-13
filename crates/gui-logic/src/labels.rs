@@ -1,76 +1,83 @@
-//! What a GUI writes a name or an outcome as: a player's name without its
-//! realm, and a segment's verdict word. Moved from the iced GUI's
-//! `view.rs`, which re-exports them; the colours a GUI draws them in stay
-//! its own (a verdict comes with a [`Tone`], not a colour).
+//! What a GUI writes a name or an outcome as: a player's name as the game
+//! shows it, with or without its realm, and a segment's verdict word.
+//! Moved from the iced GUI's `view.rs`, which re-exports them; the colors
+//! a GUI draws them in stay its own (a verdict comes with a [`Tone`], not
+//! a color). A label is read through `wowdps_model::names`, by the edition
+//! of the fight it comes from, and never split here.
 
-use wowdps_model::{Row, SegmentKind};
+use wowdps_model::names::{Label, shown_any};
+use wowdps_model::{Edition, Row, SegmentKind};
 use wowdps_proto::ClientState;
 
-/// "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
-/// contain '-', so everything from the first dash is realm noise.
-pub fn display_name(label: &str) -> &str {
-    label.split('-').next().unwrap_or(label)
+/// How a pane writes players' names: by the edition of the fight it shows,
+/// whose labels it reads, and with or without realms as the option
+/// (`hide_realms`) says. A Retail player reads "Durgan" or
+/// "Durgan-Nebula-US" (the label itself); a Forever one, whose log writes
+/// "Ada-Brightwater-Nebula-US", reads "Ada Brightwater" or
+/// "Ada Brightwater-Nebula-US".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Names {
+    pub edition: Edition,
+    pub hide_realms: bool,
 }
 
-/// `label` with a player's realm taken off wherever one is written: a whole
-/// label ("Bearlysimpin-Proudmoore-US" → "Bearlysimpin"), or the source in
-/// the parentheses a recap line or an ability wears ("Word of Glory
-/// (Soundscape-Proudmoore-US)" → "Word of Glory (Soundscape)"). For the
-/// panes whose rows are players and creatures alike — a drill's targets and
-/// attackers, a recap — so, unlike [`display_name`], it touches only what
-/// reads as a player's "Name-Realm-Region": a creature's hyphen ("Yogg-
-/// Saron", "Blood-Queen Lana'thel") is part of its name, not a realm.
-pub fn realmless(label: &str) -> String {
-    if let Some(head) = label.strip_suffix(')')
-        && let Some((what, who)) = head.rsplit_once(" (")
-    {
-        return match player_name(who) {
-            Some(name) => format!("{what} ({name})"),
-            None => label.to_string(),
-        };
-    }
-    player_name(label).map_or_else(|| label.to_string(), str::to_string)
-}
-
-/// `rows` as the window draws them in a pane of mixed players and
-/// creatures: realms taken off every label when the option says so.
-pub fn realmless_rows(rows: &[Row], hide_realms: bool) -> Vec<Row> {
-    rows.iter()
-        .map(|r| {
-            if hide_realms {
-                Row {
-                    label: realmless(&r.label),
-                    ..r.clone()
-                }
-            } else {
-                r.clone()
-            }
-        })
-        .collect()
-}
-
-/// A name as the window draws it — the rail's tips, Home, the palette,
-/// the inspector: without its realm when the option says so.
-pub fn shown_name(name: &str, hide_realms: bool) -> String {
-    if hide_realms {
-        display_name(name).to_string()
-    } else {
-        name.to_string()
+impl Default for Names {
+    fn default() -> Self {
+        Self::new(None, false)
     }
 }
 
-/// The name in a player label the log writes as "Name-Realm-Region" (the
-/// region two capitals, no part of it holding a space), else `None`.
-fn player_name(label: &str) -> Option<&str> {
-    let mut parts = label.split('-');
-    let name = parts.next().filter(|n| !n.is_empty() && !n.contains(' '))?;
-    let rest: Vec<&str> = parts.collect();
-    let region = rest.last()?;
-    let shaped = rest.len() >= 2
-        && region.len() == 2
-        && region.chars().all(|c| c.is_ascii_uppercase())
-        && rest.iter().all(|p| !p.is_empty() && !p.contains(' '));
-    shaped.then_some(name)
+impl Names {
+    /// A fight of `edition` (Retail's rule when none is known yet).
+    pub fn new(edition: Option<Edition>, hide_realms: bool) -> Self {
+        Self {
+            edition: edition.unwrap_or(Edition::Retail),
+            hide_realms,
+        }
+    }
+
+    /// A player's label, read.
+    pub fn label<'a>(&self, label: &'a str) -> Label<'a> {
+        Label::player(label, self.edition)
+    }
+
+    /// A player's name as the game shows it, never with its realm:
+    /// "Durgan", "Ada Brightwater". For the places a name stands alone
+    /// (the overlay's rows, a crumb, "you", a rezzer).
+    pub fn name(&self, label: &str) -> String {
+        self.label(label).name().into_owned()
+    }
+
+    /// A player's label as the pane writes it: the name, and the realm
+    /// and region after it unless the option hides them. For a label known
+    /// to be a player's: the rail's tips, Home, the palette, a drill's
+    /// player.
+    pub fn shown(&self, label: &str) -> String {
+        self.label(label).shown(!self.hide_realms)
+    }
+
+    /// A label in a pane of players and creatures alike (a drill's targets
+    /// and attackers, a recap, a death's source): a player's as
+    /// [`Names::shown`] writes it, a creature's as it is.
+    pub fn any(&self, label: &str) -> String {
+        shown_any(label, self.edition, !self.hide_realms).into_owned()
+    }
+
+    /// [`Names::any`] with no realm whatever the option: the overlay's
+    /// narrow recap.
+    pub fn any_short(&self, label: &str) -> String {
+        shown_any(label, self.edition, false).into_owned()
+    }
+
+    /// `rows` as the pane draws them: every label through [`Names::any`].
+    pub fn rows(&self, rows: &[Row]) -> Vec<Row> {
+        rows.iter()
+            .map(|r| Row {
+                label: self.any(&r.label),
+                ..r.clone()
+            })
+            .collect()
+    }
 }
 
 /// What a verdict word means, for a GUI to colour.
@@ -238,14 +245,39 @@ mod tests {
 
     #[test]
     fn a_player_loses_the_realm_and_a_creature_keeps_its_hyphen() {
-        assert_eq!(display_name("Keanucleavês-Proudmoore-US"), "Keanucleavês");
-        assert_eq!(realmless("Bearlysimpin-Proudmoore-US"), "Bearlysimpin");
+        let retail = Names::new(Some(Edition::Retail), true);
+        assert_eq!(retail.name("Durgan-Nebula-US"), "Durgan");
+        assert_eq!(retail.shown("Durgan-Nebula-US"), "Durgan");
         assert_eq!(
-            realmless("Word of Glory (Soundscape-Proudmoore-US)"),
-            "Word of Glory (Soundscape)"
+            retail.any("Word of Glory (Durgan-Nebula-US)"),
+            "Word of Glory (Durgan)"
         );
-        assert_eq!(realmless("Yogg-Saron"), "Yogg-Saron");
-        assert_eq!(realmless("Blood-Queen Lana'thel"), "Blood-Queen Lana'thel");
+        assert_eq!(retail.any("Yogg-Saron"), "Yogg-Saron");
+        assert_eq!(retail.any("Blood-Queen Lana'thel"), "Blood-Queen Lana'thel");
+        let shown = Names::new(Some(Edition::Retail), false);
+        assert_eq!(shown.shown("Durgan-Nebula-US"), "Durgan-Nebula-US");
+        assert_eq!(shown.any("Durgan-Nebula-US"), "Durgan-Nebula-US");
+    }
+
+    /// A Forever player is shown by both names, with or without the realm.
+    #[test]
+    fn a_forever_player_is_shown_by_both_names() {
+        let hidden = Names::new(Some(Edition::Forever), true);
+        assert_eq!(hidden.name("Ada-Brightwater-Nebula-US"), "Ada Brightwater");
+        assert_eq!(hidden.shown("Ada-Brightwater-Nebula-US"), "Ada Brightwater");
+        assert_eq!(
+            hidden.any("Smite (Ada-Brightwater-Nebula-US)"),
+            "Smite (Ada Brightwater)"
+        );
+        let shown = Names::new(Some(Edition::Forever), false);
+        assert_eq!(
+            shown.shown("Ada-Brightwater-Nebula-US"),
+            "Ada Brightwater-Nebula-US"
+        );
+        assert_eq!(
+            shown.any_short("Smite (Ada-Brightwater-Nebula-US)"),
+            "Smite (Ada Brightwater)"
+        );
     }
 
     #[test]

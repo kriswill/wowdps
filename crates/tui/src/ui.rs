@@ -7,8 +7,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use wowdps_model::fmt;
+use wowdps_model::names::shown_any;
+use wowdps_model::{Edition, Row, SegmentKind, View};
 use wowdps_model::{ListRow, Pane, Screen};
-use wowdps_model::{Row, SegmentKind, View};
 use wowdps_proto::ClientState;
 
 const METER_HINTS: &str = "d dmg  h heal  i intr  c cc  x disp  K deaths  T taken | [ ] seg | j/k move | enter drill | esc list | q quit";
@@ -16,6 +17,19 @@ const DRILL_HINTS: &str = "tab pane | j/k move | esc back | d h i c x K T view |
 const LIST_HINTS: &str = "j/k move | enter open | q quit";
 
 pub use wowdps_model::fmt::{duration, human, mitigation_line, view_name};
+
+/// A label as the TUI writes it: a player's name as the game shows it,
+/// with its realm (the TUI hides none), by the watched fight's edition — a
+/// Retail label as the log wrote it, a Forever one "Ada
+/// Brightwater-Nebula-US" — and a creature's as it is.
+fn shown(app: &ClientState, label: &str) -> String {
+    shown_any(label, edition_of(app), true).into_owned()
+}
+
+/// The watched fight's edition, Retail's rule before one is known.
+fn edition_of(app: &ClientState) -> Edition {
+    app.segment_edition().unwrap_or(Edition::Retail)
+}
 
 pub fn draw(frame: &mut Frame, app: &ClientState) {
     let area = frame.area();
@@ -100,7 +114,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
                     s.push_str(" (history)");
                 }
                 if let Some(drill) = app.drill.as_ref() {
-                    s.push_str(&format!("  > {}", drill.label));
+                    s.push_str(&format!("  > {}", shown(app, &drill.label)));
                 }
                 s
             }
@@ -268,7 +282,15 @@ fn draw_meter(frame: &mut Frame, area: Rect, app: &ClientState) {
     if rows.is_empty() {
         return draw_empty(frame, area, app.view);
     }
-    draw_rows(frame, area, &rows, app.row_sel, true, app.view);
+    draw_rows(
+        frame,
+        area,
+        &rows,
+        app.row_sel,
+        true,
+        app.view,
+        edition_of(app),
+    );
 }
 
 fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
@@ -278,7 +300,7 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
     // v16: the ability drill — the TUI words the stats the by-spell row
     // carries (the graph is the GUI's; here the numbers are the story).
     if let Some((_, spell_label)) = app.drill_spell() {
-        let title = format!(" {} ▸ {} ", drill.label, spell_label);
+        let title = format!(" {} ▸ {} ", shown(app, &drill.label), spell_label);
         let block = Block::bordered()
             .title(title)
             .border_style(Style::new().fg(Color::Cyan));
@@ -317,7 +339,7 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
             if abilities.is_empty() {
                 draw_empty(frame, rest, app.view);
             } else {
-                draw_rows(frame, rest, &abilities, 0, false, app.view);
+                draw_rows(frame, rest, &abilities, 0, false, app.view, edition_of(app));
             }
         } else {
             frame.render_widget(Paragraph::new(Line::from(body)), inner);
@@ -388,7 +410,7 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
         if rows.is_empty() {
             draw_empty(frame, inner, app.view);
         } else {
-            draw_rows(frame, inner, rows, sel, focused, app.view);
+            draw_rows(frame, inner, rows, sel, focused, app.view, edition_of(app));
         }
     }
     if let (Some(foot), Some(line)) = (foot, mitigation) {
@@ -417,7 +439,24 @@ fn draw_empty(frame: &mut Frame, area: Rect, view: View) {
     );
 }
 
-fn draw_rows(frame: &mut Frame, area: Rect, rows: &[Row], sel: usize, focused: bool, view: View) {
+fn draw_rows(
+    frame: &mut Frame,
+    area: Rect,
+    rows: &[Row],
+    sel: usize,
+    focused: bool,
+    view: View,
+    edition: Edition,
+) {
+    // Each label as the TUI writes it (`shown`), by the fight's edition.
+    let rows: Vec<Row> = rows
+        .iter()
+        .map(|r| Row {
+            label: shown_any(&r.label, edition, true).into_owned(),
+            ..r.clone()
+        })
+        .collect();
+    let rows = rows.as_slice();
     let height = area.height as usize;
     if height == 0 || area.width == 0 {
         return;
@@ -547,6 +586,8 @@ fn row_parts(
     let pre = format!(
         "{}{rank:>2} {:<name$}",
         if selected { '>' } else { ' ' },
+        // A two-word name truncates from its end as one string: the first
+        // name stays whole, then as much of the last as fits.
         truncate(&row.label, c.name),
         name = c.name,
     );

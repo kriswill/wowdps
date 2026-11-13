@@ -20,7 +20,7 @@ use wowdps_gui_logic::home::{
     boss_words, columns_for, empty_night, key_widths, long_date, night_cap, none_of, panel_count,
     state_line,
 };
-use wowdps_gui_logic::labels::{display_name, plural, shown_name};
+use wowdps_gui_logic::labels::{Names, plural};
 use wowdps_gui_logic::rail::Pull;
 use wowdps_gui_logic::theme::{AA_CONTRAST, Color, accent_wash, class_text_on};
 use wowdps_model::fmt::{duration, human};
@@ -125,7 +125,8 @@ struct Meta {
     /// The line that tells a disabled store from a cold one from a
     /// degraded one.
     state_line: Option<String>,
-    hide_realms: bool,
+    /// How Home writes names: the window's edition, realms as the option says.
+    names: Names,
     /// The night it is now, which words how long ago the lead night was.
     tonight: i64,
     /// The game Home shows, when it is not Retail among several.
@@ -145,7 +146,7 @@ pub fn view(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
         stalled: home.stalled(),
         scope: home.scope.clone(),
         state_line: state_line(home),
-        hide_realms: gui.cfg.hide_realms,
+        names: gui.window_names(),
         tonight: gui.tonight(),
         game: gui
             .header_edition()
@@ -228,15 +229,15 @@ pub fn view(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
         };
         let col_w = (inner - GAP * cols.saturating_sub(1) as f32) / cols as f32;
         let who = scope_name(&meta, &chars);
-        let hide = meta.hide_realms;
+        let names = meta.names;
         let mut raids = panels.raids.iter();
         let mut cards = vec![
-            keys_panel(&panels, who.as_deref(), hide, col_w, w, cx),
-            raid_panel(raids.next(), who.as_deref(), hide, 0, w, cx),
-            trend_panel(&panels, who.as_deref(), hide, col_w, w, cx),
+            keys_panel(&panels, who.as_deref(), names, col_w, w, cx),
+            raid_panel(raids.next(), who.as_deref(), names, 0, w, cx),
+            trend_panel(&panels, who.as_deref(), names, col_w, w, cx),
         ];
         for (i, r) in raids.enumerate() {
-            cards.push(raid_panel(Some(r), who.as_deref(), hide, i + 1, w, cx));
+            cards.push(raid_panel(Some(r), who.as_deref(), names, i + 1, w, cx));
         }
         page = page.child(grid(cards, cols, w));
         // The one honest word about a stop the reader would otherwise read
@@ -278,7 +279,7 @@ fn scope_name(meta: &Meta, chars: &[CharLine]) -> Option<String> {
     let guid = meta.scope.as_deref()?;
     Some(chars.iter().find(|c| c.guid == guid).map_or_else(
         || "this character".to_string(),
-        |c| shown_name(&c.name, meta.hide_realms),
+        |c| meta.names.shown(&c.name),
     ))
 }
 
@@ -305,7 +306,7 @@ fn top(meta: &Meta, chars: &[CharLine], w: &W, cx: &mut Context<Gui>) -> impl In
     // option says — the chip beside it carries the realm when it is shown —
     // and wraps rather than runs off a narrow window's edge.
     let title = match scope_name(meta, chars) {
-        Some(name) => format!("{}, this week", display_name(&name)),
+        Some(name) => format!("{}, this week", meta.names.name(&name)),
         None => "You, this week".to_string(),
     };
     let mut chips = div()
@@ -325,7 +326,7 @@ fn top(meta: &Meta, chars: &[CharLine], w: &W, cx: &mut Context<Gui>) -> impl In
         let on = meta.scope.as_deref() == Some(c.guid.as_str());
         let dot = hsla(c.class.map_or(w.t.ink_3, Color::of_class));
         chips = chips.child(scope_chip(
-            shown_name(&c.name, meta.hide_realms),
+            meta.names.shown(&c.name),
             Some(dot),
             on,
             Some(c.guid.clone()),
@@ -527,12 +528,7 @@ fn night_words(meta: &Meta, n: &NightPanel, w: &W, cx: &mut Context<Gui>) -> Div
         .pt(w.z(SUB_ABOVE))
         .pb(w.z(SUB_BELOW))
         .child(quiet(format!("{}, on ", long_date(n.day, meta.tonight))))
-        .child(w.text(
-            shown_name(&n.who.name, meta.hide_realms),
-            SUB_PX,
-            who,
-            SEMIBOLD,
-        ))
+        .child(w.text(meta.names.shown(&n.who.name), SUB_PX, who, SEMIBOLD))
         .child(quiet(". ".to_string()))
         .child(quiet(format!("Rank is among your role, by {}.", n.measure)));
     let mut col = div()
@@ -701,7 +697,7 @@ fn panel(
 fn keys_panel(
     panels: &Panels,
     who: Option<&str>,
-    hide_realms: bool,
+    names: Names,
     col_w: f32,
     w: &W,
     cx: &mut Context<Gui>,
@@ -712,7 +708,7 @@ fn keys_panel(
     } else {
         let mut list = div().flex().flex_col();
         for (i, k) in panels.keys.iter().enumerate() {
-            list = list.child(key_row(k, i, inner, hide_realms, w, cx));
+            list = list.child(key_row(k, i, inner, names, w, cx));
         }
         div().flex().flex_col().child(list).child(legend_words(
             "Ticks mark +3, +2 and the timer, left to right",
@@ -734,7 +730,7 @@ fn key_row(
     k: &KeyRun,
     i: usize,
     inner: f32,
-    hide_realms: bool,
+    names: Names,
     w: &W,
     cx: &mut Context<Gui>,
 ) -> AnyElement {
@@ -760,7 +756,7 @@ fn key_row(
             w.c(|t| t.ink),
             REGULAR,
         ));
-    let whose = SharedString::from(shown_name(&k.who.name, hide_realms));
+    let whose = SharedString::from(names.shown(&k.who.name));
     let face = div()
         .h(w.z(KEY_H))
         .flex()
@@ -796,7 +792,7 @@ fn key_row(
 fn raid_panel(
     r: Option<&RaidPanel>,
     who: Option<&str>,
-    hide_realms: bool,
+    names: Names,
     n: usize,
     w: &W,
     cx: &mut Context<Gui>,
@@ -817,7 +813,7 @@ fn raid_panel(
         if i > 0 {
             list = list.child(chrome::hairline(w));
         }
-        list = list.child(boss_row(b, n * 100 + i, hide_realms, w, cx));
+        list = list.child(boss_row(b, n * 100 + i, names, w, cx));
     }
     let body = div().flex().flex_col().child(list).child(legend(
         vec![
@@ -835,7 +831,7 @@ fn raid_panel(
 /// One boss (`.brow`): its name and outcome — a press opens its fastest
 /// kill, else its newest pull — and under them a dot per pull, each a
 /// press to that pull.
-fn boss_row(b: &BossLine, i: usize, hide_realms: bool, w: &W, cx: &mut Context<Gui>) -> AnyElement {
+fn boss_row(b: &BossLine, i: usize, names: Names, w: &W, cx: &mut Context<Gui>) -> AnyElement {
     let (outcome, killed) = boss_words(b);
     let ink = if killed {
         w.c(|t| t.good)
@@ -866,7 +862,7 @@ fn boss_row(b: &BossLine, i: usize, hide_realms: bool, w: &W, cx: &mut Context<G
         );
     let mut dots = div().flex().flex_wrap().items_center().gap(w.z(PDOT_GAP));
     for (j, d) in b.pulls.iter().enumerate() {
-        dots = dots.child(pull_dot(d, i * 1000 + j, hide_realms, w, cx));
+        dots = dots.child(pull_dot(d, i * 1000 + j, names, w, cx));
     }
     div()
         .flex()
@@ -884,7 +880,7 @@ fn boss_row(b: &BossLine, i: usize, hide_realms: bool, w: &W, cx: &mut Context<G
 
 /// A pull's dot (`.pdot`): filled green on a kill, a ring in whose colour
 /// on a wipe. A press opens the pull.
-fn pull_dot(d: &PullDot, i: usize, hide_realms: bool, w: &W, cx: &mut Context<Gui>) -> AnyElement {
+fn pull_dot(d: &PullDot, i: usize, names: Names, w: &W, cx: &mut Context<Gui>) -> AnyElement {
     let (fill, edge) = if d.kill {
         (w.c(|t| t.good), w.c(|t| t.good))
     } else {
@@ -892,7 +888,7 @@ fn pull_dot(d: &PullDot, i: usize, hide_realms: bool, w: &W, cx: &mut Context<Gu
     };
     let words = SharedString::from(format!(
         "{}, {}",
-        shown_name(&d.who.name, hide_realms),
+        names.shown(&d.who.name),
         if d.kill { "kill" } else { "wipe" }
     ));
     let fight = d.fight_id.clone();
@@ -922,7 +918,7 @@ fn pull_dot(d: &PullDot, i: usize, hide_realms: bool, w: &W, cx: &mut Context<Gu
 fn trend_panel(
     panels: &Panels,
     who: Option<&str>,
-    hide_realms: bool,
+    names: Names,
     col_w: f32,
     w: &W,
     cx: &mut Context<Gui>,
@@ -946,12 +942,7 @@ fn trend_panel(
         }
         let mut items: Vec<(AnyElement, String)> = seen
             .iter()
-            .map(|c| {
-                (
-                    legend_dot(char_ink(c, w), w),
-                    shown_name(&c.name, hide_realms),
-                )
-            })
+            .map(|c| (legend_dot(char_ink(c, w), w), names.shown(&c.name)))
             .collect();
         items.push((
             legend_ring(w.c(|t| t.legendary), gpui_kit::transparent_black(), w),
@@ -960,14 +951,7 @@ fn trend_panel(
         div()
             .flex()
             .flex_col()
-            .child(trend(
-                &panels.trend,
-                w.c(|t| t.ink_3),
-                hide_realms,
-                inner,
-                w,
-                cx,
-            ))
+            .child(trend(&panels.trend, w.c(|t| t.ink_3), names, inner, w, cx))
             .child(legend(items, w))
     };
     panel(

@@ -6,7 +6,7 @@
 
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Div, Hsla, PathBuilder, Pixels, div, img, px};
-use wowdps_gui_logic::labels::{class_tag, display_name};
+use wowdps_gui_logic::labels::class_tag;
 use wowdps_gui_logic::theme::Color;
 use wowdps_model::fmt::human;
 use wowdps_model::{Class, Row, Spec};
@@ -91,7 +91,13 @@ pub fn meter_row(ov: &Ov, r: &Row, rank: Option<usize>, frac: f32) -> Div {
         .px(px(8.))
         .children(rank.map(|n| rank_cell(ov, n)))
         .child(div().flex_1().min_w_0().overflow_hidden().child(ov.words(
-            display_name(&r.label).to_string(),
+            // A player's row is keyed by its guid; the enemies' rows are
+            // creatures, whose dashes are their names'.
+            if r.key.starts_with("Player-") {
+                ov.name(&r.label)
+            } else {
+                ov.names().any_short(&r.label)
+            },
             13.,
             ov.c(|t| t.text),
         )))

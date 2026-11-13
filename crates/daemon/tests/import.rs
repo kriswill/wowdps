@@ -463,7 +463,11 @@ fn an_import_is_not_this_machines_history() {
 
     // The import's owner (its "you") is not one of ours.
     let mine = store.mine();
-    assert!(!mine.owns(ZED, "Zed-Elsewhere"));
+    assert!(
+        !mine
+            .of(wowdps_model::Edition::Retail)
+            .owns(ZED, "Zed-Elsewhere")
+    );
 }
 
 /// An imported kill races for no protection: with kills not kept whole and

@@ -120,12 +120,7 @@ impl Gui {
             None => Vec::new(),
         };
         listed(
-            items(
-                &self.rail(cx),
-                &players,
-                self.hist.known(),
-                self.cfg.hide_realms,
-            ),
+            items(&self.rail(cx), &players, self.hist.known(), self.names(cx)),
             &pal.p.query,
         )
     }

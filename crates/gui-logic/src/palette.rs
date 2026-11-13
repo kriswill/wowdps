@@ -10,7 +10,7 @@ use wowdps_model::{Action, Class, Row, Spec, View};
 
 use crate::fold;
 use crate::home::{ALL_CHARACTERS, CharLine};
-use crate::labels::{WINDOW_VIEWS, shown_name, window_view_name};
+use crate::labels::{Names, WINDOW_VIEWS, window_view_name};
 use crate::rail::{KeyWord, Mark, Pull, Rail};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -129,8 +129,8 @@ pub struct Item {
 /// all characters and each of `chars` (the characters the window knows you
 /// play). `players` are that pull's rows — our side's, whatever view they
 /// were read on.
-pub fn items(rail: &Rail, players: &[Row], chars: &[CharLine], hide_realms: bool) -> Vec<Item> {
-    let shown = |name: &str| shown_name(name, hide_realms);
+pub fn items(rail: &Rail, players: &[Row], chars: &[CharLine], names: Names) -> Vec<Item> {
+    let shown = |name: &str| names.shown(name);
     let mut out = Vec::new();
     let mut recent = 0;
     for night in &rail.nights {

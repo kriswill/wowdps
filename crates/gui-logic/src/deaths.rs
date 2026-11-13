@@ -9,7 +9,7 @@ use wowdps_model::fmt::duration;
 use wowdps_model::{RaidDeath, RaidTimeline, Row};
 use wowdps_proto::ClientState;
 
-use crate::labels::{display_name, plural};
+use crate::labels::plural;
 
 /// What a death is, to open it: the player's meter key and label, and which
 /// of their death windows (R9's index) — the Deaths drill's own question.
@@ -77,7 +77,7 @@ impl Words {
 /// writes its end as a self-kill), worded as the prototype words it —
 /// "Purgatory ran out", "cheat death"; any other of their own is "self"; a
 /// player source loses its realm when the options say so.
-pub fn words(d: &RaidDeath, hide_realms: bool) -> Words {
+pub fn words(d: &RaidDeath, names: crate::labels::Names) -> Words {
     let own = !d.source.is_empty() && d.source == d.name;
     let cheat = own && !d.blow.is_empty() && d.hit <= 1;
     let (blow, note) = if d.blow.is_empty() {
@@ -91,10 +91,8 @@ pub fn words(d: &RaidDeath, hide_realms: bool) -> Words {
         "cheat death".to_string()
     } else if own {
         "self".to_string()
-    } else if hide_realms {
-        display_name(&d.source).to_string()
     } else {
-        d.source.clone()
+        names.any(&d.source)
     };
     Words {
         blow,

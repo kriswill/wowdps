@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use wowdps_core::meter::Segment;
 use wowdps_core::model::Row;
-use wowdps_model::RaidTimeline;
+use wowdps_model::{Edition, RaidTimeline};
 use wowdps_proto::Breakdown;
 
 use crate::history::name_matches;
@@ -22,8 +22,9 @@ use crate::history::name_matches;
 pub struct Mine {
     /// The addon's own characters, the store's owner, every card's owner.
     guids: HashSet<String>,
-    /// The configured characters, lowercased — "Name-Realm" matches whole,
-    /// a bare "Name" the name half, exactly as the store matches them.
+    /// The configured characters, trimmed: "Name-Realm" or "Name" (a
+    /// Forever character's "First Last"), matched as the store matches
+    /// them ([`name_matches`]).
     names: Vec<String>,
 }
 
@@ -33,15 +34,42 @@ impl Mine {
             guids: guids.into_iter().filter(|g| !g.is_empty()).collect(),
             names: names
                 .iter()
-                .map(|n| n.trim().to_lowercase())
+                .map(|n| n.trim().to_string())
                 .filter(|n| !n.is_empty())
                 .collect(),
         }
     }
 
+    /// The account's characters in a fight of `edition`, whose labels are
+    /// read by that edition's rule (`wowdps_model::names`).
+    pub fn of(&self, edition: Edition) -> In<'_> {
+        In {
+            mine: self,
+            edition,
+        }
+    }
+
+    /// The names a segment knows the account's guids by.
+    pub fn names_in(&self, seg: &Segment) -> Vec<String> {
+        self.guids
+            .iter()
+            .filter_map(|g| seg.name_of(g))
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+/// [`Mine`] in a fight of one edition: what marks its rows.
+#[derive(Debug, Clone, Copy)]
+pub struct In<'a> {
+    mine: &'a Mine,
+    edition: Edition,
+}
+
+impl In<'_> {
     /// Is the player `guid`, called `name`, one of the account's?
     pub fn owns(&self, guid: &str, name: &str) -> bool {
-        self.guids.contains(guid) || name_matches(&self.names, name)
+        self.mine.guids.contains(guid) || name_matches(&self.mine.names, name, self.edition)
     }
 
     /// The names the account's characters wear among `players` (guid,
@@ -57,15 +85,6 @@ impl Mine {
             .collect()
     }
 
-    /// The same, for a segment: the names it knows the account's guids by.
-    pub fn names_in(&self, seg: &Segment) -> Vec<String> {
-        self.guids
-            .iter()
-            .filter_map(|g| seg.name_of(g))
-            .map(str::to_string)
-            .collect()
-    }
-
     /// Meter rows, keyed by guid: the account's characters are `mine`.
     pub fn mark_rows(&self, rows: &mut [Row]) {
         for r in rows {
@@ -77,7 +96,8 @@ impl Mine {
     /// attackers), against the names `here` gives the account's characters.
     pub fn mark_named(&self, rows: &mut [Row], here: &[String]) {
         for r in rows {
-            r.mine = here.contains(&r.label) || name_matches(&self.names, &r.label);
+            r.mine =
+                here.contains(&r.label) || name_matches(&self.mine.names, &r.label, self.edition);
         }
     }
 
@@ -122,21 +142,50 @@ mod tests {
     fn a_character_is_mine_by_guid_or_by_its_configured_name() {
         let mine = Mine::new(
             ["Player-1-A".to_string()],
-            &["Tranqster".to_string(), "Other-Realm".to_string()],
+            &["Durgan".to_string(), "Other-Realm".to_string()],
         );
-        assert!(mine.owns("Player-1-A", "Anybody-Realm"));
-        assert!(mine.owns("Player-1-B", "Tranqster-Proudmoore"));
-        assert!(mine.owns("Player-1-C", "Other-Realm"));
-        assert!(!mine.owns("Player-1-D", "Other-Elsewhere"));
-        assert!(!Mine::default().owns("Player-1-A", "Tranqster"));
+        let retail = mine.of(Edition::Retail);
+        assert!(retail.owns("Player-1-A", "Anybody-Realm"));
+        assert!(retail.owns("Player-1-B", "Durgan-Nebula"));
+        assert!(retail.owns("Player-1-C", "Other-Realm"));
+        assert!(!retail.owns("Player-1-D", "Other-Elsewhere"));
+        assert!(
+            !Mine::default()
+                .of(Edition::Retail)
+                .owns("Player-1-A", "Durgan")
+        );
+        // A configured "Name-Realm" names its character whatever region
+        // the log writes after it.
+        assert!(retail.owns("Player-1-C", "Other-Realm-US"));
         let mut rows = vec![
-            row("Player-1-A", "Tranqlock-X"),
-            row("Player-1-Z", "Swampert-X"),
+            row("Player-1-A", "Brannoc-X"),
+            row("Player-1-Z", "Merrow-X"),
         ];
-        mine.mark_rows(&mut rows);
+        retail.mark_rows(&mut rows);
         assert_eq!(
             rows.iter().map(|r| r.mine).collect::<Vec<_>>(),
             [true, false]
+        );
+    }
+
+    /// A Forever character is configured by its full name, as the game
+    /// shows it: its first name alone is no one's, since a stranger who
+    /// shares it would be marked "you".
+    #[test]
+    fn a_forever_character_is_mine_by_its_full_name_never_its_first() {
+        let mine = Mine::new(
+            Vec::new(),
+            &["Ada Brightwater".to_string(), "Corwin".to_string()],
+        );
+        let forever = mine.of(Edition::Forever);
+        assert!(forever.owns("Player-6101-A", "Ada-Brightwater-Nebula-US"));
+        assert!(!forever.owns("Player-6101-B", "Ada-Thornfield-Nebula-US"));
+        assert!(!forever.owns("Player-6101-C", "Corwin-Ashdown-Nebula-US"));
+        let dashed = Mine::new(Vec::new(), &["ada-brightwater-nebula".to_string()]);
+        assert!(
+            dashed
+                .of(Edition::Forever)
+                .owns("Player-6101-A", "Ada-Brightwater-Nebula-US")
         );
     }
 
@@ -145,16 +194,14 @@ mod tests {
     #[test]
     fn a_drill_row_is_mine_by_the_name_the_fight_gives_the_guid() {
         let mine = Mine::new(["Player-1-A".to_string()], &[]);
-        let here = mine.names_among([("Player-1-A", "Tranqlock-X"), ("Player-1-Z", "Swampert-X")]);
-        assert_eq!(here, ["Tranqlock-X"]);
+        let retail = mine.of(Edition::Retail);
+        let here = retail.names_among([("Player-1-A", "Brannoc-X"), ("Player-1-Z", "Merrow-X")]);
+        assert_eq!(here, ["Brannoc-X"]);
         let mut b = Breakdown {
-            by_target: vec![
-                row("Tranqlock-X", "Tranqlock-X"),
-                row("Swampert-X", "Swampert-X"),
-            ],
+            by_target: vec![row("Brannoc-X", "Brannoc-X"), row("Merrow-X", "Merrow-X")],
             ..Breakdown::default()
         };
-        mine.mark_breakdown(&mut b, false, &here);
+        retail.mark_breakdown(&mut b, false, &here);
         assert_eq!(
             b.by_target.iter().map(|r| r.mine).collect::<Vec<_>>(),
             [true, false]

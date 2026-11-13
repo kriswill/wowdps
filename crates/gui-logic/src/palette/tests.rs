@@ -82,7 +82,12 @@ fn the_items_are_the_rail_the_players_the_views_and_the_screens() {
 }
 
 fn items_with_realms() -> Vec<Item> {
-    items(&rail_of(Vec::new()), &players(), &chars(), false)
+    items(
+        &rail_of(Vec::new()),
+        &players(),
+        &chars(),
+        Names::new(None, false),
+    )
 }
 
 /// Before anything is typed: the newest pulls worth jumping to — a boss or
@@ -141,7 +146,10 @@ fn a_query_folds_accents_and_searches_the_words() {
             )
         })
         .collect();
-    let many = listed(items(&rail_of(trash), &[], &[], true), "trash");
+    let many = listed(
+        items(&rail_of(trash), &[], &[], Names::new(None, true)),
+        "trash",
+    );
     assert_eq!(many.len(), MAX_PULLS);
 }
 

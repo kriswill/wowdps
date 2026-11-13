@@ -206,6 +206,9 @@ pub fn enemy_split(rows: &[wowdps_model::Row]) -> Option<usize> {
 fn row_matches(r: &Row, needle: &[char]) -> bool {
     use crate::fold;
     fold::contains(&r.label, needle)
+        // A Forever name the log writes "Ada-Brightwater-…" is typed as the
+        // game shows it, "ada brightwater": a space finds the log's dash.
+        || (needle.contains(&' ') && fold::contains(&r.label.replace('-', " "), needle))
         || r.class.is_some_and(|c| fold::contains(c.name(), needle))
         || r.spec.is_some_and(|s| fold::contains(s.name(), needle))
         || r.role()
@@ -577,6 +580,25 @@ mod tests {
         assert_eq!(kept("tank"), [0, 1]);
         assert_eq!(kept("dps"), Vec::<usize>::new());
         assert_eq!(kept(""), [0, 1, 2]);
+    }
+
+    /// A Forever name is found as the game shows it, with a space, though
+    /// the log writes a dash; the first name alone finds each who has it.
+    #[test]
+    fn the_filter_finds_a_forever_name_by_its_space() {
+        let rows = vec![
+            row("Ada-Brightwater-Nebula-US", 30, 1, 0),
+            row("Ada-Thornfield-Nebula-US", 20, 1, 0),
+        ];
+        let kept = |f: &str| -> Vec<usize> {
+            filtered_indexed(rows.clone(), f)
+                .into_iter()
+                .map(|(i, _)| i)
+                .collect()
+        };
+        assert_eq!(kept("ada thorn"), [1]);
+        assert_eq!(kept("ada-bright"), [0]);
+        assert_eq!(kept("ada"), [0, 1]);
     }
 
     fn row(label: &str, amount: u64, count: u64, crits: u64) -> Row {
