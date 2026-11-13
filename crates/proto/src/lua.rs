@@ -463,8 +463,8 @@ mod tests {
         assert_eq!(one(r#"X = "a\"b\\c\n""#), Lua::Str("a\"b\\c\n".to_string()));
         assert_eq!(one("X = 'single'"), Lua::Str("single".to_string()));
         // Raw UTF-8 and the byte-by-byte spelling decode alike.
-        assert_eq!(one("X = \"Ðark\""), Lua::Str("Ðark".to_string()));
-        assert_eq!(one(r#"X = "\195\144ark""#), Lua::Str("Ðark".to_string()));
+        assert_eq!(one("X = \"Ærin\""), Lua::Str("Ærin".to_string()));
+        assert_eq!(one(r#"X = "\195\134rin""#), Lua::Str("Ærin".to_string()));
         assert_eq!(one(r#"X = "tab\9here""#), Lua::Str("tab\there".to_string()));
         assert_eq!(
             one("X = [[long\nform]]"),

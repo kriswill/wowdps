@@ -1918,16 +1918,16 @@ fn affiliation() -> Affiliation {
     Affiliation {
         schema: HISTORY_SCHEMA,
         guid: "Player-1168-0A1B2C31".to_string(),
-        name: "Bastión".to_string(),
+        name: "Ilvána".to_string(),
         realm: "Nebula".to_string(),
-        guild: "Ðark Moon Templars".to_string(),
-        guild_realm: Some("Crushridge".to_string()),
+        guild: "Ærin Wardens".to_string(),
+        guild_realm: Some("Halcyon".to_string()),
         rank: Some("Raider".to_string()),
         class: Some("WARRIOR".to_string()),
         faction: Some("Alliance".to_string()),
         mine: true,
         seen_utc_ms: 1_757_000_000_000,
-        account: "KRISWILL".to_string(),
+        account: "LANTERN".to_string(),
     }
 }
 
@@ -1964,8 +1964,8 @@ fn the_addons_saved_variables_read_into_affiliations() {
         [\"characters\"] = { [\"Player-1168-0A1B2C31\"] = true, [\"Player-1168-0A1B2C99\"] = true, },\r\n\
         [\"players\"] = {\r\n\
             [\"Player-1168-0A1B2C31\"] = {\r\n\
-                [\"name\"] = \"Bastión\", [\"realm\"] = \"Nebula\",\r\n\
-                [\"guild\"] = \"Ðark Moon Templars\", [\"guild_realm\"] = \"Nebula\",\r\n\
+                [\"name\"] = \"Ilvána\", [\"realm\"] = \"Nebula\",\r\n\
+                [\"guild\"] = \"Ærin Wardens\", [\"guild_realm\"] = \"Nebula\",\r\n\
                 [\"rank\"] = \"Raider\", [\"class\"] = \"WARRIOR\", [\"faction\"] = \"Alliance\",\r\n\
                 [\"seen\"] = 1757000000,\r\n\
             },\r\n\
@@ -1976,20 +1976,20 @@ fn the_addons_saved_variables_read_into_affiliations() {
             [\"Player-1168-0A1B2C40\"] = { [\"seen\"] = 1, },\r\n\
         },\r\n\
     }\r\n";
-    let mut recs = Affiliation::read_saved_variables(text, "KRISWILL").unwrap();
+    let mut recs = Affiliation::read_saved_variables(text, "LANTERN").unwrap();
     recs.sort_by(|a, b| a.guid.cmp(&b.guid));
     assert_eq!(recs.len(), 2, "the nameless record is skipped: {recs:?}");
     let b = &recs[0];
     assert_eq!(b.guid, "Player-1168-0A1B2C31");
-    assert_eq!(b.name, "Bastión");
-    assert_eq!(b.guild, "Ðark Moon Templars");
+    assert_eq!(b.name, "Ilvána");
+    assert_eq!(b.guild, "Ærin Wardens");
     assert_eq!(b.guild_realm.as_deref(), Some("Nebula"));
     assert_eq!(b.rank.as_deref(), Some("Raider"));
     assert_eq!(b.class.as_deref(), Some("WARRIOR"));
     assert_eq!(b.faction.as_deref(), Some("Alliance"));
     assert!(b.mine);
     assert_eq!(b.seen_utc_ms, 1_757_000_000_000);
-    assert_eq!(b.account, "KRISWILL");
+    assert_eq!(b.account, "LANTERN");
     assert_eq!(b.schema, HISTORY_SCHEMA);
     let e = &recs[1];
     assert_eq!(e.guild, "", "seen unguilded");

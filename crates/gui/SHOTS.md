@@ -248,7 +248,7 @@ The viewer's states as `talents-<state>.png`:
   logged build, its tooltip, a choice's open picker, the inventory tab, and
   the `frost` theme;
 - with `WOWDPS_SHOTS_LOG` as well: the owner's logged build from the newest
-  pull of `WOWDPS_SHOTS_FIGHT`, owner `WOWDPS_SHOTS_OWNER`, against this
+  pull of `WOWDPS_SHOTS_FIGHT`, owner `WOWDPS_SHOTS_OWNER` (no default), against this
   machine's real `talents.json` and talent art, at the three frames.
 
 Its twin, `talents::shots::real_dataset_draws_every_spec`, needs no GPU but

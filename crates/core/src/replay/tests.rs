@@ -444,7 +444,7 @@ fn an_npc_id_is_a_guids_sixth_field() {
         npc_id("Pet-0-3883-2813-74658-165189-0105A3B2C1"),
         Some(165_189)
     );
-    assert_eq!(npc_id("Player-5-0EB6ECFC"), None);
+    assert_eq!(npc_id("Player-1-0A0B0E02"), None);
     assert_eq!(npc_id("0000000000000000"), None);
 }
 

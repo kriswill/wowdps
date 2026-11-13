@@ -114,9 +114,9 @@ fn fake_product(tmp: &Temp) -> PathBuf {
         format!(
             "WOWDPS_DATA = {{\n[\"schema\"] = 2,\n[\"characters\"] = {{ [\"{SPANS_PRIEST}\"] = true, }},\n\
              [\"players\"] = {{\n{}{}{}{}}},\n[\"creatures\"] = {{\n{}{}{}}},\n}}\n",
-            rec(SPANS_WARRIOR, "Bastión", "Ðark Moon Templars"),
-            rec(SPANS_PRIEST, "Lumenia", "Ðark Moon Templars"),
-            rec(SPANS_EVOKER, "Sandwyrm", "Ðark Moon Templars"),
+            rec(SPANS_WARRIOR, "Ilvána", "Ærin Wardens"),
+            rec(SPANS_PRIEST, "Lumenia", "Ærin Wardens"),
+            rec(SPANS_EVOKER, "Sandwyrm", "Ærin Wardens"),
             rec(SPANS_MAGE, "Emberlyn", ""),
             npc(164569, "Skittering Mote", "minus", 0, 1_760_000_200),
             npc(164567, "Gloomwing Lurker", "elite", 0, 1_760_000_000),
@@ -4158,7 +4158,7 @@ fn every_documented_query_runs_over_the_fixture_lake() {
     assert_eq!(
         rows,
         [
-            ("Ðark Moon Templars".to_string(), "3".to_string()),
+            ("Ærin Wardens".to_string(), "3".to_string()),
             (String::new(), "1".to_string()),
         ],
         "{t:?}"

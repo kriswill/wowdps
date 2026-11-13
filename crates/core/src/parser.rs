@@ -1152,8 +1152,8 @@ fn next_bracket(body: &str, after: usize) -> Option<usize> {
 }
 
 /// v43: `[caster,spellId,stacks,caster,spellId,stacks,…]` interior → the
-/// auras, a flat list of triples (a real line: `[Player-5-0E…,1296934,1,…,
-/// Player-5-0D…,41635,8,…]`). A triple whose caster is no guid or whose
+/// auras, a flat list of triples (a real line's shape: `[Player-1-0A…,1296934,1,…,
+/// Player-1-0B…,41635,8,…]`). A triple whose caster is no guid or whose
 /// numbers do not read is dropped alone.
 fn parse_aura_bracket(inner: &str) -> Vec<LoadoutAura> {
     let fields: Vec<&str> = inner.split(',').map(str::trim).collect();
@@ -1867,8 +1867,8 @@ mod tests {
         parse_line(&line(body)).expect("should parse").event
     }
 
-    const PLAYER: &str = r#"Player-1168-0A234B,"Thrall-Ragnaros",0x511,0x0"#;
-    const HEALER: &str = r#"Player-1168-0B999C,"Moira-Ragnaros",0x512,0x0"#;
+    const PLAYER: &str = r#"Player-1168-0A234B,"Thrall-Nebula",0x511,0x0"#;
+    const HEALER: &str = r#"Player-1168-0B999C,"Moira-Nebula",0x512,0x0"#;
     const BOSS: &str = r#"Creature-0-4232-2662-31585-214502-0001,"Ulgrax the Devourer",0xa48,0x0"#;
     const BOSS_GUID: &str = "Creature-0-4232-2662-31585-214502-0001";
     const PLAYER_GUID: &str = "Player-1168-0A234B";
@@ -2095,12 +2095,12 @@ mod tests {
         // Real retail line shape (build 12.0.7): 24 stat fields after the guid, then
         // currentSpecID at field 25, then the talent brackets. Spec 70 = Ret Paladin.
         let e = parse(
-            "COMBATANT_INFO,Player-5-0E9E6142,1,2129,217,26548,664,0,0,0,0,968,968,968,221,0,668,668,668,0,1062,73,73,73,2361,70,[(81523,102493,1)],[],(0,0)",
+            "COMBATANT_INFO,Player-1-0A0B0E01,1,2129,217,26548,664,0,0,0,0,968,968,968,221,0,668,668,668,0,1062,73,73,73,2361,70,[(81523,102493,1)],[],(0,0)",
         );
         assert_eq!(
             e,
             Event::CombatantInfo {
-                guid: "Player-5-0E9E6142".into(),
+                guid: "Player-1-0A0B0E01".into(),
                 spec_id: Some(70),
                 faction: 1,
                 talents: vec![TalentPick {
@@ -2412,12 +2412,12 @@ mod tests {
         // A truncated line (mid-write tail read) must never fail: scalars parse,
         // the unbalanced bracket yields nothing.
         let e = parse(
-            "COMBATANT_INFO,Player-5-0E9E6142,1,2129,217,26548,664,0,0,0,0,968,968,968,221,0,668,668,668,0,1062,73,73,73,2361,70,[(81523,102493,1),(8152",
+            "COMBATANT_INFO,Player-1-0A0B0E01,1,2129,217,26548,664,0,0,0,0,968,968,968,221,0,668,668,668,0,1062,73,73,73,2361,70,[(81523,102493,1),(8152",
         );
         assert_eq!(
             e,
             Event::CombatantInfo {
-                guid: "Player-5-0E9E6142".into(),
+                guid: "Player-1-0A0B0E01".into(),
                 spec_id: Some(70),
                 faction: 1,
                 talents: vec![],
@@ -2622,7 +2622,7 @@ mod tests {
         else {
             panic!("expected Damage, got {e:?}")
         };
-        assert_eq!(src.name, "Thrall-Ragnaros");
+        assert_eq!(src.name, "Thrall-Nebula");
         assert!(src.is_player());
         assert_eq!(spell.unwrap().name, "Fireball");
         // amount is base_amount (offset 31), NOT raw_amount (offset 32).
@@ -2841,7 +2841,7 @@ mod tests {
     #[test]
     fn parses_self_support_line() {
         let e = parse(&format!(
-            "SPELL_DAMAGE_SUPPORT,{EVOKER_GUID},\"Vexi-Ragnaros\",0x511,0x0,{BOSS},434481,\"Bombardments\",0x40,{},7506,7506,-1,64,0,0,0,nil,nil,nil,{EVOKER_GUID}",
+            "SPELL_DAMAGE_SUPPORT,{EVOKER_GUID},\"Vexi-Nebula\",0x511,0x0,{BOSS},434481,\"Bombardments\",0x40,{},7506,7506,-1,64,0,0,0,nil,nil,nil,{EVOKER_GUID}",
             adv(BOSS_GUID, "0000000000000000")
         ));
         let (supporter, amount, _, _, src, _) = support_of(e);
@@ -2908,8 +2908,8 @@ mod tests {
             panic!("{e:?}")
         };
         assert!(!periodic, "R26: a SPELL_HEAL is direct");
-        assert_eq!(src.name, "Moira-Ragnaros");
-        assert_eq!(dst.name, "Thrall-Ragnaros");
+        assert_eq!(src.name, "Moira-Nebula");
+        assert_eq!(dst.name, "Thrall-Nebula");
         assert_eq!(amount, 20000, "canonical amount includes overheal");
         assert_eq!(overheal, 5000);
         assert!(critical);
@@ -2951,7 +2951,7 @@ mod tests {
         else {
             panic!("{e:?}")
         };
-        assert_eq!(absorber.name, "Thrall-Ragnaros");
+        assert_eq!(absorber.name, "Thrall-Nebula");
         assert!(spell.is_none(), "no damage spell on the 19-field form");
         assert_eq!(absorb_spell.name, "Power Word: Shield");
         assert_eq!(amount, 3000);
@@ -2974,9 +2974,9 @@ mod tests {
             panic!("{e:?}")
         };
         assert_eq!(src.name, "Ulgrax the Devourer");
-        assert_eq!(dst.name, "Thrall-Ragnaros");
+        assert_eq!(dst.name, "Thrall-Nebula");
         assert_eq!(
-            absorber.name, "Moira-Ragnaros",
+            absorber.name, "Moira-Nebula",
             "credit goes to the shield caster"
         );
         assert_eq!(spell.unwrap().name, "Devouring Bite");
@@ -3216,7 +3216,7 @@ mod tests {
     #[test]
     fn parses_summon() {
         let e = parse(
-            r#"SPELL_SUMMON,Player-1168-0C777D,"Gul-Ragnaros",0x511,0x0,Pet-0-4232-2662-31585-165189-0100AB,"Felhunter",0x1114,0x0,691,"Summon Felhunter",0x20"#,
+            r#"SPELL_SUMMON,Player-1168-0C777D,"Gul-Nebula",0x511,0x0,Pet-0-4232-2662-31585-165189-0100AB,"Felhunter",0x1114,0x0,691,"Summon Felhunter",0x20"#,
         );
         let Event::Summon { owner, pet, spell } = e else {
             panic!("{e:?}")
@@ -3288,7 +3288,7 @@ mod tests {
         let Event::Death { unit } = e else {
             panic!("{e:?}")
         };
-        assert_eq!(unit.name, "Thrall-Ragnaros");
+        assert_eq!(unit.name, "Thrall-Nebula");
         assert!(unit.is_player());
     }
 
