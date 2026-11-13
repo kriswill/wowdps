@@ -40,9 +40,12 @@
 //! and spec from COMBATANT_INFO, else R8's inference from their casts); a
 //! unit some line flagged hostile (`0x40`) is a `boss` when an encounter in
 //! the slice names it (its title, or a name its commas and "and"s divide it
-//! into), else when its health is at least 30% of the strongest posted
-//! hostile's (with none posted, none is) — an `add` otherwise; anything
-//! else is `friendly`.
+//! into); else, in a cut of one distinct title, when exactly one hostile
+//! name is a single edit from such a name and its strongest unit is
+//! stronger than every posted hostile of another name, every unit of that
+//! name (`near_miss`); else when its health is at least 30% of the
+//! strongest posted hostile's (with none posted, none is) — an `add`
+//! otherwise; anything else is `friendly`.
 //!
 //! THE EVENTS (each kind's line, `model::replay::EventKind`): a player's
 //! death and an NPC's (a creature's or a vehicle's `UNIT_DIED`, or its
