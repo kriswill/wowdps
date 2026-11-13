@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use wowdps_core::index::SegmentMeta;
-use wowdps_core::meter::Visit;
+use wowdps_core::meter::{Segment, Visit};
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::TailEvent;
@@ -144,6 +144,11 @@ enum Pos {
 pub struct Engine {
     /// The live meter, fed only the tail from the index's `live_offset`.
     meter: Meter,
+    /// R31: the source is the install's own (`Followed::own`): its fights'
+    /// logger is the account's character, "you" in them and on the cards
+    /// they close into. False until told (`set_own`): a `--file` or
+    /// `--logs` source, and the mock's fixture, are anyone's.
+    own: bool,
     /// Max log timestamp seen — live durations use the log's clock, never the
     /// wall clock.
     now_ms: i64,
@@ -331,6 +336,7 @@ impl Engine {
     pub fn with_ids(ids: Ids) -> Self {
         Self {
             meter: Meter::new(),
+            own: false,
             now_ms: 0,
             index: Vec::new(),
             index_ids: Vec::new(),
@@ -363,6 +369,12 @@ impl Engine {
             index_project_id: 0,
             awaiting_index: false,
         }
+    }
+
+    /// R31: whether this engine's source is the install's own
+    /// (`SourceSetup::own`).
+    pub fn set_own(&mut self, own: bool) {
+        self.own = own;
     }
 
     fn fresh_id(&mut self) -> SegmentId {
@@ -668,8 +680,7 @@ impl Engine {
                 byte_range: None,
                 aborted: false,
                 members: Vec::new(),
-                // R31: the engine follows its own source's log.
-                own_log: true,
+                own_log: self.own,
             });
         }
         let ord = *self.visit_ids.iter().find(|(_, v)| **v == id)?.0;
@@ -700,7 +711,7 @@ impl Engine {
             byte_range: None,
             aborted: false,
             members,
-            own_log: true,
+            own_log: self.own,
         })
     }
 
@@ -1716,9 +1727,13 @@ impl Engine {
                 // v35: the account's characters are "you" — the meter's by
                 // guid (an enemy's rows are nobody's), a drill's players by
                 // the names this fight gives them, and their deaths; R31:
-                // and the character the fight's own lines name its logger.
+                // and, on the install's own source, the character the
+                // fight's own lines name its logger.
                 if let Some(s) = seg {
-                    let mine = self.mine.in_segment(s);
+                    let mine = self
+                        .mine
+                        .of(Edition::from_project_id(s.project_id))
+                        .logged_by(self.logger_of(s));
                     if *view != View::EnemyTaken {
                         mine.mark_rows(&mut rows);
                     }
@@ -1753,7 +1768,7 @@ impl Engine {
                 let roles = seg.map(Roles::of).unwrap_or_default();
                 let edition =
                     seg.map_or(Edition::Retail, |s| Edition::from_project_id(s.project_id));
-                let logger = seg.and_then(|s| s.logger());
+                let logger = seg.and_then(|s| self.logger_of(s));
                 let side = |guid: &str| {
                     let mut side = self.mine_side(
                         compare_side(seg, guid, *view, *range, *spell),
@@ -1785,8 +1800,14 @@ impl Engine {
         }
     }
 
+    /// R31: `seg`'s logger, where this engine's source is the install's own;
+    /// a `--file` or `--logs` source's writer may be anyone.
+    fn logger_of<'s>(&self, seg: &'s Segment) -> Option<&'s str> {
+        seg.logger().filter(|_| self.own)
+    }
+
     /// v35: a comparison's side is one of the account's characters, or not
-    /// (R31: the fight's logger is).
+    /// (R31: the fight's logger is, on the install's own source).
     fn mine_side(
         &self,
         mut side: CompareSide,

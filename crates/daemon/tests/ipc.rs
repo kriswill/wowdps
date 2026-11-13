@@ -308,16 +308,7 @@ fn watching_live_serves_rows_identical_to_a_direct_replay() {
     assert_eq!(info.duration_ms, 45_000);
     assert_eq!(info.success, Some(false));
     assert!(!info.live, "history is never live");
-    // R31: the daemon marks the pull's logger "you", store or none.
-    let mut direct = want.rows(View::Damage);
-    for r in &mut direct {
-        r.mine = want.logger() == Some(r.key.as_str());
-    }
-    assert!(
-        direct.iter().any(|r| r.mine),
-        "the fixture names its logger"
-    );
-    assert_eq!(rows, direct, "byte-identical rows");
+    assert_eq!(rows, want.rows(View::Damage), "byte-identical rows");
     assert_eq!(segment_count, 5, "4 segments + the visit overall (R10)");
     assert_eq!(source.as_deref(), Some("sample.txt"));
     assert!(seq >= 1);
@@ -816,6 +807,7 @@ fn an_idle_edition_costs_close_to_nothing() {
         let mut opts = options(&tmp, SourceSpec::Dir(retail.clone()));
         opts.tick = Duration::from_millis(100);
         opts.editions = wowdps_daemon::Followed {
+            own: false,
             source: Some(Edition::Retail),
             more,
         };
@@ -896,6 +888,7 @@ fn a_daemon_follows_one_source_per_edition_and_moves_its_followers() {
 
     let mut opts = options(&tmp, SourceSpec::Dir(retail.clone()));
     opts.editions = wowdps_daemon::Followed {
+        own: false,
         source: Some(Edition::Retail),
         more: vec![(Edition::Forever, forever)],
     };

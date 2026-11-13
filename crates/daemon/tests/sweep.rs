@@ -61,9 +61,7 @@ impl Drop for Temp {
 /// minutes apart (the second at 20:10), one player hitting the boss once
 /// per pull, then trash to `pad` bytes: a hit every hundredth of a second
 /// from 23:00 on, one open trash segment the store keeps nothing of (trash
-/// is off). The player is flagged a party member (0x512), never the logger
-/// (R31): no card has an owner, so no personal best is kept and the caps
-/// alone decide what a sweep keeps.
+/// is off).
 fn log_text(month: u32, day: u32, project_id: u8, pulls: &[(u32, bool)], pad: usize) -> String {
     let date = format!("{month}/{day}/2026");
     let mut out = format!(
@@ -79,7 +77,7 @@ fn log_text(month: u32, day: u32, project_id: u8, pulls: &[(u32, bool)], pad: us
     while out.len() < pad {
         let (s, ms) = (hit / 100, (hit % 100) * 10);
         out.push_str(&format!(
-            "{date} 23:{:02}:{:02}.{ms:03}-4  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x512,0x0,Creature-0-7,\"Trash\",0xa48,0x0,116,\"Frostbolt\",16,1000,1000,0,0,0,0,0,nil,nil\n",
+            "{date} 23:{:02}:{:02}.{ms:03}-4  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-7,\"Trash\",0xa48,0x0,116,\"Frostbolt\",16,1000,1000,0,0,0,0,0,nil,nil\n",
             s / 60 % 60,
             s % 60,
         ));
@@ -93,7 +91,7 @@ fn pull(date: &str, h: u32, m: u32, dur_s: u32, kill: bool) -> String {
     let ts = |sec: u32| format!("{date} {h:02}:{:02}:{:02}.000-4", m + sec / 60, sec % 60);
     format!(
         "{}  ENCOUNTER_START,3130,\"The Ashen Warden\",15,20,2769\n\
-         {}  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x512,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,1000,1000,0,0,0,0,0,nil,nil\n\
+         {}  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,1000,1000,0,0,0,0,0,nil,nil\n\
          {}  ENCOUNTER_END,3130,\"The Ashen Warden\",15,20,{},{}\n",
         ts(0),
         ts(1),
@@ -454,7 +452,7 @@ fn an_older_log_is_read_again_only_when_its_file_changed() {
             // A cast: a line the index reads and stores nothing of.
             "grown" => append(
                 &a,
-                "7/1/2026 23:59:00.000-4  SPELL_CAST_SUCCESS,Player-1-A,\"Ana-Realm\",0x512,0x0,0000000000000000,nil,0x80000000,0x80000000,116,\"Frostbolt\",0x10\n",
+                "7/1/2026 23:59:00.000-4  SPELL_CAST_SUCCESS,Player-1-A,\"Ana-Realm\",0x511,0x0,0000000000000000,nil,0x80000000,0x80000000,116,\"Frostbolt\",0x10\n",
             ),
             "truncated" => {
                 let len = std::fs::metadata(&a).unwrap().len();
@@ -649,7 +647,7 @@ fn a_read_short_of_the_files_end_is_not_recorded() {
     let at = mtime(&a);
     append(
         &a,
-        "CESS,Player-1-A,\"Ana-Realm\",0x512,0x0,0000000000000000,nil,0x80000000,0x80000000,116,\"Frostbolt\",0x10\n",
+        "CESS,Player-1-A,\"Ana-Realm\",0x511,0x0,0000000000000000,nil,0x80000000,0x80000000,116,\"Frostbolt\",0x10\n",
     );
     set_mtime(&a, at);
     run_until(opts(), 4 + 3);
@@ -880,6 +878,7 @@ fn two_editions_each_read_only_what_is_new() {
             Some(cache.clone()),
         );
         o.editions = Followed {
+            own: false,
             source: Some(Edition::Retail),
             more: vec![(Edition::Forever, forever.clone())],
         };

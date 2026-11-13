@@ -3314,7 +3314,7 @@ fn card_json(c: &FightCard) -> Json {
 
 /// `me` is the given player's graded row when one is named, else the
 /// card's owner's (null when nothing named one: R31's logger names it from
-/// one log, in every edition, for a log the daemon follows).
+/// one log, in every edition, for a log in the install's own folders).
 fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json {
     obj! {
         "id": Json::str(c.id.clone()),

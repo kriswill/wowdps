@@ -64,8 +64,9 @@ pub struct Config {
     /// `wowdps_model::names::Label::is_called`); a configured one on a
     /// card's roster is its owner. Empty = each fight's logger, the
     /// character its own unit flags name as the one writing the log (R31,
-    /// every edition), then the addon's set and COMBATANT_INFO's
-    /// intersection, which Forever's logs never carry.
+    /// every edition, in the folders `logs_dir` or discovery names, never a
+    /// `--file` or `--logs` source), then the addon's set and
+    /// COMBATANT_INFO's intersection, which Forever's logs never carry.
     pub history_characters: Vec<String>,
 }
 

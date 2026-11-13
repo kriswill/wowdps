@@ -78,6 +78,9 @@ pub const HANDOFF_QUIET: Duration = Duration::from_secs(10);
 pub struct SourceSetup {
     pub spec: Option<String>,
     pub edition: Option<Edition>,
+    /// R31: the source is one the config or install discovery names
+    /// (`Followed::own`), so its fights' logger is the account's.
+    pub own: bool,
 }
 
 /// One followed source: its engine, how `Status` words it, and the list
@@ -118,7 +121,11 @@ impl Sources {
     pub fn new(setups: &[SourceSetup]) -> Self {
         let ids = Ids::default();
         let make = |setup: &SourceSetup| Source {
-            engine: Engine::with_ids(ids.clone()),
+            engine: {
+                let mut engine = Engine::with_ids(ids.clone());
+                engine.set_own(setup.own);
+                engine
+            },
             spec: setup.spec.clone(),
             last_list: ListKey::default(),
             folder: setup.edition,

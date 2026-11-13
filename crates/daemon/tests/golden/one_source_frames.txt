@@ -35,7 +35,7 @@ pull s4 SegmentList 42765c012d26a8c1
 pull s4 SegmentList 03863b4f7c539936
 pull s5 SegmentOpened 04416fe41088cb5d
 pull s5 SegmentList 42765c012d26a8c1
-pull s5 Snapshot 94ccd1fdf44d8449
+pull s5 Snapshot 04ca46f762ea14fa
 trash s1 SegmentOpened 233c36ed1b78157e
 trash s1 SegmentList 62378f0b7a6e4394
 trash s1 Snapshot 9a56f1d5e6cfd4d9
@@ -48,11 +48,11 @@ trash s4 SegmentList a21cb519222fd77b
 trash s4 SegmentList 62378f0b7a6e4394
 trash s5 SegmentOpened 233c36ed1b78157e
 trash s5 SegmentList a21cb519222fd77b
-trash s5 Snapshot 6705b6a2bc610cbb
+trash s5 Snapshot dc59b57e2bc0a8f4
 one-shots s1 Loadout 67f0c20166633651
 one-shots s3 Loadout 93a08ac53aeead2b
 one-shots s4 Status 77be8bb4f54232cb
-ids s1 CompareSnapshot 6c08561ca3a40eeb
+ids s1 CompareSnapshot 3826b80f5b9fa904
 ids s4 Snapshot d6ee9002301f7235
 ids s5 LoadFailed 0ecb900e71582174
 no game s5 SetVisible 92acfb6006de5c10

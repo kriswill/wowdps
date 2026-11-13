@@ -7,9 +7,10 @@
 //!
 //! Resolved by the history thread (it holds the store and the addon's
 //! records) and read by the hub on every snapshot it builds; a daemon with
-//! no store knows nobody by these. R31 adds the fight's own word: the
-//! character its unit flags name as the one writing the log
-//! (`Segment::logger`) is "you" in it ([`In::logged_by`]), store or none.
+//! no store knows nobody by these. R31 adds the fight's own word: on a
+//! source the install's config or discovery names, the character its unit
+//! flags name as the one writing the log (`Segment::logger`) is "you" in it
+//! ([`In::logged_by`]), store or none.
 
 use std::collections::HashSet;
 
@@ -50,14 +51,6 @@ impl Mine {
             edition,
             logger: None,
         }
-    }
-
-    /// R31: the account's characters in `seg`, its edition's and its own
-    /// logger (`Segment::logger`) beside them: the engine's fights are the
-    /// logs it follows, written on this machine.
-    pub fn in_segment<'a>(&'a self, seg: &'a Segment) -> In<'a> {
-        self.of(Edition::from_project_id(seg.project_id))
-            .logged_by(seg.logger())
     }
 }
 

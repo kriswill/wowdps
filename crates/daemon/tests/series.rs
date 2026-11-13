@@ -60,15 +60,7 @@ fn old_rules() -> Retention {
 
 fn stored(cfg: Retention) -> (Store<MemBackend>, Vec<ClosedFight>, Vec<String>) {
     let path = Path::new(SAMPLE);
-    // Read as a log this daemon does not follow (R31): its writer's flags
-    // name no owner, so no personal best is kept and the caps alone decide.
-    let fights: Vec<ClosedFight> = closed_fights(path)
-        .into_iter()
-        .map(|mut f| {
-            f.own_log = false;
-            f
-        })
-        .collect();
+    let fights = closed_fights(path);
     let facts = LogFacts::read(path);
     let mut store = Store::open(MemBackend::new(), cfg);
     let ids = fights

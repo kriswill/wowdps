@@ -149,11 +149,13 @@ pub struct ClosedFight {
     /// A keyed visit's member bosses (Encounter segments), pull order —
     /// listed on the key's card so a reader can drill into them.
     pub members: Vec<KeyBoss>,
-    /// R31: the log is one the daemon follows — a source's file, or a log
-    /// in a source's folder — so it was written on this machine, and the
-    /// character its unit flags name as the logger
-    /// (`Segment::logger`) is one of the account's. A log imported from
-    /// anywhere else (a friend's) is not: its logger is theirs.
+    /// R31: the log is the install's own — its engine's source is a folder
+    /// the config or install discovery names (`Followed::own`), and the
+    /// history thread finds the log in one — so it was written on this
+    /// machine, and the character its unit flags name as the logger
+    /// (`Segment::logger`) is one of the account's. A `--file` or `--logs`
+    /// source, a log imported from anywhere else (a friend's) or one moved
+    /// out of the folder is not: its logger may be anyone.
     pub own_log: bool,
 }
 
@@ -512,6 +514,7 @@ pub fn spawn(
     loader: Sender<LoadReq>,
     hub: Sender<HubMsg>,
     sweep: &[SourceSpec],
+    own: bool,
 ) -> HistoryLink {
     let (tx, rx) = sync_channel::<HistoryReq>(QUEUE);
     let status = Arc::new(Mutex::new(HistoryStatus {
@@ -559,6 +562,7 @@ pub fn spawn(
             reading: HashMap::new(),
             load_failures: 0,
             sources,
+            own,
             scans: VecDeque::new(),
             backfill: VecDeque::new(),
             product: opts.addon_dir.clone(),
@@ -671,6 +675,10 @@ struct Worker<B: Backend> {
     /// are left to the engines; every one's folder is searched when a
     /// stored fight's log is wanted again.
     sources: Vec<SourceSpec>,
+    /// R31: `sources` are the install's own, named by the config or install
+    /// discovery (`Followed::own`): a log in them is this machine's, and its
+    /// fights' logger the account's. False for `--file` and `--logs`.
+    own: bool,
     /// Files a sweep listed and `run` has yet to index-scan, with whether
     /// each is the tailed (live) log.
     scans: VecDeque<(PathBuf, bool)>,
@@ -755,7 +763,10 @@ impl<B: Backend> Worker<B> {
 
     fn handle(&mut self, req: HistoryReq) {
         match req {
-            HistoryReq::Store(fight) => {
+            HistoryReq::Store(mut fight) => {
+                // R31: the engine says whether its source is the install's
+                // own; the log must still be one of its folders'.
+                fight.own_log = fight.own_log && self.follows(&fight.log.path);
                 let facts = self.facts(&fight.log.path);
                 if let Some(id) = self.store.store(&fight, facts) {
                     // v45 (R29): a live pull's replay is cut from its log as
@@ -1047,15 +1058,18 @@ impl<B: Backend> Worker<B> {
         self.reply.set_mine(mine);
     }
 
-    /// R31: whether `path` is a log this daemon follows — one of its
-    /// sources' files, or a combat log in one of its sources' folders — and
-    /// so one written on this machine, whose logger is the account's
-    /// character. A file imported from anywhere else is not.
+    /// R31: whether `path` is a log of the install's own — a combat log in
+    /// one of the folders the config or install discovery names — and so
+    /// one written on this machine, whose logger is the account's
+    /// character. Never a `--file` or `--logs` source (`own` is false
+    /// there), nor a file imported from anywhere else, nor a log moved out
+    /// of the folder.
     fn follows(&self, path: &Path) -> bool {
-        self.sources.iter().any(|s| match s {
-            SourceSpec::File(p) => same_file(p, path),
-            SourceSpec::Dir(d) => path.parent().is_some_and(|dir| same_file(dir, d)),
-        })
+        self.own
+            && self.sources.iter().any(|s| match s {
+                SourceSpec::File(p) => same_file(p, path),
+                SourceSpec::Dir(d) => path.parent().is_some_and(|dir| same_file(dir, d)),
+            })
     }
 
     fn facts(&mut self, path: &Path) -> LogFacts {
@@ -1765,7 +1779,7 @@ pub fn visit_members(meter: &Meter, ord: u32) -> Vec<KeyBoss> {
 }
 /// R31: the character a fight's own unit flags name as the one writing its
 /// log ([`Segment::logger`](wowdps_core::meter::Segment::logger)) — trusted
-/// as the account's only for a log this daemon follows
+/// as the account's only for a log of the install's own
 /// ([`ClosedFight::own_log`]).
 pub fn logger_of(fight: &ClosedFight) -> Option<&str> {
     fight.own_log.then(|| fight.segment.logger()).flatten()
@@ -3351,7 +3365,13 @@ impl<B: Backend> Store<B> {
             return None;
         }
         let mut doc = extract(fight, facts, &id);
-        doc.card.owner = self.owner_of(&doc.card, logger_of(fight));
+        // R31: a log whose trust cannot be re-established now (moved out of
+        // the install's folders, or read through `--file`) names no logger;
+        // a rewrite of its card keeps the owner it was stamped with in the
+        // logger's place, still on the roster and after a configured name.
+        let kept = self.card(&id).and_then(|c| c.owner.clone());
+        let logger = logger_of(fight).or(kept.as_deref());
+        doc.card.owner = self.owner_of(&doc.card, logger);
         // A pin is the user's decision: a rewrite (aborted → real, or an
         // older schema) carries it forward.
         doc.card.pinned = self.card(&id).is_some_and(|c| c.pinned);
@@ -3455,7 +3475,8 @@ impl<B: Backend> Store<B> {
     /// Who "me" is ON THIS CARD: a player of the card who is one of the
     /// account's characters — the configured names first; then (R31)
     /// `logger`, the character the fight's own unit flags name as the one
-    /// writing a log this daemon follows ([`logger_of`]); then the addon's
+    /// writing a log of the install's own ([`logger_of`]), or on a rewrite
+    /// of an untrusted log the card's stamped owner; then the addon's
     /// own-character set; then the owner of the card's edition
     /// ([`Store::owner_in`]) — each only when they are on the roster —
     /// else `None`. Never a guid the card does not list: that owner is one
@@ -3635,8 +3656,11 @@ impl<B: Backend> Store<B> {
         }
         // The inference is sticky: once a main was found and stamped on the
         // cards, one alt's dungeon or a friend's imported log (which empty
-        // the intersection) must not un-know them — that would strip every
-        // personal best of its retention protection. The newest stamp wins.
+        // the intersection) must not un-know them. The newest stamp wins —
+        // and since R31 stamps each card with its own logger, that is the
+        // character played last on the install's own logs: an alt's night
+        // moves it. Retention no longer hangs on it alone: every card's own
+        // owner keeps its bests (`protected`).
         self.cards
             .iter()
             .rev()
@@ -3764,9 +3788,10 @@ impl<B: Backend> Store<B> {
         // group key below carries the edition too.
         let owners = self.owners();
         let mut fastest: HashMap<GroupKey, (i64, &str)> = HashMap::new();
-        // (group, spec id, 0 = damage / 1 = healing / 2 = mitigated_pct) →
-        // the owner's best value. Zeros never enter (see below).
-        let mut best: HashMap<(GroupKey, u32, u8), (f64, &str)> = HashMap::new();
+        // (group, character, spec id, 0 = damage / 1 = healing / 2 =
+        // mitigated_pct) → that character's best value. Zeros never enter
+        // (see below).
+        let mut best: HashMap<(GroupKey, &str, u32, u8), (f64, &str)> = HashMap::new();
         for c in &self.cards {
             // v46: an imported fight is kept as a pin is, and races for no
             // fastest kill or personal best — it is not this machine's.
@@ -3790,16 +3815,27 @@ impl<B: Backend> Store<B> {
                     *e = (c.duration_ms, &c.id);
                 }
             }
-            // The owner's personal bests. A best is only a best when it is
-            // a real number on a real fight: an aborted record never
-            // qualifies, and a measure of 0 protects nothing (before the
-            // floor, "best hps = 0.0" pinned an arbitrary card on every
-            // pure-DPS spec, and every un-regraded card would now do the
-            // same for mitigated_pct).
-            if let Some((owner, _)) = owners.get(&c.edition().counts_as())
-                && !c.aborted
-                && let Some(p) = c.players.iter().find(|p| &p.guid == owner)
-            {
+            // The personal bests. A best is only a best when it is a real
+            // number on a real fight: an aborted record never qualifies, and
+            // a measure of 0 protects nothing (before the floor, "best hps =
+            // 0.0" pinned an arbitrary card on every pure-DPS spec, and every
+            // un-regraded card would now do the same for mitigated_pct).
+            // Whose: the edition's owner on every card they are on, as ever;
+            // and (R31) each card's own stamped owner on the cards they own,
+            // so every character that owns cards keeps its bests, whichever
+            // the edition's owner is today. Only ever more kept: the
+            // edition's owner races as it always did.
+            if c.aborted {
+                continue;
+            }
+            let edition_owner = owners
+                .get(&c.edition().counts_as())
+                .map(|(g, _)| g.as_str());
+            let own = c.owner.as_deref().filter(|o| Some(*o) != edition_owner);
+            for subject in [edition_owner, own].into_iter().flatten() {
+                let Some(p) = c.players.iter().find(|p| p.guid == subject) else {
+                    continue;
+                };
                 let spec = p.spec.map_or(0, |s| s.id());
                 // 0 damage, 1 healing, 2 (R17) mitigated_pct — the tank
                 // measure, kills only, and only for a Tank spec: a DPS's
@@ -3810,7 +3846,9 @@ impl<B: Backend> Store<B> {
                     let Some(per_sec) = per_sec.filter(|v| *v > 0.0) else {
                         continue;
                     };
-                    let e = best.entry((key, spec, view)).or_insert((per_sec, &c.id));
+                    let e = best
+                        .entry((key, subject, spec, view))
+                        .or_insert((per_sec, &c.id));
                     if per_sec > e.0 {
                         *e = (per_sec, &c.id);
                     }
@@ -4544,7 +4582,11 @@ impl<B: Backend> Store<B> {
             fight.segment.kind == SegmentKind::Overall,
         );
         let mut docs = extract(fight, facts, &id);
-        docs.card.owner = self.owner_of(&docs.card, logger_of(fight));
+        // As a rewrite stamps it (`store_impl`): an untrusted log's card
+        // keeps its stamped owner in the logger's place.
+        let kept = self.card(&id).and_then(|c| c.owner.clone());
+        let logger = logger_of(fight).or(kept.as_deref());
+        docs.card.owner = self.owner_of(&docs.card, logger);
         let loadout = ask.drill.as_deref().and_then(|guid| {
             let hash = docs.card.players.iter().find(|p| p.guid == guid)?.loadout?;
             docs.loadouts

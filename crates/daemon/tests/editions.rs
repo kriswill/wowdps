@@ -51,16 +51,12 @@ impl Drop for Temp {
 /// identity. `project_id` `None` writes a header without the field, as an
 /// older client did. One player, `guid` named `name`, hits the boss once
 /// per pull for `damage`; pulls are (seconds, kill, damage), ten minutes
-/// apart. The player is flagged the logger (R31, 0x511) only where
-/// `logger` says so, else a party member (0x512): a log that names no
-/// logger leaves its cards' owner to the configured names, so the caps and
-/// the kills alone decide what is kept.
+/// apart.
 struct Log<'a> {
     day: u32,
     project_id: Option<u8>,
     guid: &'a str,
     name: &'a str,
-    logger: bool,
     pulls: &'a [(u32, bool, u64)],
 }
 
@@ -86,11 +82,10 @@ impl Log<'_> {
                 ts(0)
             ));
             out.push_str(&format!(
-                "{}  SPELL_DAMAGE,{},\"{}\",{},0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,{damage},{damage},0,0,0,0,0,nil,nil\n",
+                "{}  SPELL_DAMAGE,{},\"{}\",0x511,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,{damage},{damage},0,0,0,0,0,nil,nil\n",
                 ts(1),
                 self.guid,
                 self.name,
-                if self.logger { "0x511" } else { "0x512" },
             ));
             out.push_str(&format!(
                 "{}  ENCOUNTER_END,3130,\"The Ashen Warden\",15,20,{},{}\n",
@@ -172,7 +167,6 @@ fn one_editions_kill_ends_no_progression_of_anothers() {
                     project_id: wiped,
                     guid: "Player-1-A",
                     name: "Ana-Realm",
-                    logger: false,
                     pulls: &[(30, false, 1000), (40, false, 1000)],
                 },
                 Log {
@@ -180,7 +174,6 @@ fn one_editions_kill_ends_no_progression_of_anothers() {
                     project_id: killed,
                     guid: "Player-2-B",
                     name: "Bex-Realm",
-                    logger: false,
                     pulls: &[(90, true, 1000)],
                 },
             ],
@@ -219,7 +212,6 @@ fn one_editions_kill_ends_no_progression_of_anothers() {
                 project_id: wiped,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(95, true, 1000)],
             }],
         );
@@ -258,7 +250,6 @@ fn the_caps_count_each_editions_fights_apart() {
                 project_id: RETAIL,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(70, false, 1000), (71, false, 1000), (72, false, 1000)],
             },
             Log {
@@ -266,7 +257,6 @@ fn the_caps_count_each_editions_fights_apart() {
                 project_id: FOREVER,
                 guid: "Player-2-B",
                 name: "Bex-Realm",
-                logger: false,
                 pulls: &[(80, false, 1000), (81, false, 1000), (82, false, 1000)],
             },
         ],
@@ -308,7 +298,6 @@ fn the_fastest_kill_is_each_editions_own() {
                 project_id: RETAIL,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(90, true, 1000), (60, true, 1000)],
             },
             Log {
@@ -316,7 +305,6 @@ fn the_fastest_kill_is_each_editions_own() {
                 project_id: FOREVER,
                 guid: "Player-2-B",
                 name: "Bex-Realm",
-                logger: false,
                 pulls: &[(150, true, 1000), (120, true, 1000)],
             },
         ],
@@ -335,9 +323,10 @@ fn the_fastest_kill_is_each_editions_own() {
 /// One owner's wipes in two editions' logs, kills not kept whole and no
 /// room under the cap, so only each edition's best survives: the kept
 /// cards' (edition, dps), oldest first, and their owners.
-/// `configured`: the owner is named by `history_characters`, and the log
-/// names no logger; else (R31) the log's flags alone name it, nothing
-/// configured.
+/// `configured`: the owner is named by `history_characters`, the logs read
+/// as a typed `--file` or `--logs` names them (their logger untrusted).
+/// Else (R31) nothing is configured, and the logs are the install's own:
+/// each card's logger, the one player flagged MINE, is its owner.
 fn bests_kept(
     a: (Option<u8>, &str, [u64; 2]),
     b: (Option<u8>, &str, [u64; 2]),
@@ -376,11 +365,17 @@ fn bests_kept(
             } else {
                 "Ana-Elsewhere"
             },
-            logger: !configured,
             pulls,
         })
         .collect();
-    store_logs(&tmp, &mut store, &logs);
+    for log in &logs {
+        let (path, fights) = log.fights(&tmp);
+        let facts = LogFacts::read(&path);
+        for mut f in fights {
+            f.own_log = !configured;
+            store.store(&f, facts).expect("stored");
+        }
+    }
     for (project_id, guid, _) in [a, b] {
         let edition = Edition::from_project_id(project_id.unwrap_or(0));
         // A configured owner is named; one the flags name is inferred.
@@ -406,7 +401,7 @@ fn the_owners_best_is_kept_per_edition() {
     the_owners_best_per_edition(true);
 }
 
-/// R31: and with nothing configured, by the logger each edition's log
+/// R31: and with nothing configured, by the logger each edition's own log
 /// flags — Forever's, whose log names no COMBATANT_INFO to intersect, as
 /// Retail's.
 #[test]
@@ -476,7 +471,6 @@ fn two_classic_clients_count_apart() {
                 project_id: Some(2),
                 guid: "Player-3-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(70, false, 1000), (71, false, 1000)],
             },
             Log {
@@ -484,7 +478,6 @@ fn two_classic_clients_count_apart() {
                 project_id: Some(19),
                 guid: "Player-4-B",
                 name: "Bex-Realm",
-                logger: false,
                 pulls: &[(80, false, 1000), (81, false, 1000)],
             },
         ],
@@ -514,7 +507,6 @@ fn two_classic_clients_count_apart() {
                 project_id: Some(19),
                 guid: "Player-4-B",
                 name: "Bex-Realm",
-                logger: false,
                 pulls: &[(30, false, 1000)],
             },
             Log {
@@ -522,7 +514,6 @@ fn two_classic_clients_count_apart() {
                 project_id: Some(2),
                 guid: "Player-3-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(90, true, 1000)],
             },
         ],
@@ -549,7 +540,6 @@ fn a_card_with_no_number_groups_with_retail() {
                     project_id: wiped,
                     guid: "Player-1-A",
                     name: "Ana-Realm",
-                    logger: false,
                     pulls: &[(30, false, 1000)],
                 },
                 Log {
@@ -557,7 +547,6 @@ fn a_card_with_no_number_groups_with_retail() {
                     project_id: killed,
                     guid: "Player-1-A",
                     name: "Ana-Realm",
-                    logger: false,
                     pulls: &[(90, true, 1000)],
                 },
             ],
@@ -592,7 +581,6 @@ fn a_card_with_no_number_groups_with_retail() {
                 project_id: RETAIL,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(70, false, 1000)],
             },
             Log {
@@ -600,7 +588,6 @@ fn a_card_with_no_number_groups_with_retail() {
                 project_id: None,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(80, false, 1000)],
             },
         ],
@@ -634,7 +621,6 @@ fn an_unlisted_edition_is_kept_apart_from_retail() {
                 project_id: UNLISTED,
                 guid: "Player-7-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(30, false, 1000)],
             },
             Log {
@@ -642,7 +628,6 @@ fn an_unlisted_edition_is_kept_apart_from_retail() {
                 project_id: RETAIL,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(90, true, 1000)],
             },
         ],
@@ -670,7 +655,6 @@ fn an_unlisted_edition_is_kept_apart_from_retail() {
                 project_id: RETAIL,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(70, false, 1000)],
             },
             Log {
@@ -678,7 +662,6 @@ fn an_unlisted_edition_is_kept_apart_from_retail() {
                 project_id: UNLISTED,
                 guid: "Player-7-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(80, false, 1000)],
             },
         ],
@@ -1094,7 +1077,6 @@ fn every_query_takes_an_edition_filter() {
                 project_id: RETAIL,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(30, false, 1000), (60, true, 2000)],
             },
             Log {
@@ -1102,7 +1084,6 @@ fn every_query_takes_an_edition_filter() {
                 project_id: FOREVER,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(50, true, 3000)],
             },
             Log {
@@ -1110,7 +1091,6 @@ fn every_query_takes_an_edition_filter() {
                 project_id: None,
                 guid: "Player-1-A",
                 name: "Ana-Realm",
-                logger: false,
                 pulls: &[(40, false, 4000)],
             },
         ],

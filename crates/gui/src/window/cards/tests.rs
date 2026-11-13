@@ -121,16 +121,14 @@ fn the_options_write_one_key_each(cx: &mut TestAppContext) {
     });
     press(cx, &rig, "theme-onyx");
     assert_eq!(Config::load().theme, "onyx");
-    // A class chrome wears the owner's class over the configured one: the
-    // fixture's logger (R31), a Warrior, is the window's "you". It keeps
-    // that class through a theme switch.
+    // A class chrome keeps its class through a theme switch.
     rig.gui
         .update(cx, |g, _| g.cfg.character_class = Some("Priest".into()));
     press(cx, &rig, "chrome-class");
     let class_accent = cx.update(|cx| crate::theme::Look::global(cx).accent);
     assert_eq!(
         class_accent,
-        wowdps_gui_logic::theme::class_accent(wowdps_model::Class::Warrior)
+        wowdps_gui_logic::theme::class_accent(wowdps_model::Class::Priest)
     );
     press(cx, &rig, "theme-navy");
     assert_eq!(Config::load().theme, "navy");

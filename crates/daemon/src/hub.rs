@@ -2144,10 +2144,12 @@ mod tests {
             SourceSetup {
                 spec: Some("logs:/wow/_retail_/Logs".to_string()),
                 edition: Some(Edition::Retail),
+                own: false,
             },
             SourceSetup {
                 spec: Some("logs:/wow/_forever_/Logs".to_string()),
                 edition: Some(Edition::Forever),
+                own: false,
             },
         ])
     }
@@ -2406,6 +2408,7 @@ mod tests {
         let one = one_source_scenario(Hub::with_sources(vec![SourceSetup {
             spec: Some(RETAIL_SPEC.to_string()),
             edition: Some(Edition::Retail),
+            own: false,
         }]));
         let got: Vec<String> = one.iter().map(Frame::golden).collect();
         if std::env::var_os("WOWDPS_BLESS").is_some() {
