@@ -63,6 +63,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	power_sum	120
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	power_max	100
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	role	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E03	logger	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	damage	1500
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	overkill	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	petdamage	0
@@ -127,6 +128,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	power_sum	120
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	power_max	100
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	role	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E04	logger	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	damage	1400
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	overkill	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	petdamage	0
@@ -191,6 +193,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	power_sum	180
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	power_max	100
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	role	3
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E05	logger	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	damage	500
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	overkill	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	petdamage	0
@@ -255,6 +258,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	power_sum	540
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	power_max	100
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	role	1
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E01	logger	1
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	damage	100
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	overkill	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	petdamage	0
@@ -319,6 +323,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	power_sum	360
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	power_max	100
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	role	2
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E02	logger	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	damage	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	overkill	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	petdamage	0
@@ -383,6 +388,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	power_sum	60
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	power_max	100
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	role	0
+1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	Player-6101-0C1D2E0A	logger	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	damage	2600
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	overkill	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	petdamage	0
@@ -447,6 +453,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	power_sum	180
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	power_max	100
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	role	3
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E08	logger	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	damage	700
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	overkill	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	petdamage	0
@@ -511,6 +518,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	power_sum	240
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	power_max	100
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	role	1
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E01	logger	1
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	damage	600
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	overkill	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	petdamage	0
@@ -575,6 +583,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	power_sum	300
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	power_max	100
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	role	1
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E06	logger	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	damage	80
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	overkill	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	petdamage	0
@@ -639,6 +648,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	power_sum	240
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	power_max	100
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	role	2
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E07	logger	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	damage	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	overkill	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	petdamage	0
@@ -703,6 +713,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	power_sum	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	power_max	0
 2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	role	0
+2	Encounter	Aku'mai	kill	40000	2910	1	Player-6101-0C1D2E09	logger	0
 3	Trash	Trash		6000			Player-6101-0C1D2E08	damage	1100
 3	Trash	Trash		6000			Player-6101-0C1D2E08	overkill	0
 3	Trash	Trash		6000			Player-6101-0C1D2E08	petdamage	0
@@ -767,6 +778,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		6000			Player-6101-0C1D2E08	power_sum	0
 3	Trash	Trash		6000			Player-6101-0C1D2E08	power_max	0
 3	Trash	Trash		6000			Player-6101-0C1D2E08	role	0
+3	Trash	Trash		6000			Player-6101-0C1D2E08	logger	0
 3	Trash	Trash		6000			Player-6101-0C1D2E01	damage	0
 3	Trash	Trash		6000			Player-6101-0C1D2E01	overkill	0
 3	Trash	Trash		6000			Player-6101-0C1D2E01	petdamage	0
@@ -831,6 +843,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		6000			Player-6101-0C1D2E01	power_sum	60
 3	Trash	Trash		6000			Player-6101-0C1D2E01	power_max	100
 3	Trash	Trash		6000			Player-6101-0C1D2E01	role	0
+3	Trash	Trash		6000			Player-6101-0C1D2E01	logger	1
 4	Trash	Trash		20000			Player-6101-0C1D2E05	damage	2750
 4	Trash	Trash		20000			Player-6101-0C1D2E05	overkill	0
 4	Trash	Trash		20000			Player-6101-0C1D2E05	petdamage	0
@@ -895,6 +908,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Trash	Trash		20000			Player-6101-0C1D2E05	power_sum	300
 4	Trash	Trash		20000			Player-6101-0C1D2E05	power_max	100
 4	Trash	Trash		20000			Player-6101-0C1D2E05	role	3
+4	Trash	Trash		20000			Player-6101-0C1D2E05	logger	0
 4	Trash	Trash		20000			Player-6101-0C1D2E03	damage	1850
 4	Trash	Trash		20000			Player-6101-0C1D2E03	overkill	0
 4	Trash	Trash		20000			Player-6101-0C1D2E03	petdamage	0
@@ -959,6 +973,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Trash	Trash		20000			Player-6101-0C1D2E03	power_sum	60
 4	Trash	Trash		20000			Player-6101-0C1D2E03	power_max	100
 4	Trash	Trash		20000			Player-6101-0C1D2E03	role	3
+4	Trash	Trash		20000			Player-6101-0C1D2E03	logger	0
 4	Trash	Trash		20000			Player-6101-0C1D2E08	damage	1600
 4	Trash	Trash		20000			Player-6101-0C1D2E08	overkill	0
 4	Trash	Trash		20000			Player-6101-0C1D2E08	petdamage	0
@@ -1023,6 +1038,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Trash	Trash		20000			Player-6101-0C1D2E08	power_sum	60
 4	Trash	Trash		20000			Player-6101-0C1D2E08	power_max	100
 4	Trash	Trash		20000			Player-6101-0C1D2E08	role	3
+4	Trash	Trash		20000			Player-6101-0C1D2E08	logger	0
 5	Trash	Trash		15000			Player-6101-0C1D2E02	damage	870
 5	Trash	Trash		15000			Player-6101-0C1D2E02	overkill	0
 5	Trash	Trash		15000			Player-6101-0C1D2E02	petdamage	0
@@ -1087,6 +1103,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 5	Trash	Trash		15000			Player-6101-0C1D2E02	power_sum	180
 5	Trash	Trash		15000			Player-6101-0C1D2E02	power_max	100
 5	Trash	Trash		15000			Player-6101-0C1D2E02	role	3
+5	Trash	Trash		15000			Player-6101-0C1D2E02	logger	0
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_units	7
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_posts	40
 1	Encounter	Twilight Lord Kelris	kill	30000	2911	1	*	replay_absorb	0

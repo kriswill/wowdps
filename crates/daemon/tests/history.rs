@@ -28,6 +28,7 @@ use wowdps_daemon::history::{
     MemBackend, Retention, Store,
 };
 use wowdps_daemon::{DaemonOptions, run};
+use wowdps_model::Edition;
 use wowdps_proto::creatures::Creature;
 use wowdps_proto::history::{Affiliation, CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
@@ -1219,6 +1220,358 @@ fn an_inferred_owner_survives_a_log_without_them() {
         card(3, 300, &[("G-alt", "Alt-Realm", true), ("G-c", "C", true)]),
     ];
     assert_eq!(store_of(&fresh, Retention::default()).owner(), None);
+}
+
+/// The store's cards opened again, as the next start opens them (which
+/// runs `Store::repair_owners`).
+fn reopened(store: &Store<MemBackend>, cfg: Retention) -> Store<MemBackend> {
+    let mut backend = MemBackend::new();
+    for dir in ["fights", "rows"] {
+        for name in store.backend().list(dir) {
+            backend
+                .write(dir, &name, &store.backend().read(dir, &name).unwrap())
+                .unwrap();
+        }
+    }
+    Store::open(backend, cfg)
+}
+
+/// A log's closed fights as the engine of a source the install's config or
+/// discovery names closes them (R31: `own_log`, its logger trusted).
+fn own_fights(path: &Path) -> Vec<ClosedFight> {
+    closed_fights(path)
+        .into_iter()
+        .map(|mut f| {
+            f.own_log = true;
+            f
+        })
+        .collect()
+}
+
+/// Every card's owner, by id.
+fn owners(store: &Store<MemBackend>) -> Vec<(String, Option<String>)> {
+    store
+        .cards()
+        .iter()
+        .map(|c| (c.id.clone(), c.owner.clone()))
+        .collect()
+}
+
+/// R31 on Retail: where COMBATANT_INFO and the flag both speak, the owner
+/// the flag stamps is the one today's inference names. Two logs of one
+/// raider (the sample's, and the night after with two other raiders) leave
+/// exactly that raider in both logs' COMBATANT_INFO; read as logs this
+/// daemon does not follow (the flag unread, `own_log` false) the cards get
+/// their owner from the intersection, the first log's at the next start;
+/// read as its own, from the flag at once. Every card's owner and the
+/// store's owner agree.
+#[test]
+fn a_retail_owner_by_the_flag_is_the_one_combatant_info_names() {
+    let tmp = Temp::new("flag-ci");
+    let sample = std::fs::read_to_string(SAMPLE).unwrap();
+    let night = sample
+        .replace("7/27/2026", "7/28/2026")
+        .replace("0A1B2C02", "0A1B2C92")
+        .replace("0A1B2C03", "0A1B2C93");
+    let a = tmp.join("WoWCombatLog-a.txt");
+    let b = tmp.join("WoWCombatLog-b.txt");
+    std::fs::write(&a, &sample).unwrap();
+    std::fs::write(&b, &night).unwrap();
+    let read = |own_log: bool| {
+        let mut store = mem(Retention::default());
+        for path in [&a, &b] {
+            let facts = LogFacts::read(path);
+            for mut fight in closed_fights(path) {
+                fight.own_log = own_log;
+                store.store(&fight, facts);
+            }
+        }
+        reopened(&store, Retention::default())
+    };
+    let today = read(false);
+    let flagged = read(true);
+    let me = Some(("Player-1168-0A1B2C01".to_string(), true));
+    assert_eq!(today.owner(), me, "the intersection names the raider");
+    assert_eq!(flagged.owner(), me);
+    assert!(
+        today.cards().len() >= 4 && today.cards().iter().all(|c| c.owner.is_some()),
+        "{:?}",
+        owners(&today)
+    );
+    assert_eq!(owners(&flagged), owners(&today));
+}
+
+/// R31 on Forever, whose log carries no COMBATANT_INFO: with nothing
+/// configured, every card the logger fought on is theirs (`forever.txt`'s
+/// one pull; `roles.txt`'s, but for the two trash fights of other groups
+/// the log overheard), a log this daemon does not follow names no one, and
+/// a configured character on the roster wins over the flag.
+#[test]
+fn a_forever_card_is_owned_by_the_logger_its_flags_name() {
+    let fixture = |name: &str| {
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures")).join(name)
+    };
+    let cfg = || Retention {
+        store_trash: true,
+        ..Retention::default()
+    };
+    for (log, logger, owned) in [
+        ("forever.txt", "Player-6101-0A2B3C01", 1),
+        ("roles.txt", "Player-6101-0C1D2E01", 3),
+    ] {
+        let path = fixture(log);
+        let fights = own_fights(&path);
+        let mut store = mem(cfg());
+        store_all(&mut store, &path, &fights);
+        let cards = store.cards();
+        assert!(cards.iter().all(|c| c.edition() == Edition::Forever));
+        for c in cards {
+            let on = c.players.iter().any(|p| p.guid == logger);
+            assert_eq!(
+                c.owner.as_deref(),
+                on.then_some(logger),
+                "{log}: {}",
+                c.name
+            );
+        }
+        assert_eq!(
+            cards.iter().filter(|c| c.owner.is_some()).count(),
+            owned,
+            "{log}: {:?}",
+            owners(&store)
+        );
+        assert_eq!(
+            store.owner_in(Edition::Forever),
+            Some((logger.to_string(), true))
+        );
+
+        // Read as a `--file`, a `--logs` or an import names it: nobody.
+        let mut elsewhere = mem(cfg());
+        for mut fight in fights.clone() {
+            fight.own_log = false;
+            elsewhere.store(&fight, LogFacts::read(&path));
+        }
+        assert!(elsewhere.cards().iter().all(|c| c.owner.is_none()), "{log}");
+    }
+
+    // A configured name on the roster is the owner, the logger beside it.
+    let path = fixture("roles.txt");
+    let mut store = mem(Retention {
+        characters: vec!["Mirela Vale".to_string()],
+        ..cfg()
+    });
+    store_all(&mut store, &path, &own_fights(&path));
+    let mirela = "Player-6101-0C1D2E02";
+    let mut named = 0;
+    for c in store.cards() {
+        let has = |g: &str| c.players.iter().any(|p| p.guid == g);
+        let want = if has(mirela) {
+            named += 1;
+            Some(mirela)
+        } else {
+            Some("Player-6101-0C1D2E01").filter(|g| has(g))
+        };
+        assert_eq!(c.owner.as_deref(), want, "{}", c.name);
+    }
+    assert!(named > 0, "Mirela fought here");
+}
+
+/// `boss_log`'s pulls written by another character on another evening: a
+/// log of its own (its header, and so its identity, moves to `day`), its
+/// one player `guid` named `name`, in edition `project_id`.
+fn boss_log_of(pulls: &[(u32, bool)], day: u32, project_id: u8, guid: &str, name: &str) -> String {
+    boss_log(pulls)
+        .replace("7/27/2026", &format!("7/{day}/2026"))
+        .replace("PROJECT_ID,1\n", &format!("PROJECT_ID,{project_id}\n"))
+        .replace("Player-1-A", guid)
+        .replace("\"Ana-Realm\"", &format!("\"{name}\""))
+}
+
+/// Store each log's fights, read as the install's own (R31: each card's
+/// logger its owner unless a configured name says otherwise).
+fn store_own_logs(tmp: &Temp, store: &mut Store<MemBackend>, logs: &[(&str, String)]) {
+    for (file, text) in logs {
+        let path = tmp.join(file);
+        std::fs::write(&path, text).unwrap();
+        let facts = LogFacts::read(&path);
+        for f in own_fights(&path) {
+            store.store(&f, facts);
+        }
+    }
+}
+
+/// Every card's (owner, damage per second), oldest first.
+fn kept(store: &Store<MemBackend>) -> Vec<(Option<String>, f64)> {
+    store
+        .cards()
+        .iter()
+        .map(|c| (c.owner.clone(), c.players[0].dps.round()))
+        .collect()
+}
+
+/// R31 retention: every character that owns cards keeps its personal bests,
+/// not only the edition's one owner. Ana's main logs and then, the newest
+/// night, her alt Cora's: the edition's owner (the newest stamp) is now
+/// Cora, and before each card's owner kept its own bests, Ana's best wipe
+/// answered to the caps with the rest. Both bests stay; each character's
+/// lesser wipe goes.
+#[test]
+fn every_character_that_owns_cards_keeps_its_bests() {
+    let tmp = Temp::new("two-bests");
+    let mut store = mem(Retention {
+        keep_per_encounter: 0,
+        keep_progression: false,
+        ..Retention::default()
+    });
+    let wipes = [(60, false), (60, false)];
+    store_own_logs(
+        &tmp,
+        &mut store,
+        &[
+            ("WoWCombatLog-a.txt", boss_log(&wipes)),
+            (
+                "WoWCombatLog-b.txt",
+                boss_log_of(&wipes, 28, 1, "Player-1-C", "Cora-Realm"),
+            ),
+        ],
+    );
+    assert_eq!(
+        store.owner(),
+        Some(("Player-1-C".to_string(), true)),
+        "the newest stamp: the alt"
+    );
+    let ana = Some("Player-1-A".to_string());
+    let cora = Some("Player-1-C".to_string());
+    assert_eq!(kept(&store), [(ana, 33.0), (cora, 33.0)], "each one's best");
+}
+
+/// R31 retention with only Retail's character configured: Forever's cards
+/// are their writer's by the flag, Forever has no edition owner (the
+/// configured name names no Forever card), and Forever's best is kept all
+/// the same, by its cards' own owner.
+#[test]
+fn a_forever_best_is_kept_when_only_retail_is_configured() {
+    let tmp = Temp::new("forever-best");
+    let mut store = mem(Retention {
+        keep_per_encounter: 0,
+        keep_progression: false,
+        characters: vec!["Ana-Realm".to_string()],
+        ..Retention::default()
+    });
+    let wipes = [(60, false), (60, false)];
+    store_own_logs(
+        &tmp,
+        &mut store,
+        &[
+            ("WoWCombatLog-a.txt", boss_log(&wipes)),
+            (
+                "WoWCombatLog-f.txt",
+                boss_log_of(&wipes, 28, 18, "Player-6101-B", "Bex-Moss-Nebula-US"),
+            ),
+        ],
+    );
+    assert_eq!(store.owner_in(Edition::Forever), None);
+    let forever: Vec<(Option<String>, f64)> = store
+        .cards()
+        .iter()
+        .filter(|c| c.edition() == Edition::Forever)
+        .map(|c| (c.owner.clone(), c.players[0].dps.round()))
+        .collect();
+    assert_eq!(forever, [(Some("Player-6101-B".to_string()), 33.0)]);
+    assert_eq!(
+        kept(&store).len(),
+        2,
+        "Ana's best and Bex's: {:?}",
+        kept(&store)
+    );
+}
+
+/// R31: a regrade of a log whose trust cannot be re-established now (moved
+/// out of the install's folders, or read through `--file`) names no logger,
+/// and keeps the owner the card was stamped with, still on the roster — here
+/// where the edition's owner, the newest stamp, is an alt not on the card,
+/// so nothing else would name its writer; a card that had none keeps none.
+#[test]
+fn a_regrade_without_the_logger_keeps_the_stamped_owner() {
+    let tmp = Temp::new("regrade-kept");
+    let path = tmp.join("WoWCombatLog-a.txt");
+    std::fs::write(&path, boss_log(&[(60, false)])).unwrap();
+    let facts = LogFacts::read(&path);
+    let mut store = mem(no_progression());
+    let ids = store_all(&mut store, &path, &own_fights(&path));
+    store_own_logs(
+        &tmp,
+        &mut store,
+        &[(
+            "WoWCombatLog-b.txt",
+            boss_log_of(&[(60, false)], 28, 1, "Player-1-C", "Cora-Realm"),
+        )],
+    );
+    assert_eq!(store.owner(), Some(("Player-1-C".to_string(), true)));
+    assert_eq!(
+        store.card(&ids[0]).unwrap().owner.as_deref(),
+        Some("Player-1-A")
+    );
+    for f in closed_fights(&path) {
+        assert!(!f.own_log);
+        store.regrade(&f, facts).expect("rewritten");
+    }
+    assert_eq!(
+        store.card(&ids[0]).unwrap().owner.as_deref(),
+        Some("Player-1-A"),
+        "kept through an untrusted regrade"
+    );
+    let mut fresh = mem(no_progression());
+    let ids = store_all(&mut fresh, &path, &closed_fights(&path));
+    for f in closed_fights(&path) {
+        fresh.regrade(&f, facts).expect("rewritten");
+    }
+    assert_eq!(fresh.card(&ids[0]).unwrap().owner, None);
+}
+
+/// R31: the kept owner is an untrusted log's alone. A trusted log is read
+/// afresh on a regrade, whether or not its fight names a logger, so a wrong
+/// stamp there clears: here a fight no line of the writer flags (its player
+/// a party member, 0x512), stamped Ana by a configured name since dropped,
+/// with the edition's owner now the alt Cora, not on the card. An untrusted
+/// regrade keeps Ana; a trusted one finds no one.
+#[test]
+fn a_trusted_regrade_reads_the_owner_afresh() {
+    let tmp = Temp::new("regrade-afresh");
+    let path = tmp.join("WoWCombatLog-a.txt");
+    std::fs::write(&path, boss_log(&[(60, false)]).replace("0x511", "0x512")).unwrap();
+    let facts = LogFacts::read(&path);
+    let configured = Retention {
+        characters: vec!["Ana-Realm".to_string()],
+        ..no_progression()
+    };
+    let mut store = mem(configured);
+    let ids = store_all(&mut store, &path, &own_fights(&path));
+    store_own_logs(
+        &tmp,
+        &mut store,
+        &[(
+            "WoWCombatLog-b.txt",
+            boss_log_of(&[(60, false)], 28, 1, "Player-1-C", "Cora-Realm"),
+        )],
+    );
+    let mut store = reopened(&store, no_progression());
+    assert_eq!(store.owner(), Some(("Player-1-C".to_string(), true)));
+    let stamped = |s: &Store<MemBackend>| s.card(&ids[0]).unwrap().owner.clone();
+    assert_eq!(stamped(&store).as_deref(), Some("Player-1-A"));
+    for f in closed_fights(&path) {
+        store.regrade(&f, facts).expect("rewritten");
+    }
+    assert_eq!(
+        stamped(&store).as_deref(),
+        Some("Player-1-A"),
+        "untrusted: kept"
+    );
+    for f in own_fights(&path) {
+        assert!(f.segment.logger().is_none(), "no line flags the writer");
+        store.regrade(&f, facts).expect("rewritten");
+    }
+    assert_eq!(stamped(&store), None, "trusted: read afresh");
 }
 
 #[test]
@@ -3057,6 +3410,7 @@ fn a_daemon_following_two_editions_stores_and_regrades_from_both_folders() {
     let hist = tmp.join("history");
     let mut opts = options(&tmp, SourceSpec::Dir(retail), hist.clone());
     opts.editions = wowdps_daemon::Followed {
+        own: false,
         source: Some(Edition::Retail),
         more: vec![(Edition::Forever, forever)],
     };
@@ -3157,6 +3511,7 @@ fn a_regrade_by_edition_gives_a_forever_replay_its_posts() {
     let opts = || {
         let mut opts = options(&tmp, SourceSpec::Dir(retail.clone()), hist.clone());
         opts.editions = wowdps_daemon::Followed {
+            own: false,
             source: Some(Edition::Retail),
             more: vec![(Edition::Forever, forever.clone())],
         };
@@ -4417,8 +4772,8 @@ fn a_card_is_owned_by_the_account_character_on_it() {
             ..Retention::default()
         },
     );
-    assert_eq!(store.owner_of(&main).as_deref(), Some("Player-1-B"));
-    assert_eq!(store.owner_of(&alt_night), None);
+    assert_eq!(store.owner_of(&main, None).as_deref(), Some("Player-1-B"));
+    assert_eq!(store.owner_of(&alt_night, None), None);
     assert_eq!(
         store.owner(),
         Some(("Player-1-B".to_string(), false)),
@@ -4428,8 +4783,11 @@ fn a_card_is_owned_by_the_account_character_on_it() {
     // the configured name still wins where both are on a card.
     let mut store = store;
     store.merge_affiliations(vec![affiliation("Player-1-C", "Templars", true, 3_000)]);
-    assert_eq!(store.owner_of(&alt_night).as_deref(), Some("Player-1-C"));
-    assert_eq!(store.owner_of(&main).as_deref(), Some("Player-1-B"));
+    assert_eq!(
+        store.owner_of(&alt_night, None).as_deref(),
+        Some("Player-1-C")
+    );
+    assert_eq!(store.owner_of(&main, None).as_deref(), Some("Player-1-B"));
     // And the merge repaired the stored card in place.
     assert_eq!(
         store

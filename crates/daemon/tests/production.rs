@@ -106,13 +106,21 @@ fn the_source_comes_from_the_override_the_config_or_nowhere() {
     assert_eq!(opts.source, SourceSpec::File(PathBuf::from(FIXTURE)));
     assert!(!opts.linger);
     assert_eq!(opts.editions, Default::default(), "--file: one source");
-    // A folder outside an install: followed alone.
+    assert!(!opts.editions.own, "R31: a --file log's writer is anyone's");
+    // A folder outside an install: followed alone — and the config named
+    // it, so its logs are the install's own (R31).
     let opts = DaemonOptions::production(&configured, None, true).expect("configured");
-    assert_eq!(opts.editions, Default::default());
+    assert_eq!((opts.editions.source, opts.editions.more.len()), (None, 0));
+    assert!(opts.editions.own);
     assert_eq!(opts.followed().len(), 1);
 }
 
 const FOREVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+/// A second Forever log, read here as another player's: its writer is
+/// `roles.txt`'s one player flagged MINE.
+const ROLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/roles.txt");
+const ROLES_WRITER: &str = "Player-6101-0C1D2E01";
+const FOREVER_WRITER: &str = "Player-6101-0A2B3C01";
 
 /// A WoW install at `wow` holding the logs folder of each of `products`.
 fn install(wow: &Path, products: &[&str]) {
@@ -165,6 +173,10 @@ fn an_install_is_followed_edition_by_edition() {
         };
         let opts = DaemonOptions::production(&cfg, None, true).expect("configured");
         assert_eq!(opts.source, SourceSpec::Dir(logs.clone()));
+        assert!(
+            opts.editions.own,
+            "R31: the config's folder is the install's"
+        );
         assert_eq!(opts.editions.source, Some(own));
         assert_eq!(opts.editions.more, vec![(beside.0, beside.1.clone())]);
         assert_eq!(opts.followed().len(), 2, "{own:?}");
@@ -176,6 +188,10 @@ fn an_install_is_followed_edition_by_edition() {
         DaemonOptions::production(&Config::default(), None, true).expect("discovered")
     };
     assert_eq!(opts.source, SourceSpec::Dir(retail.clone()));
+    assert!(
+        opts.editions.own,
+        "R31: discovery's folders are the install's"
+    );
     assert_eq!(
         opts.followed(),
         vec![
@@ -205,6 +221,10 @@ fn an_install_is_followed_edition_by_edition() {
     )
     .unwrap();
     assert_eq!(opts.editions, Default::default(), "--logs: one source");
+    assert!(
+        !opts.editions.own,
+        "R31: a --logs folder's writers are anyone's"
+    );
     let _ = std::fs::remove_dir_all(&wow);
     let _ = std::fs::remove_dir_all(root.join("home/Retail Only"));
 }
@@ -553,4 +573,102 @@ fn a_production_daemon_runs_with_the_cache_and_watcher_wired() {
     assert!(result.is_ok(), "{result:?}");
     assert!(!socket.exists(), "the socket is removed on the way out");
     assert!(root.join("rt/wowdps").exists());
+}
+
+/// Run a production-shaped daemon over `opts` until every log it reads is
+/// stored (at least one fight, nothing importing), then stop it; the store
+/// it wrote, opened again as the next start would, nothing configured.
+fn stored_by(
+    opts: DaemonOptions,
+    dir: &Path,
+) -> wowdps_daemon::history::Store<wowdps_daemon::history::DirBackend> {
+    let _ = std::fs::remove_dir_all(dir);
+    let (daemon, socket, _stop) = start(opts, dir);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).expect("handshake");
+    status_until(
+        &mut client,
+        "the log stored",
+        |m| matches!(fights_of(m), Some((n, 0)) if n > 0),
+    );
+    client.send(&ClientMsg::Shutdown);
+    assert!(daemon.join().expect("daemon thread").is_ok());
+    wowdps_daemon::history::Store::open(
+        wowdps_daemon::history::DirBackend::new(dir.join("history")),
+        Default::default(),
+    )
+}
+
+/// R31: a log followed through `--file` or `--logs` is a path typed on the
+/// command line, maybe a friend's: its writer, the player its unit flags
+/// mark MINE, owns no card, is no edition's owner (so no repair stamps
+/// them later and no best is theirs) and is nobody's "you" — as the addon
+/// is withheld from such a source. The same kind of log in the folder the
+/// config names is the install's own: each card is its writer's.
+#[test]
+fn a_typed_log_names_no_owner_and_the_install_s_folder_does() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = sandbox();
+    let cfg = Config {
+        game_process: "wowdps-no-such-process-5e1c".to_string(),
+        auto_overlay: false,
+        ..Config::default()
+    };
+    // A friend's log, saved where downloads go.
+    let downloads = root.join("home/Downloads");
+    let _ = std::fs::remove_dir_all(&downloads);
+    std::fs::create_dir_all(&downloads).unwrap();
+    let theirs = downloads.join("WoWCombatLog-110226_200000.txt");
+    std::fs::copy(ROLES, &theirs).unwrap();
+    for (what, source) in [
+        ("--file", SourceSpec::File(theirs.clone())),
+        ("--logs", SourceSpec::Dir(downloads.clone())),
+    ] {
+        let opts = DaemonOptions::production(&cfg, Some(source), true).expect("typed");
+        let store = stored_by(opts, &root.join("typed"));
+        assert!(!store.cards().is_empty(), "{what}");
+        assert!(
+            store.cards().iter().all(|c| c.owner.is_none()),
+            "{what}: no card is the writer's"
+        );
+        assert_eq!(
+            store.owner_in(Edition::Forever),
+            None,
+            "{what}: nothing sticky"
+        );
+        assert!(!store.status().owner_inferred, "{what}");
+        let mine = store.mine();
+        assert!(
+            !mine.of(Edition::Forever).owns(ROLES_WRITER, ""),
+            "{what}: the writer is nobody's \"you\""
+        );
+    }
+
+    // The install's own folder, named by the config: the writer's cards.
+    let wow = root.join("home/Own/World of Warcraft");
+    install(&wow, &["_forever_"]);
+    let logs = wow.join("_forever_/Logs");
+    std::fs::copy(FOREVER, logs.join("WoWCombatLog-110126_200000.txt")).unwrap();
+    let own = Config {
+        logs_dir: Some(logs.clone()),
+        ..cfg.clone()
+    };
+    let opts = DaemonOptions::production(&own, None, true).expect("configured");
+    let store = stored_by(opts, &root.join("own"));
+    assert!(!store.cards().is_empty());
+    assert!(
+        store
+            .cards()
+            .iter()
+            .all(|c| c.owner.as_deref() == Some(FOREVER_WRITER)),
+        "every card the writer's"
+    );
+    assert_eq!(
+        store.owner_in(Edition::Forever),
+        Some((FOREVER_WRITER.to_string(), true))
+    );
+    let _ = std::fs::remove_dir_all(&downloads);
+    let _ = std::fs::remove_dir_all(&wow);
+    let _ = std::fs::remove_dir_all(root.join("typed"));
+    let _ = std::fs::remove_dir_all(root.join("own"));
 }

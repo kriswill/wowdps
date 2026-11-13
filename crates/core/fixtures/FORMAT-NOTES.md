@@ -589,6 +589,49 @@ type `0x400` Player / `0x800` NPC / `0x1000` Pet / `0x2000` Guardian.
 So `0x511` = Mine+Friendly+PlayerControlled+Player, `0x514` = Raid+...+Player,
 `0x1114` = Raid+Friendly+PlayerControlled+**Pet**, `0xa48` = Outsider+Hostile+NPC.
 
+**The Mine bit names the character writing the log** (R31). Measured on
+2026-11-12 over every log on one machine (83 Retail, 4 Forever), by counts
+alone (no name, no guid printed):
+
+| | Retail | Forever |
+|---|---:|---:|
+| unit blocks (a non-nil guid) | 362 920 166 | 921 871 |
+| … with exactly one affiliation bit | all | all |
+| … `0x1` Mine | 25 899 131 | 69 138 |
+| `Player-` guids with Mine as a player-controlled player, per log | 1: 66 logs, 2: 15, 3: 2 | 1: 4 logs |
+| lines flagging two such players | 0 | 0 |
+
+- **What else carries Mine:** only the writer's own units — its pets
+  (`Pet-`, type `0x1000`; 1 103 pet guids, counted per log, across the Retail
+  logs), its guardians and
+  totems (`Creature-`, type `0x2000`) and its vehicles (`Vehicle-`, type
+  `0x1000` or `0x2000`), each player-controlled and friendly. No unit
+  controlled by an NPC carries it, and neither does any other type. Forever's
+  logs show no pet with it.
+- **One writer per stretch.** A log written by two or three characters in
+  turn (a log-out onto another character, the file kept) flags each for its
+  own stretch of lines: 17 Retail logs, five of them with one writer back for a
+  second stretch. No two stretches overlap.
+- **The writer can lose it for a moment.** On 30 unit blocks in 3 logs the
+  writer's guid was flagged without Mine, every one inside its own stretch:
+  `0x528` (Outsider, Neutral, a player-controlled player: a charm) on 6
+  swings, and `0x1218` (Outsider, Friendly, NPC-controlled, a pet: a
+  possession) on 24 blocks of auras, casts, energizes and heals.
+- **It agrees with what else names the owner.** Over the Retail logs'
+  stored cards that have an owner (the addon's own-character set named every
+  one here), 823 of 823 name the player the card's lines flag; no card's
+  owner differs. Every Retail boss pull that names a logger (1 377 of the
+  1 408 pulls, arenas aside) carries the logger's own COMBATANT_INFO
+  loadout (`tests/real_log_logger.rs`).
+- **Per fight** (`Segment::logger`, the same logs): 1 401 of Retail's 1 408
+  closed pulls and all 18 of Forever's name a logger, and 3 427 of 3 882
+  Retail trash fights and 164 of Forever's 205. A raid pull can hold none: one
+  pull's 659 player blocks are its group's alone, the writer taking no part.
+- `Unit::is_logger` reads it (Mine, player-controlled, player, a `Player-`
+  guid, and neither a pet's nor a guardian's type, which a player the
+  writer controls could wear), `Segment::logger` counts it per fight, and
+  `check.awk` mirrors both.
+
 ## Player labels
 
 A `Player-` guid's name field is its **label**, and its shape is the edition's.
@@ -636,8 +679,9 @@ letter read as its case, no name printed): every distinct (guid, label) pair a
 - **Nothing else names a Forever player.** Forever's logs carry no
   `COMBATANT_INFO` (0 lines over three logs), so the roster is the labels alone,
   and the owner inference, which intersects the players COMBATANT_INFO names
-  (`CardPlayer::logged`), finds no Forever owner: a Forever "you" is
-  `history_characters` by name, read by this rule. The wowdps addon records a
+  (`CardPlayer::logged`), finds no Forever owner: a Forever "you" is the
+  fight's logger, the player its unit flags mark Mine (R31, "Unit flags"
+  above), or `history_characters` by name, read by this rule. The wowdps addon records a
   player's name and realm apart (`UnitFullName`), keyed by guid; the daemon reads
   Retail's copy alone, and no Forever copy exists on the machine measured, so how
   that client's `UnitFullName` spells a two-word name is not known yet.

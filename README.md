@@ -112,6 +112,13 @@ scans Steam/Proton prefixes for the newest install. In an install the daemon
 follows each edition's logs folder, Retail's `_retail_/Logs` and Forever's
 `_forever_/Logs`, from when it first holds a log, whichever of the two
 `logs_dir` names; `--logs` and `--file` follow the one source they name.
+A fight's own log names the character who wrote it, and the daemon takes
+that character for you, on its cards and as "you" in the window, only in
+the folders `logs_dir` or discovery names: a log you follow with `--file`
+or `--logs` may be someone else's, so its writer is never taken for you.
+Trust goes with the folder, not the file: a friend's log you copy into
+your own Logs folder is read as yours, and its writer becomes "you" in
+its fights.
 
 ### Themes
 

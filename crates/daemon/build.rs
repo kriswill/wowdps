@@ -90,6 +90,13 @@ const DECIDING: &[&str] = &[
     "fn protected(",
     "fn is_progression(",
     "fn owner_in(",
+    // R31: a card's owner — the fight's logger, from a log this daemon
+    // follows, among the rest.
+    "pub fn owner_of(",
+    "pub fn logger_of(",
+    "fn kept_owner(",
+    "fn follows(",
+    "pub fn logger(",
     "pub fn rules(",
     // daemon: the helpers they decide through — a log's identity, the
     // configured characters' matching, retention's groups and kept-whole

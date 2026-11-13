@@ -61,8 +61,12 @@ pub struct Config {
     pub history_replay_mb: u64,
     /// The characters that are "me", comma-separated: "Name", "Name-Realm",
     /// or a Forever character's "First Last" (never its first name alone:
-    /// `wowdps_model::names::Label::is_called`); empty = infer from
-    /// COMBATANT_INFO, which Forever's logs never carry.
+    /// `wowdps_model::names::Label::is_called`); a configured one on a
+    /// card's roster is its owner. Empty = each fight's logger, the
+    /// character its own unit flags name as the one writing the log (R31,
+    /// every edition, in the folders `logs_dir` or discovery names, never a
+    /// `--file` or `--logs` source), then the addon's set and
+    /// COMBATANT_INFO's intersection, which Forever's logs never carry.
     pub history_characters: Vec<String>,
 }
 

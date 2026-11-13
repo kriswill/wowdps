@@ -44,6 +44,13 @@ use crate::sources::SourceSetup;
 /// `--file`, `--logs` and a folder outside an install are followed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Followed {
+    /// R31: the folders followed are the ones the config's `logs_dir` or
+    /// install discovery names — this machine's logs, whose writers are
+    /// the account's characters, so a fight's logger (`Segment::logger`)
+    /// is trusted as one of them. False for `--file` and `--logs`, a path
+    /// typed on the command line that may be anyone's: the logger is
+    /// withheld from it as the addon is.
+    pub own: bool,
     /// The edition `source`'s own folder names: its install product
     /// folder's (`wowdps_core::cli::product_edition`), when it sits in an
     /// install.
@@ -60,6 +67,7 @@ impl Followed {
     /// editions' folders beside it.
     pub fn of_logs_dir(dir: &std::path::Path) -> Self {
         Self {
+            own: true,
             source: wowdps_core::cli::product_edition(dir),
             more: wowdps_core::cli::sibling_logs(dir, wowdps_core::cli::FOLLOWED),
         }
@@ -233,6 +241,7 @@ pub fn run(opts: DaemonOptions) -> io::Result<()> {
         .map(|(edition, spec)| SourceSetup {
             spec: Some(spec_display(spec)),
             edition: *edition,
+            own: opts.editions.own,
         })
         .collect();
     for (i, (_, spec)) in specs.iter().enumerate() {
@@ -241,7 +250,13 @@ pub fn run(opts: DaemonOptions) -> io::Result<()> {
     let loader_tx = loader::spawn(hub_tx.clone(), opts.loader_workers);
     let sweeps: Vec<SourceSpec> = specs.iter().map(|(_, spec)| spec.clone()).collect();
     let history_link = match &opts.history {
-        Some(h) => history::spawn(h.clone(), loader_tx.clone(), hub_tx.clone(), &sweeps),
+        Some(h) => history::spawn(
+            h.clone(),
+            loader_tx.clone(),
+            hub_tx.clone(),
+            &sweeps,
+            opts.editions.own,
+        ),
         None => history::HistoryLink::disabled(
             "history disabled (history_enabled = false, or no data dir)",
         ),

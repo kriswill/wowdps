@@ -3060,6 +3060,7 @@ fn start_two_editions_owned(
     assert_eq!(
         editions,
         wowdps_daemon::Followed {
+            own: true,
             source: Some(Edition::Retail),
             more: vec![(Edition::Forever, fdir)],
         }

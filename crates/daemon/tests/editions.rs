@@ -323,9 +323,14 @@ fn the_fastest_kill_is_each_editions_own() {
 /// One owner's wipes in two editions' logs, kills not kept whole and no
 /// room under the cap, so only each edition's best survives: the kept
 /// cards' (edition, dps), oldest first, and their owners.
+/// `configured`: the owner is named by `history_characters`, the logs read
+/// as a typed `--file` or `--logs` names them (their logger untrusted).
+/// Else (R31) nothing is configured, and the logs are the install's own:
+/// each card's logger, the one player flagged MINE, is its owner.
 fn bests_kept(
     a: (Option<u8>, &str, [u64; 2]),
     b: (Option<u8>, &str, [u64; 2]),
+    configured: bool,
 ) -> Vec<(Edition, f64, Option<String>)> {
     let tmp = Temp::new("best");
     let mut store = Store::open(
@@ -336,7 +341,11 @@ fn bests_kept(
             keep_per_encounter: 0,
             // A Forever character is configured by both names: its first
             // name alone names no one.
-            characters: vec!["Ana".to_string(), "Ana Moss".to_string()],
+            characters: if configured {
+                vec!["Ana".to_string(), "Ana Moss".to_string()]
+            } else {
+                Vec::new()
+            },
             ..Retention::default()
         },
     );
@@ -359,12 +368,20 @@ fn bests_kept(
             pulls,
         })
         .collect();
-    store_logs(&tmp, &mut store, &logs);
+    for log in &logs {
+        let (path, fights) = log.fights(&tmp);
+        let facts = LogFacts::read(&path);
+        for mut f in fights {
+            f.own_log = !configured;
+            store.store(&f, facts).expect("stored");
+        }
+    }
     for (project_id, guid, _) in [a, b] {
         let edition = Edition::from_project_id(project_id.unwrap_or(0));
+        // A configured owner is named; one the flags name is inferred.
         assert_eq!(
             store.owner_in(edition),
-            Some((guid.to_string(), false)),
+            Some((guid.to_string(), !configured)),
             "{edition:?}"
         );
     }
@@ -381,11 +398,24 @@ fn bests_kept(
 /// Classic clients as between Retail and Forever.
 #[test]
 fn the_owners_best_is_kept_per_edition() {
+    the_owners_best_per_edition(true);
+}
+
+/// R31: and with nothing configured, by the logger each edition's own log
+/// flags — Forever's, whose log names no COMBATANT_INFO to intersect, as
+/// Retail's.
+#[test]
+fn the_owners_best_is_kept_per_edition_by_the_logger_alone() {
+    the_owners_best_per_edition(false);
+}
+
+fn the_owners_best_per_edition(configured: bool) {
     let owned = |g: &str| Some(g.to_string());
     assert_eq!(
         bests_kept(
             (RETAIL, "Player-1-A", [12_000, 6_000]),
-            (FOREVER, "Player-2-A", [4_800, 3_000])
+            (FOREVER, "Player-2-A", [4_800, 3_000]),
+            configured
         ),
         [
             (Edition::Retail, 200.0, owned("Player-1-A")),
@@ -396,7 +426,8 @@ fn the_owners_best_is_kept_per_edition() {
     assert_eq!(
         bests_kept(
             (RETAIL, "Player-1-A", [4_800, 3_000]),
-            (FOREVER, "Player-2-A", [12_000, 6_000])
+            (FOREVER, "Player-2-A", [12_000, 6_000]),
+            configured
         ),
         [
             (Edition::Retail, 80.0, owned("Player-1-A")),
@@ -407,7 +438,8 @@ fn the_owners_best_is_kept_per_edition() {
     assert_eq!(
         bests_kept(
             (Some(2), "Player-3-A", [4_800, 3_000]),
-            (Some(19), "Player-4-A", [12_000, 6_000])
+            (Some(19), "Player-4-A", [12_000, 6_000]),
+            configured
         ),
         [
             (Edition::Classic(2), 80.0, owned("Player-3-A")),

@@ -878,6 +878,7 @@ fn two_editions_each_read_only_what_is_new() {
             Some(cache.clone()),
         );
         o.editions = Followed {
+            own: false,
             source: Some(Edition::Retail),
             more: vec![(Edition::Forever, forever.clone())],
         };

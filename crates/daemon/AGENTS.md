@@ -93,6 +93,10 @@ Threads and channels, no async runtime. Operations: `docs/tracing.md`.
   rewrites them from their logs while idle, and never touches a newer
   format.
 - **Affiliations are joined when answered,** never stored on a card.
+- **A card's owner is stamped at write** (`Store::owner_of`): a configured
+  character, else the fight's logger (R31, trusted only in the folders the
+  config or discovery names, `Followed::own`, never `--file`/`--logs`), else
+  the addon's set, else the edition's. Each card's owner keeps its bests.
 - **A late replay is broadcast:** a replay that lands after its card sends
   `HistoryChanged`.
 - **A ruling that moves stored numbers** needs `wowdps history regrade`

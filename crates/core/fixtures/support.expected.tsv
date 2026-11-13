@@ -63,6 +63,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	power_sum	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	power_max	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	role	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	logger	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	damage	239500
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	overkill	2500
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	petdamage	0
@@ -127,6 +128,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	power_sum	480
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	power_max	100
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	role	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	logger	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	damage	69500
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	overkill	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	petdamage	0
@@ -191,6 +193,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	power_sum	290000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	power_max	250000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	role	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	logger	1
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	damage	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	overkill	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	petdamage	0
@@ -255,6 +258,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	power_sum	356000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	power_max	250000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	role	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	logger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	damage	8000
 2	Trash	Trash		2000			Player-1168-0A1B2C22	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	petdamage	0
@@ -319,6 +323,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C22	power_sum	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	power_max	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	role	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	logger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	damage	6000
 2	Trash	Trash		2000			Player-1168-0A1B2C23	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	petdamage	0
@@ -383,6 +388,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C23	power_sum	60
 2	Trash	Trash		2000			Player-1168-0A1B2C23	power_max	100
 2	Trash	Trash		2000			Player-1168-0A1B2C23	role	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	logger	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	damage	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	petdamage	0
@@ -447,6 +453,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C21	power_sum	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	power_max	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	role	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	logger	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_units	5
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_posts	43
 1	Encounter	Support Test Boss	kill	60000	3146	16	*	replay_absorb	0

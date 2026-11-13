@@ -261,6 +261,8 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                     Some(Role::Dps) => 3,
                 },
             );
+            // R31: the segment's logger, by its lines' unit flags.
+            put_i("logger", i64::from(seg.logger() == Some(key.as_str())));
         }
         let _ = result;
     }

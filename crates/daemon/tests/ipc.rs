@@ -807,6 +807,7 @@ fn an_idle_edition_costs_close_to_nothing() {
         let mut opts = options(&tmp, SourceSpec::Dir(retail.clone()));
         opts.tick = Duration::from_millis(100);
         opts.editions = wowdps_daemon::Followed {
+            own: false,
             source: Some(Edition::Retail),
             more,
         };
@@ -887,6 +888,7 @@ fn a_daemon_follows_one_source_per_edition_and_moves_its_followers() {
 
     let mut opts = options(&tmp, SourceSpec::Dir(retail.clone()));
     opts.editions = wowdps_daemon::Followed {
+        own: false,
         source: Some(Edition::Retail),
         more: vec![(Edition::Forever, forever)],
     };

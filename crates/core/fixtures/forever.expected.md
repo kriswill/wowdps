@@ -123,6 +123,16 @@ took no melee swing and the swing signal is 0 for everyone.
 The Warrior's stance alone is not a tank's evidence: he took no swing and
 cast nothing of the kit, so his role is the one the lines show.
 
+## The logger (R31)
+
+Velkris Duskmantle (`…3C01`) is flagged `0x511` on every line of theirs:
+Mine, Friendly, player-controlled, a player. No other player's flags carry
+Mine (the rest read `0x512`, a party member), so the pull's logger is
+Velkris, and the TSV's `logger` row is 1 on them and 0 on the other four. A
+Forever log names no COMBATANT_INFO, so the flag is the only line that says
+whose fight this is: a daemon following this log stamps Velkris the pull's
+owner with nothing configured.
+
 ## The replay cut (R29)
 
 The client names no UiMap inside the dungeon and writes 0 in every block's

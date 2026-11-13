@@ -873,6 +873,12 @@ pub struct Segment {
     owners: HashMap<String, String>,
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
+    /// R31: per `Player-` guid, the unit blocks of this segment's lines that
+    /// flag it as the logging character (`Unit::is_logger`), through the
+    /// passive gate. Segment-local and never seeded: the meter's `flags`
+    /// remember a character the log left, these count only what this
+    /// segment's own lines say. An Overall sums its members'.
+    logger_lines: HashMap<String, u32>,
     classes: HashMap<String, Class>,
     specs: HashMap<String, Spec>,
     /// COMBATANT_INFO talent + gear loadouts, keyed by player GUID. Same
@@ -1376,6 +1382,7 @@ impl Segment {
             owners: HashMap::new(),
             names: HashMap::new(),
             flags: HashMap::new(),
+            logger_lines: HashMap::new(),
             classes: HashMap::new(),
             specs: HashMap::new(),
             loadouts: HashMap::new(),
@@ -1736,6 +1743,11 @@ impl Segment {
         }
         for (k, v) in &other.owners {
             self.owners.insert(k.clone(), v.clone());
+        }
+        // R31: the logger's lines sum, so a visit's logger is the character
+        // its members' lines flag most.
+        for (guid, n) in &other.logger_lines {
+            *self.logger_lines.entry(guid.clone()).or_default() += n;
         }
         // R26: casts sum raw-keyed like `actors`; a summon keeps the first
         // member's (members are absorbed in order, so first seen wins).
@@ -4221,6 +4233,30 @@ impl Segment {
         self.names.get(guid).map(String::as_str)
     }
 
+    /// R31: the character who wrote this segment's lines — the `Player-`
+    /// guid whose unit flags say MINE, player-controlled and player
+    /// (`Unit::is_logger`) on the most unit blocks of them, a tie to the
+    /// smaller guid; `None` when no line flags one. The log's own word on
+    /// whose fight it is: a character logged onto mid-file is the logger of
+    /// the segments after it, and one charmed for a few lines keeps the
+    /// fight. Whether it has a row is the reader's to ask.
+    pub fn logger(&self) -> Option<&str> {
+        self.logger_lines
+            .iter()
+            .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+            .map(|(g, _)| g.as_str())
+    }
+
+    /// R31: one unit block of a line flagging `guid` as the logger.
+    fn note_logger(&mut self, guid: &str) {
+        match self.logger_lines.get_mut(guid) {
+            Some(n) => *n = n.saturating_add(1),
+            None => {
+                self.logger_lines.insert(guid.to_string(), 1);
+            }
+        }
+    }
+
     /// R20: the ledger as of now — the closed cells plus every shield
     /// still open, folded with its `consumed` and `count` only (`unknown`
     /// += 1; applied, wasted and its waste flag dropped: the size and the
@@ -5989,7 +6025,8 @@ impl Meter {
     /// it must never open a segment. Every seed kind but one is passive
     /// under `feed` already; the exception, an ENCOUNTER_START the scanner
     /// seeded because it opened or resumed a visit (R10), replays its visit
-    /// rule alone.
+    /// rule alone. A seed is state, never a fight's line: it counts toward
+    /// no segment's logger (R31), whatever segment is open.
     pub fn seed(&mut self, line: LogLine) {
         match &line.event {
             Event::EncounterStart {
@@ -5997,7 +6034,7 @@ impl Meter {
                 instance_id,
                 ..
             } => self.encounter_visit(line.ts_ms, *instance_id, *difficulty),
-            _ => self.feed(line),
+            _ => self.feed_line(&line),
         }
     }
 
@@ -6039,6 +6076,24 @@ impl Meter {
     }
 
     pub fn feed(&mut self, line: LogLine) {
+        self.feed_line(&line);
+        // R31: whose fight this is, from the line's own unit flags — every
+        // block flagging the logging character counts for the segment open
+        // once the line is read (the one it opened, extended or fell in),
+        // through the passive gate: never one closed, or past its trash gap.
+        // A lazy load of the slice reads the same lines the same way.
+        if line.event.units().iter().flatten().any(|u| u.is_logger())
+            && let Some(s) = self.open_segment_for_passive(line.ts_ms)
+        {
+            for u in line.event.units().into_iter().flatten() {
+                if u.is_logger() {
+                    s.note_logger(&u.guid);
+                }
+            }
+        }
+    }
+
+    fn feed_line(&mut self, line: &LogLine) {
         let ts = line.ts_ms;
         if let Some(h) = &line.owner_hint {
             let (unit, owner) = (h.unit_guid.clone(), h.owner_guid.clone());
@@ -12368,5 +12423,142 @@ mod tests {
             (friends.casts, friends.heals),
             (base.casts + 3, base.heals + 3)
         );
+    }
+
+    /// R31: a fight's own lines over one or more segments, as the game
+    /// writes them: `at` seconds past 21:00 on one evening.
+    fn r31(lines: &[(u32, String)]) -> Meter {
+        let text: Vec<String> = std::iter::once(
+            "7/27/2026 21:00:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,12.0.0,PROJECT_ID,1".to_string(),
+        )
+        .chain(lines.iter().map(|(at, l)| {
+            format!("7/27/2026 21:{:02}:{:02}.000-7  {l}", at / 60, at % 60)
+        }))
+        .collect();
+        meter_from_lines(text.iter().map(String::as_str))
+    }
+
+    fn r31_hit(guid: &str, name: &str, flags: &str) -> String {
+        format!(
+            r#"SPELL_DAMAGE,{guid},"{name}",{flags},0x0,Creature-0-1-2-3-4-0000000009,"Boar",0xa48,0x0,1449,"Frostbolt",16,1000,1000,0,0,0,0,0,nil,nil,nil"#
+        )
+    }
+
+    fn r31_cast(guid: &str, name: &str, flags: &str) -> String {
+        format!(
+            r#"SPELL_CAST_SUCCESS,{guid},"{name}",{flags},0x0,0000000000000000,nil,0x80000000,0x80000000,1459,"Arcane Intellect",64"#
+        )
+    }
+
+    const ADA: &str = "Player-1-0A0B0C01";
+    const BRAM: &str = "Player-1-0A0B0C02";
+    const CORA: &str = "Player-1-0A0B0C03";
+
+    /// R31: the logger is the player whose blocks say MINE as a player; a
+    /// party member (0x512), a raid member (0x514) and the logger's own pet
+    /// (0x1111) are not, and a segment no line flags has none.
+    #[test]
+    fn the_logger_is_the_player_its_lines_flag_as_mine() {
+        let m = r31(&[
+            (1, r31_hit(BRAM, "Bram-Nebula-US", "0x512")),
+            (2, r31_hit(ADA, "Ada-Nebula-US", "0x511")),
+            (3, r31_hit(CORA, "Cora-Nebula-US", "0x514")),
+            (4, r31_hit("Pet-0-1-2-3-4-0000000001", "Imp", "0x1111")),
+            (5, r31_hit(BRAM, "Bram-Nebula-US", "0x512")),
+            (90, r31_hit(BRAM, "Bram-Nebula-US", "0x512")),
+        ]);
+        let segs = m.segments();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].logger(), Some(ADA));
+        assert_eq!(segs[1].logger(), None, "no line of it flags anyone");
+    }
+
+    /// R31: a character logged onto mid-file is the logger of the segments
+    /// after it, never of the one before; and one charmed for a few lines
+    /// (flagged an outsider, 0x528) keeps the fight.
+    #[test]
+    fn the_logger_follows_the_character_and_a_charm_keeps_the_fight() {
+        let m = r31(&[
+            (1, r31_hit(ADA, "Ada-Nebula-US", "0x511")),
+            (2, r31_hit(ADA, "Ada-Nebula-US", "0x511")),
+            (3, r31_hit(ADA, "Ada-Nebula-US", "0x528")),
+            (4, r31_hit(BRAM, "Bram-Nebula-US", "0x512")),
+            (120, r31_hit(CORA, "Cora-Halcyon-US", "0x511")),
+            (121, r31_hit(BRAM, "Bram-Nebula-US", "0x514")),
+        ]);
+        let segs = m.segments();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].logger(), Some(ADA));
+        assert_eq!(segs[1].logger(), Some(CORA));
+    }
+
+    /// R31: passive — a flagged cast past a trash fight's gap counts for no
+    /// segment (it neither extends the old one nor opens one), and the next
+    /// hit's segment counts from its own lines. A tie goes to the smaller
+    /// guid.
+    #[test]
+    fn the_logger_counts_through_the_passive_gate() {
+        let m = r31(&[
+            (1, r31_hit(BRAM, "Bram-Nebula-US", "0x512")),
+            (80, r31_cast(ADA, "Ada-Nebula-US", "0x511")),
+            (200, r31_hit(CORA, "Cora-Nebula-US", "0x511")),
+            (201, r31_hit(BRAM, "Bram-Nebula-US", "0x511")),
+        ]);
+        let segs = m.segments();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].logger(), None, "the cast past the gap is no one's");
+        assert_eq!(
+            segs[1].logger(),
+            Some(BRAM),
+            "one block each: the smaller guid"
+        );
+    }
+
+    /// R31: a visit's Σ sums its members' lines, so its logger is the
+    /// character its pulls' lines flag most.
+    #[test]
+    fn an_overall_s_logger_is_its_members_most_flagged_character() {
+        let m = r31(&[
+            (1, r#"ZONE_CHANGE,2526,"Hollow Deep",8"#.to_string()),
+            (2, r31_hit(ADA, "Ada-Nebula-US", "0x511")),
+            (3, r31_hit(ADA, "Ada-Nebula-US", "0x511")),
+            (100, r31_hit(BRAM, "Bram-Nebula-US", "0x511")),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let sigma = m.overall(0).expect("the visit has a sum");
+        assert_eq!(sigma.logger(), Some(ADA));
+    }
+
+    /// R31: a player under the writer's control — flagged MINE and
+    /// player-controlled as a player, a pet's or a guardian's type beside it
+    /// — is no logger; and a seed line, state ahead of a slice, counts toward
+    /// no segment's logger even while one is open.
+    #[test]
+    fn a_controlled_player_and_a_seed_count_toward_no_logger() {
+        let u = |flags| Unit {
+            guid: ADA.to_string(),
+            name: "Ada-Nebula-US".to_string(),
+            flags,
+        };
+        assert!(u(0x511).is_logger());
+        assert!(!u(0x1511).is_logger(), "a pet's type");
+        assert!(!u(0x2511).is_logger(), "a guardian's type");
+        assert!(!u(0x512).is_logger(), "a party member");
+        let pet = Unit {
+            guid: "Pet-0-1-2-3-4-0000000001".to_string(),
+            ..u(0x1111)
+        };
+        assert!(!pet.is_logger(), "the writer's pet");
+
+        let mut m = r31(&[(1, r31_hit(BRAM, "Bram-Nebula-US", "0x512"))]);
+        let seed = crate::parser::parse_line(&format!(
+            "7/27/2026 21:00:02.000-7  {}",
+            r31_cast(ADA, "Ada-Nebula-US", "0x511")
+        ))
+        .expect("a cast");
+        m.seed(seed);
+        assert_eq!(m.segments().len(), 1);
+        assert!(m.segments()[0].end_ms.is_none(), "the fight is open");
+        assert_eq!(m.segments()[0].logger(), None);
     }
 }

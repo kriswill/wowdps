@@ -372,3 +372,13 @@ names:
 - Verkath the Hollow (segment 4): 18 posts (Thraxx 5, Mírelle 1 — her
   `DAMAGE_SPLIT`, read at its offset 12 since v45 —, Kael'thar 1), 4 units;
   one hit on a player, one interrupt, three deaths.
+
+## Addendum — the logger (2026-11-12: R31)
+
+Thraxx (`…2C01`) is the one player flagged `0x511` (Mine, Friendly,
+player-controlled, a player); Mírelle and Kael'thar read `0x514` (raid
+members), and the hunter's pet `0x1114`. Thraxx's lines fall in all four segments, so each names
+Thraxx its logger: the TSV's `logger` row is 1 on Thraxx and 0 on everyone
+else. Thraxx is also one of the three players the log's COMBATANT_INFO names,
+and over two logs of theirs the one the owner inference keeps, so the owner
+the flag stamps on a card is the one the inference would.
