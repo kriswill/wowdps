@@ -1,0 +1,662 @@
+segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	damage	950
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	overkill	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	petdamage	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	dps	47.50
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	combat_ms	20000
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	pct	52.78
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	heal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	overheal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	absorbheal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	interrupts	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	cc	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	dispels	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	deaths	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	taken	400
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	absorbed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	blocked	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	prevented	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	misses	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	stagger	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	stagger_ticked	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	reduced	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	self_harm	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	friendly_fire	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	support_given	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	support_received	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	support_given_heal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	support_received_heal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	healed_received	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	self_healed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	effective	950
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	am_uptime_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	externals_given	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	externals_given_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	externals_received	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	externals_received_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	support_uptime_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	spans	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	taken10_0	400
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	absorb_applied	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	absorb_wasted	
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	shields_unknown	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	stack_hits	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	stack_sum	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	stack_max	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	stack_cells	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	stack_auras	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	casts	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	cast_starts	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	damage_periodic	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	heal_periodic	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	misses_dealt	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	dot_uptime_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	energize_gained	0.0000
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	energize_wasted	0.0000
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	heal_absorbed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	empower_stage1	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	empower_stage2	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	empower_stage3	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	empower_stage4	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	empower_cancelled	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	power_seconds	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	power_sum	40
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	power_max	100
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	role	3
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	logger	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	damage	850
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	overkill	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	petdamage	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	dps	42.50
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	combat_ms	20000
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	pct	47.22
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	heal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	overheal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	absorbheal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	interrupts	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	cc	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	dispels	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	deaths	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	taken	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	absorbed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	blocked	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	prevented	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	misses	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	stagger	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	stagger_ticked	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	reduced	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	self_harm	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	friendly_fire	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	support_given	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	support_received	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	support_given_heal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	support_received_heal	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	healed_received	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	self_healed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	effective	850
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	am_uptime_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	externals_given	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	externals_given_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	externals_received	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	externals_received_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	support_uptime_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	spans	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	taken10_0	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	absorb_applied	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	absorb_wasted	
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	shields_unknown	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	stack_hits	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	stack_sum	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	stack_max	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	stack_cells	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	stack_auras	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	casts	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	cast_starts	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	damage_periodic	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	heal_periodic	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	misses_dealt	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	dot_uptime_ms	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	energize_gained	0.0000
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	energize_wasted	0.0000
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	heal_absorbed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	empower_stage1	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	empower_stage2	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	empower_stage3	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	empower_stage4	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	empower_cancelled	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	power_seconds	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	power_sum	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	power_max	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	role	3
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F02	logger	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	damage	650
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	overkill	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	petdamage	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	dps	43.33
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	combat_ms	15000
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	pct	76.47
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	heal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	overheal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	absorbheal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	interrupts	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	cc	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	dispels	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	deaths	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	taken	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	absorbed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	blocked	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	prevented	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	misses	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	stagger	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	stagger_ticked	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	reduced	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	self_harm	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	friendly_fire	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	support_given	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	support_received	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	support_given_heal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	support_received_heal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	healed_received	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	self_healed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	effective	650
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	am_uptime_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	externals_given	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	externals_given_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	externals_received	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	externals_received_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	support_uptime_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	spans	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	taken10_0	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	absorb_applied	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	absorb_wasted	
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	shields_unknown	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	stack_hits	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	stack_sum	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	stack_max	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	stack_cells	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	stack_auras	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	casts	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	cast_starts	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	damage_periodic	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	heal_periodic	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	misses_dealt	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	dot_uptime_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	energize_gained	0.0000
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	energize_wasted	0.0000
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	heal_absorbed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	empower_stage1	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	empower_stage2	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	empower_stage3	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	empower_stage4	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	empower_cancelled	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	power_seconds	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	power_sum	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	power_max	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	role	3
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F02	logger	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	damage	200
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	overkill	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	petdamage	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	dps	13.33
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	combat_ms	15000
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	pct	23.53
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	heal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	overheal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	absorbheal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	interrupts	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	cc	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	dispels	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	deaths	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	taken	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	absorbed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	blocked	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	prevented	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	misses	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	stagger	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	stagger_ticked	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	reduced	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	self_harm	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	friendly_fire	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	support_given	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	support_received	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	support_given_heal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	support_received_heal	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	healed_received	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	self_healed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	effective	200
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	am_uptime_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	externals_given	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	externals_given_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	externals_received	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	externals_received_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	support_uptime_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	spans	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	taken10_0	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	absorb_applied	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	absorb_wasted	
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	shields_unknown	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	stack_hits	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	stack_sum	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	stack_max	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	stack_cells	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	stack_auras	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	casts	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	cast_starts	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	damage_periodic	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	heal_periodic	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	misses_dealt	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	dot_uptime_ms	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	energize_gained	0.0000
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	energize_wasted	0.0000
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	heal_absorbed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	empower_stage1	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	empower_stage2	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	empower_stage3	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	empower_stage4	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	empower_cancelled	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	power_seconds	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	power_sum	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	power_max	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	role	3
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	Player-6101-0D4E5F01	logger	1
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	damage	650
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	overkill	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	petdamage	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	dps	43.33
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	combat_ms	15000
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	pct	76.47
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	heal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	overheal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	absorbheal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	interrupts	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	cc	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	dispels	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	deaths	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	taken	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	absorbed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	blocked	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	prevented	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	misses	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	stagger	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	stagger_ticked	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	reduced	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	self_harm	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	friendly_fire	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	support_given	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	support_received	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	support_given_heal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	support_received_heal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	healed_received	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	self_healed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	effective	650
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	am_uptime_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	externals_given	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	externals_given_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	externals_received	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	externals_received_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	support_uptime_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	spans	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	taken10_0	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	absorb_applied	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	absorb_wasted	
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	shields_unknown	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	stack_hits	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	stack_sum	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	stack_max	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	stack_cells	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	stack_auras	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	casts	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	cast_starts	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	damage_periodic	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	heal_periodic	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	misses_dealt	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	dot_uptime_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	energize_gained	0.0000
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	energize_wasted	0.0000
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	heal_absorbed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	empower_stage1	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	empower_stage2	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	empower_stage3	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	empower_stage4	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	empower_cancelled	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	power_seconds	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	power_sum	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	power_max	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	role	3
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F02	logger	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	damage	200
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	overkill	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	petdamage	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	dps	13.33
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	combat_ms	15000
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	pct	23.53
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	heal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	overheal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	absorbheal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	interrupts	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	cc	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	dispels	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	deaths	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	taken	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	absorbed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	blocked	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	prevented	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	misses	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	stagger	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	stagger_ticked	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	reduced	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	self_harm	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	friendly_fire	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	support_given	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	support_received	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	support_given_heal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	support_received_heal	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	healed_received	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	self_healed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	effective	200
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	am_uptime_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	externals_given	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	externals_given_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	externals_received	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	externals_received_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	support_uptime_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	spans	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	taken10_0	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	absorb_applied	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	absorb_wasted	
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	shields_unknown	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	stack_hits	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	stack_sum	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	stack_max	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	stack_cells	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	stack_auras	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	casts	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	cast_starts	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	damage_periodic	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	heal_periodic	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	misses_dealt	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	dot_uptime_ms	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	energize_gained	0.0000
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	energize_wasted	0.0000
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	heal_absorbed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	empower_stage1	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	empower_stage2	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	empower_stage3	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	empower_stage4	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	empower_cancelled	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	power_seconds	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	power_sum	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	power_max	0
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	role	3
+3	Encounter	Morvessa	wipe	15000	2952	1	Player-6101-0D4E5F01	logger	1
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	damage	650
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	overkill	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	petdamage	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	dps	43.33
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	combat_ms	15000
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	pct	76.47
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	heal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	overheal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	absorbheal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	interrupts	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	cc	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	dispels	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	deaths	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	taken	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	absorbed	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	blocked	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	prevented	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	misses	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	stagger	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	stagger_ticked	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	reduced	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	self_harm	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	friendly_fire	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	support_given	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	support_received	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	support_given_heal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	support_received_heal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	healed_received	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	self_healed	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	effective	650
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	am_uptime_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	externals_given	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	externals_given_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	externals_received	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	externals_received_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	support_uptime_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	spans	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	taken10_0	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	absorb_applied	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	absorb_wasted	
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	shields_unknown	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	stack_hits	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	stack_sum	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	stack_max	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	stack_cells	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	stack_auras	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	casts	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	cast_starts	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	damage_periodic	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	heal_periodic	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	misses_dealt	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	dot_uptime_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	energize_gained	0.0000
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	energize_wasted	0.0000
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	heal_absorbed	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	empower_stage1	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	empower_stage2	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	empower_stage3	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	empower_stage4	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	empower_cancelled	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	power_seconds	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	power_sum	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	power_max	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	role	3
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F02	logger	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	damage	200
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	overkill	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	petdamage	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	dps	13.33
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	combat_ms	15000
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	pct	23.53
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	heal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	overheal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	absorbheal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	interrupts	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	cc	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	dispels	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	deaths	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	taken	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	absorbed	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	blocked	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	prevented	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	misses	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	stagger	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	stagger_ticked	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	reduced	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	self_harm	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	friendly_fire	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	support_given	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	support_received	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	support_given_heal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	support_received_heal	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	healed_received	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	self_healed	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	effective	200
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	am_uptime_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	externals_given	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	externals_given_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	externals_received	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	externals_received_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	support_uptime_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	spans	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	taken10_0	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	absorb_applied	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	absorb_wasted	
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	shields_unknown	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	stack_hits	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	stack_sum	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	stack_max	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	stack_cells	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	stack_auras	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	casts	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	cast_starts	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	damage_periodic	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	heal_periodic	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	misses_dealt	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	dot_uptime_ms	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	energize_gained	0.0000
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	energize_wasted	0.0000
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	heal_absorbed	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	empower_stage1	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	empower_stage2	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	empower_stage3	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	empower_stage4	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	empower_cancelled	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	power_seconds	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	power_sum	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	power_max	0
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	role	3
+4	Encounter	Évara	wipe	15000	2953	1	Player-6101-0D4E5F01	logger	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_units	5
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_posts	7
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_absorb	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_pools	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_pool_sum	40
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_floor	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_affixes	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_affix_sum	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_hit	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_cast_start	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_cast_success	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_pcast_start	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_pcast_success	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_pcast_failed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_interrupt	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_debuff_applied	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_debuff_removed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_debuff_dose	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_death	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_npc_died	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_rez	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_boss_engaged	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_boss_killed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_boss_wiped	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_buff_applied	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_buff_removed	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_buff_dose	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_placed_cast	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_placed_summon	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_placed_touch	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_placed_gone	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_markers	0
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_bosses	1
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	*	replay_boss_npcs	990101
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	0	replay_map_posts	7
+1	Encounter	Thalgrim Ashvane	wipe	20000	2950	1	Player-6101-0D4E5F01	replay_posts	1
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_units	2
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_posts	3
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_absorb	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_pools	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_pool_sum	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_floor	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_affixes	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_affix_sum	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_hit	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_cast_start	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_cast_success	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_pcast_start	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_pcast_success	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_pcast_failed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_interrupt	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_debuff_applied	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_debuff_removed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_debuff_dose	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_death	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_npc_died	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_rez	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_boss_engaged	1
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_boss_killed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_boss_wiped	1
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_buff_applied	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_buff_removed	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_buff_dose	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_placed_cast	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_placed_summon	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_placed_touch	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_placed_gone	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_markers	0
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_bosses	1
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	*	replay_boss_npcs	990111
+2	Encounter	Kezran the Hollow	wipe	15000	2951	1	0	replay_map_posts	3
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_units	2
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_posts	3
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_absorb	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_pools	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_pool_sum	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_floor	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_affixes	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_affix_sum	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_hit	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_cast_start	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_cast_success	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_pcast_start	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_pcast_success	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_pcast_failed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_interrupt	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_debuff_applied	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_debuff_removed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_debuff_dose	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_death	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_npc_died	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_rez	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_boss_engaged	1
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_boss_killed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_boss_wiped	1
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_buff_applied	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_buff_removed	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_buff_dose	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_placed_cast	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_placed_summon	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_placed_touch	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_placed_gone	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_markers	0
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_bosses	1
+3	Encounter	Morvessa	wipe	15000	2952	1	*	replay_boss_npcs	990122
+3	Encounter	Morvessa	wipe	15000	2952	1	0	replay_map_posts	3
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_units	2
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_posts	3
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_absorb	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_pools	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_pool_sum	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_floor	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_affixes	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_affix_sum	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_hit	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_cast_start	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_cast_success	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_pcast_start	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_pcast_success	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_pcast_failed	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_interrupt	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_debuff_applied	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_debuff_removed	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_debuff_dose	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_death	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_npc_died	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_rez	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_boss_engaged	1
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_boss_killed	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_boss_wiped	1
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_buff_applied	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_buff_removed	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_buff_dose	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_placed_cast	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_placed_summon	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_placed_touch	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_placed_gone	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_markers	0
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_bosses	1
+4	Encounter	Évara	wipe	15000	2953	1	*	replay_boss_npcs	990131
+4	Encounter	Évara	wipe	15000	2953	1	0	replay_map_posts	3

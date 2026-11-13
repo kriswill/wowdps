@@ -356,6 +356,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_placed_touch	0
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_placed_gone	0
 1	Encounter	Geilhast	kill	21000	2914	1	*	replay_markers	0
+1	Encounter	Geilhast	kill	21000	2914	1	*	replay_bosses	1
+1	Encounter	Geilhast	kill	21000	2914	1	*	replay_boss_npcs	990001
 1	Encounter	Geilhast	kill	21000	2914	1	0	replay_map_posts	16
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C01	replay_posts	2
 1	Encounter	Geilhast	kill	21000	2914	1	Player-6101-0A2B3C02	replay_posts	2

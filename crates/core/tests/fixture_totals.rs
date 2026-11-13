@@ -571,6 +571,24 @@ fn roles_fixture_totals_match_expected() {
     );
 }
 
+/// R29's boss rule: a Forever log of four pulls — a title the client
+/// spells two letters apart from its creature, adds over the share beside
+/// it; a title naming its creature exactly; a near miss weaker than another
+/// hostile; an accented title one swap from its creature — and every
+/// pre-existing metric beside them. A missing golden FAILS.
+#[test]
+fn bosses_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/bosses.txt", "fixtures/bosses.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
 /// NEGATIVE CONTROL — proves this test can actually fail. `corrupt.txt` is
 /// `sample.txt` with three silently altered amounts; checked against sample's
 /// expected values it MUST produce mismatches. A suite that cannot fail proves

@@ -632,6 +632,36 @@ alone (no name, no guid printed):
   writer controls could wear), `Segment::logger` counts it per fight, and
   `check.awk` mirrors both.
 
+## Encounter titles and their creatures
+
+An `ENCOUNTER_START` names the encounter; the boss is a creature the log
+names on its own unit blocks, and the two need not agree. Measured on
+2026-11-13 over every log on one machine, by counts and encounter ids
+alone (`tests/real_log_boss_names.rs`):
+
+- **Retail: often no creature carries the title.** Of 1,490 cuts (1,384
+  boss pulls, 106 keystone runs), 1,456 hold a hostile, and 510 of those none named
+  as the title or a piece its commas and lone "and"s divide it into: an
+  encounter named for a place, a council or a vehicle. No hostile there is
+  one edit from a title piece, so the replay cut's health rule decides
+  them.
+- **Forever: the client can spell the two apart.** In 2 of its 18 pulls,
+  both of encounter 2914, the creature's name and the title differ by two
+  neighboring letters swapped. Exactly one hostile name is one edit from
+  the title there, and it is the strongest posted hostile; in one pull the
+  health rule alone would have called four more units bosses.
+- **No two hostiles of a cut are one edit apart** in either edition, so a
+  single edit names no creature in place of another.
+
+R29's boss rule takes the near miss: when no hostile carries a title piece
+exactly, in a cut of one distinct encounter title, the one name a single
+edit from one (5 letters or more, case and punctuation folded) names the
+boss, provided it alone holds the strongest posted health, so it never
+takes the boss kind from a hostile of another name as strong or stronger
+(a singular add under a plural title). A cut of more than one distinct
+title (a keystone run of several encounters) pools them and takes none.
+`bosses.txt` gates it.
+
 ## Player labels
 
 A `Player-` guid's name field is its **label**, and its shape is the edition's.

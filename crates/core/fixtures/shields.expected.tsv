@@ -486,6 +486,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_touch	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_placed_gone	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_markers	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_bosses	1
+1	Encounter	Shields Test Boss	kill	60000	3148	16	*	replay_boss_npcs	218000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	2287	replay_map_posts	41
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	replay_posts	2
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	replay_posts	3

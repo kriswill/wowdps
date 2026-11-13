@@ -5,8 +5,9 @@
 # taken.txt (R17), support.txt (R19 + the R2 amendment), spans.txt (R18) and
 # shields.txt (R20), stacks.txt (R21), tree.txt (R26), relog.txt (R5 + R6),
 # replay.txt (R29, the replay cut), forever.txt (R8's editions: a Forever
-# log, which reads no Retail table) and roles.txt (R30: a Forever log's roles
-# inferred per fight);
+# log, which reads no Retail table), roles.txt (R30: a Forever log's roles
+# inferred per fight) and bosses.txt (R29's boss rule: a near miss of the
+# title);
 # a log given without a golden pairs with <log>.expected.tsv,
 # falling back to sample.expected.tsv (the corrupt.txt negative control).
 # check.awk's own self-checks (R20: a REMOVED trailer disagreeing with the
@@ -14,9 +15,18 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 
+# check.awk folds names letter by letter (R29's boss names), which needs a
+# UTF-8 locale; gawk falls back to bytes, silently, where C.UTF-8 is missing.
+if ! LC_ALL=C.UTF-8 gawk 'BEGIN { exit !(length("\303\251") == 1) }' 2>/dev/null; then
+    echo "verify.sh: the C.UTF-8 locale is not available here; check.awk needs it to fold names by letter" >&2
+    exit 2
+fi
+
 check() {
     local log="$1" golden="$2" actual rc=0
-    actual="$(gawk -f "$here/check.awk" "$log" "$log")" || rc=$?
+    # The folding reads letters as the locale does (R29's boss names):
+    # a UTF-8 one, whatever the caller's.
+    actual="$(LC_ALL=C.UTF-8 gawk -f "$here/check.awk" "$log" "$log")" || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "FAIL: $(basename "$log") — check.awk self-check failed (exit $rc)"
         return 1
@@ -33,7 +43,7 @@ check() {
 
 if [ $# -eq 0 ]; then
     rc=0
-    for name in sample taken support spans shields stacks tree relog replay forever roles; do
+    for name in sample taken support spans shields stacks tree relog replay forever roles bosses; do
         check "$here/$name.txt" "$here/$name.expected.tsv" || rc=1
     done
     exit $rc
