@@ -55,7 +55,7 @@ use wowdps_gui_logic::keys::Zoom;
 use wowdps_gui_logic::labels::Names;
 use wowdps_gui_logic::table::{Col, filtered_indexed, meter_set, meter_step, step_in};
 use wowdps_gui_logic::theme::{Chrome, class_accent};
-use wowdps_model::{Action, RaidTimeline, Row, Screen, View};
+use wowdps_model::{Action, Edition, RaidTimeline, Row, Screen, View};
 use wowdps_proto::{DaemonClient, EditionRef};
 
 /// Esc or Enter in the row filter: done filtering, the keys back on the
@@ -325,7 +325,7 @@ impl Gui {
         // The pull the stage draws: a stored one's own state, else the log's.
         let state = history::fight_of(&self.hist, &self.session, cx);
         let rows = state.rows();
-        let owner = self.owner_of(&rows).and_then(|i| rows.get(i)).cloned();
+        let owner = self.owner_of(&rows, cx).and_then(|i| rows.get(i)).cloned();
         let mut seen = std::mem::take(&mut self.seen);
         seen.observe(state, owner.as_ref());
         self.seen = seen;
@@ -348,22 +348,22 @@ impl Gui {
     /// daemon marked `mine`, else the configured `history_characters`.
     /// The owner's row on the chart on screen — none on the Enemies view,
     /// whose rows are the enemies.
-    pub(crate) fn owner_in(&self, rows: &[Row], view: View) -> Option<usize> {
+    pub(crate) fn owner_in(&self, rows: &[Row], view: View, cx: &App) -> Option<usize> {
         if view == View::EnemyTaken {
             return None;
         }
-        self.owner_of(rows)
+        self.owner_of(rows, cx)
     }
 
     /// The reader's own guid among a raid timeline's deaths when the daemon
     /// marked none of them: found as the meter's "you" is, so the skull,
     /// the table, the header and the meter agree.
-    pub(crate) fn death_owner(&self, raid: &RaidTimeline) -> Option<String> {
+    pub(crate) fn death_owner(&self, raid: &RaidTimeline, cx: &App) -> Option<String> {
         if any_mine(raid) {
             return None;
         }
         let rows = owner_rows(raid);
-        self.owner_of(&rows)
+        self.owner_of(&rows, cx)
             .and_then(|i| rows.get(i))
             .map(|r| r.key.clone())
     }
@@ -475,7 +475,7 @@ impl Gui {
             let state = self.fight(cx);
             (state.rows(), state.view)
         };
-        if let Some(i) = self.owner_in(&rows, view) {
+        if let Some(i) = self.owner_in(&rows, view, cx) {
             // Into view, the least that shows them whole.
             let key = rows.get(i).map(|r| r.key.clone());
             self.reveal.set(key.map(Reveal::Row));
@@ -524,26 +524,31 @@ impl Gui {
         window.focus(&self.focus, cx);
     }
 
-    pub(crate) fn owner_of(&self, rows: &[Row]) -> Option<usize> {
+    pub(crate) fn owner_of(&self, rows: &[Row], cx: &App) -> Option<usize> {
         rows.iter().position(|r| r.mine && !r.enemy).or_else(|| {
             owner_among(
                 rows,
                 None,
                 &self.cfg.history_characters(),
-                Some(self.hist.edition),
+                Some(self.stage_edition(cx)),
             )
         })
     }
 
-    /// How the stage's panes write players' names: by the edition of the
-    /// fight on the stage (the window's while none is watched), realms as
-    /// the option says.
-    pub(crate) fn names(&self, cx: &App) -> Names {
-        let edition = self
-            .fight(cx)
+    /// The edition of the fight on the stage (the window's while none is
+    /// watched): whose labels the stage's rows are, so what writes them
+    /// ([`Gui::names`]) and what finds "you" among them by a configured
+    /// name ([`Gui::owner_of`]) read them alike.
+    pub(crate) fn stage_edition(&self, cx: &App) -> Edition {
+        self.fight(cx)
             .segment_edition()
-            .unwrap_or(self.hist.edition);
-        Names::new(Some(edition), self.cfg.hide_realms)
+            .unwrap_or(self.hist.edition)
+    }
+
+    /// How the stage's panes write players' names: by the edition of the
+    /// fight on the stage, realms as the option says.
+    pub(crate) fn names(&self, cx: &App) -> Names {
+        Names::new(Some(self.stage_edition(cx)), self.cfg.hide_realms)
     }
 
     /// How Home, the rail, the menus and the top bar write names: by the
@@ -613,7 +618,7 @@ impl Gui {
         let state = self.fight(cx);
         let rows = state.rows();
         let me = self
-            .owner_of(&rows)
+            .owner_of(&rows, cx)
             .and_then(|i| rows.get(i))
             .or_else(|| self.seen.of(state).and_then(Seen::owner))?;
         Some(CharPick {

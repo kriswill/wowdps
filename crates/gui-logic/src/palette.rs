@@ -2,7 +2,7 @@
 //! what it lists — the pulls on the rail (the newest few before anything
 //! is typed), the players of the pull on the stage, the views and the
 //! window's screens, grouped — how a query narrows it (the row filter's
-//! accent-folded substring, so "akanos" finds Akanôs), and the selection
+//! accent-folded substring, so "vashon" finds Vashôn), and the selection
 //! the keys move. Moved from the iced window's palette so both window GUIs
 //! list and rank the same things.
 
@@ -277,7 +277,7 @@ pub fn listed(items: Vec<Item>, query: &str) -> Vec<Item> {
 
 /// Does `item` answer to the folded `needle`? Its title and its words are
 /// one text, a space between (the prototype's `fold(t + ' ' + s)`), so a
-/// query may run from one into the other: "akanos devourer".
+/// query may run from one into the other: "vashon devourer".
 fn matches(item: &Item, needle: &[char]) -> bool {
     if item.sub.is_empty() {
         fold::contains(&item.title, needle)

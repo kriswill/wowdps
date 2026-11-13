@@ -154,7 +154,7 @@ fn stats_of(gui: &Gui, cx: &App) -> Stats {
     }
     let rows = app.rows();
     let seen = gui.seen.of(app).and_then(Seen::owner);
-    let owner = gui.owner_in(&rows, app.view);
+    let owner = gui.owner_in(&rows, app.view, cx);
     let raid = app.raid();
     // R25: when the owner died, as the raid timeline marks it.
     let died_at = owner

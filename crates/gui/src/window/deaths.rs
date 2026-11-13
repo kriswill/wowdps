@@ -70,7 +70,7 @@ impl Table {
             keys_away: app.inspecting(),
             names: gui.names(cx),
             filter: gui.filter_text.clone(),
-            owner: gui.death_owner(raid),
+            owner: gui.death_owner(raid, cx),
             all: raid.deaths.clone(),
         })
     }

@@ -122,7 +122,7 @@ impl Meter {
             slots: all.iter().map(|r| app.compare_slot(&r.key)).collect(),
             split: sort.is_none().then(|| enemy_split(&all)).flatten(),
             owner: gui
-                .owner_in(&all, app.view)
+                .owner_in(&all, app.view, cx)
                 .map(|i| (i, all.get(i).and_then(|r| r.class))),
             all,
             drawn,

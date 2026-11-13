@@ -216,7 +216,7 @@ fn row_matches(r: &Row, needle: &[char]) -> bool {
 }
 
 /// Accent-folded, case-insensitive substring over what a row IS — its
-/// label, its class, its spec and its role, so "akanos" finds `Akanôs` —
+/// label, its class, its spec and its role, so "vashon" finds `Vashôn` —
 /// keeping each row's position in the UNFILTERED list. The index is both
 /// the rank the row displays and the one a click sends back to
 /// `ClientState`, so it must survive filtering or a filtered click would

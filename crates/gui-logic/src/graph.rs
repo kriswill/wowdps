@@ -173,7 +173,7 @@ pub fn caster_name<'a>(src: &'a str, names: &[(&str, &'a str)]) -> &'a str {
 /// The hovered item summarized for the legend row — kind, name, and a
 /// details clause (uses, uptime, share of the displayed window). Computed
 /// over every displayed timeline, so a comparison counts both players' uses.
-/// R18: a mark with a caster names them — "Power Infusion from Gennar" —
+/// R18: a mark with a caster names them — "Power Infusion from Corvane" —
 /// every distinct caster of that label, resolved through `names`. Only when
 /// `with_caster`: the window has the width, the overlay's legend row does
 /// not, and a wrapped legend line misbehaves in the layer-shell surface, so

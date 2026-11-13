@@ -448,11 +448,14 @@ fn draw_rows(
     view: View,
     edition: Edition,
 ) {
-    // Each label as the TUI writes it (`shown`), by the fight's edition.
+    // Each label as the TUI writes it (`shown`), by the fight's edition,
+    // and a Forever name fitted to the name column (`fitted`).
+    let any_extra = extra_tag(view).is_some() && rows.iter().any(|r| r.extra > 0);
+    let width = columns(area.width as usize, any_extra).name;
     let rows: Vec<Row> = rows
         .iter()
         .map(|r| Row {
-            label: shown_any(&r.label, edition, true).into_owned(),
+            label: fitted(&r.label, edition, width),
             ..r.clone()
         })
         .collect();
@@ -466,7 +469,6 @@ fn draw_rows(
     // Not `rows.first()`: the death-recap pane (R9) is chronological, so the
     // biggest amount can sit anywhere in the list.
     let max = rows.iter().map(|r| r.amount).max().unwrap_or(0).max(1);
-    let any_extra = extra_tag(view).is_some() && rows.iter().any(|r| r.extra > 0);
     let lines: Vec<Line> = rows
         .iter()
         .enumerate()
@@ -655,6 +657,24 @@ fn compose(left: &str, mid: &str, right: &str, width: usize) -> String {
         s.push_str(right);
     }
     truncate(&s, width)
+}
+
+/// A row's label in a name column `width` characters wide. Retail's, and
+/// any label not shaped as a player's, as [`shown`] writes it, cut from its
+/// end. A Forever player's gives way a piece at a time, so two players
+/// who share a first name stay apart as long as they can: the realm first
+/// ("Tharokk Emberfell"), then the last name to its initial ("Tharokk
+/// E."), and only then is it cut.
+fn fitted(label: &str, edition: Edition, width: usize) -> String {
+    use wowdps_model::names::Label;
+    let player = Label::shaped(label, edition).filter(|_| edition.counts_as() == Edition::Forever);
+    let Some(p) = player else {
+        return shown_any(label, edition, true).into_owned();
+    };
+    [p.shown(true), p.name().into_owned(), p.initialed()]
+        .into_iter()
+        .find(|s| s.chars().count() <= width)
+        .unwrap_or_else(|| p.initialed())
 }
 
 /// Char count is the column count for everything drawn here — names, the
@@ -965,6 +985,38 @@ mod tests {
         assert!(state.drill.is_some());
         let all = flat(&render(&state, 120, 20));
         assert!(all.contains("K T view"), "drill footer:\n{all}");
+    }
+
+    /// A Forever fight writes each player by both names, with the realm
+    /// where the name column holds it, and a narrow column gives the realm
+    /// up first, then the last name to its initial: the two players named
+    /// Tharokk stay two rows that read apart.
+    #[test]
+    fn a_forever_fight_names_players_by_both_names() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/forever.txt");
+        let mut mock = MockDaemon::fixture_at(std::path::Path::new(path));
+        let mut state = ClientState::new();
+        let first = state.initial_request();
+        pump(&mut state, &mut mock, vec![first]);
+        apply(&mut state, &mut mock, Action::Open);
+        for _ in 0..3 {
+            if state.segment_name().as_deref() == Some("Geilhast") {
+                break;
+            }
+            apply(&mut state, &mut mock, Action::OlderSegment);
+        }
+        assert_eq!(state.segment_name().as_deref(), Some("Geilhast"));
+        let wide = flat(&render(&state, 120, 20));
+        assert!(
+            wide.contains("Tharokk Emberfell") && wide.contains("Tharokk Ironvale"),
+            "{wide}"
+        );
+        assert!(!wide.contains("Tharokk-"), "no dashed name:\n{wide}");
+        let narrow = flat(&render(&state, 40, 20));
+        assert!(
+            narrow.contains("Tharokk E.") && narrow.contains("Tharokk I."),
+            "{narrow}"
+        );
     }
 
     /// R17: the `taken.txt` fixture's kill in the Taken view — the header

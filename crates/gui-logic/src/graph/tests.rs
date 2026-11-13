@@ -230,11 +230,11 @@ fn the_legend_keys_only_the_kinds_shown() {
 #[test]
 fn hover_lines_name_the_caster() {
     let t = role_marked();
-    let names = [("Player-1-0B", "Gennar"), ("Player-1-0A", "Tank")];
+    let names = [("Player-1-0B", "Corvane"), ("Player-1-0A", "Tank")];
     let (kind, name, details) =
         hover_line(&[&t], "Pain Suppression", (0, 10), &names, true, &[]).unwrap();
     assert_eq!(kind, MarkKind::External);
-    assert_eq!(name, "Pain Suppression from Gennar");
+    assert_eq!(name, "Pain Suppression from Corvane");
     assert_eq!(details, "external ×1 · uptime 8s · 80%");
     // An unknown guid shows its tail rather than nothing.
     let (_, name, _) = hover_line(&[&t], "Ebon Might", (0, 10), &names, true, &[]).unwrap();
@@ -249,7 +249,7 @@ fn hover_lines_name_the_caster() {
     u.marks[0].src = "Player-1-0C".to_string();
     let (_, name, _) =
         hover_line(&[&t, &u], "Pain Suppression", (0, 10), &names, true, &[]).unwrap();
-    assert_eq!(name, "Pain Suppression from Gennar, 0C");
+    assert_eq!(name, "Pain Suppression from Corvane, 0C");
     // No caster, no clause.
     let (_, name, _) = hover_line(&[&t], "Proc", (0, 10), &names, true, &[]).unwrap();
     assert_eq!(name, "Proc");

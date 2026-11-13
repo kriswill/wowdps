@@ -3892,7 +3892,7 @@ impl Segment {
 
     /// R23: the same close, naming what raised them — a battle rez, a
     /// Soulstone, an Ankh. The spell goes in the label and the rezzer in
-    /// `src`, so the graph's hover reads "Death (Raise Ally) from Gennar"
+    /// `src`, so the graph's hover reads "Death (Raise Ally) from Corvane"
     /// through the same caster resolution every R18 span uses.
     ///
     /// The resurrect line is what ENDS the span: it is the game's own

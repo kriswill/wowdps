@@ -468,6 +468,49 @@ fn the_week_is_the_newest_card_s() {
     assert!(!scoped.unowned && scoped.night.is_some());
 }
 
+/// A configured name names a character the store knows as the daemon reads
+/// it: by name alone, by name and realm, a Forever character by both its
+/// names. None of those adds a second, empty chip; a name the store has no
+/// card for still adds one.
+#[test]
+fn a_configured_name_never_doubles_a_known_character() {
+    let sun = evening("2026-09-27");
+    let me = || raid_of(250.0);
+    let retail = vec![boss("new", "Boss", 1, sun, true, me())];
+    for configured in ["Me", "me-realm", "Me-Realm-US"] {
+        let panels = derive(
+            &retail,
+            None,
+            &Season::default(),
+            &[configured.to_string()],
+            &[],
+        );
+        let names: Vec<&str> = panels.characters.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Me-Realm-US"], "{configured}");
+    }
+    let forever: Vec<FightCard> = retail
+        .iter()
+        .map(|c| FightCard {
+            project_id: 18,
+            players: c
+                .players
+                .iter()
+                .map(|p| CardPlayer {
+                    name: format!("{}-Moss-Nebula-US", p.guid),
+                    ..p.clone()
+                })
+                .collect(),
+            ..c.clone()
+        })
+        .collect();
+    let configured = ["Me Moss".to_string(), "Me".to_string()];
+    let panels = derive(&forever, None, &Season::default(), &configured, &[]);
+    let names: Vec<&str> = panels.characters.iter().map(|c| c.name.as_str()).collect();
+    // "Me Moss" is the character; a first name alone names no Forever
+    // character, so it stands as a configured name of its own.
+    assert_eq!(names, ["Me-Moss-Nebula-US", "Me"]);
+}
+
 #[test]
 fn an_empty_store_derives_empty_panels_without_panicking() {
     let panels = derive(&[], None, &Season::default(), &[], &[]);

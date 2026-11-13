@@ -39,7 +39,7 @@ impl Recap {
 /// R25: a death as the recap's head words it (the prototype's
 /// `recapPanel`): "died 5:45 to Coalesced Venom", "died 5:15 as Purgatory
 /// ran out", "died 6:01, no damage logged" — then ", rezzed 2:03 by
-/// Soundscape" when someone raised them (their own spell's name for a
+/// Wenna" when someone raised them (their own spell's name for a
 /// self-rez: "by Reincarnation").
 pub fn died_words(d: &wowdps_model::RaidDeath, names: Names) -> String {
     let w = crate::deaths::words(d, names);

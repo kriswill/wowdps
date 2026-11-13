@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::BufRead;
 
 use wowdps_model::Edition;
-use wowdps_model::names::{Found, Label, find};
+use wowdps_model::names::{Found, Label, Named, find};
 
 /// The most players a lookup is asked about, each over the whole roster.
 const ASKED: usize = 3_000;
@@ -132,13 +132,13 @@ fn check(path: &str, edition: Edition) {
         let l = Label::player(label, edition);
         // The label whole names its own player (with any other who wore
         // the very same label: a character made again under its name).
-        match find(label, all()) {
+        match find(label, Named::First, all()) {
             Found::One(g) if g == guid => {}
             Found::Several(gs) if gs.contains(&guid) => {}
             _ => wrong += 1,
         }
         // A name names its player, or several, never another alone.
-        match find(&l.name(), all()) {
+        match find(&l.name(), Named::First, all()) {
             Found::One(g) if g != guid => wrong += 1,
             Found::Several(gs) if !gs.contains(&guid) => wrong += 1,
             Found::Nobody => wrong += 1,
@@ -150,7 +150,7 @@ fn check(path: &str, edition: Edition) {
                 .copied()
                 .unwrap_or(0)
                 > 1;
-            match find(l.first(), all()) {
+            match find(l.first(), Named::First, all()) {
                 Found::One(g) if g == guid && !shared => found_first += 1,
                 Found::Several(gs) if shared && gs.contains(&guid) => refused_first += 1,
                 _ => wrong += 1,

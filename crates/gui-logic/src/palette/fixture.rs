@@ -95,8 +95,8 @@ pub fn players() -> Vec<Row> {
         ..Row::default()
     };
     vec![
-        row("Player-1", "Swampert-Proudmoore-US", Spec::Arms, false),
-        row("Player-2", "Akanôs-Proudmoore-US", Spec::Devourer, false),
+        row("Player-1", "Merrow-Nebula-US", Spec::Arms, false),
+        row("Player-2", "Vashôn-Nebula-US", Spec::Devourer, false),
         row("Zul'jan", "Zul'jan", Spec::Fire, true),
     ]
 }
@@ -107,7 +107,7 @@ pub fn chars() -> Vec<CharLine> {
     vec![
         CharLine {
             guid: "Player-ME".to_string(),
-            name: "Tranqlock-Proudmoore-US".to_string(),
+            name: "Brannoc-Nebula-US".to_string(),
             class: Some(Class::Warlock),
             spec: Some(Spec::Destruction),
             ..CharLine::default()

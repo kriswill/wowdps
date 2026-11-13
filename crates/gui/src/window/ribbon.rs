@@ -148,7 +148,7 @@ impl Ribbon {
         let open = (app.view == View::Deaths)
             .then(|| selected(app, raid))
             .flatten();
-        let owner = gui.death_owner(raid);
+        let owner = gui.death_owner(raid, cx);
         let span = fight_span(app, 0);
         let (step_ms, rate) = rates(&raid.series, raid.bucket_ms.max(1), span);
         let skulls = raid

@@ -45,8 +45,8 @@ impl Gui {
     pub(crate) fn insp(&self, w: &W, cx: &gpui_kit::App) -> Insp {
         let app = self.fight(cx);
         let rows = app.rows();
-        let owner = self.owner_in(&rows, app.view);
-        let owner_of = |rows: &[Row]| self.owner_of(rows);
+        let owner = self.owner_in(&rows, app.view, cx);
+        let owner_of = |rows: &[Row]| self.owner_of(rows, cx);
         Insp::of(&Ctx {
             app,
             st: &self.insp,

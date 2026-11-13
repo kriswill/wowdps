@@ -34,11 +34,11 @@ fn the_items_are_the_rail_the_players_the_views_and_the_screens() {
     assert_eq!(sub("k1"), "Saturday, Sep 26, +1");
     assert_eq!(sub("k2"), "Saturday, Sep 26, over");
     // The enemy is no player; realms are hidden as the option says.
-    assert_eq!(titles(&items, Group::Players), ["Swampert", "Akanôs"]);
-    let akanos = items.iter().find(|i| i.title == "Akanôs").unwrap();
-    assert_eq!(akanos.sub, "Devourer Demon Hunter");
+    assert_eq!(titles(&items, Group::Players), ["Merrow", "Vashôn"]);
+    let vashon = items.iter().find(|i| i.title == "Vashôn").unwrap();
+    assert_eq!(vashon.sub, "Devourer Demon Hunter");
     assert_eq!(
-        akanos.disc,
+        vashon.disc,
         Some((Some(Class::DemonHunter), Some(Spec::Devourer)))
     );
     // Every view, in the tab strip's order, on the key that switches to it.
@@ -67,10 +67,10 @@ fn the_items_are_the_rail_the_players_the_views_and_the_screens() {
             // Home's scope chips, for the keys: every character with a
             // guid, realms hidden as the option says.
             ("Home: All characters".to_string(), None),
-            ("Home: Tranqlock".to_string(), None),
+            ("Home: Brannoc".to_string(), None),
         ]
     );
-    let scoped = items.iter().find(|i| i.title == "Home: Tranqlock").unwrap();
+    let scoped = items.iter().find(|i| i.title == "Home: Brannoc").unwrap();
     assert_eq!(scoped.run, Run::HomeScope(Some("Player-ME".to_string())));
     assert_eq!(
         scoped.disc,
@@ -78,7 +78,7 @@ fn the_items_are_the_rail_the_players_the_views_and_the_screens() {
     );
     // Realms shown when the option says so.
     let shown = items_with_realms();
-    assert!(titles(&shown, Group::Players).contains(&"Swampert-Proudmoore-US".to_string()));
+    assert!(titles(&shown, Group::Players).contains(&"Merrow-Nebula-US".to_string()));
 }
 
 fn items_with_realms() -> Vec<Item> {
@@ -118,20 +118,20 @@ fn an_empty_query_offers_the_recent_pulls() {
 #[test]
 fn a_query_folds_accents_and_searches_the_words() {
     let find = |q: &str| -> Vec<String> { listed(all(), q).into_iter().map(|i| i.title).collect() };
-    assert_eq!(find("akanos"), ["Akanôs"], "the accent folds");
-    assert_eq!(find("AKANÔS"), ["Akanôs"], "and the case");
-    assert_eq!(find("devourer"), ["Akanôs"], "the spec beside the name");
+    assert_eq!(find("vashon"), ["Vashôn"], "the accent folds");
+    assert_eq!(find("VASHÔN"), ["Vashôn"], "and the case");
+    assert_eq!(find("devourer"), ["Vashôn"], "the spec beside the name");
     assert_eq!(find("ula"), ["Ula'tek", "Ula'tek"]);
     assert_eq!(find("wipe"), ["Ula'tek"], "the verdict beside it");
     assert_eq!(find("kings"), ["Kings' Rest +14", "Kings' Rest +14"]);
     assert_eq!(find("heal"), ["Healing"]);
     assert_eq!(find("keyboard"), ["Keyboard shortcuts"]);
     // The title and its words are one text: a query may run across them.
-    assert_eq!(find("akanos devourer"), ["Akanôs"]);
+    assert_eq!(find("vashon devourer"), ["Vashôn"]);
     assert_eq!(find("ula'tek tonight"), ["Ula'tek", "Ula'tek"]);
     assert_eq!(find("coiled altar tonight, kill"), ["The Coiled Altar"]);
     // Home's scopes answer a name, or "home".
-    assert_eq!(find("tranq"), ["Home: Tranqlock"]);
+    assert_eq!(find("brann"), ["Home: Brannoc"]);
     assert_eq!(find("home: all"), ["Home: All characters"]);
     assert!(find("zzz").is_empty());
     // A query lists at most MAX_PULLS pulls.

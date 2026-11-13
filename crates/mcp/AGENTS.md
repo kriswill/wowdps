@@ -19,8 +19,12 @@ An MCP stdio server exposing the daemon's fight data as tools, reached as
   tools answer every edition without one but never count, rank or look a
   player up across two.
 - **A player argument resolves through `one_player`** (`names::find`, by the
-  fight's edition): a name two players answer to is refused with each named,
-  never one picked. Two players sharing a Forever first name are two.
+  fight's edition). Only a lookup over one fight's rows takes the start of a
+  name (floor `Named::Prefix`); one over stored fights stops at a Forever
+  first name (`Named::First`). A name two players answer to resolves to the
+  account's own when exactly one is (the answer's `player_note` says so),
+  else it is refused with each named, never one picked. Two players sharing
+  a Forever first name are two.
 - **Arguments before the daemon.** A tool reads and checks every argument
   (`arg_*` in `tools.rs`: types, edition, night or date, fight id shape)
   before its first `Bridge` call; only a check that needs the daemon's

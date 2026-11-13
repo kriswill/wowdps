@@ -173,6 +173,23 @@ impl<'a> Label<'a> {
         self.region
     }
 
+    /// The name with every word after the first cut to its initial: "Ada
+    /// B." for "Ada Brightwater" — what a column too narrow for the whole
+    /// name writes, so two players sharing a first name stay apart where
+    /// their last names start apart. A one-word name is itself.
+    pub fn initialed(&self) -> String {
+        let mut words = self.name.split('-');
+        let mut out = words.next().unwrap_or_default().to_string();
+        for w in words {
+            if let Some(c) = w.chars().next() {
+                out.push(' ');
+                out.push(c);
+                out.push('.');
+            }
+        }
+        out
+    }
+
     /// The label as a pane writes it: the name, and when `realms`, the
     /// rest of the label as the log wrote it ("Ada Brightwater-Nebula-US").
     /// Retail's with its realm is the label itself.
@@ -192,7 +209,8 @@ impl<'a> Label<'a> {
     /// a first name alone, so a one-word query reaches it only as
     /// [`Named::First`].
     pub fn named_by(&self, query: &str) -> Option<Named> {
-        let query = query.trim();
+        let query = one_space(query);
+        let query = query.as_ref();
         if query.is_empty() {
             return None;
         }
@@ -222,6 +240,18 @@ impl<'a> Label<'a> {
     }
 }
 
+/// `query` trimmed, every run of white space one space: "ada  brightwater"
+/// reads as "ada brightwater".
+fn one_space(query: &str) -> Cow<'_, str> {
+    let query = query.trim();
+    let odd = |c: char| c.is_whitespace() && c != ' ';
+    if !query.contains("  ") && !query.contains(odd) {
+        Cow::Borrowed(query)
+    } else {
+        Cow::Owned(query.split_whitespace().collect::<Vec<_>>().join(" "))
+    }
+}
+
 /// A character as a query is compared: lowercase, a space read as a dash.
 fn fold(c: char) -> impl Iterator<Item = char> {
     let c = if c == ' ' { '-' } else { c };
@@ -242,6 +272,15 @@ fn same<const N: usize>(query: &str, pieces: [&str; N]) -> bool {
 fn starts(query: &str, name: &str) -> bool {
     let mut name = name.chars().flat_map(fold);
     query.chars().flat_map(fold).all(|q| name.next() == Some(q))
+}
+
+/// Whether a configured name can never name a Forever character: one word,
+/// which a Forever label answers to only as a first name, and a configured
+/// name is never a first name alone ([`Label::is_called`]). It may still
+/// name a Retail character.
+pub fn never_names_forever(configured: &str) -> bool {
+    let configured = one_space(configured);
+    !configured.is_empty() && !configured.contains([' ', '-'])
 }
 
 /// `label` as a pane of players and creatures alike writes it: a whole
@@ -266,10 +305,17 @@ pub fn shown_any(label: &str, edition: Edition, realms: bool) -> Cow<'_, str> {
 
 /// The one player among `players` (each a key, its label and its fight's
 /// edition) that `query` names at the closest [`Named`] it reaches over
-/// all of them. Players are told apart by their keys (guids), never by a
-/// name: a key listed twice is one player, two keys at the closest reach
-/// are [`Found::Several`].
-pub fn find<K, L>(query: &str, players: impl IntoIterator<Item = (K, L, Edition)>) -> Found<K>
+/// all of them, no looser than `floor`. Players are told apart by their
+/// keys (guids), never by a name: a key listed twice is one player, two
+/// keys at the closest reach are [`Found::Several`]. A lookup over a
+/// fight's own rows may take [`Named::Prefix`]; one over many stored
+/// fights takes [`Named::First`] at the loosest, so the start of a name
+/// never answers about a stranger who happens to begin with it.
+pub fn find<K, L>(
+    query: &str,
+    floor: Named,
+    players: impl IntoIterator<Item = (K, L, Edition)>,
+) -> Found<K>
 where
     K: PartialEq,
     L: AsRef<str>,
@@ -277,7 +323,10 @@ where
     let mut best: Option<Named> = None;
     let mut hits: Vec<K> = Vec::new();
     for (key, label, edition) in players {
-        let Some(named) = Label::player(label.as_ref(), edition).named_by(query) else {
+        let Some(named) = Label::player(label.as_ref(), edition)
+            .named_by(query)
+            .filter(|n| *n >= floor)
+        else {
             continue;
         };
         match best {
@@ -317,6 +366,7 @@ mod tests {
         assert_eq!((p.realm(), p.region()), (Some("Nebula"), Some("US")));
         assert_eq!(p.shown(true), "Durgan-Nebula-US");
         assert_eq!(p.shown(false), "Durgan");
+        assert_eq!(p.initialed(), "Durgan");
         // A log older than the region suffix, and a bare name.
         let old = Label::player("Durgan-Nebula", R);
         assert_eq!(
@@ -342,6 +392,7 @@ mod tests {
         assert_eq!((p.realm(), p.region()), (Some("Nebula"), Some("US")));
         assert_eq!(p.shown(true), "Ada Brightwater-Nebula-US");
         assert_eq!(p.shown(false), "Ada Brightwater");
+        assert_eq!(p.initialed(), "Ada B.");
         // A lowercase last word is a word all the same.
         assert_eq!(Label::player("Ada-of-Nebula-US", F).name(), "Ada of");
         // The stranger's bare first name.
@@ -414,6 +465,13 @@ mod tests {
         assert!(p.is_called("Ada Brightwater"));
         assert!(!p.is_called("Ada") && !p.is_called("Ada Bright"));
         assert!(r.is_called("Durgan") && r.is_called("Durgan-Nebula"));
+        // One word names no Forever character, whatever its label.
+        assert!(never_names_forever(" Ada ") && never_names_forever("Durgan"));
+        assert!(!never_names_forever("Ada Brightwater") && !never_names_forever("Durgan-Nebula"));
+        assert!(!never_names_forever("  "));
+        for label in ["Ada-Brightwater-Nebula-US", "Ada-Nebula-US", "Ada"] {
+            assert!(!Label::player(label, F).is_called("Ada"), "{label}");
+        }
     }
 
     /// Two players who share a first name are never one: the first name
@@ -426,37 +484,77 @@ mod tests {
             ("Player-1-C", "Corwin-Ashdown-Nebula-US", F),
         ];
         assert_eq!(
-            find("Ada", players),
+            find("Ada", Named::Prefix, players),
             Found::Several(vec!["Player-1-A", "Player-1-B"])
         );
-        assert_eq!(find("Ada Thornfield", players), Found::One("Player-1-B"));
-        assert_eq!(find("ada-brightwater", players), Found::One("Player-1-A"));
-        assert_eq!(find("Corwin", players), Found::One("Player-1-C"));
-        assert_eq!(find("Brightwater", players), Found::Nobody);
-        assert_eq!(find("Ada T", players), Found::One("Player-1-B"));
-        assert_eq!(find("Co", players), Found::One("Player-1-C"));
+        assert_eq!(
+            find("Ada Thornfield", Named::Prefix, players),
+            Found::One("Player-1-B")
+        );
+        assert_eq!(
+            find("ada-brightwater", Named::Prefix, players),
+            Found::One("Player-1-A")
+        );
+        assert_eq!(
+            find("Corwin", Named::Prefix, players),
+            Found::One("Player-1-C")
+        );
+        assert_eq!(find("Brightwater", Named::Prefix, players), Found::Nobody);
+        assert_eq!(
+            find("Ada T", Named::Prefix, players),
+            Found::One("Player-1-B")
+        );
+        assert_eq!(find("Co", Named::Prefix, players), Found::One("Player-1-C"));
         // A player listed twice (two cards, a bare label beside the whole
         // one) is one player.
         let twice = [
             ("Player-1-A", "Ada-Brightwater-Nebula-US", F),
             ("Player-1-A", "Ada", F),
         ];
-        assert_eq!(find("Ada", twice), Found::One("Player-1-A"));
+        assert_eq!(find("Ada", Named::Prefix, twice), Found::One("Player-1-A"));
         // A closer reach wins over a looser one: the full name over a first.
         let close = [
             ("Player-1-A", "Ada-Brightwater-Nebula-US", F),
             ("Player-1-D", "Ada-Ada-Nebula-US", F),
         ];
-        assert_eq!(find("Ada Ada", close), Found::One("Player-1-D"));
+        assert_eq!(
+            find("Ada Ada", Named::Prefix, close),
+            Found::One("Player-1-D")
+        );
         // Retail's namesakes on two realms are two players too.
         let realms = [
             ("Player-1-E", "Durgan-Nebula-US", R),
             ("Player-2-F", "Durgan-Halcyon-US", R),
         ];
         assert_eq!(
-            find("Durgan", realms),
+            find("Durgan", Named::Prefix, realms),
             Found::Several(vec!["Player-1-E", "Player-2-F"])
         );
-        assert_eq!(find("Durgan-Halcyon", realms), Found::One("Player-2-F"));
+        assert_eq!(
+            find("Durgan-Halcyon", Named::Prefix, realms),
+            Found::One("Player-2-F")
+        );
+        // Over many stored fights the start of a name answers nobody: a
+        // name only a longer one begins with is no one's there.
+        let longer = [
+            ("Player-1-G", "Brannocks-Halcyon-US", R),
+            ("Player-6101-H", "Corwinna-Vale-Nebula-US", F),
+        ];
+        assert_eq!(find("Brannoc", Named::First, longer), Found::Nobody);
+        assert_eq!(find("Corwin", Named::First, longer), Found::Nobody);
+        assert_eq!(
+            find("Brannoc", Named::Prefix, longer),
+            Found::One("Player-1-G")
+        );
+        // A Forever first name is a stored lookup's loosest reach.
+        assert_eq!(
+            find("Corwinna", Named::First, longer),
+            Found::One("Player-6101-H")
+        );
+        // Runs of white space read as one space.
+        assert_eq!(
+            find("corwinna   vale", Named::Name, longer),
+            Found::One("Player-6101-H")
+        );
     }
 }

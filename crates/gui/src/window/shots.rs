@@ -7,8 +7,9 @@
 //! - With `$WOWDPS_SHOTS_LOG` (a combat log the daemon's mock reads, the
 //!   iced shots' `coiled-altar-night.txt`), on the newest pull of
 //!   `$WOWDPS_SHOTS_FIGHT` (default "The Coiled Altar"), the owner
-//!   `$WOWDPS_SHOTS_OWNER` (default "Tranqlock") named in the config's
-//!   `history_characters` so the "you" marks find them.
+//!   `$WOWDPS_SHOTS_OWNER` (no default: the owner of the log is yours to
+//!   name) named in the config's `history_characters` so the "you" marks
+//!   find them.
 //! - `$WOWDPS_SHOTS_HISTORY` (a store's `v1` directory, the frozen
 //!   `history-v1`) read through READ-ONLY under the log's own stored
 //!   fights, for Home, the rail's earlier nights and a stored pull.
@@ -99,7 +100,9 @@ impl Input {
     fn from_env() -> Self {
         let log = std::env::var_os("WOWDPS_SHOTS_LOG").map(PathBuf::from);
         let history = std::env::var_os("WOWDPS_SHOTS_HISTORY").map(PathBuf::from);
-        let owner = std::env::var("WOWDPS_SHOTS_OWNER").unwrap_or_else(|_| "Tranqlock".into());
+        // No default: a real log's owner is a real name, which no source
+        // file carries (an empty name names nobody).
+        let owner = std::env::var("WOWDPS_SHOTS_OWNER").unwrap_or_default();
         // Over a real log, the iced shots' mock: the account's character
         // named, a real store read through when one is given
         // (`$WOWDPS_SHOTS_HISTORY`, read-only), the log's own cards on top.
@@ -292,7 +295,7 @@ fn states() -> Vec<(&'static str, Pose)> {
                 let gui = s.gui.read(cx);
                 let state = gui.fight(cx);
                 let rows = state.rows();
-                (state.row_sel, gui.owner_in(&rows, state.view))
+                (state.row_sel, gui.owner_in(&rows, state.view, cx))
             });
             let Some(owner) = owner.filter(|&o| o != sel) else {
                 break;
@@ -464,7 +467,7 @@ fn stored(cx: &mut HeadlessAppContext, s: &Shot, pull: wowdps_gui_logic::rail::P
             let gui = s.gui.read(cx);
             let state = gui.fight(cx);
             let rows = state.rows();
-            (state.row_sel, gui.owner_in(&rows, view))
+            (state.row_sel, gui.owner_in(&rows, view, cx))
         });
         let Some(owner) = owner.filter(|&o| o != sel) else {
             break;

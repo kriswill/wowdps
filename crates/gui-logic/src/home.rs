@@ -940,6 +940,8 @@ fn trend_points(mine: &[(&FightCard, &CardPlayer)]) -> Vec<TrendPoint> {
 /// rather than being absent.
 pub fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharLine> {
     let mut by_guid: BTreeMap<String, CharLine> = BTreeMap::new();
+    // Each line's label is read by the edition of the cards that named it.
+    let mut edition_of: BTreeMap<String, Edition> = BTreeMap::new();
     for c in cards {
         let Some(owner) = c.owner.as_deref() else {
             continue;
@@ -956,6 +958,7 @@ pub fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharL
                 spec: p.spec,
                 ..CharLine::default()
             });
+        edition_of.insert(owner.to_string(), c.edition());
         line.fights += 1;
         if c.start_utc_ms >= line.last_utc_ms {
             line.last_utc_ms = c.start_utc_ms;
@@ -964,9 +967,16 @@ pub fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharL
     }
     let mut out: Vec<CharLine> = by_guid.into_values().collect();
     // The config names characters, not guids; the store knows guids. Name is
-    // the only join there is, and it is the same "Name-Realm" on both sides.
+    // the only join there is: a configured name names a line as the daemon
+    // reads it (`Label::is_called`: "Durgan", "Durgan-Nebula", a Forever
+    // character's "Ada Brightwater"), so a character the store knows never
+    // gets a second, empty chip.
+    let named = |c: &CharLine, name: &str| {
+        let edition = edition_of.get(&c.guid).copied().unwrap_or(Edition::Retail);
+        wowdps_model::names::Label::player(&c.name, edition).is_called(name)
+    };
     for name in configured {
-        if !out.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
+        if !out.iter().any(|c| named(c, name)) {
             out.push(CharLine {
                 name: name.clone(),
                 ..CharLine::default()
