@@ -266,6 +266,12 @@ pub const LOCALES: [(&str, u32); 15] = [
     ("enTW", 0x800),
 ];
 
+/// Content flag 0x1: the record is a file's high-resolution copy, most
+/// often beside a record of the same file without the flag. The download
+/// manifest tags these copies `HighRes`, an option an install's
+/// `.build.info` tags may select; an install that does not select it holds
+/// the base copy alone.
+const CONTENT_HIGH_RES: u32 = 0x1;
 const CONTENT_LOW_VIOLENCE: u32 = 0x80;
 const CONTENT_NO_NAME_HASH: u32 = 0x1000_0000;
 
@@ -366,13 +372,18 @@ fn block_fdids(b: &RootBlock) -> impl Iterator<Item = i64> {
     })
 }
 
+/// A record's rank among one file's records: least is preferred.
+type Rank = (bool, bool, bool);
+
 /// Which of several records for one file a lookup prefers, least first:
-/// the wanted locale, and non-low-violence content within it. Of equals,
-/// the first in file order.
-fn root_rank(locale: u32, content: u32, locale_mask: u32) -> (bool, bool) {
+/// the wanted locale, non-low-violence content within it, and the base
+/// copy over its high-resolution one (`CONTENT_HIGH_RES`) within that. Of
+/// equals, the first in file order.
+fn root_rank(locale: u32, content: u32, locale_mask: u32) -> Rank {
     (
         locale & locale_mask == 0,
         content & CONTENT_LOW_VIOLENCE != 0,
+        content & CONTENT_HIGH_RES != 0,
     )
 }
 
@@ -406,7 +417,8 @@ pub fn root_find(
         }
     }
 
-    // Prefer the wanted locale, and non-low-violence content within it.
+    // Prefer the wanted locale, non-low-violence content within it, and
+    // the base copy over a high-resolution one within that.
     candidates.sort_by_key(|c| root_rank(c.locale, c.content, locale_mask));
     Ok(candidates.into_iter().next())
 }
@@ -480,7 +492,7 @@ impl RootIndex {
     /// `locale_mask`; `d` is the manifest this index was made from.
     pub fn find(&self, d: &[u8], fdid: u32, locale_mask: u32) -> Option<RootMatch> {
         let want = i64::from(fdid);
-        let mut best: Option<((bool, bool), &IndexBlock, usize)> = None;
+        let mut best: Option<(Rank, &IndexBlock, usize)> = None;
         for b in &self.blocks {
             if want < b.lo || want > b.hi {
                 continue;
@@ -752,12 +764,14 @@ us|0|cccc|12.1.5.0|kkkk|wow";
     }
 
     /// The index picks what the scan picks, record for record: across
-    /// locales and low-violence copies, of equals the first in file order,
-    /// in blocks whose ids fall or repeat, and in a version 1 manifest.
+    /// locales, low-violence and high-resolution copies, of equals the
+    /// first in file order, in blocks whose ids fall or repeat, and in a
+    /// version 1 manifest.
     #[test]
     fn the_root_index_picks_what_the_scan_picks() {
         let ck = |n: u8| [n; 16];
         const LV: u32 = CONTENT_LOW_VIOLENCE;
+        const HR: u32 = CONTENT_HIGH_RES;
         let v2 = root_v2(&[
             (0x2, 0, vec![(5, ck(1), Some(1)), (1, ck(2), Some(2))]),
             (0x10, CONTENT_NO_NAME_HASH, vec![(7, ck(3), None)]),
@@ -778,6 +792,12 @@ us|0|cccc|12.1.5.0|kkkk|wow";
             (0x2, 0, vec![]),
             // Both locales at once, and an id past every other.
             (0x12, 0, vec![(40, ck(10), Some(9)), (0, ck(11), Some(10))]),
+            // High resolution before its base copy (20), alone (21), and
+            // beside a low-violence base copy (22).
+            (0x2, HR, vec![(20, ck(14), Some(11)), (0, ck(15), Some(12))]),
+            (0x2, LV, vec![(22, ck(16), Some(13))]),
+            (0x2, HR, vec![(22, ck(17), Some(14))]),
+            (0x2, 0, vec![(20, ck(18), Some(15))]),
         ]);
         let mut v1 = Vec::new();
         v1.extend_from_slice(b"TSFM");
@@ -815,6 +835,11 @@ us|0|cccc|12.1.5.0|kkkk|wow";
         assert_eq!(index.find(&v2, 7, 0x2).unwrap().ckey, ck(2));
         assert_eq!(index.find(&v2, 4, 0x2).unwrap().ckey, ck(7));
         assert_eq!(index.find(&v2, 5, 0x2).unwrap().ckey, ck(1));
+        // The base copy wins wherever it stands; a high-resolution file
+        // with no base copy is still found, and low violence weighs more.
+        assert_eq!(index.find(&v2, 20, 0x2).unwrap().ckey, ck(18));
+        assert_eq!(index.find(&v2, 21, 0x2).unwrap().ckey, ck(15));
+        assert_eq!(index.find(&v2, 22, 0x2).unwrap().ckey, ck(17));
         // A manifest the scan refuses, the index refuses alike.
         let mut short = root_v2(&[(0x2, 0, vec![(5, ck(1), Some(1))])]);
         short.truncate(short.len() - 4);

@@ -425,29 +425,35 @@ mod tests {
         d
     }
 
-    /// A version-1 root manifest with one enUS block of `(fdid, ckey)`.
-    fn root(files: &[(u32, [u8; 16])]) -> Vec<u8> {
+    /// One root block: its content flags and its `(fdid, ckey)` records.
+    type Block<'a> = (u32, &'a [(u32, [u8; 16])]);
+
+    /// A version-1 root manifest of enUS blocks.
+    fn root(blocks: &[Block]) -> Vec<u8> {
+        let total: usize = blocks.iter().map(|(_, files)| files.len()).sum();
         let mut d = Vec::new();
         d.extend_from_slice(b"TSFM");
         d.extend_from_slice(&24u32.to_le_bytes());
         d.extend_from_slice(&1u32.to_le_bytes());
-        d.extend_from_slice(&(files.len() as u32).to_le_bytes());
-        d.extend_from_slice(&(files.len() as u32).to_le_bytes());
+        d.extend_from_slice(&(total as u32).to_le_bytes());
+        d.extend_from_slice(&(total as u32).to_le_bytes());
         d.extend_from_slice(&0u32.to_le_bytes());
-        d.extend_from_slice(&(files.len() as u32).to_le_bytes());
-        d.extend_from_slice(&0u32.to_le_bytes()); // content flags
-        d.extend_from_slice(&0x2u32.to_le_bytes()); // enUS
-        let mut last: i64 = -1;
-        for (fdid, _) in files {
-            let delta = i64::from(*fdid) - last - 1;
-            d.extend_from_slice(&(delta as i32).to_le_bytes());
-            last = i64::from(*fdid);
-        }
-        for (_, ckey) in files {
-            d.extend_from_slice(ckey);
-        }
-        for _ in files {
-            d.extend_from_slice(&0u64.to_le_bytes());
+        for (content, files) in blocks {
+            d.extend_from_slice(&(files.len() as u32).to_le_bytes());
+            d.extend_from_slice(&content.to_le_bytes());
+            d.extend_from_slice(&0x2u32.to_le_bytes()); // enUS
+            let mut last: i64 = -1;
+            for (fdid, _) in *files {
+                let delta = i64::from(*fdid) - last - 1;
+                d.extend_from_slice(&(delta as i32).to_le_bytes());
+                last = i64::from(*fdid);
+            }
+            for (_, ckey) in *files {
+                d.extend_from_slice(ckey);
+            }
+            for _ in *files {
+                d.extend_from_slice(&0u64.to_le_bytes());
+            }
         }
         d
     }
@@ -461,11 +467,16 @@ mod tests {
     /// A complete fake install: .build.info, build config, keyring config,
     /// sixteen journals and one archive holding the encoding, root and one
     /// file, all BLTE-plain. Two editions are installed, Retail's `wow`
-    /// and Forever's `wowf`, their rows naming the one build config.
+    /// and Forever's `wowf`, their rows naming the one build config. As an
+    /// install without the HighRes option has it, the manifest lists file
+    /// 41's high-resolution copy first, and a high-resolution file 43 with
+    /// no base copy; neither copy's bytes are in the archive.
     fn fake_install(wow: &Path) -> [u8; 16] {
         let (enc_ckey, enc_ekey) = (key(0x10), key(0xA0));
         let (root_ckey, root_ekey) = (key(0x20), key(0xB0));
         let (file_ckey, file_ekey) = (key(0x30), key(0xC0));
+        let (high_ckey, high_ekey) = (key(0x40), key(0xD0));
+        let (lone_ckey, lone_ekey) = (key(0x50), key(0xE0));
         let build_hash = "aabb".repeat(8);
         let keyring_hash = "ccdd".repeat(8);
 
@@ -501,9 +512,20 @@ mod tests {
         let blobs = [
             (
                 enc_ekey,
-                blte_plain(&encoding(&[(root_ckey, root_ekey), (file_ckey, file_ekey)])),
+                blte_plain(&encoding(&[
+                    (root_ckey, root_ekey),
+                    (file_ckey, file_ekey),
+                    (high_ckey, high_ekey),
+                    (lone_ckey, lone_ekey),
+                ])),
             ),
-            (root_ekey, blte_plain(&root(&[(41, file_ckey)]))),
+            (
+                root_ekey,
+                blte_plain(&root(&[
+                    (0x1, &[(41, high_ckey), (43, lone_ckey)]),
+                    (0, &[(41, file_ckey)]),
+                ])),
+            ),
             (file_ekey, blte_plain(b"hello file")),
         ];
         let mut archive = Vec::new();
@@ -530,6 +552,29 @@ mod tests {
         file_ckey
     }
 
+    /// The base copy of a file wins over its high-resolution twin, which an
+    /// install without the HighRes option lacks, though the manifest lists
+    /// it first; a high-resolution file with no base copy is reported
+    /// absent. Alike for both editions.
+    #[test]
+    fn a_files_base_copy_wins_over_its_high_resolution_twin() {
+        let dir = scratch("high-res");
+        let wow = dir.join("wow");
+        fake_install(&wow);
+        for product in ["wow", "wowf"] {
+            let game = Game::open_product(&wow, product, None).unwrap();
+            assert_eq!(game.fetch_fdid(41, 0x2).unwrap(), b"hello file");
+            let m = tact::root_find(game.root(), Some(41), None, 0x2)
+                .unwrap()
+                .unwrap();
+            assert_eq!((m.ckey, m.content), (key(0x30), 0));
+            let lost = |e: String| e.contains("not in local storage");
+            assert!(lost(game.fetch_ckey(&key(0x40)).unwrap_err()));
+            assert!(lost(game.fetch_fdid(43, 0x2).unwrap_err()));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn open_resolves_files_through_encoding_and_root() {
         let dir = scratch("open");
@@ -547,7 +592,7 @@ mod tests {
         assert_eq!(game.product, "wow");
         assert_eq!(game.build_label(), "12.0.0.1", "Retail's header as ever");
         assert_eq!(game.keys.len(), 4);
-        assert_eq!(game.root().len(), 24 + 12 + 4 + 16 + 8);
+        assert_eq!(game.root().len(), 24 + (12 + 2 * 28) + (12 + 28));
         assert_eq!(game.fetch_fdid(41, 0x2).unwrap(), b"hello file");
         assert_eq!(game.fetch_ckey(&file_ckey).unwrap(), b"hello file");
         assert!(
