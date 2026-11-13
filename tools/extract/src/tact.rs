@@ -266,6 +266,12 @@ pub const LOCALES: [(&str, u32); 15] = [
     ("enTW", 0x800),
 ];
 
+/// Content flag 0x1, `HighResTexture` in the public notes on the format:
+/// the record is a file's high-resolution copy, most often beside a record
+/// of the same file without the flag. The download manifest tags these
+/// copies `HighRes`, an option an install's `.build.info` tags may select;
+/// an install that does not select it holds the base copy alone.
+const CONTENT_HIGH_RES: u32 = 0x1;
 const CONTENT_LOW_VIOLENCE: u32 = 0x80;
 const CONTENT_NO_NAME_HASH: u32 = 0x1000_0000;
 
@@ -366,14 +372,31 @@ fn block_fdids(b: &RootBlock) -> impl Iterator<Item = i64> {
     })
 }
 
+/// A record's rank among one file's records: least is preferred.
+type Rank = (bool, bool, bool);
+
 /// Which of several records for one file a lookup prefers, least first:
-/// the wanted locale, and non-low-violence content within it. Of equals,
-/// the first in file order.
-fn root_rank(locale: u32, content: u32, locale_mask: u32) -> (bool, bool) {
+/// the wanted locale, non-low-violence content within it, and the base
+/// copy over its high-resolution one (`CONTENT_HIGH_RES`) within that. Of
+/// equals, the first in file order.
+fn root_rank(locale: u32, content: u32, locale_mask: u32) -> Rank {
     (
         locale & locale_mask == 0,
         content & CONTENT_LOW_VIOLENCE != 0,
+        content & CONTENT_HIGH_RES != 0,
     )
+}
+
+/// Whether a lookup may read `other` in place of `first`, its preferred
+/// record, when local storage lacks `first`'s bytes: the same match of the
+/// wanted locale and the same low-violence state, so the two differ at
+/// most by the high-resolution or a platform's flags. Where `first` misses
+/// the wanted locale, `other` must carry the same locales: no other
+/// language stands in.
+pub(crate) fn root_twins(first: &RootMatch, other: &RootMatch, locale_mask: u32) -> bool {
+    let a = root_rank(first.locale, first.content, locale_mask);
+    let b = root_rank(other.locale, other.content, locale_mask);
+    a.0 == b.0 && a.1 == b.1 && (!a.0 || first.locale == other.locale)
 }
 
 /// Scan the decoded root manifest for a FileDataID or a name hash. The
@@ -386,6 +409,19 @@ pub fn root_find(
     want_name: Option<u64>,
     locale_mask: u32,
 ) -> Result<Option<RootMatch>, String> {
+    Ok(root_records(d, want_fdid, want_name, locale_mask)?
+        .into_iter()
+        .next())
+}
+
+/// Every record the scan finds, in the order a lookup prefers them: by
+/// `root_rank`, and of equals in file order. `root_find` takes the first.
+fn root_records(
+    d: &[u8],
+    want_fdid: Option<u32>,
+    want_name: Option<u64>,
+    locale_mask: u32,
+) -> Result<Vec<RootMatch>, String> {
     let mut candidates: Vec<RootMatch> = Vec::new();
     for b in root_blocks(d)? {
         for (i, fdid) in block_fdids(&b).enumerate() {
@@ -406,16 +442,18 @@ pub fn root_find(
         }
     }
 
-    // Prefer the wanted locale, and non-low-violence content within it.
+    // Prefer the wanted locale, non-low-violence content within it, and
+    // the base copy over a high-resolution one within that.
     candidates.sort_by_key(|c| root_rank(c.locale, c.content, locale_mask));
-    Ok(candidates.into_iter().next())
+    Ok(candidates)
 }
 
 /// The root manifest's FileDataIDs, read once: each block's flags, its ids
 /// in file order and where its content keys lie, so a lookup visits only
 /// the blocks whose range holds the id instead of walking all ~67 MB of the
 /// manifest, as `root_find` does on every call. `find` picks exactly the
-/// record `root_find` picks.
+/// record `root_find` picks, and `find_all` gives every record in the order
+/// they are preferred.
 pub struct RootIndex {
     blocks: Vec<IndexBlock>,
     /// Every record's FileDataID, block after block.
@@ -479,35 +517,50 @@ impl RootIndex {
     /// The record for `fdid` that `root_find` picks, preferring
     /// `locale_mask`; `d` is the manifest this index was made from.
     pub fn find(&self, d: &[u8], fdid: u32, locale_mask: u32) -> Option<RootMatch> {
+        self.find_all(d, fdid, locale_mask).into_iter().next()
+    }
+
+    /// Every record for `fdid`, in the order a lookup prefers them: by
+    /// `root_rank`, and of equals in file order, so `find`'s pick first.
+    pub(crate) fn find_all(&self, d: &[u8], fdid: u32, locale_mask: u32) -> Vec<RootMatch> {
         let want = i64::from(fdid);
-        let mut best: Option<((bool, bool), &IndexBlock, usize)> = None;
+        let mut found: Vec<(Rank, RootMatch)> = Vec::new();
         for b in &self.blocks {
             if want < b.lo || want > b.hi {
                 continue;
             }
-            let ids = self.fdids.get(b.first..b.first + b.len)?;
-            let rank = root_rank(b.locale, b.content, locale_mask);
-            // Strictly better only: of equals, the first in file order.
-            if best.is_some_and(|(r, _, _)| r <= rank) {
+            let Some(ids) = self.fdids.get(b.first..b.first + b.len) else {
                 continue;
-            }
-            let at = if b.sorted {
-                let i = ids.partition_point(|&f| f < want);
-                (ids.get(i) == Some(&want)).then_some(i)
-            } else {
-                ids.iter().position(|&f| f == want)
             };
-            if let Some(i) = at {
-                best = Some((rank, b, i));
+            let rank = root_rank(b.locale, b.content, locale_mask);
+            // A sorted block's records for the id stand together from the
+            // first; any other block is read whole.
+            let from = if b.sorted {
+                ids.partition_point(|&f| f < want)
+            } else {
+                0
+            };
+            for (i, &f) in ids.iter().enumerate().skip(from) {
+                if f != want {
+                    if b.sorted {
+                        break;
+                    }
+                    continue;
+                }
+                if let Ok(ckey) = raw::array(d, b.ckeys_at + i * 16, "root: record ckey") {
+                    let m = RootMatch {
+                        fdid,
+                        ckey,
+                        locale: b.locale,
+                        content: b.content,
+                    };
+                    found.push((rank, m));
+                }
             }
         }
-        let (_, b, i) = best?;
-        Some(RootMatch {
-            fdid,
-            ckey: raw::array(d, b.ckeys_at + i * 16, "root: record ckey").ok()?,
-            locale: b.locale,
-            content: b.content,
-        })
+        // Stable: of equals, file order.
+        found.sort_by_key(|(rank, _)| *rank);
+        found.into_iter().map(|(_, m)| m).collect()
     }
 }
 
@@ -751,13 +804,15 @@ us|0|cccc|12.1.5.0|kkkk|wow";
         assert!(root_find(&d, Some(999), None, 0x2).unwrap().is_none());
     }
 
-    /// The index picks what the scan picks, record for record: across
-    /// locales and low-violence copies, of equals the first in file order,
-    /// in blocks whose ids fall or repeat, and in a version 1 manifest.
+    /// The index picks what the scan picks, record for record, and lists
+    /// every record in the scan's order: across locales, low-violence and
+    /// high-resolution copies, of equals the first in file order, in blocks
+    /// whose ids fall or repeat, and in a version 1 manifest.
     #[test]
     fn the_root_index_picks_what_the_scan_picks() {
         let ck = |n: u8| [n; 16];
         const LV: u32 = CONTENT_LOW_VIOLENCE;
+        const HR: u32 = CONTENT_HIGH_RES;
         let v2 = root_v2(&[
             (0x2, 0, vec![(5, ck(1), Some(1)), (1, ck(2), Some(2))]),
             (0x10, CONTENT_NO_NAME_HASH, vec![(7, ck(3), None)]),
@@ -778,6 +833,18 @@ us|0|cccc|12.1.5.0|kkkk|wow";
             (0x2, 0, vec![]),
             // Both locales at once, and an id past every other.
             (0x12, 0, vec![(40, ck(10), Some(9)), (0, ck(11), Some(10))]),
+            // High resolution before its base copy (20), alone (21), and
+            // beside a low-violence base copy (22).
+            (0x2, HR, vec![(20, ck(14), Some(11)), (0, ck(15), Some(12))]),
+            (0x2, LV, vec![(22, ck(16), Some(13))]),
+            (0x2, HR, vec![(22, ck(17), Some(14))]),
+            (0x2, 0, vec![(20, ck(18), Some(15))]),
+            // The locale before the flag (31), and a plain base copy before
+            // its high-resolution one (32).
+            (0x10, 0, vec![(31, ck(19), Some(16))]),
+            (0x2, HR, vec![(31, ck(20), Some(17))]),
+            (0x2, 0, vec![(32, ck(21), Some(18))]),
+            (0x2, HR, vec![(32, ck(22), Some(19))]),
         ]);
         let mut v1 = Vec::new();
         v1.extend_from_slice(b"TSFM");
@@ -793,6 +860,7 @@ us|0|cccc|12.1.5.0|kkkk|wow";
         v1.extend_from_slice(&ck(12));
         v1.extend_from_slice(&ck(13));
         v1.extend_from_slice(&[0u8; 16]);
+        let key = |m: &RootMatch| (m.fdid, m.ckey, m.locale, m.content);
         for d in [&v2, &v1] {
             let index = RootIndex::new(d).unwrap();
             let mut found = 0;
@@ -800,11 +868,17 @@ us|0|cccc|12.1.5.0|kkkk|wow";
                 for mask in [0, 0x2, 0x10, 0x12, u32::MAX] {
                     let scan = root_find(d, Some(fdid), None, mask).unwrap();
                     let fast = index.find(d, fdid, mask);
-                    let key = |m: &RootMatch| (m.fdid, m.ckey, m.locale, m.content);
                     assert_eq!(
                         scan.as_ref().map(key),
                         fast.as_ref().map(key),
                         "fdid {fdid} mask {mask:#x}"
+                    );
+                    let scan_all = root_records(d, Some(fdid), None, mask).unwrap();
+                    let fast_all = index.find_all(d, fdid, mask);
+                    assert_eq!(
+                        scan_all.iter().map(key).collect::<Vec<_>>(),
+                        fast_all.iter().map(key).collect::<Vec<_>>(),
+                        "all of fdid {fdid} mask {mask:#x}"
                     );
                     found += usize::from(scan.is_some());
                 }
@@ -815,6 +889,29 @@ us|0|cccc|12.1.5.0|kkkk|wow";
         assert_eq!(index.find(&v2, 7, 0x2).unwrap().ckey, ck(2));
         assert_eq!(index.find(&v2, 4, 0x2).unwrap().ckey, ck(7));
         assert_eq!(index.find(&v2, 5, 0x2).unwrap().ckey, ck(1));
+        // The base copy wins wherever it stands; a high-resolution file
+        // with no base copy is still found, and low violence weighs more.
+        assert_eq!(index.find(&v2, 20, 0x2).unwrap().ckey, ck(18));
+        assert_eq!(index.find(&v2, 21, 0x2).unwrap().ckey, ck(15));
+        assert_eq!(index.find(&v2, 22, 0x2).unwrap().ckey, ck(17));
+        // The wanted locale outweighs the flag, and a base copy first in
+        // file order keeps its place.
+        assert_eq!(index.find(&v2, 31, 0x2).unwrap().ckey, ck(20));
+        assert_eq!(index.find(&v2, 31, 0x10).unwrap().ckey, ck(19));
+        assert_eq!(index.find(&v2, 32, 0x2).unwrap().ckey, ck(21));
+        // Every record, best first: a repeated id's both, a file's base
+        // copy before its high-resolution one.
+        let ckeys = |fdid| -> Vec<[u8; 16]> {
+            index
+                .find_all(&v2, fdid, 0x2)
+                .iter()
+                .map(|m| m.ckey)
+                .collect()
+        };
+        assert_eq!(ckeys(4), [ck(7), ck(8)]);
+        assert_eq!(ckeys(20), [ck(18), ck(14)]);
+        assert_eq!(ckeys(32), [ck(21), ck(22)]);
+        assert!(ckeys(59).is_empty());
         // A manifest the scan refuses, the index refuses alike.
         let mut short = root_v2(&[(0x2, 0, vec![(5, ck(1), Some(1))])]);
         short.truncate(short.len() - 4);
@@ -823,6 +920,34 @@ us|0|cccc|12.1.5.0|kkkk|wow";
             root_find(&short, Some(5), None, 0x2).unwrap_err()
         );
         assert!(RootIndex::new(b"TSF").unwrap_err().contains("MFST"));
+    }
+
+    /// Twins share the match of the wanted locale and the low-violence
+    /// state; another language or the low-violence copy is no twin.
+    #[test]
+    fn root_twins_differ_only_by_resolution_or_platform() {
+        let r = |locale, content| RootMatch {
+            fdid: 1,
+            ckey: [0; 16],
+            locale,
+            content,
+        };
+        const LV: u32 = CONTENT_LOW_VIOLENCE;
+        const HR: u32 = CONTENT_HIGH_RES;
+        let base = r(0x2, 0);
+        assert!(root_twins(&base, &base, 0x2));
+        assert!(root_twins(&base, &r(0x2, HR), 0x2));
+        assert!(root_twins(&base, &r(0x12, 0x10), 0x2), "a platform's copy");
+        assert!(!root_twins(&base, &r(0x20, 0), 0x2), "another language");
+        assert!(
+            !root_twins(&base, &r(0x2, LV), 0x2),
+            "the low-violence copy"
+        );
+        assert!(!root_twins(&r(0x2, LV), &base, 0x2));
+        // Both miss the wanted locale: only the same locales stand in.
+        let german = r(0x20, 0);
+        assert!(root_twins(&german, &r(0x20, HR), 0x2));
+        assert!(!root_twins(&german, &r(0x10, 0), 0x2));
     }
 
     #[test]

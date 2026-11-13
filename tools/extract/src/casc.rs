@@ -83,6 +83,12 @@ impl LocalStore {
         self.map.len()
     }
 
+    /// Whether the journals list an encoding key: whether `read` finds it.
+    pub(crate) fn holds(&self, ekey: &[u8; 16]) -> bool {
+        ekey.first_chunk::<9>()
+            .is_some_and(|prefix| self.map.contains_key(prefix))
+    }
+
     /// Fetch the BLTE blob for an encoding key.
     pub fn read(&self, ekey: &[u8; 16]) -> Result<Vec<u8>, String> {
         let prefix: [u8; 9] = raw::array(ekey, 0, "casc: ekey prefix")?;
