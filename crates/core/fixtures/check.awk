@@ -673,6 +673,88 @@ function r_friend(g,   top) {
     return top != g && r_ours(top)
 }
 function r_side(s, g, f) { if (g ~ /-/ && and(strtonum(f), 0x40)) rH[s SUBSEP g] = 1 }
+# A unit's name, the first a cut sees it by (the sides `r_side` reads).
+function r_name(s, g, n) { if (g ~ /-/ && !((s SUBSEP g) in rNm)) rNm[s SUBSEP g] = strip(n) }
+# An encounter title a cut's own ENCOUNTER_START names.
+function r_title(s, t) { rTn[s]++; rT[s SUBSEP rTn[s]] = t }
+# ---- R29 the bosses (`replay_bosses`, the units cut `boss`). A hostile NPC
+# (flagged 0x40 on a modeled line, no `Player-` guid) is a boss when a title
+# the cut opens names it — the whole title, or a piece its commas and lone
+# "and"s divide it into, case aside. Else, when none is so named, when
+# exactly ONE name among the hostiles is a single edit from such a piece —
+# two neighbors swapped, one letter inserted, deleted or substituted — with
+# case and punctuation folded and both of 5 letters or more, and its
+# strongest unit has at least 30% of the strongest posted hostile's most
+# health: every unit of that name. Else by health: every hostile with at
+# least 30% of the strongest posted one's (none posted, none is a boss).
+function r_npc(s, g) { return ((s SUBSEP g) in rH) && g !~ /^Player-/ }
+function r_fold(n,   f) {
+    f = tolower(n)
+    gsub(/[^[:alnum:][:space:]]/, "", f)
+    gsub(/[[:space:]]+/, " ", f)
+    sub(/^ /, "", f); sub(/ $/, "", f)
+    return f
+}
+function r_letters(f,   c) { c = f; return gsub(/[[:alnum:]]/, "", c) }
+function r_one_edit(a, b,   la, lb, i) {
+    if (a == b) return 1
+    la = length(a); lb = length(b)
+    if (la - lb > 1 || lb - la > 1) return 0
+    i = 1
+    while (i <= la && i <= lb && substr(a, i, 1) == substr(b, i, 1)) i++
+    if (la == lb) {
+        if (substr(a, i + 1) == substr(b, i + 1)) return 1
+        return i < la && substr(a, i, 1) == substr(b, i + 1, 1) && substr(a, i + 1, 1) == substr(b, i, 1) && substr(a, i + 2) == substr(b, i + 2)
+    }
+    if (la > lb) return substr(a, i + 1) == substr(b, i)
+    return substr(a, i) == substr(b, i + 1)
+}
+# A title's pieces into `parts` (from np + 1): the whole, then each piece a
+# comma or a lone "and" (a word of its own) divides it into, lowercased.
+function r_title_parts(t, parts, np,   u, n, pc, i) {
+    parts[++np] = tolower(t)
+    u = gensub(/(^|[^A-Za-z0-9_])and([^A-Za-z0-9_]|$)/, "\\1,\\2", "g", t)
+    n = split(u, pc, /[[:space:]]*,[[:space:]]*/)
+    while (n > 0 && pc[n] == "") n--
+    for (i = 1; i <= n; i++) parts[++np] = tolower(pc[i])
+    return np
+}
+function r_bosses(s,   k, kk, g, i, np, parts, named, top, cnt, f, cf, several, nc, best, hit) {
+    np = 0
+    for (i = 1; i <= rTn[s]; i++) np = r_title_parts(rT[s SUBSEP i], parts, np)
+    for (i = 1; i <= np; i++) named[parts[i]] = 1
+    top = 0
+    for (k in rU) {
+        split(k, kk, SUBSEP); g = kk[2]
+        if (kk[1] == s && r_npc(s, g) && rMax[s SUBSEP g] > top) top = rMax[s SUBSEP g]
+    }
+    cnt = 0
+    for (k in rU) {
+        split(k, kk, SUBSEP); g = kk[2]
+        if (kk[1] == s && r_npc(s, g) && (tolower(rNm[s SUBSEP g]) in named)) cnt++
+    }
+    if (cnt) return cnt
+    cf = ""; several = 0; nc = 0; best = 0
+    for (k in rU) {
+        split(k, kk, SUBSEP); g = kk[2]
+        if (kk[1] != s || !r_npc(s, g)) continue
+        f = r_fold(rNm[s SUBSEP g])
+        if (r_letters(f) < 5) continue
+        hit = 0
+        for (i = 1; i <= np; i++) if (r_letters(r_fold(parts[i])) >= 5 && r_one_edit(f, r_fold(parts[i]))) hit = 1
+        if (!hit) continue
+        if (cf != "" && cf != f) several = 1
+        cf = f; nc++
+        if (rMax[s SUBSEP g] > best) best = rMax[s SUBSEP g]
+    }
+    if (nc && !several && top > 0 && best >= 0.3 * top) return nc
+    cnt = 0
+    if (top > 0) for (k in rU) {
+        split(k, kk, SUBSEP); g = kk[2]
+        if (kk[1] == s && r_npc(s, g) && rMax[s SUBSEP g] >= 0.3 * top) cnt++
+    }
+    return cnt
+}
 function r_unit(s, g) { if (!((s SUBSEP g) in rU)) { rU[s SUBSEP g] = 1; rv[s SUBSEP "replay_units"]++ } }
 function r_src(s, g) { if (g != "" && g != "0000000000000000") r_unit(s, g) }
 function r_target(s, g) { if (g != "0000000000000000" && g ~ /-/) r_unit(s, g) }
@@ -788,11 +870,12 @@ function r_aura(s,   dose, step, kind, keep, key) {
 # floor), its event row, and a placed candidate (resolved when the cut
 # closes, once every other row has numbered its units).
 function r_line(s) {
-    if (ev ~ RBOTH) { r_side(s, $2, $4); r_side(s, $6, $8) }
-    else if (ev ~ /^SPELL_EMPOWER_/) r_side(s, $2, $4)
-    else if (ev == "UNIT_DIED" || ev == "UNIT_DESTROYED") r_side(s, $6, $8)
+    if (ev ~ RBOTH) { r_side(s, $2, $4); r_side(s, $6, $8); r_name(s, $2, $3); r_name(s, $6, $7) }
+    else if (ev ~ /^SPELL_EMPOWER_/) { r_side(s, $2, $4); r_name(s, $2, $3) }
+    else if (ev == "UNIT_DIED" || ev == "UNIT_DESTROYED") { r_side(s, $6, $8); r_name(s, $6, $7) }
     if (r_block(r_pk()) && rguid ~ /^(Player|Creature|Vehicle)-/) {
         rPosts[s SUBSEP rguid]++; rMapP[s SUBSEP rmap]++; r_count(s, "posts"); r_unit(s, rguid)
+        if ($(r_pk() + 3) + 0 > rMax[s SUBSEP rguid]) rMax[s SUBSEP rguid] = $(r_pk() + 3) + 0
         r_post_pools(s, r_pk())
     }
     if (ev == "UNIT_DIED") {
@@ -851,6 +934,7 @@ function r_emit(s, head,   i, it, n2, k, kk, rpl, rmp) {
         else if (it[1] == "gone") { if ((s SUBSEP it[2]) in rSum) { r_unit(s, it[2]); r_count(s, "placed_gone") } }
     }
     rv[s SUBSEP "replay_floor"] = rFl[s]
+    rv[s SUBSEP "replay_bosses"] = r_bosses(s)
     for (i = 1; i in rnames; i++)
         printf "%s\t*\treplay_%s\t%d\n", head, rnames[i], rv[s SUBSEP "replay_" rnames[i]] + 0
     n2 = 0
@@ -1121,6 +1205,7 @@ ev == "ENCOUNTER_START" {
     # instance map, the markers standing there — with its boss row, as an
     # open keystone run takes one.
     rk2++; rEnc[cur] = 1; rMap[cur] = $6 + 0; rFl[cur] = r_floor(rvote, rk2)
+    r_title(cur, strip($3)); if (kc != "") r_title(kc, strip($3))
     for (k in mOn) { split(k, kk, SUBSEP); if (kk[1] + 0 == rMap[cur]) r_count(cur, "markers") }
     r_count(cur, "boss_engaged")
     if (kc != "") { r_count(kc, "boss_engaged"); r_key_affixes(cur, kc) }
@@ -1599,7 +1684,7 @@ END {
     # R29: each closed boss pull's replay cut, then each finished keystone
     # run's ("K<n>", kind Key, its name and level, timed or over, its START to
     # its END) — `r_emit`'s rows.
-    split("units posts absorb pools pool_sum floor affixes affix_sum hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped buff_applied buff_removed buff_dose placed_cast placed_summon placed_touch placed_gone markers", rnames, " ")
+    split("units posts absorb pools pool_sum floor affixes affix_sum hit cast_start cast_success pcast_start pcast_success pcast_failed interrupt debuff_applied debuff_removed debuff_dose death npc_died rez boss_engaged boss_killed boss_wiped buff_applied buff_removed buff_dose placed_cast placed_summon placed_touch placed_gone markers bosses", rnames, " ")
     for (s = 1; s <= nseg; s++) {
         if (!(s in rEnc) || segEnd[s] == "") continue
         dur = segEnd[s] - segStart[s]

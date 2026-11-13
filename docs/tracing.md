@@ -167,7 +167,9 @@ support, the ability tree), `real_log_names` (every player label reads
 by its edition, and no lookup by name names a player other than the one
 asked for, CONTRACT.md "Player names") and `real_log_logger` (R31: no line
 flags two players as the writer, every fight's logger is a lazy load's, and
-a Retail pull's logger carries its COMBATANT_INFO). Every gate's name holds `real`, and libtest
+a Retail pull's logger carries its COMBATANT_INFO) and `real_log_boss_names`
+(R29: how often no hostile carries the encounter's title, and that a near
+miss of it is taken alone or refused whole). Every gate's name holds `real`, and libtest
 filters on a test's own name, never its file's, so `real` runs them all
 (`real_log` runs four):
 
@@ -183,7 +185,7 @@ captured mid-first-pull fails its non-empty assertion by design.
 Forever's logs have their own variants of the gates whose rules that
 edition has (the whole-file parse, deaths, taken, stacks, power, shields,
 spans, the player labels: two name words before the realm, and a first name
-two players share resolving to neither, and the logger), and three gates
+two players share resolving to neither, the logger, and the boss names), and three gates
 of Forever's alone: the roles it infers, `real_log_segments` (the scan and
 the replay cut alike, every fight lazy = full, Forever's tables read), and
 `real_log_posts` (every boss pull's replay posts each credited player, on

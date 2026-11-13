@@ -90,7 +90,7 @@ The real-log gates need a log with at least one closed segment
 name, never its file's: every gate's name holds `real`, and every Forever
 variant's `forever`; `real_log` selects four. Each gate whose rule
 Forever has (the whole-file parse, deaths, taken, stacks, power, shields,
-spans, player labels, the logger, and roles,
+spans, player labels, the logger, the boss names, and roles,
 `real_log_segments`' cut and totals and `real_log_posts`' replay positions,
 which are Forever's alone) has a
 Forever variant over `WOWDPS_REAL_LOG_FOREVER` (`tests/real_log/mod.rs`);

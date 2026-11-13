@@ -215,6 +215,10 @@ const HOSTILE: u32 = 0x40;
 const NOBODY: &str = "0000000000000000";
 /// A boss by health: at least this share of the strongest hostile's.
 const BOSS_SHARE: f64 = 0.3;
+/// R29: a near miss names the boss only between names of this many letters
+/// or more, a title piece's and a hostile's: a short name one edit from
+/// another is too often another word.
+const NEAR_MISS_LETTERS: usize = 5;
 
 /// The cut of one segment: its `seeds` (state from before it) and its
 /// `slice` (its own lines, the first its start), parsed once. `owner` is
@@ -1361,19 +1365,27 @@ impl Cutter {
             .max()
             .copied()
             .unwrap_or(0);
+        let name_of = |g: Gix| seen(g).and_then(|s| s.name.as_deref()).unwrap_or("");
         let named: HashSet<Gix> = order
             .iter()
             .copied()
-            .filter(|&g| {
-                hostile_npc(g)
-                    && parts.contains(
-                        &seen(g)
-                            .and_then(|s| s.name.as_deref())
-                            .unwrap_or("")
-                            .to_ascii_lowercase(),
-                    )
-            })
+            .filter(|&g| hostile_npc(g) && parts.contains(&name_of(g).to_ascii_lowercase()))
             .collect();
+        // Named by nobody: a near miss of a title piece, else health.
+        let named = if named.is_empty() {
+            near_miss(
+                order
+                    .iter()
+                    .copied()
+                    .filter(|&g| hostile_npc(g))
+                    .map(|g| (g, name_of(g))),
+                parts,
+                max_hp,
+                top,
+            )
+        } else {
+            named
+        };
         order
             .iter()
             .zip(posts)
@@ -1399,8 +1411,9 @@ impl Cutter {
                         posts,
                     });
                 }
-                // With no hostile posted (no health to weigh), none is a boss
-                // by health: every hostile is an add.
+                // Named (exactly, else by a near miss) or, with neither, by
+                // health. With no hostile posted (no health to weigh), none
+                // is a boss by health: every hostile is an add.
                 let boss = if named.is_empty() {
                     top > 0
                         && max_hp.get(&g).copied().unwrap_or(0) as f64 >= BOSS_SHARE * top as f64
@@ -1600,6 +1613,89 @@ fn npc_id(g: &str) -> Option<u32> {
     (word && [a, b, c, d, npc].iter().all(|s| whole(s)))
         .then(|| npc.parse().ok())
         .flatten()
+}
+
+/// R29: when no hostile is named as a title or a piece of one, the one
+/// hostile NAME a single edit from such a piece ([`within_one_edit`]; case
+/// and punctuation folded, [`folded`]; both of [`NEAR_MISS_LETTERS`]
+/// letters or more) names the boss — every hostile of that name — provided
+/// the strongest of them has at least [`BOSS_SHARE`] of the strongest
+/// posted hostile's health (`top`). Several such names, or one too weak or
+/// never posted, name nobody, and the health rule decides as before. The
+/// client can spell an encounter's title and its creature apart (two
+/// letters swapped); the share keeps a near miss from crowning an add.
+fn near_miss<'a>(
+    hostiles: impl Iterator<Item = (Gix, &'a str)>,
+    parts: &HashSet<String>,
+    max_hp: &HashMap<Gix, u64>,
+    top: u64,
+) -> HashSet<Gix> {
+    let long = |f: &[char]| f.iter().filter(|c| c.is_alphanumeric()).count() >= NEAR_MISS_LETTERS;
+    let pieces: Vec<Vec<char>> = parts
+        .iter()
+        .map(|p| folded(p))
+        .filter(|p| long(p))
+        .collect();
+    let mut found: Option<Vec<char>> = None;
+    let mut units: HashSet<Gix> = HashSet::new();
+    for (g, name) in hostiles {
+        let f = folded(name);
+        if !long(&f) || !pieces.iter().any(|p| within_one_edit(&f, p)) {
+            continue;
+        }
+        match &found {
+            Some(other) if *other != f => return HashSet::new(),
+            _ => found = Some(f),
+        }
+        units.insert(g);
+    }
+    let strongest = units.iter().filter_map(|g| max_hp.get(g)).max().copied();
+    match strongest {
+        Some(hp) if top > 0 && hp as f64 >= BOSS_SHARE * top as f64 => units,
+        _ => HashSet::new(),
+    }
+}
+
+/// R29: a name as the near miss reads it: letters and digits lowercased,
+/// one space between words, every other character dropped.
+fn folded(name: &str) -> Vec<char> {
+    let mut out: Vec<char> = Vec::new();
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+        } else if c.is_whitespace() && out.last().is_some_and(|l| *l != ' ') {
+            out.push(' ');
+        }
+    }
+    if out.last() == Some(&' ') {
+        out.pop();
+    }
+    out
+}
+
+/// R29: whether `a` and `b` are at most one edit apart: two neighbors
+/// swapped, one inserted, one deleted or one substituted (the optimal
+/// string alignment distance, at most 1).
+fn within_one_edit(a: &[char], b: &[char]) -> bool {
+    if a == b {
+        return true;
+    }
+    if a.len().abs_diff(b.len()) > 1 {
+        return false;
+    }
+    let i = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    match a.len().cmp(&b.len()) {
+        std::cmp::Ordering::Equal => {
+            let substituted = a.get(i + 1..) == b.get(i + 1..);
+            let swapped = a.get(i).is_some()
+                && a.get(i) == b.get(i + 1)
+                && a.get(i + 1) == b.get(i)
+                && a.get(i + 2..) == b.get(i + 2..);
+            substituted || swapped
+        }
+        std::cmp::Ordering::Greater => a.get(i + 1..) == b.get(i..),
+        std::cmp::Ordering::Less => a.get(i..) == b.get(i + 1..),
+    }
 }
 
 /// A title's parts: the whole, then each name a comma or a lone "and"

@@ -1982,6 +1982,7 @@ mod tests {
     fn the_forever_fixtures_survive_index_then_lazy_parse() {
         parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/forever.txt"));
         parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/roles.txt"));
+        parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/bosses.txt"));
     }
 
     #[test]

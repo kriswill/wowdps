@@ -18,9 +18,9 @@ use wowdps_core::model::replay::{Cut, EventKind, PlacedKind, UnitKind};
 use wowdps_core::replay::{PlacedTable, cut};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures");
-const GATED: [&str; 11] = [
+const GATED: [&str; 12] = [
     "sample", "taken", "support", "spans", "shields", "stacks", "tree", "relog", "replay",
-    "forever", "roles",
+    "forever", "roles", "bosses",
 ];
 
 /// The fixtures' placed spells — check.awk's `PLACE` / `TELL`, a subset of
@@ -103,6 +103,13 @@ fn counts(seg: &str, c: &Cut, out: &mut Golden) {
         put("*", &format!("placed_{}", k.word()), n as u64);
     }
     put("*", "markers", c.markers.len() as u64);
+    // R29: the units cut `boss` (the exact title, else a near miss, else
+    // health).
+    put(
+        "*",
+        "bosses",
+        c.units.iter().filter(|u| u.kind == UnitKind::Boss).count() as u64,
+    );
     for m in c.maps() {
         put(&m.map_id.to_string(), "map_posts", m.posts as u64);
     }
@@ -424,5 +431,55 @@ fn the_replay_fixtures_key_follows_the_party_down() {
             ("Frost Warden", UnitKind::Boss)
         ],
         "the boss rule names the run's boss by its encounter"
+    );
+}
+
+/// R29's boss rule over `bosses.txt`, a Forever log, pull by pull: the
+/// title the client spells two letters apart from its creature ("Thalgrim
+/// Ashvane" over "Thalgirm Ashvane") names that creature alone, though
+/// two acolytes at 40% of its health would be bosses by health; a title
+/// naming its creature exactly does as it always did; a near miss too
+/// weak for the share ("Morvesa" at 20% of the golem's health under
+/// "Morvessa") names nobody, and the health rule crowns the golem.
+#[test]
+fn the_bosses_fixture_names_its_boss_by_a_near_miss() {
+    let path = format!("{FIXTURES}/bosses.txt");
+    let idx = index::scan(&mut std::fs::File::open(&path).unwrap());
+    let pulls: Vec<Vec<(String, UnitKind)>> = idx
+        .segments
+        .iter()
+        .filter(|m| m.kind == SegmentKind::Encounter)
+        .map(|meta| {
+            let text = load_segment_text(Path::new(&path), meta).unwrap();
+            let c = cut(text.seeds(), text.slice(), &Fixtures, None);
+            assert_eq!(
+                c.head.map, 48,
+                "the instance's map, Forever's posts on no UiMap"
+            );
+            c.units
+                .iter()
+                .filter(|u| matches!(u.kind, UnitKind::Boss | UnitKind::Add))
+                .map(|u| (u.name.clone(), u.kind))
+                .collect()
+        })
+        .collect();
+    let named = |rows: &[(&str, UnitKind)]| -> Vec<(String, UnitKind)> {
+        rows.iter().map(|(n, k)| ((*n).to_string(), *k)).collect()
+    };
+    assert_eq!(
+        pulls,
+        [
+            named(&[
+                ("Thalgirm Ashvane", UnitKind::Boss),
+                ("Ashvane Acolyte", UnitKind::Add),
+                ("Ashvane Acolyte", UnitKind::Add),
+                ("Cinder Imp", UnitKind::Add),
+            ]),
+            named(&[
+                ("Kezran the Hollow", UnitKind::Boss),
+                ("Hollow Shade", UnitKind::Add),
+            ]),
+            named(&[("Gate Golem", UnitKind::Boss), ("Morvesa", UnitKind::Add),]),
+        ]
     );
 }

@@ -333,6 +333,125 @@ fn without_a_named_boss_the_strongest_hostiles_are_bosses() {
     assert!(c.units.iter().all(|u| !u.you));
 }
 
+/// The second pull's log with `edits` made to every line: the near-miss
+/// tests' (R29) own spellings of the title and the hostiles.
+fn respelled(edits: &[(&str, &str)]) -> Cut {
+    let lines: Vec<String> = lines(0, 30)
+        .into_iter()
+        .map(|l| {
+            edits
+                .iter()
+                .fold(l.to_string(), |l, (from, to)| l.replace(from, to))
+        })
+        .collect();
+    let all: Vec<&str> = lines.iter().map(String::as_str).collect();
+    cut(all[..8].to_vec(), all[8..].to_vec(), &NoPlaced, None)
+}
+
+/// The hostiles' kinds, by name, in unit order.
+fn kinds(c: &Cut) -> Vec<(&str, UnitKind)> {
+    c.units
+        .iter()
+        .filter(|u| matches!(u.kind, UnitKind::Boss | UnitKind::Add))
+        .map(|u| (u.name.as_str(), u.kind))
+        .collect()
+}
+
+/// The title the client spells with two letters swapped ("Ulta'ek" for
+/// the creature "Ula'tek"): the exact rule names nobody, and the one
+/// hostile a single edit from the title, strong enough, is the boss — not
+/// the Egg, made strong enough here (5000 of the boss's 10000) that the
+/// health rule alone would crown it too. In any edition: this log is
+/// Retail's.
+#[test]
+fn a_near_miss_of_the_title_names_the_boss() {
+    let title = (
+        "ENCOUNTER_START,3000,\"Ula'tek\"",
+        "ENCOUNTER_START,3000,\"Ulta'ek\"",
+    );
+    let strong_egg = (
+        "Creature-0-1-2-3-501-BB,0000000000000000,1000,1000",
+        "Creature-0-1-2-3-501-BB,0000000000000000,5000,5000",
+    );
+    let health = respelled(&[strong_egg, ("\"Ula'tek\",16,20", "\"Someone Else\",16,20")]);
+    assert_eq!(
+        kinds(&health),
+        [("Ula'tek", UnitKind::Boss), ("Egg", UnitKind::Boss)],
+        "by health alone, the Egg is a boss too"
+    );
+    let near = respelled(&[strong_egg, title]);
+    assert_eq!(
+        kinds(&near),
+        [("Ula'tek", UnitKind::Boss), ("Egg", UnitKind::Add)]
+    );
+}
+
+/// A near miss names nobody, and the health rule decides, when the one
+/// name a single edit away is too weak for the share (the Egg, renamed
+/// "Eggling" under "Egglnig"), when two names are each a single edit away
+/// ("Ulateq" from both "Ula'tek" and "Ulateg"), or when the names are
+/// short (under five letters: "Ulak" from "Ula'k").
+#[test]
+fn a_weak_doubled_or_short_near_miss_falls_back_to_health() {
+    let weak = respelled(&[
+        ("\"Egg\"", "\"Eggling\""),
+        ("\"Ula'tek\",16,20", "\"Egglnig\",16,20"),
+    ]);
+    assert_eq!(
+        kinds(&weak),
+        [("Ula'tek", UnitKind::Boss), ("Eggling", UnitKind::Add)],
+        "the weak Eggling is no boss; health crowns Ula'tek"
+    );
+    let strong_egg = (
+        "Creature-0-1-2-3-501-BB,0000000000000000,1000,1000",
+        "Creature-0-1-2-3-501-BB,0000000000000000,5000,5000",
+    );
+    let doubled = respelled(&[
+        strong_egg,
+        ("\"Egg\"", "\"Ulateg\""),
+        ("\"Ula'tek\",16,20", "\"Ulateq\",16,20"),
+    ]);
+    assert_eq!(
+        kinds(&doubled),
+        [("Ula'tek", UnitKind::Boss), ("Ulateg", UnitKind::Boss)],
+        "two near misses: health decides, and both are strong"
+    );
+    let short = respelled(&[
+        strong_egg,
+        ("\"Ula'tek\"", "\"Ula'k\""),
+        (
+            "ENCOUNTER_START,3000,\"Ula'k\"",
+            "ENCOUNTER_START,3000,\"Ulak\"",
+        ),
+    ]);
+    assert_eq!(
+        kinds(&short),
+        [("Ula'k", UnitKind::Boss), ("Egg", UnitKind::Boss)],
+        "four letters: no near miss"
+    );
+}
+
+/// One edit: two neighbors swapped, one inserted, deleted or substituted;
+/// equal names are within it, two edits are not; case and punctuation are
+/// folded away first.
+#[test]
+fn one_edit_and_the_folding() {
+    let one = |a: &str, b: &str| within_one_edit(&folded(a), &folded(b));
+    assert!(one("Thalgrim", "Thalgirm"), "swapped");
+    assert!(one("Thalgrim", "Thalgrimm"), "inserted");
+    assert!(one("Thalgrim", "Thalgim"), "deleted");
+    assert!(one("Thalgrim", "Thalgrom"), "substituted");
+    assert!(one("Thalgrim", "THAL-GRIM"), "case and a hyphen folded");
+    assert!(one("Ula'tek", "Ulatek"));
+    assert!(!one("Thalgrim", "Thagrlim"), "two edits");
+    assert!(!one("Thalgrim", "Halgri"), "two deletions");
+    assert!(!one("Thalgrim", "Thalgrim the Unbent"));
+    assert_eq!(
+        folded("  Lord  Vex'mara, the Undying "),
+        "lord vexmara the undying".chars().collect::<Vec<_>>()
+    );
+}
+
 /// A pull of what players place: a warlock's gateway and a trip through
 /// it, a shaman's Wind Rush Totem (summoned, never posted) and its buff, an
 /// Anti-Magic Zone's buff (no source), a Healing Rain heal (where its
