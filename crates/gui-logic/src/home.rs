@@ -1126,7 +1126,7 @@ pub fn empty_night(
 }
 
 /// The empty words of a panel about `what`: "No keys this week.", "No
-/// keys on Tranqster this week."
+/// keys on Brannoc this week."
 pub fn none_of(what: &str, who: Option<&str>) -> String {
     match who {
         Some(name) => format!("No {what} on {name} this week."),

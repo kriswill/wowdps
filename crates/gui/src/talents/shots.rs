@@ -9,7 +9,8 @@
 //! - with `$WOWDPS_SHOTS_LOG` (a combat log the daemon's mock reads, the
 //!   iced shots' `coiled-altar-night.txt`): the owner's logged build from
 //!   the newest pull of `$WOWDPS_SHOTS_FIGHT` (default "The Coiled
-//!   Altar"), owner `$WOWDPS_SHOTS_OWNER` (default "Tranqlock"), against
+//!   Altar"), owner `$WOWDPS_SHOTS_OWNER` (required: the log's owner is a
+//!   real name, which no source file carries), against
 //!   the real dataset and art, at the iced shots' three sizes — what the
 //!   iced `wide-` / `tile-` / `narrow-talents.png` show.
 //!
@@ -151,9 +152,9 @@ fn hover(
 fn talent_shots() {
     let dir = std::env::var_os("WOWDPS_SHOTS_DIR").map(PathBuf::from);
     let dir = dir.as_deref();
-    let frosty = || {
+    let kestrel = || {
         Some(Player {
-            name: "Frosty-Proudmoore".to_string(),
+            name: "Kestrel-Nebula".to_string(),
             spec_id: Some(62),
             guid: "Player-1-0000AAAA".to_string(),
         })
@@ -165,13 +166,13 @@ fn talent_shots() {
     {
         let _sb = Sandbox::new("gpui-shots");
         let mut cx = app(crate::testkit::shots_theme());
-        shoot(&mut cx, dir, "fixture", (900., 640.), frosty(), logged);
+        shoot(&mut cx, dir, "fixture", (900., 640.), kestrel(), logged);
         shoot(
             &mut cx,
             dir,
             "fixture-tooltip",
             (900., 640.),
-            frosty(),
+            kestrel(),
             |cx, w, v| {
                 logged(cx, w, v);
                 hover(cx, w, v, 1);
@@ -182,7 +183,7 @@ fn talent_shots() {
             dir,
             "fixture-picker",
             (900., 640.),
-            frosty(),
+            kestrel(),
             |cx, w, v| {
                 logged(cx, w, v);
                 cx.update_entity(v, |v, cx| v.apply(Msg::NodeClick(2), cx));
@@ -193,7 +194,7 @@ fn talent_shots() {
             dir,
             "fixture-inventory",
             (900., 640.),
-            frosty(),
+            kestrel(),
             |cx, w, v| {
                 logged(cx, w, v);
                 cx.update_entity(v, |v, cx| v.apply(Msg::ToggleTab, cx));
@@ -223,7 +224,7 @@ fn talent_shots() {
             dir,
             "fixture-frost",
             (900., 640.),
-            frosty(),
+            kestrel(),
             logged,
         );
     }
@@ -235,7 +236,15 @@ fn talent_shots() {
         return;
     };
     let fight = std::env::var("WOWDPS_SHOTS_FIGHT").unwrap_or_else(|_| "The Coiled Altar".into());
-    let owner = std::env::var("WOWDPS_SHOTS_OWNER").unwrap_or_else(|_| "Tranqlock".into());
+    let Some(owner) = std::env::var("WOWDPS_SHOTS_OWNER")
+        .ok()
+        .filter(|o| !o.is_empty())
+    else {
+        eprintln!(
+            "talent_shots: set WOWDPS_SHOTS_OWNER (the log's character) for the real-log states"
+        );
+        return;
+    };
     let mut cx = app(crate::testkit::shots_theme());
     let session = cx.update(|cx| {
         cx.new(|_| {

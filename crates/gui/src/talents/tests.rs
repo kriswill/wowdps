@@ -25,9 +25,9 @@ use crate::testkit;
 
 const WIDE: (f32, f32) = (1440., 900.);
 
-fn frosty() -> Player {
+fn kestrel() -> Player {
     Player {
-        name: "Frosty-Proudmoore".to_string(),
+        name: "Kestrel-Nebula".to_string(),
         spec_id: Some(62),
         guid: "Player-1-0000AAAA".to_string(),
     }
@@ -149,7 +149,7 @@ impl Rig {
 #[gpui_kit::test]
 fn a_row_opens_its_bare_tree_and_nobody_gets_the_paste_prompt(cx: &mut TestAppContext) {
     let _sb = Sandbox::new("gpui-open");
-    let rig = open(cx, Some(frosty()));
+    let rig = open(cx, Some(kestrel()));
     rig.with(cx, |window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("talent-pane-0").is_some(), "the class pane");
@@ -165,7 +165,7 @@ fn a_row_opens_its_bare_tree_and_nobody_gets_the_paste_prompt(cx: &mut TestAppCo
         );
     });
     rig.read(cx, |v| {
-        assert_eq!(v.ui.player.as_deref(), Some("Frosty-Proudmoore"));
+        assert_eq!(v.ui.player.as_deref(), Some("Kestrel-Nebula"));
         assert!(v.ui.sels.is_empty());
     });
 
@@ -183,7 +183,7 @@ fn a_row_opens_its_bare_tree_and_nobody_gets_the_paste_prompt(cx: &mut TestAppCo
 #[gpui_kit::test]
 fn presses_take_ranks_refund_them_and_open_a_choice(cx: &mut TestAppContext) {
     let _sb = Sandbox::new("gpui-presses");
-    let rig = open(cx, Some(frosty()));
+    let rig = open(cx, Some(kestrel()));
     rig.press_node(cx, 1, MouseButton::Left);
     assert_eq!(rig.ranks(cx, 1), Some(1), "a left press takes the root");
     rig.press_node(cx, 1, MouseButton::Left);
@@ -231,7 +231,7 @@ fn presses_take_ranks_refund_them_and_open_a_choice(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_pointer_over_a_node_brings_its_tooltip_and_leaving_takes_it(cx: &mut TestAppContext) {
     let _sb = Sandbox::new("gpui-hover");
-    let rig = open(cx, Some(frosty()));
+    let rig = open(cx, Some(kestrel()));
     let (pane, offset) = rig.node_offset(cx, 1);
     rig.pointer(cx, pane, offset, None);
     rig.read(cx, |v| assert_eq!(v.ui.hover, Some((1, None))));
@@ -313,7 +313,7 @@ fn the_logged_loadout_comes_back_through_the_session(cx: &mut TestAppContext) {
         asked: Rc::clone(&asked),
     };
     let session = cx.new(|_| Session::with_state(Box::new(link), ClientState::new()));
-    let rig = open(cx, Some(frosty()));
+    let rig = open(cx, Some(kestrel()));
     rig.viewer.update(cx, |v, cx| {
         v.ask_loadout(
             &session,
@@ -366,7 +366,7 @@ fn the_logged_loadout_comes_back_through_the_session(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn esc_closes_and_tab_flips_to_the_inventory(cx: &mut TestAppContext) {
     let _sb = Sandbox::new("gpui-keys");
-    let rig = open(cx, Some(frosty()));
+    let rig = open(cx, Some(kestrel()));
     rig.viewer.update(cx, |v, cx| v.adopt_logged(&logged(), cx));
     let closed = Rc::new(RefCell::new(0));
     let seen = Rc::clone(&closed);
@@ -437,16 +437,13 @@ fn the_clipboard_pastes_in_and_copies_out(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_simc_export_brings_loadout_chips_and_an_inventory(cx: &mut TestAppContext) {
     let sb = Sandbox::new("gpui-simc");
-    let rig = open(cx, Some(frosty()));
+    let rig = open(cx, Some(kestrel()));
     let (a, b) = (full_string(), string_for(&[r#"{"node_id": 3}"#]));
     rig.viewer.update(cx, |v, cx| {
-        v.paste(
-            &simc_paste("Frosty", Some("proudmoore"), &[&a, &b], true),
-            cx,
-        );
+        v.paste(&simc_paste("Kestrel", Some("nebula"), &[&a, &b], true), cx);
     });
     assert!(
-        sb.stored("Frosty-Proudmoore").is_some(),
+        sb.stored("Kestrel-Nebula").is_some(),
         "kept for the next open"
     );
     rig.with(cx, |window, cx| {
@@ -468,12 +465,12 @@ fn a_dropped_file_is_read_as_a_paste(cx: &mut TestAppContext) {
     let rig = open(cx, None);
     let path = sb.dir.join("export.simc");
     std::fs::create_dir_all(&sb.dir).unwrap();
-    std::fs::write(&path, simc_paste("Frosty", None, &[&full_string()], false)).unwrap();
+    std::fs::write(&path, simc_paste("Kestrel", None, &[&full_string()], false)).unwrap();
     rig.viewer.update(cx, |v, cx| {
         v.drop_files(&ExternalPaths(vec![path.clone()].into()), cx)
     });
     rig.read(cx, |v| {
-        assert_eq!(v.ui.player.as_deref(), Some("Frosty"));
+        assert_eq!(v.ui.player.as_deref(), Some("Kestrel"));
         assert_eq!(v.ui.hero, Some(77));
     });
     rig.viewer.update(cx, |v, cx| {
@@ -544,7 +541,7 @@ fn a_narrow_window_fits_the_trees_before_it_scrolls(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_taken_node_ripples_and_the_ripple_ends(cx: &mut TestAppContext) {
     let _sb = Sandbox::new("gpui-ripple");
-    let rig = open(cx, Some(frosty()));
+    let rig = open(cx, Some(kestrel()));
     cx.update(|cx| cx.set_reduce_motion(false));
     rig.press_node(cx, 1, MouseButton::Left);
     rig.with(cx, |window, cx| window.render_frame(cx));

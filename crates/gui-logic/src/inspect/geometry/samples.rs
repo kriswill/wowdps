@@ -95,7 +95,7 @@ fn lanes(own: Color) -> Vec<Row> {
         Row {
             lane: Lane::Externals,
             spans: vec![
-                span(2, 40, "Heroism", Some("Vingsham"), shaman),
+                span(2, 40, "Heroism", Some("Halvric"), shaman),
                 span(10, 15, "Power Infusion", Some("Lumen"), priest),
                 span(195, 8, "Pain Suppression", Some("Lumen"), priest),
             ],
@@ -145,7 +145,7 @@ fn pair_lanes(a: Color, b: Color) -> Vec<Row> {
             })
             .collect()
     };
-    let first = mark(lanes(a), "Tranqlock", false);
+    let first = mark(lanes(a), "Brannoc", false);
     let mut second = mark(lanes(b), "Embersong", true);
     for r in &mut second {
         for s in &mut r.spans {
@@ -191,11 +191,11 @@ pub fn all_in(data: &DataTokens) -> Vec<Sample> {
         ..base.clone()
     };
     let pair_curves = vec![
-        curve("Tranqlock", lock, rate(1.0, 0.0), Ink::Line),
+        curve("Brannoc", lock, rate(1.0, 0.0), Ink::Line),
         curve("Embersong", mage, rate(0.85, 1.7), Ink::Line),
     ];
     let twin_curves = vec![
-        curve("Tranqlock", lock, rate(1.0, 0.0), Ink::Line),
+        curve("Brannoc", lock, rate(1.0, 0.0), Ink::Line),
         curve("Grimveil", lock, rate(0.9, 2.4), Ink::Dashed),
     ];
     let ghosted = vec![

@@ -97,7 +97,7 @@ fn the_log_lists_its_pulls_newest_first_and_its_sum_last() {
         v.dot,
         Some(Who {
             color: Color::of_class(Class::Warlock),
-            name: "Tranqlock-Proudmoore-US".to_string(),
+            name: "Brannoc-Nebula-US".to_string(),
         }),
         "the window's owner: their colour, and their name on its tip"
     );

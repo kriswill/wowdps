@@ -2568,7 +2568,7 @@ pub struct Affiliation {
     /// The unit guid the combat log uses — the join key.
     pub guid: String,
     pub name: String,
-    /// The normalized realm name (`"Area52"`, as the log spells it).
+    /// The normalized realm name (`"AzureReach"` for Azure Reach, as the log spells it).
     pub realm: String,
     /// `""` is a player SEEN without a guild; the addon writes no record
     /// at all for a unit it could not tell about.

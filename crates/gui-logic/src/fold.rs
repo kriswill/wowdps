@@ -1,4 +1,4 @@
-//! Accent folding for the row filter: "akanos" has to find `Akanôs`.
+//! Accent folding for the row filter: "vashon" has to find `Vashôn`.
 //!
 //! **What it covers.** Lowercasing, then diacritic stripping over Latin-1
 //! Supplement (U+00C0–U+00FF) and Latin Extended-A (U+0100–U+017F) — the
@@ -153,19 +153,19 @@ mod tests {
 
     #[test]
     fn plain_letters_find_accented_names() {
-        // Both real rows from the user's store.
-        assert!(contains("Akanôs-Tichondrius-US", &fold("akanos")));
-        assert!(contains("Fidèle-Tichondrius-US", &fold("fidele")));
+        // Accented names, as a store holds them.
+        assert!(contains("Vashôn-Nebula-US", &fold("vashon")));
+        assert!(contains("Ysèlle-Nebula-US", &fold("yselle")));
         // And the accented spelling still finds it: someone with a compose
         // key typing the name correctly must not be punished for it.
-        assert!(contains("Akanôs-Tichondrius-US", &fold("akanôs")));
-        assert!(contains("Akanôs-Tichondrius-US", &fold("AKANÔS")));
-        assert!(contains("Fidèle-Tichondrius-US", &fold("Fidèle")));
+        assert!(contains("Vashôn-Nebula-US", &fold("vashôn")));
+        assert!(contains("Vashôn-Nebula-US", &fold("VASHÔN")));
+        assert!(contains("Ysèlle-Nebula-US", &fold("Ysèlle")));
         // A fragment through the accent, from either side.
-        assert!(contains("Akanôs-Tichondrius-US", &fold("nos")));
+        assert!(contains("Vashôn-Nebula-US", &fold("hon")));
         assert!(contains("Mírelle-Nebula-US", &fold("mirelle")));
         // And a genuine miss is still a miss.
-        assert!(!contains("Akanôs-Tichondrius-US", &fold("akanas")));
+        assert!(!contains("Vashôn-Nebula-US", &fold("vashan")));
     }
 
     #[test]
