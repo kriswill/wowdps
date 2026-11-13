@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn a_set_absolute_variable_wins() {
         assert_eq!(
-            Base::Data.resolve(os("/xdg/data"), os("/home/k")),
+            Base::Data.resolve(os("/xdg/data"), os("/home/user")),
             Some(PathBuf::from("/xdg/data"))
         );
         assert_eq!(

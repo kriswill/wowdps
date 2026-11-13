@@ -27,7 +27,7 @@ const SAVED: &str = "\r\nWOWDPS_DATA = {\r\n\
     \t[\"version\"] = \"0.1.0\",\r\n\
     \t[\"characters\"] = { [\"Player-1168-0A1B2C31\"] = true, },\r\n\
     \t[\"players\"] = {\r\n\
-    \t\t[\"Player-1168-0A1B2C31\"] = { [\"name\"] = \"Bastión\", [\"guild\"] = \"\", [\"seen\"] = 1757000000, },\r\n\
+    \t\t[\"Player-1168-0A1B2C31\"] = { [\"name\"] = \"Ilvána\", [\"guild\"] = \"\", [\"seen\"] = 1757000000, },\r\n\
     \t},\r\n\
     \t[\"creatures\"] = {\r\n\
     \t\t[164567] = {\r\n\

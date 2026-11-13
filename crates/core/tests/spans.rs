@@ -109,7 +109,7 @@ fn guids(lines: &[LogLine]) -> Vec<String> {
 
 // ---- synthetic log lines --------------------------------------------------
 
-const W_UNIT: &str = "Player-1168-0A1B2C31,\"Bastión-Nebula-US\",0x511,0x80000000";
+const W_UNIT: &str = "Player-1168-0A1B2C31,\"Ilvána-Nebula-US\",0x511,0x80000000";
 const H_UNIT: &str = "Player-1168-0A1B2C32,\"Lumenia-Nebula-US\",0x514,0x80000000";
 const E_UNIT: &str = "Player-1168-0A1B2C33,\"Vesperine-Nebula-US\",0x514,0x80000000";
 const PET: &str = "Pet-0-4232-2662-31585-417-0102ABCDEF";

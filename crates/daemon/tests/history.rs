@@ -4237,7 +4237,7 @@ WOWDPS_DATA = {\r\n\
 \t\t[\"Player-1168-0A1B2C01\"] = {\r\n\
 \t\t\t[\"name\"] = \"Thraxx\",\r\n\
 \t\t\t[\"realm\"] = \"Nebula\",\r\n\
-\t\t\t[\"guild\"] = \"Ðark Moon Templars\",\r\n\
+\t\t\t[\"guild\"] = \"Ærin Wardens\",\r\n\
 \t\t\t[\"guild_realm\"] = \"Nebula\",\r\n\
 \t\t\t[\"rank\"] = \"Raider\",\r\n\
 \t\t\t[\"class\"] = \"WARRIOR\",\r\n\
@@ -4247,7 +4247,7 @@ WOWDPS_DATA = {\r\n\
 \t\t[\"Player-1168-0A1B2C02\"] = {\r\n\
 \t\t\t[\"name\"] = \"Mírelle\",\r\n\
 \t\t\t[\"realm\"] = \"Nebula\",\r\n\
-\t\t\t[\"guild\"] = \"Ðark Moon Templars\",\r\n\
+\t\t\t[\"guild\"] = \"Ærin Wardens\",\r\n\
 \t\t\t[\"guild_realm\"] = \"Nebula\",\r\n\
 \t\t\t[\"class\"] = \"PRIEST\",\r\n\
 \t\t\t[\"seen\"] = 1757000000,\r\n\
@@ -4354,11 +4354,11 @@ fn a_daemon_updates_a_stale_addon_and_files_the_saved_variables_it_finds() {
     };
     assert_eq!(
         guild_of("Player-1168-0A1B2C01").as_deref(),
-        Some("Ðark Moon Templars")
+        Some("Ærin Wardens")
     );
     assert_eq!(
         guild_of("Player-1168-0A1B2C02").as_deref(),
-        Some("Ðark Moon Templars")
+        Some("Ærin Wardens")
     );
     assert_eq!(
         guild_of("Player-1168-0A1B2C03"),

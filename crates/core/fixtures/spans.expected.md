@@ -64,7 +64,7 @@ not a role: an **R12 `TrinketProc` mark**, untouched by R18).
 
 ## Roster
 
-- `W` = `Player-1168-0A1B2C31` "Bastión-Nebula-US", flags `0x511` — **Protection
+- `W` = `Player-1168-0A1B2C31` "Ilvána-Nebula-US", flags `0x511` — **Protection
   Warrior** (COMBATANT_INFO spec 73). The tank: Shield Block spans, Shield Wall,
   receives Pain Suppression, Guardian Spirit, Ebon Might, Time Warp; the trinket
   proc.
