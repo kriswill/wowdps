@@ -18,8 +18,8 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::drill::{avg_text, counts, crit_text};
 use wowdps_gui_logic::graph::{
-    Plot, curve, hover_line, kinds_shown, mode_word, peak_of, probe_line, short_name,
-    side_for_view, table_words, view_window, waiting_words,
+    Plot, curve, hover_line, kinds_shown, mode_word, peak_of, probe_line, side_for_view,
+    table_words, view_window, waiting_words,
 };
 use wowdps_gui_logic::labels::rate_label;
 use wowdps_gui_logic::theme::{Color, school_color};
@@ -59,7 +59,11 @@ impl Overlay {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(ov.words(waiting_words(state.compare_picks()), 13., ov.c(|t| t.dim)))
+                .child(ov.words(
+                    waiting_words(state.compare_picks(), ov.names()),
+                    13.,
+                    ov.c(|t| t.dim),
+                ))
                 .into_any_element();
         };
         let mode = state.graph_mode();
@@ -95,8 +99,8 @@ impl Overlay {
                 bms,
                 mode_word(mode, rate),
                 &[
-                    (short_name(&a.total.label), curve(&a.timeline, mode)),
-                    (short_name(&b.total.label), curve(&b.timeline, mode)),
+                    (ov.name(&a.total.label), curve(&a.timeline, mode)),
+                    (ov.name(&b.total.label), curve(&b.timeline, mode)),
                 ],
             )
         });
@@ -110,7 +114,7 @@ impl Overlay {
         .chain(rows.iter().map(|r| (r.key.as_str(), r.label.as_str())))
         .collect();
         let timelines = [&a.timeline, &b.timeline];
-        let sides = [short_name(&a.total.label), short_name(&b.total.label)];
+        let sides = [ov.name(&a.total.label), ov.name(&b.total.label)];
         let hovered = self
             .graph_hover
             .as_deref()
@@ -166,7 +170,7 @@ impl Overlay {
                 true,
                 ov.z(18.),
             ))
-            .child(ov.words(short_name(&side.total.label), 14., hsla(color)))
+            .child(ov.words(ov.name(&side.total.label), 14., hsla(color)))
             .child(div().flex_1())
             .child(ov.nums(human(side.total.amount), 13., ov.c(|t| t.text)))
             .child(ov.nums(
@@ -226,7 +230,7 @@ impl Overlay {
                     .gap(ov.z(8.))
                     .child(drill::crumb(
                         ov,
-                        &short_name(&side.total.label),
+                        &ov.name(&side.total.label),
                         label,
                         Some(r),
                     ))

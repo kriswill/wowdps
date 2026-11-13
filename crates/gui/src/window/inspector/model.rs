@@ -23,7 +23,7 @@ use wowdps_gui_logic::inspect::plot::{Curve, Dead, Ink};
 use wowdps_gui_logic::inspect::power::{PowerLine, healer_mana};
 use wowdps_gui_logic::inspect::recap::{Recap, died_words};
 use wowdps_gui_logic::inspect::{Roster, lanes, stack, wide};
-use wowdps_gui_logic::labels::{rate_label, realmless, realmless_rows, shown_name};
+use wowdps_gui_logic::labels::{Names, rate_label};
 use wowdps_gui_logic::table::{Col, figure};
 use wowdps_gui_logic::theme::{self as gl, AA_CONTRAST, DataTokens, WindowTokens};
 use wowdps_gui_logic::{deaths, graph::mmss, tree};
@@ -387,7 +387,9 @@ pub struct Ctx<'a> {
     pub t: &'a WindowTokens,
     /// The theme's data hues: the stacked bands.
     pub data: &'a DataTokens,
-    pub hide: bool,
+    /// How names are written: the fight's edition, realms as the option
+    /// says.
+    pub names: Names,
     /// The owner's row on the chart on screen.
     pub owner: Option<usize>,
     /// A person list's owner, by rows.
@@ -695,7 +697,7 @@ fn stacked_curves(
     let tree = app.drill_tree();
     let name = |key: &str| -> String {
         if on_targets {
-            return shown_name(key, cx.hide);
+            return cx.names.any(key);
         }
         if let Some(g) = tree.group(key) {
             return g.label.clone();
@@ -846,7 +848,7 @@ fn against_top(row: &Row, rows: &[Row]) -> f32 {
 /// A player's drill: what they did, over the fight.
 fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     let app = cx.app;
-    let hide = cx.hide;
+    let names = cx.names;
     let Some(drill) = app.drill.as_ref() else {
         return Insp::quiet("Select a player to inspect them here.");
     };
@@ -876,7 +878,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     }
     let head = Head {
         discs: vec![Disc::Player(class, spec)],
-        name: vec![cx.piece(shown_name(&drill.label, hide), class)],
+        name: vec![cx.piece(names.shown(&drill.label), class)],
         sub: sub.join(", "),
         sweep: row.map(|r| against_top(r, rows)),
         // R27 (v44): the resources the drill carries, in a line of words.
@@ -981,13 +983,9 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         window_tail(g, app, &rows);
     }
     let ability = spell.as_ref().map(|(_, label)| Ability {
-        who: shown_name(&drill.label, hide),
+        who: names.shown(&drill.label),
         who_ink: Some(cx.name_ink(class)),
-        label: if hide {
-            realmless(label)
-        } else {
-            label.clone()
-        },
+        label: names.any(label),
         row: spell_row.clone(),
         view,
         tally: spell
@@ -1013,7 +1011,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
 
     let bar = Bar::Of(cx.class_rgb(class));
     let (tabs, body) = if spell.is_some() {
-        let targets = realmless_rows(&cx.st.roster.as_themselves(&app.spell_target_rows()), hide);
+        let targets = names.rows(&cx.st.roster.as_themselves(&app.spell_target_rows()));
         let mut l = pane_list(
             cx,
             targets,
@@ -1038,7 +1036,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         let abilities = || {
             pane_list(
                 cx,
-                realmless_rows(&by_spell, hide),
+                names.rows(&by_spell),
                 Kind::Abilities,
                 view,
                 // Widened, no tab names what hit them: the heading does.
@@ -1069,7 +1067,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         let targets = || {
             pane_list(
                 cx,
-                realmless_rows(&cx.st.roster.as_themselves(&by_target), hide),
+                names.rows(&cx.st.roster.as_themselves(&by_target)),
                 Kind::Targets,
                 view,
                 &scoped(
@@ -1138,7 +1136,7 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
 /// R9: a death's recap.
 fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     let app = cx.app;
-    let hide = cx.hide;
+    let names = cx.names;
     let Some(drill) = app.drill.as_ref() else {
         return Insp::quiet("Select a death to see its recap.");
     };
@@ -1155,7 +1153,7 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         .and_then(|raid| deaths::selected(app, raid).and_then(|i| raid.deaths.get(i)));
     let mut sub: Vec<String> = plays(class, spec).into_iter().collect();
     match (death, at) {
-        (Some(d), _) => sub.push(died_words(d, hide)),
+        (Some(d), _) => sub.push(died_words(d, names)),
         (None, Some(at)) => sub.push(format!("died {}", duration(at))),
         (None, None) => {}
     }
@@ -1198,16 +1196,17 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     let up = drill.pane;
     let recap_body = || {
         Body::Recap(Recap {
-            rows: realmless_rows(&events, hide),
-            who: shown_name(&drill.label, hide),
+            rows: names.rows(&events),
+            who: names.shown(&drill.label),
             yours: owner,
             class,
+            names,
         })
     };
     let attackers_body = || {
         Body::One(Box::new(pane_list(
             cx,
-            realmless_rows(&cx.st.roster.as_themselves(&attackers), hide),
+            names.rows(&cx.st.roster.as_themselves(&attackers)),
             Kind::Targets,
             View::Damage,
             "Attacker",
@@ -1234,7 +1233,7 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         wide: false,
         head: Head {
             discs: vec![Disc::Player(class, spec)],
-            name: vec![cx.piece(shown_name(&drill.label, hide), class)],
+            name: vec![cx.piece(names.shown(&drill.label), class)],
             sub: sub.join(", "),
             sweep: None,
             energy: None,
@@ -1261,7 +1260,7 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
 /// R24: an enemy, and who hit it.
 fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
     let app = cx.app;
-    let hide = cx.hide;
+    let names = cx.names;
     let Some(drill) = app.drill.as_ref() else {
         return Insp::quiet("Select an enemy to see who hit it.");
     };
@@ -1305,17 +1304,13 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         };
         window_tail(g, app, &rows);
     }
-    let name = if hide {
-        realmless(&drill.label)
-    } else {
-        drill.label.clone()
-    };
+    let name = names.any(&drill.label);
     let acts = timeline
         .map(|_| vec![mode_act(app.graph_mode())])
         .unwrap_or_default();
     let (ability, body) = match spell {
         Some((_, label)) => {
-            let abilities = realmless_rows(&app.spell_target_rows(), hide);
+            let abilities = names.rows(&app.spell_target_rows());
             let mut l = pane_list(
                 cx,
                 abilities,
@@ -1334,7 +1329,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
                 Some(Ability {
                     who: name.clone(),
                     who_ink: None,
-                    label: shown_name(&label, hide),
+                    label: names.any(&label),
                     row: spell_row,
                     view: View::EnemyTaken,
                     tally: Tally::default(),
@@ -1346,7 +1341,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             None,
             Body::One(Box::new(pane_list(
                 cx,
-                realmless_rows(&attackers, hide),
+                names.rows(&attackers),
                 Kind::Targets,
                 View::EnemyTaken,
                 &scoped(cx, "Attacker", true),
@@ -1391,7 +1386,7 @@ fn enemy(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
 /// R12: the pair, on one scale and one time axis.
 fn pair(cx: &Ctx, rows: &[Row]) -> Insp {
     let app = cx.app;
-    let hide = cx.hide;
+    let names = cx.names;
     let picks = app.compare_picks();
     let (Some((a_key, a_label)), Some((b_key, b_label))) = (picks.first(), picks.get(1)) else {
         return Insp::quiet("Pick another player to compare.");
@@ -1409,7 +1404,7 @@ fn pair(cx: &Ctx, rows: &[Row]) -> Insp {
     let (a_side, b_side) = (sides.map(|(a, _)| a), sides.map(|(_, b)| b));
     let (a_class, a_spec) = who(a_key, a_side);
     let (b_class, b_spec) = who(b_key, b_side);
-    let (a_name, b_name) = (shown_name(a_label, hide), shown_name(b_label, hide));
+    let (a_name, b_name) = (names.shown(a_label), names.shown(b_label));
     let head = Head {
         discs: vec![Disc::Player(a_class, a_spec), Disc::Player(b_class, b_spec)],
         name: vec![
@@ -1536,13 +1531,13 @@ fn pair(cx: &Ctx, rows: &[Row]) -> Insp {
     let ability = spell.as_ref().map(|(_, label)| Ability {
         who: format!("{a_name} and {b_name}"),
         who_ink: None,
-        label: shown_name(label, hide),
+        label: names.any(label),
         row: None,
         view: metric,
         tally: Tally::default(),
     });
     let side_list = |s: &CompareSide, name: &str, class: Option<Class>| List {
-        rows: realmless_rows(&s.spells, hide),
+        rows: names.rows(&s.spells),
         kind: Kind::Pair,
         view: metric,
         note: s

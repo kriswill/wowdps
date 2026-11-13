@@ -3431,18 +3431,12 @@ impl<B: Backend> Store<B> {
     /// Never a guid the card does not list: that owner is one character,
     /// and a night on an alt is the alt's night (spec §9).
     pub fn owner_of(&self, card: &FightCard) -> Option<String> {
-        let wanted: Vec<String> = self
-            .cfg
-            .characters
-            .iter()
-            .map(|c| c.trim().to_lowercase())
-            .filter(|c| !c.is_empty())
-            .collect();
+        let wanted = &self.cfg.characters;
         let configured = card
             .players
             .iter()
             .filter(|p| !p.enemy)
-            .find(|p| name_matches(&wanted, &p.name));
+            .find(|p| name_matches(wanted, &p.name, card.edition()));
         if let Some(p) = configured {
             return Some(p.guid.clone());
         }
@@ -3565,23 +3559,17 @@ impl<B: Backend> Store<B> {
         // machine's; an imported card has none.
         let ours = |c: &&FightCard| !c.is_imported() && c.edition().counts_as() == edition;
         if !self.cfg.characters.is_empty() {
-            let wanted: Vec<String> = self
-                .cfg
-                .characters
-                .iter()
-                .map(|c| c.trim().to_lowercase())
-                .filter(|c| !c.is_empty())
-                .collect();
-            // "Name-Realm" must match whole; a bare "Name" (no realm
-            // given) matches the name half.
+            // A name names its character whole, with its realm, or alone
+            // (a Forever character by both names, never the first alone).
+            let wanted = &self.cfg.characters;
             return self
                 .cards
                 .iter()
                 .rev()
                 .filter(ours)
-                .flat_map(|c| c.players.iter())
-                .find(|p| name_matches(&wanted, &p.name))
-                .map(|p| (p.guid.clone(), false));
+                .flat_map(|c| c.players.iter().map(move |p| (c.edition(), p)))
+                .find(|(e, p)| name_matches(wanted, &p.name, *e))
+                .map(|(_, p)| (p.guid.clone(), false));
         }
         // Spec §9a: the addon marks the account's own characters, and a
         // character the account logged in as IS the logger — whichever alt
@@ -5397,7 +5385,7 @@ fn answer(
                 .filter(|_| crate::engine::compare_windows(view) && pa.is_some() && pb.is_some());
             let side = |guid: &str, p: Option<&PlayerSeries>| {
                 let mut s = stored_side(rows_doc, details, p, &card, guid, window, ask);
-                s.total.mine = mine.owns(&s.guid, &s.total.label);
+                s.total.mine = mine.of(card.edition()).owns(&s.guid, &s.total.label);
                 roles.mark_rows(std::slice::from_mut(&mut s.total));
                 s
             };
@@ -5652,6 +5640,7 @@ fn mark_mine(
     breakdown: Option<&mut Breakdown>,
     raid: &mut wowdps_model::RaidTimeline,
 ) {
+    let mine = mine.of(card.edition());
     mine.mark_rows(rows);
     mine.mark_raid(raid);
     if let Some(b) = breakdown {
@@ -5884,11 +5873,12 @@ fn cap_taken(mut spells: Vec<Row>) -> (Vec<Row>, TakenOther) {
     (spells, other)
 }
 
-/// Does a configured "Name-Realm" (or bare "Name") name this player?
-pub(crate) fn name_matches(wanted: &[String], name: &str) -> bool {
-    let full = name.to_lowercase();
-    let bare = full.split('-').next().unwrap_or(&full);
-    wanted
-        .iter()
-        .any(|w| w == &full || (!w.contains('-') && w == bare))
+/// Does a configured name (`history_characters`: "Name-Realm", a bare
+/// "Name", a Forever character's "First Last") name this player, whose
+/// label a fight of `edition` wrote? Its whole label, its name and realm,
+/// or its name, case aside; never a Forever first name alone, which two
+/// players often share (`wowdps_model::names::Label::is_called`).
+pub(crate) fn name_matches(wanted: &[String], name: &str, edition: Edition) -> bool {
+    let label = wowdps_model::names::Label::player(name, edition);
+    wanted.iter().any(|w| label.is_called(w))
 }

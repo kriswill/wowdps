@@ -17,7 +17,7 @@ use wowdps_gui_logic::fight_head::{
 };
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::home::wipe_pct;
-use wowdps_gui_logic::labels::{Tone, display_name};
+use wowdps_gui_logic::labels::Tone;
 use wowdps_gui_logic::rail::{night_of, night_short};
 use wowdps_gui_logic::theme::{YOU_EDGE, YOU_WASH, YOU_WASH_HOVER};
 use wowdps_model::fmt::duration;
@@ -154,7 +154,7 @@ fn stats_of(gui: &Gui, cx: &App) -> Stats {
     }
     let rows = app.rows();
     let seen = gui.seen.of(app).and_then(Seen::owner);
-    let owner = gui.owner_in(&rows, app.view);
+    let owner = gui.owner_in(&rows, app.view, cx);
     let raid = app.raid();
     // R25: when the owner died, as the raid timeline marks it.
     let died_at = owner
@@ -162,10 +162,9 @@ fn stats_of(gui: &Gui, cx: &App) -> Stats {
         .zip(raid)
         .and_then(|(me, r)| r.deaths.iter().find(|d| d.guid == me.key))
         .map(|d| d.at_ms);
+    let names = gui.names(cx);
     let you = you(app.view, &rows, owner, seen, app.is_live(), died_at).map(|mut you| {
-        if gui.cfg.hide_realms {
-            you.name = display_name(&you.name).to_string();
-        }
+        you.name = names.shown(&you.name);
         you
     });
     Stats {

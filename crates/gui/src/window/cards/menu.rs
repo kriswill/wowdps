@@ -13,7 +13,7 @@ use gpui_kit::{
     div,
 };
 use wowdps_gui_logic::home::{CharLine, FOLLOW, played_note};
-use wowdps_gui_logic::labels::display_name;
+use wowdps_gui_logic::labels::Names;
 use wowdps_gui_logic::theme::{AA_CONTRAST, class_text_on};
 
 use super::super::Gui;
@@ -55,7 +55,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         _ => gui.cfg.character_in(gui.keys()).map(str::to_string),
     };
     let tonight = gui.tonight();
-    let hide_realms = gui.cfg.hide_realms;
+    let names = gui.window_names();
     let mut list = div()
         .w(w.z(w.pitch.menu_w - 2.0 * BORDER))
         .flex()
@@ -95,10 +95,10 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         let guid = c.guid.clone();
         list = list.child(
             row(
-                shown_name(c, hide_realms).into(),
+                names.shown(&c.name).into(),
                 row_id(Some(&c.guid)),
                 on,
-                character(c, hide_realms, tonight, w),
+                character(c, names, tonight, w),
                 w,
             )
             .on_mouse_down(
@@ -146,21 +146,11 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         .into_any_element()
 }
 
-/// A character's name as the menu shows it: the realm stripped when the
-/// option says so.
-fn shown_name(c: &CharLine, hide_realms: bool) -> String {
-    if hide_realms {
-        display_name(&c.name).to_string()
-    } else {
-        c.name.clone()
-    }
-}
-
 /// A character's line: their spec icon, their name in their class's text
 /// colour — a person keeps their colour when picked; the pick is said by
 /// the raised row and its accent edge — and when they last played.
-fn character(c: &CharLine, hide_realms: bool, tonight: i64, w: &W) -> Div {
-    let name = shown_name(c, hide_realms);
+fn character(c: &CharLine, names: Names, tonight: i64, w: &W) -> Div {
+    let name = names.shown(&c.name);
     let ink = c.class.map_or(w.c(|t| t.ink_2), |class| {
         hsla(class_text_on(class, w.t.surface, AA_CONTRAST))
     });

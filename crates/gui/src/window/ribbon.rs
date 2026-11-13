@@ -30,7 +30,6 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::axis::minute_ticks;
 use wowdps_gui_logic::deaths::{Pick, is_mine, selected};
-use wowdps_gui_logic::labels::display_name;
 use wowdps_gui_logic::ribbon::{fight_span, peak_words, rates, skull_words, word};
 use wowdps_model::fmt::{commas, duration};
 use wowdps_model::{Class, LustWindow, View};
@@ -145,11 +144,11 @@ impl Ribbon {
     pub fn of(gui: &Gui, cx: &App) -> Option<Self> {
         let app = gui.fight(cx);
         let raid = app.raid()?;
-        let hide = gui.cfg.hide_realms;
+        let names = gui.names(cx);
         let open = (app.view == View::Deaths)
             .then(|| selected(app, raid))
             .flatten();
-        let owner = gui.death_owner(raid);
+        let owner = gui.death_owner(raid, cx);
         let span = fight_span(app, 0);
         let (step_ms, rate) = rates(&raid.series, raid.bucket_ms.max(1), span);
         let skulls = raid
@@ -159,13 +158,9 @@ impl Ribbon {
             .map(|(i, d)| Skull {
                 at_ms: d.at_ms,
                 pick: Pick::of(d),
-                name: if hide {
-                    display_name(&d.name).to_string()
-                } else {
-                    d.name.clone()
-                },
+                name: names.shown(&d.name),
                 class: d.class,
-                words: skull_words(d, hide),
+                words: skull_words(d, names),
                 mine: is_mine(d, owner.as_deref()),
                 enemy: d.enemy,
                 on: open == Some(i),

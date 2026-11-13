@@ -2,7 +2,7 @@
 //! what it lists — the pulls on the rail (the newest few before anything
 //! is typed), the players of the pull on the stage, the views and the
 //! window's screens, grouped — how a query narrows it (the row filter's
-//! accent-folded substring, so "akanos" finds Akanôs), and the selection
+//! accent-folded substring, so "vashon" finds Vashôn), and the selection
 //! the keys move. Moved from the iced window's palette so both window GUIs
 //! list and rank the same things.
 
@@ -10,7 +10,7 @@ use wowdps_model::{Action, Class, Row, Spec, View};
 
 use crate::fold;
 use crate::home::{ALL_CHARACTERS, CharLine};
-use crate::labels::{WINDOW_VIEWS, shown_name, window_view_name};
+use crate::labels::{Names, WINDOW_VIEWS, window_view_name};
 use crate::rail::{KeyWord, Mark, Pull, Rail};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -129,8 +129,8 @@ pub struct Item {
 /// all characters and each of `chars` (the characters the window knows you
 /// play). `players` are that pull's rows — our side's, whatever view they
 /// were read on.
-pub fn items(rail: &Rail, players: &[Row], chars: &[CharLine], hide_realms: bool) -> Vec<Item> {
-    let shown = |name: &str| shown_name(name, hide_realms);
+pub fn items(rail: &Rail, players: &[Row], chars: &[CharLine], names: Names) -> Vec<Item> {
+    let shown = |name: &str| names.shown(name);
     let mut out = Vec::new();
     let mut recent = 0;
     for night in &rail.nights {
@@ -277,7 +277,7 @@ pub fn listed(items: Vec<Item>, query: &str) -> Vec<Item> {
 
 /// Does `item` answer to the folded `needle`? Its title and its words are
 /// one text, a space between (the prototype's `fold(t + ' ' + s)`), so a
-/// query may run from one into the other: "akanos devourer".
+/// query may run from one into the other: "vashon devourer".
 fn matches(item: &Item, needle: &[char]) -> bool {
     if item.sub.is_empty() {
         fold::contains(&item.title, needle)

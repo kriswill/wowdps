@@ -4162,19 +4162,38 @@ fn mine_is_every_character_of_the_account_the_store_knows() {
         },
     );
     let mine = store.mine();
-    assert!(mine.owns("Player-9-Z", "Cy-Nebula"), "configured, unseen");
-    assert!(!mine.owns("Player-1-A", "Ana") && !mine.owns("Player-1-B", "Bo"));
+    assert!(
+        mine.of(wowdps_model::Edition::Retail)
+            .owns("Player-9-Z", "Cy-Nebula"),
+        "configured, unseen"
+    );
+    assert!(
+        !mine
+            .of(wowdps_model::Edition::Retail)
+            .owns("Player-1-A", "Ana")
+            && !mine
+                .of(wowdps_model::Edition::Retail)
+                .owns("Player-1-B", "Bo")
+    );
     store.merge_affiliations(vec![
         affiliation("Player-1-A", "Templars", true, 2_000),
         affiliation("Player-1-B", "Templars", false, 2_000),
     ]);
     let mine = store.mine();
-    assert!(mine.owns("Player-1-A", "whatever the fight calls him"));
     assert!(
-        !mine.owns("Player-1-B", "Bo"),
+        mine.of(wowdps_model::Edition::Retail)
+            .owns("Player-1-A", "whatever the fight calls them")
+    );
+    assert!(
+        !mine
+            .of(wowdps_model::Edition::Retail)
+            .owns("Player-1-B", "Bo"),
         "a guildmate is not the account's"
     );
-    assert!(mine.owns("Player-9-Z", "Cy"));
+    assert!(
+        mine.of(wowdps_model::Edition::Retail)
+            .owns("Player-9-Z", "Cy")
+    );
 }
 
 /// A fake install: `.build.info`, the product dir with its Logs, a STALE

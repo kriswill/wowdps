@@ -140,6 +140,9 @@ fn run_daemon(source: Option<SourceSpec>, linger: bool) -> i32 {
         }
     };
     daemon_log(&format!("starting on {}", spec_display(&opts.source)));
+    if let Some(note) = unnamed_forever_characters(&cfg.history_characters, &opts) {
+        daemon_log(&note);
+    }
     match wowdps_daemon::run(opts) {
         Ok(()) => {
             daemon_log("clean exit");
@@ -157,6 +160,38 @@ fn run_daemon(source: Option<SourceSpec>, linger: bool) -> i32 {
             1
         }
     }
+}
+
+/// The line the start writes when the daemon follows Forever and a
+/// `history_characters` entry is one word: such a name can never be a
+/// Forever character's (`wowdps_model::names::never_names_forever`), whose
+/// labels name it by both names. Positions only, never the names.
+fn unnamed_forever_characters(characters: &[String], opts: &DaemonOptions) -> Option<String> {
+    let forever = opts.editions.source == Some(Edition::Forever)
+        || opts
+            .editions
+            .more
+            .iter()
+            .any(|(e, _)| *e == Edition::Forever);
+    let lone: Vec<String> = characters
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| wowdps_model::names::never_names_forever(c))
+        .map(|(i, _)| (i + 1).to_string())
+        .collect();
+    let (which, are) = if lone.len() == 1 {
+        ("entry", "is")
+    } else {
+        ("entries", "are")
+    };
+    (forever && !lone.is_empty()).then(|| {
+        format!(
+            "config history_characters: {which} {} {are} one word, which names no Forever \
+             character (a Forever character is named by both its names, \"First Last\"); \
+             it can still name a Retail one",
+            lone.join(", "),
+        )
+    })
 }
 
 /// Append one line to `$XDG_STATE_HOME/wowdps/daemon.log` — the only trace a
@@ -704,7 +739,7 @@ fn run(mut client: DaemonClient, mut state: ClientState) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{game_line, source_lines, tables_line, tui_state};
+    use super::{game_line, source_lines, tables_line, tui_state, unnamed_forever_characters};
     use wowdps_model::Edition;
     use wowdps_proto::{ClientMsg, Cursor, EditionRef, EditionSource};
 
@@ -852,5 +887,39 @@ mod tests {
             watch_edition(following.initial_request()),
             EditionRef::Follow
         );
+    }
+
+    /// A daemon following Forever says, once at start, which configured
+    /// entries are one word (by position, never by name); one that follows
+    /// no Forever folder, or a config of full names, says nothing.
+    #[test]
+    fn a_one_word_character_is_named_once_at_start_by_position() {
+        use std::path::PathBuf;
+        use wowdps_core::cli::SourceSpec;
+        let cfg = wowdps_daemon::config::Config::default();
+        let mut opts = wowdps_daemon::DaemonOptions::production(
+            &cfg,
+            Some(SourceSpec::Dir(PathBuf::from("/wow/_retail_/Logs"))),
+            false,
+        )
+        .expect("options");
+        opts.editions.source = Some(Edition::Retail);
+        opts.editions.more = vec![(Edition::Forever, PathBuf::from("/wow/_forever_/Logs"))];
+        let chars = |c: &[&str]| c.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let line = unnamed_forever_characters(&chars(&["Durgan-Nebula", "Ada", "Corwin"]), &opts)
+            .expect("a line");
+        assert!(
+            line.contains("history_characters: entries 2, 3 are one word"),
+            "{line}"
+        );
+        assert!(!line.contains("Ada") && !line.contains("Corwin"), "{line}");
+        let one = unnamed_forever_characters(&chars(&["Ada Brightwater", "Ada"]), &opts);
+        assert!(one.is_some_and(|l| l.contains("entry 2 is one word")));
+        assert_eq!(
+            unnamed_forever_characters(&chars(&["Ada Brightwater"]), &opts),
+            None
+        );
+        opts.editions.more.clear();
+        assert_eq!(unnamed_forever_characters(&chars(&["Ada"]), &opts), None);
     }
 }

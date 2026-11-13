@@ -45,14 +45,14 @@ impl Gui {
     pub(crate) fn insp(&self, w: &W, cx: &gpui_kit::App) -> Insp {
         let app = self.fight(cx);
         let rows = app.rows();
-        let owner = self.owner_in(&rows, app.view);
-        let owner_of = |rows: &[Row]| self.owner_of(rows);
+        let owner = self.owner_in(&rows, app.view, cx);
+        let owner_of = |rows: &[Row]| self.owner_of(rows, cx);
         Insp::of(&Ctx {
             app,
             st: &self.insp,
             t: &w.t,
             data: &w.data,
-            hide: self.cfg.hide_realms,
+            names: self.names(cx),
             owner,
             owner_of: &owner_of,
             stored: self.hist.store.stored.as_ref().map(|s| s.offered()),
@@ -116,7 +116,7 @@ impl Gui {
         let app = super::history::fight_of(&self.hist, &self.session, cx);
         if app.view != View::EnemyTaken {
             let rows = app.rows();
-            self.insp.roster.observe(&rows);
+            self.insp.roster.observe(&rows, app.segment_edition());
         }
         if let Some((context, keys)) = stack_keys(app) {
             self.insp.stack_slots.observe(&context, &keys);

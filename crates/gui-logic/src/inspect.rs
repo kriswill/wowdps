@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use wowdps_model::{Class, Row, Spec};
+use wowdps_model::{Class, Edition, Row, Spec};
 
 pub mod curves;
 pub mod geometry;
@@ -35,20 +35,24 @@ pub mod stack;
 /// roster's to say.
 #[derive(Debug, Clone, Default)]
 pub struct Roster {
-    people: HashMap<String, (String, Option<Class>)>,
+    /// By guid: the label, the class, and the edition of the fight the
+    /// label was read in, which reads it.
+    people: HashMap<String, (String, Option<Class>, Edition)>,
     names: HashMap<String, (Option<Class>, Option<Spec>)>,
 }
 
 impl Roster {
-    /// Take in a meter's rows (players: never the enemies' view).
-    pub fn observe(&mut self, rows: &[Row]) {
+    /// Take in a meter's rows (players: never the enemies' view), of a
+    /// fight of `edition` (Retail's when none is known).
+    pub fn observe(&mut self, rows: &[Row], edition: Option<Edition>) {
+        let edition = edition.unwrap_or(Edition::Retail);
         for r in rows {
             match self.people.get_mut(&r.key) {
                 Some(have) if have.1.is_none() && r.class.is_some() => have.1 = r.class,
                 Some(_) => {}
                 None => {
                     self.people
-                        .insert(r.key.clone(), (r.label.clone(), r.class));
+                        .insert(r.key.clone(), (r.label.clone(), r.class, edition));
                 }
             }
             // Every tick walks every row: a name already known is looked up,
@@ -67,9 +71,23 @@ impl Roster {
         }
     }
 
-    /// Their name ("Name-Realm") and class, when seen.
+    /// Their label ("Name-Realm-Region", as the log writes it) and class,
+    /// when seen.
     pub fn get(&self, guid: &str) -> Option<(&str, Option<Class>)> {
-        self.people.get(guid).map(|(n, c)| (n.as_str(), *c))
+        self.people.get(guid).map(|(n, c, _)| (n.as_str(), *c))
+    }
+
+    /// Their name as the game shows it ("Durgan", "Ada Brightwater"), read
+    /// by the edition of the fight they were seen in, and their class.
+    pub fn name(&self, guid: &str) -> Option<(String, Option<Class>)> {
+        self.people.get(guid).map(|(n, c, e)| {
+            (
+                wowdps_model::names::Label::player(n, *e)
+                    .name()
+                    .into_owned(),
+                *c,
+            )
+        })
     }
 
     /// `rows` — a drill's targets, keyed by name — each wearing its OWN

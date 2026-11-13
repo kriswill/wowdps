@@ -3017,6 +3017,18 @@ fn start_two_editions(
     stale: &str,
     history: bool,
 ) -> PathBuf {
+    start_two_editions_owned(tmp, retail, forever, stale, history.then(Vec::new))
+}
+
+/// [`start_two_editions`] whose store, when there is one (`characters`),
+/// names the account's characters by those configured names.
+fn start_two_editions_owned(
+    tmp: &Temp,
+    retail: &[(&str, &str)],
+    forever: &[(&str, &str)],
+    stale: &str,
+    characters: Option<Vec<String>>,
+) -> PathBuf {
     use wowdps_model::Edition;
     let wow = tmp.0.join("World of Warcraft");
     std::fs::create_dir_all(wow.join("Data/data")).expect("mkdir");
@@ -3040,7 +3052,10 @@ fn start_two_editions(
             assert!(set.is_ok(), "{set:?}");
         }
     }
-    let opts = history.then(|| history_opts(tmp));
+    let opts = characters.map(|characters| wowdps_daemon::history::HistoryOptions {
+        characters,
+        ..history_opts(tmp)
+    });
     let editions = wowdps_daemon::Followed::of_logs_dir(&rdir);
     assert_eq!(
         editions,
@@ -3187,7 +3202,7 @@ fn the_live_tools_follow_or_pin_an_edition() {
     let mut sec = 0;
     let mut write_forever = || {
         let line = format!(
-            "11/1/2026 20:01:{sec:02}.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990002-0000A0B002,\"Ashwing Acolyte\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990002-0000A0B002,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST\n"
+            "11/1/2026 20:01:{sec:02}.000-8  SPELL_DAMAGE,Player-6101-0A2B3C01,\"Velkris-Duskmantle-Nebula-US\",0x511,0x80000000,Creature-0-6101-48-2001-990002-0000A0B002,\"Ashwing Acolyte\",0xa48,0x80000000,1752,\"Sinister Strike\",0x1,Creature-0-6101-48-2001-990002-0000A0B002,0000000000000000,1170,1290,93,0,932,0,0,0,1,0,0,0,-507.79,-11.67,0,0.3814,22,120,125,-1,1,0,0,0,nil,nil,nil,ST\n"
         );
         sec += 1;
         let wrote = std::fs::OpenOptions::new()
@@ -3303,12 +3318,37 @@ fn the_live_tools_follow_or_pin_an_edition() {
     );
     assert_eq!(
         doc.get("player").map(|p| str_of(p, "name").to_string()),
-        Some("Velkris-Nebula-US".to_string())
+        Some("Velkris-Duskmantle-Nebula-US".to_string())
+    );
+    // A Forever player is named by both names as the game shows them, or
+    // by a first name one player alone has; two players sharing a first
+    // name are refused by it, each named, never one picked.
+    let doc = doc_of(
+        &mut bridge,
+        "breakdown",
+        &format!(r#"{{"segment_id":{geilhast},"player":"velkris duskmantle"}}"#),
+    );
+    assert_eq!(
+        doc.get("player").map(|p| str_of(p, "name").to_string()),
+        Some("Velkris-Duskmantle-Nebula-US".to_string())
+    );
+    let reply = call(
+        &mut bridge,
+        "breakdown",
+        &format!(r#"{{"segment_id":{geilhast},"player":"Tharokk"}}"#),
+    );
+    let text = error_text(&reply);
+    assert!(
+        text.contains("names more than one player")
+            && text.contains("Tharokk-Emberfell-Nebula-US")
+            && text.contains("Tharokk-Ironvale-Nebula-US"),
+        "{}",
+        reply.to_line()
     );
     let doc = doc_of(
         &mut bridge,
         "compare",
-        &format!(r#"{{"segment_id":{geilhast},"a":"Velkris","b":"Hollin"}}"#),
+        &format!(r#"{{"segment_id":{geilhast},"a":"Velkris","b":"Tharokk Ironvale"}}"#),
     );
     let fight = doc.get("fight").expect("fight");
     assert_eq!(str_of(fight, "edition"), "forever");
@@ -3380,6 +3420,271 @@ fn boss_log(project_id: u8, hour: u32, guid: &str, name: &str, pulls: &[(u32, bo
         ));
     }
     out
+}
+
+/// One pull of the boss by every `(guid, label)` of `players`, each
+/// dealing a Frostbolt.
+fn party_log(project_id: u8, hour: u32, players: &[(&str, &str)]) -> String {
+    let date = "7/27/2026";
+    let ts = |s: u32| format!("{date} {hour}:10:{s:02}.000-4");
+    let mut out = format!(
+        "{date} {hour}:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,{project_id}\n\
+         {date} {hour}:00:01.000-4  ZONE_CHANGE,2769,\"Hall of Echoes\",15\n\
+         {}  ENCOUNTER_START,3130,\"The Ashen Warden\",15,20,2769\n",
+        ts(0)
+    );
+    for (i, (guid, name)) in players.iter().enumerate() {
+        out.push_str(&format!(
+            "{}  SPELL_DAMAGE,{guid},\"{name}\",0x512,0x0,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,116,\"Frostbolt\",16,{},9000,0,0,0,0,0,nil,nil\n",
+            ts(1 + i as u32),
+            1000 * (i + 1)
+        ));
+    }
+    out.push_str(&format!(
+        "{}  ENCOUNTER_END,3130,\"The Ashen Warden\",15,20,1,40000\n",
+        ts(40)
+    ));
+    out
+}
+
+/// The history tools look a player up over many stored fights, where the
+/// start of a name never answers: a name that only a longer one begins
+/// with is no one's, in `history`, `trend`, `stored_fight` and a stored
+/// `loadout` alike — never the stranger who happens to start so. A Forever
+/// first name two players share is answered for the account's own
+/// character when exactly one of them is (its configured full name stamps
+/// the card's owner), and the answer says which label was taken; a name
+/// none of whose players is the account's is refused, naming each.
+#[test]
+fn stored_lookups_take_no_prefix_and_prefer_the_account_s_own() {
+    let tmp = Temp::new("hist-names");
+    let forever = party_log(
+        18,
+        20,
+        &[
+            ("Player-6101-0000D001", "Tharokk-Emberfell-Nebula-US"),
+            ("Player-6101-0000D002", "Tharokk-Ironvale-Nebula-US"),
+            ("Player-6101-0000D003", "Velkrissa-Moor-Nebula-US"),
+            ("Player-6101-0000D004", "Ada-Brightwater-Nebula-US"),
+            ("Player-6101-0000D005", "Ada-Thornfield-Nebula-US"),
+        ],
+    );
+    let later = boss_log(
+        18,
+        23,
+        "Player-6101-0000D009",
+        "Orrin-Hale-Nebula-US",
+        &[(30, true)],
+    );
+    let retail = boss_log(
+        1,
+        22,
+        "Player-1-0000E001",
+        "Brannocks-Halcyon-US",
+        &[(30, true)],
+    );
+    let socket = start_two_editions_owned(
+        &tmp,
+        &[("WoWCombatLog-072726_220000.txt", &retail)],
+        &[
+            ("WoWCombatLog-072726_200000.txt", &forever),
+            ("WoWCombatLog-072726_230000.txt", &later),
+        ],
+        "WoWCombatLog-072726_200000.txt",
+        Some(vec!["Tharokk Emberfell".to_string()]),
+    );
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    let party = |bridge: &mut Bridge| {
+        let doc = doc_of(
+            bridge,
+            "history",
+            r#"{"edition":"forever","kind":"encounter"}"#,
+        );
+        fights(&doc)
+            .iter()
+            .find(|f| num_of(f, "roster_size") == 5.0)
+            .map(|f| (str_of(f, "id").to_string(), f.get("owner").cloned()))
+    };
+    let deadline = Instant::now() + DEADLINE;
+    let (fid, owner) = loop {
+        let brannocks = doc_of(&mut bridge, "history", r#"{"edition":"retail"}"#);
+        if let Some(found) = party(&mut bridge)
+            && !fights(&brannocks).is_empty()
+        {
+            break found;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the store never held both editions' pulls"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    // The configured full name stamps the card's owner.
+    assert_eq!(owner, Some(Json::str("Player-6101-0000D001")));
+
+    // The start of a name answers nothing over stored fights.
+    for (tool, args) in [
+        ("history", r#"{"player":"Velkris"}"#.to_string()),
+        ("history", r#"{"player":"Brannoc"}"#.to_string()),
+        (
+            "trend",
+            r#"{"player":"Velkris","edition":"forever"}"#.to_string(),
+        ),
+        ("trend", r#"{"player":"Brannoc"}"#.to_string()),
+        (
+            "stored_fight",
+            format!(r#"{{"fight_id":"{fid}","player":"Velkris"}}"#),
+        ),
+        (
+            "loadout",
+            format!(r#"{{"fight_id":"{fid}","player":"Velkris"}}"#),
+        ),
+    ] {
+        let reply = call(&mut bridge, tool, &args);
+        assert!(
+            is_error(&reply)
+                && error_text(&reply).contains("no ")
+                && error_text(&reply).contains("named"),
+            "{tool} {args}: {}",
+            reply.to_line()
+        );
+    }
+    // The whole name answers, with no note.
+    let trend = doc_of(&mut bridge, "trend", r#"{"player":"Velkrissa Moor"}"#);
+    assert_eq!(str_of(&trend, "player"), "Player-6101-0000D003");
+    assert_eq!(trend.get("player_note"), Some(&Json::Null));
+    // A first name only one stored player has answers too, never silently:
+    // it may be a stranger's who alone still has it, so every stored tool
+    // names the label and guid it took.
+    let lone = |doc: &Json, key: &str| {
+        let note = str_of(doc, key);
+        assert!(
+            note.contains("a first name alone")
+                && note.contains("Velkrissa-Moor-Nebula-US (Player-6101-0000D003)"),
+            "{key}: {note}"
+        );
+    };
+    lone(
+        &doc_of(&mut bridge, "trend", r#"{"player":"Velkrissa"}"#),
+        "player_note",
+    );
+    lone(
+        &doc_of(&mut bridge, "history", r#"{"player":"Velkrissa"}"#),
+        "player_note",
+    );
+    lone(
+        &doc_of(
+            &mut bridge,
+            "history",
+            r#"{"edition":"forever","players":"Velkrissa"}"#,
+        ),
+        "peer_note",
+    );
+    lone(
+        &doc_of(
+            &mut bridge,
+            "stored_fight",
+            &format!(r#"{{"fight_id":"{fid}","player":"Velkrissa"}}"#),
+        ),
+        "player_note",
+    );
+    lone(
+        &doc_of(
+            &mut bridge,
+            "loadout",
+            &format!(r#"{{"fight_id":"{fid}","player":"Velkrissa"}}"#),
+        ),
+        "player_note",
+    );
+
+    // A shared first name: the account's own character, said so.
+    let trend = doc_of(&mut bridge, "trend", r#"{"player":"Tharokk"}"#);
+    assert_eq!(str_of(&trend, "player"), "Player-6101-0000D001");
+    let note = str_of(&trend, "player_note");
+    assert!(
+        note.contains("Tharokk-Emberfell-Nebula-US") && note.contains("account's own"),
+        "{note}"
+    );
+    let drill = doc_of(
+        &mut bridge,
+        "stored_fight",
+        &format!(r#"{{"fight_id":"{fid}","player":"Tharokk"}}"#),
+    );
+    assert!(str_of(&drill, "player_note").contains("Tharokk-Emberfell-Nebula-US"));
+    let build = doc_of(
+        &mut bridge,
+        "loadout",
+        &format!(r#"{{"fight_id":"{fid}","player":"Tharokk"}}"#),
+    );
+    assert_eq!(
+        str_of(build.get("player").expect("player"), "key"),
+        "Player-6101-0000D001"
+    );
+    assert!(str_of(&build, "player_note").contains("account's own"));
+    // A shared first name none of whose players is the account's: refused.
+    let reply = call(&mut bridge, "trend", r#"{"player":"Ada"}"#);
+    let text = error_text(&reply);
+    assert!(
+        text.contains("names more than one player")
+            && text.contains("Ada-Brightwater-Nebula-US")
+            && text.contains("Ada-Thornfield-Nebula-US"),
+        "{text}"
+    );
+}
+
+/// A live tool looks a player up in the fight's own rows, where the start
+/// of a name may answer; a first name two players share answers for the
+/// account's own (the row the daemon marks `mine`, here by its configured
+/// full name) and says which label it took.
+#[test]
+fn a_live_lookup_takes_the_account_s_own_among_namesakes() {
+    let tmp = Temp::new("live-names");
+    let opts = wowdps_daemon::history::HistoryOptions {
+        characters: vec!["Tharokk Ironvale".to_string()],
+        ..history_opts(&tmp)
+    };
+    let socket = start_daemon_with(&tmp, FOREVER_FIXTURE, |o| o.history = Some(opts));
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    // "Mine" is published once the store has answered: wait for its card.
+    let deadline = Instant::now() + DEADLINE;
+    while fights(&doc_of(&mut bridge, "history", "{}")).is_empty() {
+        assert!(Instant::now() < deadline, "the store never held the pull");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let doc = doc_of(&mut bridge, "breakdown", r#"{"player":"Tharokk"}"#);
+    assert_eq!(
+        str_of(doc.get("player").expect("player"), "name"),
+        "Tharokk-Ironvale-Nebula-US"
+    );
+    let note = str_of(&doc, "player_note");
+    assert!(
+        note.contains("Tharokk-Ironvale-Nebula-US") && note.contains("account's own"),
+        "{note}"
+    );
+    // The start of a name one player's name has answers live, and a first
+    // name one player alone has; neither silently: the note names the
+    // label and guid taken. The full name needs no note.
+    let doc = doc_of(&mut bridge, "breakdown", r#"{"player":"Brindle"}"#);
+    assert_eq!(
+        str_of(doc.get("player").expect("player"), "name"),
+        "Brindlewick-Fenn-Nebula-US"
+    );
+    let note = str_of(&doc, "player_note");
+    assert!(
+        note.contains("the start of a name") && note.contains("Brindlewick-Fenn-Nebula-US"),
+        "{note}"
+    );
+    let doc = doc_of(&mut bridge, "loadout", r#"{"player":"Elowyn"}"#);
+    assert!(str_of(&doc, "player_note").contains("a first name alone"));
+    let doc = doc_of(&mut bridge, "breakdown", r#"{"player":"Elowyn Marsh"}"#);
+    assert_eq!(doc.get("player_note"), Some(&Json::Null));
+    let doc = doc_of(
+        &mut bridge,
+        "compare",
+        r#"{"a":"Velkris","b":"Tharokk Emberfell"}"#,
+    );
+    assert!(str_of(&doc, "a_note").contains("Velkris-Duskmantle-Nebula-US"));
+    assert_eq!(doc.get("b_note"), Some(&Json::Null));
 }
 
 /// The history tools over a store holding two editions' pulls of one boss

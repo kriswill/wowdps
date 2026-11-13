@@ -334,7 +334,9 @@ fn bests_kept(
             keep_whole: false,
             keep_progression: false,
             keep_per_encounter: 0,
-            characters: vec!["Ana".to_string()],
+            // A Forever character is configured by both names: its first
+            // name alone names no one.
+            characters: vec!["Ana".to_string(), "Ana Moss".to_string()],
             ..Retention::default()
         },
     );
@@ -349,6 +351,8 @@ fn bests_kept(
             guid,
             name: if *day == 27 {
                 "Ana-Realm"
+            } else if *project_id == FOREVER {
+                "Ana-Moss-Elsewhere-US"
             } else {
                 "Ana-Elsewhere"
             },
@@ -371,8 +375,8 @@ fn bests_kept(
         .collect()
 }
 
-/// The owner's personal bests are per edition: the same configured name is
-/// a character in each edition, and each keeps its own best wipe however
+/// The owner's personal bests are per edition: the same configured names
+/// name a character in each edition (Forever's by both its names), and each keeps its own best wipe however
 /// the other edition's numbers compare — higher or lower, and between two
 /// Classic clients as between Retail and Forever.
 #[test]
@@ -829,8 +833,11 @@ fn each_edition_infers_its_own_owner() {
         "stamped on open, each by its own edition's owner"
     );
     let mine = store.mine();
-    assert!(mine.owns("G-me", "Me-Realm") && mine.owns("G-fme", "Fme-Realm"));
-    assert!(!mine.owns("G-c", "C-Realm"));
+    assert!(
+        mine.of(Edition::Retail).owns("G-me", "Me-Realm")
+            && mine.of(Edition::Retail).owns("G-fme", "Fme-Realm")
+    );
+    assert!(!mine.of(Edition::Retail).owns("G-c", "C-Realm"));
 
     // A fights answer reads each card's own edition's owner: the role
     // filter's subject and the owner-per-second sort.
@@ -1599,7 +1606,7 @@ fn append(path: &Path, text: &str) {
     f.write_all(text.as_bytes()).unwrap();
 }
 
-const BUFF: &str = "11/1/2026 20:50:00.000-8  SPELL_AURA_APPLIED,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,Player-6101-0A2B3C03,\"Tharokk-Nebula-US\",0x512,0x80000000,71,\"Defensive Stance\",0x1,BUFF";
+const BUFF: &str = "11/1/2026 20:50:00.000-8  SPELL_AURA_APPLIED,Player-6101-0A2B3C03,\"Tharokk-Emberfell-Nebula-US\",0x512,0x80000000,Player-6101-0A2B3C03,\"Tharokk-Emberfell-Nebula-US\",0x512,0x80000000,71,\"Defensive Stance\",0x1,BUFF";
 
 /// The newest line time a source's logs show, what the live edition is
 /// ranked by, through a real tailer over a logs folder: the log's last

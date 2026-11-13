@@ -7,6 +7,7 @@
 //! contract keep their existing paths.
 
 pub mod fmt;
+pub mod names;
 pub mod replay;
 pub mod series;
 

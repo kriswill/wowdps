@@ -299,8 +299,10 @@ impl Config {
         base.join("wowdps").join("config.toml")
     }
 
-    /// The daemon's `history_characters` — "Name-Realm" strings naming the
-    /// characters that are "me". The GUI does not own the key (it rides in
+    /// The daemon's `history_characters` — the names ("Name-Realm", a bare
+    /// "Name", a Forever character's "First Last") of the characters that
+    /// are "me", matched as `wowdps_model::names::Label::is_called` reads
+    /// them. The GUI does not own the key (it rides in
     /// `extra`, untouched through a save), but Home needs it: a character
     /// the store has no cards for this season would otherwise vanish from
     /// its own dashboard.

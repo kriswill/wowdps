@@ -22,7 +22,7 @@ use crate::testkit::{self, EditionsLink, MockLink};
 /// The fixtures' characters: Retail's and Forever's, each the owner of its
 /// edition's stored fights.
 const RETAIL_ME: &str = "Thraxx-Nebula-US";
-const FOREVER_ME: &str = "Velkris-Nebula-US";
+const FOREVER_ME: &str = "Velkris-Duskmantle-Nebula-US";
 
 type Sent = Rc<RefCell<Vec<ClientMsg>>>;
 
@@ -234,6 +234,47 @@ fn the_switch_shows_one_game_at_a_time(cx: &mut TestAppContext) {
     });
     assert!(!shown(cx, &rig, "head-edition"));
     assert_eq!(rail_editions(cx, &rig), vec![Edition::Retail]);
+}
+
+/// A Forever fight's meter writes each player by both names, as the game
+/// shows them, and two players who share a first name are two rows, each
+/// by its own names — with realms or without, as the option says. Retail's
+/// rows read as the log wrote them.
+#[gpui_kit::test]
+fn a_forever_meter_writes_both_names(cx: &mut TestAppContext) {
+    let (rig, h) = two(cx, EditionsLink::owned(&[RETAIL_ME, FOREVER_ME]));
+    h.playing.set(Some(Edition::Retail));
+    status(cx, &rig);
+    let labels = |cx: &mut TestAppContext| {
+        rig.gui.read_with(cx, |g, cx| {
+            let w = super::super::w::W::new(1.0, 1440., cx);
+            super::super::table::Meter::of(g, &w, cx).drawn_labels()
+        })
+    };
+    assert!(
+        labels(cx).contains(&RETAIL_ME.to_string()),
+        "{:?}",
+        labels(cx)
+    );
+    pick(cx, &rig, "edition-forever");
+    let shown = labels(cx);
+    for name in [
+        "Tharokk Emberfell-Nebula-US",
+        "Tharokk Ironvale-Nebula-US",
+        "Velkris Duskmantle-Nebula-US",
+    ] {
+        assert!(shown.contains(&name.to_string()), "{shown:?}");
+    }
+    rig.gui.update(cx, |g, _| g.cfg.hide_realms = true);
+    let hidden = labels(cx);
+    for name in [
+        "Tharokk Emberfell",
+        "Tharokk Ironvale",
+        "Velkris Duskmantle",
+    ] {
+        assert!(hidden.contains(&name.to_string()), "{hidden:?}");
+    }
+    assert!(!hidden.contains(&"Tharokk".to_string()), "{hidden:?}");
 }
 
 /// Where the bar has room the games sit side by side, a chip each, every

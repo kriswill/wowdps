@@ -36,7 +36,6 @@ use gpui_kit::base::{Keyframe, Keyframes, Timing, TransitionId, animate_keyframe
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, KeyDownEvent, Task, Window};
 use wowdps_gui_logic::keys::{Inert, Surface, inert_keys};
-use wowdps_gui_logic::labels::display_name;
 use wowdps_gui_logic::theme::{Chrome, Def, class_accent};
 use wowdps_gui_logic::toast::{TOAST_FOR, pinned_player, stored_refusal};
 use wowdps_model::{Action, Screen, View};
@@ -283,11 +282,7 @@ impl Gui {
             Some((key, label))
                 if screen == Screen::Meter && before.as_deref() != Some(key.as_str()) =>
             {
-                let name = if self.cfg.hide_realms {
-                    display_name(label).to_string()
-                } else {
-                    label.clone()
-                };
+                let name = self.names(cx).shown(label);
                 self.say(&pinned_player(&name), cx);
             }
             Some(_) if screen != Screen::Compare => {}

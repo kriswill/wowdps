@@ -147,8 +147,8 @@ depends on the day the shots are taken.
   default.
 - `WOWDPS_SHOTS_LOG=<log>` — a combat log the mock reads instead. The
   window is landed on the newest pull of `WOWDPS_SHOTS_FIGHT` (default
-  "The Coiled Altar"), with `WOWDPS_SHOTS_OWNER` (default "Tranqlock")
-  named in the config's `history_characters` so the "you" marks find them,
+  "The Coiled Altar"), with `WOWDPS_SHOTS_OWNER` (no default) named in the
+  config's `history_characters` so the "you" marks find them,
   and the display keys the iced shots used: realms hidden, ranks shown,
   comfortable density.
 - `WOWDPS_SHOTS_HISTORY=<store v1 dir>` — a history store read through

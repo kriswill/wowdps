@@ -23,6 +23,7 @@ use wowdps_gui_logic::editions::{
     Entry, Face, Form, chip_tip, chips, compact_tip, ink_on, richest_fit, switch_form,
 };
 use wowdps_gui_logic::glyph::Glyph;
+use wowdps_gui_logic::labels::Names;
 use wowdps_model::fmt::duration;
 use wowdps_model::{Class, Screen, SegmentKind, Spec};
 use wowdps_proto::ClientState;
@@ -237,7 +238,7 @@ impl Parts {
         window: &mut Window,
         narrow: bool,
         pill: Option<&Pill>,
-        picker: Option<(&CharPick, bool)>,
+        picker: Option<(&CharPick, Names)>,
         switch: Option<(&[Entry], &Face)>,
     ) -> Self {
         let text = |window: &mut Window, s: &str, size: f32, family: &SharedString, weight| {
@@ -267,15 +268,11 @@ impl Parts {
                 text(window, &duration(p.ms), PILL_PX, &w.ui, REGULAR),
             )
         });
-        let picker = picker.map(|(me, hide_realms)| {
+        let picker = picker.map(|(me, names)| {
             let mut width =
                 PICKER_GAP + PICKER_PAD.0 + place_px + PICKER_INNER_GAP + caret + PICKER_PAD.1;
             if !narrow {
-                let name = if hide_realms {
-                    wowdps_gui_logic::labels::display_name(&me.name).to_string()
-                } else {
-                    me.name.clone()
-                };
+                let name = names.shown(&me.name);
                 width += text(window, &name, place_px, &w.ui, SEMIBOLD).min(PICKER_NAME_W)
                     + PICKER_INNER_GAP;
             }
@@ -539,7 +536,7 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         window,
         narrow,
         pill.as_ref(),
-        me.as_ref().map(|me| (me, gui.cfg.hide_realms)),
+        me.as_ref().map(|me| (me, gui.window_names())),
         switch.as_ref().map(|(e, f)| (e.as_slice(), f)),
     );
     // The form by the bar at its widest for either game, so the width
@@ -645,7 +642,7 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
     if let Some(me) = me {
         line = line
             .child(div().w(w.z(PICKER_GAP)).flex_none())
-            .child(picker(w, me, narrow, gui.cfg.hide_realms, cx));
+            .child(picker(w, me, narrow, gui.window_names(), cx));
     }
     line = line.child(tip(
         icon_button(w, "top-gear", Glyph::Gear, true).on_mouse_down(
@@ -1023,7 +1020,7 @@ fn picker(
     w: &W,
     me: CharPick,
     narrow: bool,
-    hide_realms: bool,
+    names: Names,
     cx: &mut Context<Gui>,
 ) -> impl IntoElement {
     let side = w.z(w.size.place);
@@ -1051,11 +1048,7 @@ fn picker(
                 .bg(hsla(w.class_rgb(me.class)))
                 .into_any_element(),
         });
-    let name = if hide_realms {
-        wowdps_gui_logic::labels::display_name(&me.name).to_string()
-    } else {
-        me.name.clone()
-    };
+    let name = names.shown(&me.name);
     div()
         .id("top-picker")
         .test_support()

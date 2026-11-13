@@ -123,11 +123,8 @@ pub fn lanes(
             let (caster, color) = if m.src.is_empty() || m.src == player {
                 (None, own)
             } else {
-                match roster.get(&m.src) {
-                    Some((name, who)) => (
-                        Some(crate::labels::display_name(name).to_string()),
-                        who.map_or(classless, Color::of_class),
-                    ),
+                match roster.name(&m.src) {
+                    Some((name, who)) => (Some(name), who.map_or(classless, Color::of_class)),
                     // A caster no meter named (a pet, someone never on
                     // screen): a guid's tail ("0A1B2C02") is no name a
                     // reader knows, so the hover says only that it was not
@@ -190,9 +187,9 @@ pub fn pair(a: Vec<Row>, b: Vec<Row>, a_name: &str, b_name: &str) -> Vec<Row> {
         .collect()
 }
 
-/// What hovering a span says: its name, and "4:02, 40s, from Vingsham" —
+/// What hovering a span says: its name, and "4:02, 40s, from Halvric" —
 /// when, how long (a moment has no length), and who, when it was not the
-/// player; a comparison's leads with whose it is ("Swampert, 4:02, 40s").
+/// player; a comparison's leads with whose it is ("Merrow, 4:02, 40s").
 pub fn span_words(s: &Span) -> (String, String) {
     let mut when = match &s.whose {
         Some(who) => format!("{who}, {}", crate::graph::mmss(s.at_ms.max(0) as u32)),
@@ -229,20 +226,23 @@ mod tests {
 
     fn roster() -> Roster {
         let mut r = Roster::default();
-        r.observe(&[
-            MeterRow {
-                key: "Player-Shaman".into(),
-                label: "Vingsham-Proudmoore-US".into(),
-                class: Some(Class::Shaman),
-                ..MeterRow::default()
-            },
-            MeterRow {
-                key: "Player-Priest".into(),
-                label: "Eggtoast-Proudmoore-US".into(),
-                class: Some(Class::Priest),
-                ..MeterRow::default()
-            },
-        ]);
+        r.observe(
+            &[
+                MeterRow {
+                    key: "Player-Shaman".into(),
+                    label: "Halvric-Nebula-US".into(),
+                    class: Some(Class::Shaman),
+                    ..MeterRow::default()
+                },
+                MeterRow {
+                    key: "Player-Priest".into(),
+                    label: "Wenna-Nebula-US".into(),
+                    class: Some(Class::Priest),
+                    ..MeterRow::default()
+                },
+            ],
+            None,
+        );
         r
     }
 
@@ -350,7 +350,7 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(span("Heroism").color, Color::of_class(Class::Shaman));
-        assert_eq!(span("Heroism").caster.as_deref(), Some("Vingsham"));
+        assert_eq!(span("Heroism").caster.as_deref(), Some("Halvric"));
         assert_eq!(span("Power Infusion").color, Color::of_class(Class::Priest));
         assert_eq!(span("Blessing").color, CLASSLESS);
         assert_eq!(
@@ -393,10 +393,7 @@ mod tests {
         assert_eq!(externals.spans.len(), 1);
         assert_eq!(
             span_words(&externals.spans[0]),
-            (
-                "Heroism".to_string(),
-                "4:02, 40s, from Vingsham".to_string()
-            )
+            ("Heroism".to_string(), "4:02, 40s, from Halvric".to_string())
         );
         let items = rows.iter().find(|r| r.lane == Lane::Items).unwrap();
         assert_eq!(
@@ -433,7 +430,7 @@ mod tests {
             &roster(),
             CLASSLESS,
         );
-        let rows = pair(a_rows, b_rows, "Tranqlock", "Swampert");
+        let rows = pair(a_rows, b_rows, "Brannoc", "Merrow");
         let lanes_of: Vec<Lane> = rows.iter().map(|r| r.lane).collect();
         assert_eq!(
             lanes_of,
@@ -451,7 +448,7 @@ mod tests {
         assert_eq!(cds[0].color, Color::of_class(Class::Warrior));
         assert_eq!(
             span_words(&cds[1]).1,
-            "Tranqlock, 0:20, 15s",
+            "Brannoc, 0:20, 15s",
             "whose, then when"
         );
     }

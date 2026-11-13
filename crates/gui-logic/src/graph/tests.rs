@@ -29,12 +29,6 @@ fn cumulative_is_monotonic_and_dps_is_not() {
 }
 
 #[test]
-fn names_lose_their_realm() {
-    assert_eq!(short_name("Keanucleavês-Proudmoore"), "Keanucleavês");
-    assert_eq!(short_name("Alice"), "Alice");
-}
-
-#[test]
 fn marker_colors_and_names_are_distinct_per_kind() {
     // R18: every kind has a name and a colour; the exhaustive list is
     // the model's ten, in code order. Names are all distinct; colours
@@ -236,11 +230,11 @@ fn the_legend_keys_only_the_kinds_shown() {
 #[test]
 fn hover_lines_name_the_caster() {
     let t = role_marked();
-    let names = [("Player-1-0B", "Gennar"), ("Player-1-0A", "Tank")];
+    let names = [("Player-1-0B", "Corvane"), ("Player-1-0A", "Tank")];
     let (kind, name, details) =
         hover_line(&[&t], "Pain Suppression", (0, 10), &names, true, &[]).unwrap();
     assert_eq!(kind, MarkKind::External);
-    assert_eq!(name, "Pain Suppression from Gennar");
+    assert_eq!(name, "Pain Suppression from Corvane");
     assert_eq!(details, "external ×1 · uptime 8s · 80%");
     // An unknown guid shows its tail rather than nothing.
     let (_, name, _) = hover_line(&[&t], "Ebon Might", (0, 10), &names, true, &[]).unwrap();
@@ -255,7 +249,7 @@ fn hover_lines_name_the_caster() {
     u.marks[0].src = "Player-1-0C".to_string();
     let (_, name, _) =
         hover_line(&[&t, &u], "Pain Suppression", (0, 10), &names, true, &[]).unwrap();
-    assert_eq!(name, "Pain Suppression from Gennar, 0C");
+    assert_eq!(name, "Pain Suppression from Corvane, 0C");
     // No caster, no clause.
     let (_, name, _) = hover_line(&[&t], "Proc", (0, 10), &names, true, &[]).unwrap();
     assert_eq!(name, "Proc");
@@ -503,9 +497,23 @@ fn a_comparison_words_its_tables_and_its_wait() {
     assert_eq!(table_words(View::Taken), ("hit by", "nothing landed"));
     assert_eq!(table_words(View::Damage), ("spell", "no damage recorded"));
     assert_eq!(table_words(View::Dispels).0, "dispel");
-    assert_eq!(waiting_words(&[]), "pick two players to compare");
+    let names = crate::labels::Names::default();
+    assert_eq!(waiting_words(&[], names), "pick two players to compare");
     let one = [("Player-1".to_string(), "Thraxx-Nebula-US".to_string())];
-    assert_eq!(waiting_words(&one), "comparing Thraxx — pick one more");
+    assert_eq!(
+        waiting_words(&one, names),
+        "comparing Thraxx — pick one more"
+    );
     let two = [one[0].clone(), one[0].clone()];
-    assert_eq!(waiting_words(&two), "loading comparison…");
+    assert_eq!(waiting_words(&two, names), "loading comparison…");
+    // A Forever pick is named by both names.
+    let forever = crate::labels::Names::new(Some(wowdps_model::Edition::Forever), false);
+    let ada = [(
+        "Player-2".to_string(),
+        "Ada-Brightwater-Nebula-US".to_string(),
+    )];
+    assert_eq!(
+        waiting_words(&ada, forever),
+        "comparing Ada Brightwater — pick one more"
+    );
 }
