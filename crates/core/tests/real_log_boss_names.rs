@@ -8,14 +8,16 @@
 //!   transposition, an insertion, a deletion or a substitution; case and
 //!   punctuation folded; both 5+ letters): none, one or several, and where
 //!   one, whether the cut took it (its units the only bosses) or refused
-//!   it as the rule says (the cut opens several encounters, or the name
-//!   is not the strongest posted hostile, read here from the lines);
+//!   it as the rule says (the cut opens more than one distinct title, or
+//!   the name is no stronger than every posted hostile of another name,
+//!   read here from the lines);
 //! - how many units the cut calls bosses there;
 //! - two distinct hostiles one edit apart anywhere, and hostiles one edit
 //!   from a title the exact rule already matched.
 //!
 //! Held: a near-miss name is either taken alone or refused for a reason
-//! the rule gives. The title pieces are the cut's own (`title_parts`).
+//! the rule gives. The title pieces are the cut's own (`title_parts`,
+//! read from its source file).
 //! Measured over this machine's 87 logs on 2026-11-13, before the near
 //! miss existed: the exact rule named nobody in 510 of 1,456 Retail cuts
 //! with hostiles and 2 of 18 Forever pulls; the near miss found one name
@@ -44,7 +46,12 @@ use wowdps_core::index::{SegmentMeta, load_segment_text, scan};
 use wowdps_core::meter::SegmentKind;
 use wowdps_core::model::replay::{EventKind, UnitKind};
 use wowdps_core::parser::parse_line;
-use wowdps_core::replay::{NoPlaced, cut, title_parts};
+use wowdps_core::replay::{NoPlaced, cut};
+
+// The cut's own title splitter, read from its source: no public API.
+#[path = "../src/replay/titles.rs"]
+mod titles;
+use titles::title_parts;
 
 /// The hostiles of a slice as its own lines show them, read here apart
 /// from the cut: each guid's first name and its most health over the
@@ -246,7 +253,8 @@ fn measure(
             verdict = ", taken";
         } else if its_bosses == 0 {
             // A refusal the rule explains: several encounters, or a name
-            // not the strongest posted hostile (read here from the lines).
+            // no stronger than every posted hostile of another name (read
+            // here from the lines).
             let fc: Vec<Vec<char>> = cand.iter().map(|n| fold(n)).collect();
             let strongest = seen
                 .iter()
@@ -254,15 +262,20 @@ fn measure(
                 .map(|(_, hp)| *hp)
                 .max()
                 .unwrap_or(0);
-            let top = seen.iter().map(|(_, hp)| *hp).max().unwrap_or(0);
+            let others = seen
+                .iter()
+                .filter(|(n, _)| !fc.contains(&fold(n)))
+                .map(|(_, hp)| *hp)
+                .max()
+                .unwrap_or(0);
             if titles.len() > 1 {
                 t.refused += 1;
                 verdict = ", refused: several encounters";
-            } else if strongest == 0 || strongest < top {
+            } else if strongest <= others {
                 t.refused += 1;
-                verdict = ", refused: not the strongest posted hostile";
+                verdict = ", refused: not the strongest alone";
             } else {
-                verdict = ", REFUSED THOUGH THE STRONGEST";
+                verdict = ", REFUSED THOUGH THE STRONGEST ALONE";
                 t.broken.push(format!("{label} (encounter {encounter})"));
             }
         } else {

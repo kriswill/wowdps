@@ -15,6 +15,13 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 
+# check.awk folds names letter by letter (R29's boss names), which needs a
+# UTF-8 locale; gawk falls back to bytes, silently, where C.UTF-8 is missing.
+if ! LC_ALL=C.UTF-8 gawk 'BEGIN { exit !(length("\303\251") == 1) }' 2>/dev/null; then
+    echo "verify.sh: the C.UTF-8 locale is not available here; check.awk needs it to fold names by letter" >&2
+    exit 2
+fi
+
 check() {
     local log="$1" golden="$2" actual rc=0
     # The folding reads letters as the locale does (R29's boss names):

@@ -36,12 +36,12 @@ its most health by the block a hit on it carries. Every name is invented.
 
 A hostile is a `boss` when a title its cut opens names it (the whole title
 or a piece its commas and lone "and"s divide it into, case aside). When none
-is so named, in a cut of one encounter: when exactly one hostile NAME is a
-single edit from such a piece (two neighbors swapped, a letter inserted,
-deleted or substituted; case and punctuation folded; both of 5 letters or
-more) and its strongest unit is the strongest posted hostile, every unit
-of that name. Else by health: every hostile with at least 30% of the
-strongest posted one's.
+is so named, in a cut of one distinct encounter title: when exactly one
+hostile NAME is a single edit from such a piece (two neighbors swapped, a
+letter inserted, deleted or substituted; case and punctuation folded; both
+of 5 letters or more) and its strongest unit is stronger than every posted
+hostile of another name, every unit of that name. Else by health: every
+hostile with at least 30% of the strongest posted one's.
 
 ## Pull 1 — "Thalgrim Ashvane" (encounter 2950, 20 000 ms): a near miss
 

@@ -453,6 +453,27 @@ fn a_near_miss_weaker_than_the_strongest_names_nobody() {
     );
 }
 
+/// A near-miss name only as strong as a hostile of another name takes
+/// nothing from it either: "Eggling" at 10000 under "Egglings" ties
+/// Ula'tek's 10000, so health decides and keeps both bosses.
+#[test]
+fn a_near_miss_that_only_ties_the_strongest_names_nobody() {
+    let tied_egg = (
+        "Creature-0-1-2-3-501-BB,0000000000000000,1000,1000",
+        "Creature-0-1-2-3-501-BB,0000000000000000,10000,10000",
+    );
+    let c = respelled(&[
+        tied_egg,
+        ("\"Egg\"", "\"Eggling\""),
+        ("\"Ula'tek\",16,20", "\"Egglings\",16,20"),
+    ]);
+    assert_eq!(
+        kinds(&c),
+        [("Ula'tek", UnitKind::Boss), ("Eggling", UnitKind::Boss)],
+        "a tie: health decides"
+    );
+}
+
 /// Every unit of the near-miss name is a boss, the weak one beside the
 /// strongest (the Egg renamed "Ula'tek" too, under "Ulta'ek"); and a name a
 /// single edit from two pieces of one title ("Ulta'ek, Ulatec") is still

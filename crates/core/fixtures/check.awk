@@ -682,13 +682,13 @@ function r_title(s, t) { rTn[s]++; rT[s SUBSEP rTn[s]] = t }
 # many). A hostile NPC (flagged 0x40 on a modeled line, no `Player-` guid) is
 # a boss when a title the cut opens names it — the whole title, or a piece
 # its commas and lone "and"s divide it into, ASCII case aside. Else, when
-# none is so named and the cut opens ONE encounter (a keystone run's pooled
-# titles take none), when exactly one name among the hostiles is a single
+# none is so named and the cut opens one distinct encounter title (more than
+# one, pooled, take none), when exactly one name among the hostiles is a single
 # edit from such a piece — two neighbors swapped, one letter inserted,
 # deleted or substituted — with case and punctuation folded and both of 5
-# letters or more, and its strongest unit is the strongest posted hostile
-# (its most health at least every other's; one never posted is none): every
-# unit of that name. Else by health: every hostile with at least 30% of the
+# letters or more, and its strongest unit is stronger than every posted
+# hostile of another name (that name alone holds the top; a tie, or one never
+# posted, is none): every unit of that name. Else by health: every hostile with at least 30% of the
 # strongest posted one's (none posted, none is a boss). The folding reads
 # letters as the locale does: verify.sh pins a UTF-8 one.
 function r_npc(s, g) { return ((s SUBSEP g) in rH) && g !~ /^Player-/ }
@@ -741,7 +741,7 @@ function r_title_parts(t, parts, np,   u, n, pc, i) {
     return np
 }
 # Cut s's bosses into rBoss[s SUBSEP g] (each a 1).
-function r_bosses(s,   k, kk, g, i, np, parts, named, top, any, f, cf, several, best, hit, titles, nt, fold, isnear) {
+function r_bosses(s,   k, kk, g, i, np, parts, named, top, any, f, cf, several, best, hit, titles, nt, fold, isnear, other) {
     np = 0; nt = 0
     for (i = 1; i <= rTn[s]; i++) {
         np = r_title_parts(rT[s SUBSEP i], parts, np)
@@ -777,7 +777,13 @@ function r_bosses(s,   k, kk, g, i, np, parts, named, top, any, f, cf, several, 
             cf = f
             if (rMax[s SUBSEP g] > best) best = rMax[s SUBSEP g]
         }
-        if (cf != "" && !several && top > 0 && best >= top) {
+        # Every posted hostile of another name: the near miss must beat them.
+        other = 0
+        if (cf != "" && !several) for (k in rU) {
+            split(k, kk, SUBSEP); g = kk[2]
+            if (kk[1] == s && r_npc(s, g) && !isnear[rNm[s SUBSEP g]] && rMax[s SUBSEP g] > other) other = rMax[s SUBSEP g]
+        }
+        if (cf != "" && !several && best > other) {
             for (k in rU) {
                 split(k, kk, SUBSEP); g = kk[2]
                 if (kk[1] == s && r_npc(s, g) && isnear[rNm[s SUBSEP g]]) rBoss[s SUBSEP g] = 1

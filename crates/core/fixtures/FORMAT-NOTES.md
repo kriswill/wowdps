@@ -654,12 +654,13 @@ alone (`tests/real_log_boss_names.rs`):
   single edit names no creature in place of another.
 
 R29's boss rule takes the near miss: when no hostile carries a title piece
-exactly, in a cut of one encounter, the one name a single edit from one (5
-letters or more, case and punctuation folded) names the boss, provided it
-is the strongest posted hostile, so it never takes the boss kind from a
-stronger hostile of another name (a singular add under a plural title).
-A keystone run pools its encounters' titles and takes none. `bosses.txt`
-gates it.
+exactly, in a cut of one distinct encounter title, the one name a single
+edit from one (5 letters or more, case and punctuation folded) names the
+boss, provided it alone holds the strongest posted health, so it never
+takes the boss kind from a hostile of another name as strong or stronger
+(a singular add under a plural title). A cut of more than one distinct
+title (a keystone run of several encounters) pools them and takes none.
+`bosses.txt` gates it.
 
 ## Player labels
 

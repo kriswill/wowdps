@@ -213,6 +213,9 @@ impl PlacedTable for NoPlaced {
 const HOSTILE: u32 = 0x40;
 /// The GUID the log writes for no unit.
 const NOBODY: &str = "0000000000000000";
+mod titles;
+use titles::title_parts;
+
 /// A boss by health: at least this share of the strongest hostile's.
 const BOSS_SHARE: f64 = 0.3;
 /// R29: a near miss names the boss only between names of this many letters
@@ -1384,7 +1387,6 @@ impl Cutter {
                     .map(|g| (g, name_of(g))),
                 parts,
                 max_hp,
-                top,
             )
         } else {
             named
@@ -1622,20 +1624,21 @@ fn npc_id(g: &str) -> Option<u32> {
 /// one encounter, the one hostile NAME a single edit from such a piece
 /// ([`within_one_edit`]; case and punctuation folded, [`folded`]; both of
 /// [`NEAR_MISS_LETTERS`] letters or more) names the boss — every hostile
-/// of that name — provided the strongest of them IS the strongest posted
-/// hostile (its most health at least `top`, every posted hostile's). Two
-/// such names, one weaker than another hostile, or one never posted name
-/// nobody, and the health rule decides as before. The client can spell an
-/// encounter's title and its creature apart (two letters swapped); asking
-/// for the strongest keeps a near miss (a singular add under a plural
-/// title) from taking the boss kind from a stronger hostile of another
-/// name, which health alone would keep.
+/// of that name — provided the strongest of them is stronger than every
+/// posted hostile of another name: that name alone holds the strongest
+/// posted health. Two such names, one weaker than or only as strong as a
+/// hostile of another name, or one never posted name nobody, and the
+/// health rule decides as before. The client can spell an encounter's
+/// title and its creature apart (two letters swapped); asking for the
+/// strongest alone keeps a near miss (a singular add under a plural title)
+/// from taking the boss kind from a hostile of another name, stronger or
+/// as strong, which health alone would keep.
 fn near_miss<'a>(
     hostiles: impl Iterator<Item = (Gix, &'a str)>,
     parts: &HashSet<String>,
     max_hp: &HashMap<Gix, u64>,
-    top: u64,
 ) -> HashSet<Gix> {
+    let hostiles: Vec<(Gix, &str)> = hostiles.collect();
     let long = |f: &[char]| f.iter().filter(|c| c.is_alphanumeric()).count() >= NEAR_MISS_LETTERS;
     let pieces: Vec<Vec<char>> = parts
         .iter()
@@ -1646,7 +1649,7 @@ fn near_miss<'a>(
     let mut near: HashMap<&str, Option<Vec<char>>> = HashMap::new();
     let mut found: Option<Vec<char>> = None;
     let mut units: HashSet<Gix> = HashSet::new();
-    for (g, name) in hostiles {
+    for &(g, name) in &hostiles {
         let f = near.entry(name).or_insert_with(|| {
             let f = folded(name);
             (long(&f) && pieces.iter().any(|p| within_one_edit(&f, p))).then_some(f)
@@ -1661,8 +1664,16 @@ fn near_miss<'a>(
         units.insert(g);
     }
     let strongest = units.iter().filter_map(|g| max_hp.get(g)).max().copied();
+    // Every posted hostile of another name: the near miss must beat them.
+    let others = hostiles
+        .iter()
+        .filter(|(g, _)| !units.contains(g))
+        .filter_map(|(g, _)| max_hp.get(g))
+        .max()
+        .copied()
+        .unwrap_or(0);
     match strongest {
-        Some(hp) if top > 0 && hp >= top => units,
+        Some(hp) if hp > others => units,
         _ => HashSet::new(),
     }
 }
@@ -1707,61 +1718,6 @@ fn within_one_edit(a: &[char], b: &[char]) -> bool {
         std::cmp::Ordering::Greater => a.get(i + 1..) == b.get(i..),
         std::cmp::Ordering::Less => a.get(i..) == b.get(i + 1..),
     }
-}
-
-/// R29: a title's parts — the whole, then each name a comma or a lone
-/// "and" divides it into, lowercased (ASCII only) — what names a boss.
-pub fn title_parts(title: &str) -> Vec<String> {
-    let b = title.as_bytes();
-    let at = |i: usize| b.get(i).copied();
-    let word = |i: usize| at(i).is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_');
-    let space = |i: usize| at(i).is_some_and(|c| c.is_ascii_whitespace());
-    let mut parts = vec![title.to_ascii_lowercase()];
-    // The separators: a comma, or "and" standing alone, with the white
-    // space round them.
-    let mut cuts: Vec<(usize, usize)> = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        let sep = if at(i) == Some(b',') {
-            Some(i + 1)
-        } else if b.get(i..).is_some_and(|r| r.starts_with(b"and"))
-            && (i == 0 || !word(i - 1))
-            && !word(i + 3)
-        {
-            Some(i + 3)
-        } else {
-            None
-        };
-        match sep {
-            Some(end) => {
-                let mut s = i;
-                while s > 0 && space(s - 1) {
-                    s -= 1;
-                }
-                let mut e = end;
-                while space(e) {
-                    e += 1;
-                }
-                cuts.push((s, e));
-                i = end;
-            }
-            None => i += 1,
-        }
-    }
-    let mut pieces = Vec::new();
-    let mut from = 0;
-    for (s, e) in cuts {
-        // A cut inside white space already taken by the last one.
-        let s = s.max(from);
-        pieces.push(title.get(from..s).unwrap_or(""));
-        from = e.max(s);
-    }
-    pieces.push(title.get(from..).unwrap_or(""));
-    while pieces.last() == Some(&"") {
-        pieces.pop();
-    }
-    parts.extend(pieces.iter().map(|p| p.to_ascii_lowercase()));
-    parts
 }
 
 /// The local date of a local-time epoch (ms): year, month, day. Howard
