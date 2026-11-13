@@ -236,8 +236,11 @@ impl Game {
     /// record `tact::root_find` picks, through the index. When local
     /// storage lacks that record's bytes, the next record in the same order
     /// whose bytes it holds: another platform's copy, say, or a
-    /// high-resolution copy whose base copy is not there. An error names
-    /// the file and the flags of the record it read.
+    /// high-resolution copy whose base copy is not there. Only such twins
+    /// stand in (`tact::root_twins`), never a record of another locale or
+    /// the low-violence copy, so a fallback never changes a file's language
+    /// or content. An error names the file and the flags of the record it
+    /// read.
     pub fn fetch_fdid(&self, fdid: u32, locale_mask: u32) -> Result<Vec<u8>, String> {
         let index = self
             .index
@@ -248,12 +251,17 @@ impl Game {
         let first = records
             .first()
             .ok_or_else(|| format!("fdid {fdid} not found in root manifest"))?;
-        let held = records.iter().find(|m| self.holds(&m.ckey));
+        let twins = || {
+            records
+                .iter()
+                .filter(|m| tact::root_twins(first, m, locale_mask))
+        };
+        let held = twins().find(|m| self.holds(&m.ckey));
         let m = held.unwrap_or(first);
         self.fetch_ckey(&m.ckey)
-            .map_err(|e| match (held, records.len()) {
+            .map_err(|e| match (held, twins().count()) {
                 (None, n) if n > 1 => format!(
-                    "fdid {fdid} (content {:#x}; none of its {n} records in local storage): {e}",
+                    "fdid {fdid} (content {:#x}; none of its {n} copies readable): {e}",
                     m.content
                 ),
                 _ => format!("fdid {fdid} (content {:#x}): {e}", m.content),
@@ -448,12 +456,13 @@ mod tests {
         d
     }
 
-    /// One root block: its content flags and its `(fdid, ckey)` records.
-    type Block<'a> = (u32, &'a [(u32, [u8; 16])]);
+    /// One root block: its locales, its content flags and its
+    /// `(fdid, ckey)` records.
+    type Block<'a> = (u32, u32, &'a [(u32, [u8; 16])]);
 
-    /// A version-1 root manifest of enUS blocks.
+    /// A version-1 root manifest.
     fn root(blocks: &[Block]) -> Vec<u8> {
-        let total: usize = blocks.iter().map(|(_, files)| files.len()).sum();
+        let total: usize = blocks.iter().map(|(_, _, files)| files.len()).sum();
         let mut d = Vec::new();
         d.extend_from_slice(b"TSFM");
         d.extend_from_slice(&24u32.to_le_bytes());
@@ -461,10 +470,10 @@ mod tests {
         d.extend_from_slice(&(total as u32).to_le_bytes());
         d.extend_from_slice(&(total as u32).to_le_bytes());
         d.extend_from_slice(&0u32.to_le_bytes());
-        for (content, files) in blocks {
+        for (locale, content, files) in blocks {
             d.extend_from_slice(&(files.len() as u32).to_le_bytes());
             d.extend_from_slice(&content.to_le_bytes());
-            d.extend_from_slice(&0x2u32.to_le_bytes()); // enUS
+            d.extend_from_slice(&locale.to_le_bytes());
             let mut last: i64 = -1;
             for (fdid, _) in *files {
                 let delta = i64::from(*fdid) - last - 1;
@@ -495,7 +504,10 @@ mod tests {
     /// 41's high-resolution copy first, and a high-resolution file 43 with
     /// no base copy; neither copy's bytes are in the archive. File 44's
     /// base copy is missing and its high-resolution copy is there; neither
-    /// of file 45's copies is.
+    /// of file 45's copies is. Files 46 and 47 lack their enUS base copy,
+    /// and hold only a deDE copy and a low-violence one; file 48's base
+    /// copy is not in the encoding table and its high-resolution copy is
+    /// not stored.
     fn fake_install(wow: &Path) -> [u8; 16] {
         let (enc_ckey, enc_ekey) = (key(0x10), key(0xA0));
         let (root_ckey, root_ekey) = (key(0x20), key(0xB0));
@@ -506,6 +518,12 @@ mod tests {
         let (kept_ckey, kept_ekey) = (key(0x70), key(0xD2));
         let (none_ckey, none_ekey) = (key(0x80), key(0xD3));
         let (none_high_ckey, none_high_ekey) = (key(0x90), key(0xD4));
+        let (german_ckey, german_ekey) = (key(0x91), key(0xD8));
+        let (violence_ckey, violence_ekey) = (key(0x92), key(0xD9));
+        let (high48_ckey, high48_ekey) = (key(0x93), key(0xD5));
+        let (base46_ckey, base46_ekey) = (key(0x94), key(0xD6));
+        let (base47_ckey, base47_ekey) = (key(0x95), key(0xD7));
+        let base48_ckey = key(0xA8); // in no encoding page
         let build_hash = "aabb".repeat(8);
         let keyring_hash = "ccdd".repeat(8);
 
@@ -550,25 +568,47 @@ mod tests {
                     (kept_ckey, kept_ekey),
                     (none_ckey, none_ekey),
                     (none_high_ckey, none_high_ekey),
+                    (german_ckey, german_ekey),
+                    (violence_ckey, violence_ekey),
+                    (high48_ckey, high48_ekey),
+                    (base46_ckey, base46_ekey),
+                    (base47_ckey, base47_ekey),
                 ])),
             ),
             (
                 root_ekey,
                 blte_plain(&root(&[
                     (
+                        0x2,
                         0x1,
                         &[
                             (41, high_ckey),
                             (43, lone_ckey),
                             (44, kept_ckey),
                             (45, none_high_ckey),
+                            (48, high48_ckey),
                         ],
                     ),
-                    (0, &[(41, file_ckey), (44, gone_ckey), (45, none_ckey)]),
+                    (
+                        0x2,
+                        0,
+                        &[
+                            (41, file_ckey),
+                            (44, gone_ckey),
+                            (45, none_ckey),
+                            (46, base46_ckey),
+                            (47, base47_ckey),
+                            (48, base48_ckey),
+                        ],
+                    ),
+                    (0x20, 0, &[(46, german_ckey)]),
+                    (0x2, 0x80, &[(47, violence_ckey)]),
                 ])),
             ),
             (file_ekey, blte_plain(b"hello file")),
             (kept_ekey, blte_plain(b"high copy")),
+            (german_ekey, blte_plain(b"german copy")),
+            (violence_ekey, blte_plain(b"low-violence copy")),
         ];
         let mut archive = Vec::new();
         let mut entries = Vec::new();
@@ -618,11 +658,12 @@ mod tests {
     }
 
     /// When local storage lacks the bytes of the record a lookup prefers,
-    /// the next record it holds is read: file 44's high-resolution copy,
-    /// its base copy missing. A file none of whose records it holds, or
-    /// whose only record it lacks, is named with that record's flags.
+    /// the next twin it holds is read: file 44's high-resolution copy, its
+    /// base copy missing. A record of another locale or a low-violence copy
+    /// never stands in. A file none of whose copies is readable, or whose
+    /// only copy is missing, is named with the flags of the record read.
     #[test]
-    fn a_record_local_storage_lacks_yields_to_the_next_it_holds() {
+    fn a_record_local_storage_lacks_yields_to_the_next_twin_it_holds() {
         let dir = scratch("fallback");
         let wow = dir.join("wow");
         fake_install(&wow);
@@ -637,13 +678,35 @@ mod tests {
             assert_eq!(
                 game.fetch_fdid(45, 0x2).unwrap_err(),
                 format!(
-                    "fdid 45 (content 0x0; none of its 2 records in local storage): {}",
+                    "fdid 45 (content 0x0; none of its 2 copies readable): {}",
                     lost(0xD3)
                 )
             );
             assert_eq!(
                 game.fetch_fdid(43, 0x2).unwrap_err(),
                 format!("fdid 43 (content 0x1): {}", lost(0xE0))
+            );
+            // No other language and no low-violence copy stands in for a
+            // missing enUS base copy; the error still names the file.
+            assert_eq!(
+                game.fetch_fdid(46, 0x2).unwrap_err(),
+                format!("fdid 46 (content 0x0): {}", lost(0xD6))
+            );
+            assert_eq!(
+                game.fetch_fdid(47, 0x2).unwrap_err(),
+                format!("fdid 47 (content 0x0): {}", lost(0xD7))
+            );
+            // Asked for, the German copy is read as the preferred record.
+            assert_eq!(game.fetch_fdid(46, 0x20).unwrap(), b"german copy");
+            // A copy missing from the encoding table is not blamed on
+            // local storage.
+            assert_eq!(
+                game.fetch_fdid(48, 0x2).unwrap_err(),
+                format!(
+                    "fdid 48 (content 0x0; none of its 2 copies readable): \
+                     ckey {} not in encoding table",
+                    casc::hex(&key(0xA8))
+                )
             );
         }
         std::fs::remove_dir_all(&dir).unwrap();
@@ -666,7 +729,10 @@ mod tests {
         assert_eq!(game.product, "wow");
         assert_eq!(game.build_label(), "12.0.0.1", "Retail's header as ever");
         assert_eq!(game.keys.len(), 4);
-        assert_eq!(game.root().len(), 24 + (12 + 4 * 28) + (12 + 3 * 28));
+        assert_eq!(
+            game.root().len(),
+            24 + (12 + 5 * 28) + (12 + 6 * 28) + 2 * (12 + 28)
+        );
         assert_eq!(game.fetch_fdid(41, 0x2).unwrap(), b"hello file");
         assert_eq!(game.fetch_ckey(&file_ckey).unwrap(), b"hello file");
         assert!(

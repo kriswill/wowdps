@@ -387,6 +387,18 @@ fn root_rank(locale: u32, content: u32, locale_mask: u32) -> Rank {
     )
 }
 
+/// Whether a lookup may read `other` in place of `first`, its preferred
+/// record, when local storage lacks `first`'s bytes: the same match of the
+/// wanted locale and the same low-violence state, so the two differ at
+/// most by the high-resolution or a platform's flags. Where `first` misses
+/// the wanted locale, `other` must carry the same locales: no other
+/// language stands in.
+pub(crate) fn root_twins(first: &RootMatch, other: &RootMatch, locale_mask: u32) -> bool {
+    let a = root_rank(first.locale, first.content, locale_mask);
+    let b = root_rank(other.locale, other.content, locale_mask);
+    a.0 == b.0 && a.1 == b.1 && (!a.0 || first.locale == other.locale)
+}
+
 /// Scan the decoded root manifest for a FileDataID or a name hash. The
 /// manifest is block-structured; this walks every block rather than
 /// building a map of all ~6M files (`RootIndex` is that map, for a caller
@@ -908,6 +920,34 @@ us|0|cccc|12.1.5.0|kkkk|wow";
             root_find(&short, Some(5), None, 0x2).unwrap_err()
         );
         assert!(RootIndex::new(b"TSF").unwrap_err().contains("MFST"));
+    }
+
+    /// Twins share the match of the wanted locale and the low-violence
+    /// state; another language or the low-violence copy is no twin.
+    #[test]
+    fn root_twins_differ_only_by_resolution_or_platform() {
+        let r = |locale, content| RootMatch {
+            fdid: 1,
+            ckey: [0; 16],
+            locale,
+            content,
+        };
+        const LV: u32 = CONTENT_LOW_VIOLENCE;
+        const HR: u32 = CONTENT_HIGH_RES;
+        let base = r(0x2, 0);
+        assert!(root_twins(&base, &base, 0x2));
+        assert!(root_twins(&base, &r(0x2, HR), 0x2));
+        assert!(root_twins(&base, &r(0x12, 0x10), 0x2), "a platform's copy");
+        assert!(!root_twins(&base, &r(0x20, 0), 0x2), "another language");
+        assert!(
+            !root_twins(&base, &r(0x2, LV), 0x2),
+            "the low-violence copy"
+        );
+        assert!(!root_twins(&r(0x2, LV), &base, 0x2));
+        // Both miss the wanted locale: only the same locales stand in.
+        let german = r(0x20, 0);
+        assert!(root_twins(&german, &r(0x20, HR), 0x2));
+        assert!(!root_twins(&german, &r(0x10, 0), 0x2));
     }
 
     #[test]
