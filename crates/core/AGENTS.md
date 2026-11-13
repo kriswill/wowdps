@@ -38,6 +38,11 @@ rulings, §Fixtures). Read the ruling before changing what it governs.
   fight's own lines, never seeded, never carried, never opening a segment.
   Retail's role is its spec's: no Retail segment keeps one. The weights are
   constants in `roles.rs`; `check.awk`'s R30 block holds the same ones.
+- **R31's logger** (`Segment::logger`) is segment-local too: each unit
+  block flagging the logging character (`Unit::is_logger`: Mine,
+  player-controlled, a `Player-` player) counts for the segment open once
+  its line is read, through the passive gate; never seeded, never carried,
+  never opening a segment. `check.awk`'s `logger` metric mirrors it.
 - **The replay cut is passive** (`replay.rs`, R29): it moves no meter
   number and shares the meter's parse (`cut_and_meter`). Core cannot name
   proto's `placed` table; the daemon implements `PlacedTable` over it.
@@ -84,7 +89,7 @@ The real-log gates need a log with at least one closed segment
 name, never its file's: every gate's name holds `real`, and every Forever
 variant's `forever`; `real_log` selects four. Each gate whose rule
 Forever has (the whole-file parse, deaths, taken, stacks, power, shields,
-spans, player labels, and roles,
+spans, player labels, the logger, and roles,
 `real_log_segments`' cut and totals and `real_log_posts`' replay positions,
 which are Forever's alone) has a
 Forever variant over `WOWDPS_REAL_LOG_FOREVER` (`tests/real_log/mod.rs`);

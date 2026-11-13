@@ -1670,6 +1670,9 @@ mod tests {
             // R16: the boss-health observation is segment-local, so the
             // slice reproduces it.
             assert_eq!(ls.best_pct(), seg.best_pct(), "R16 parity: {}", meta.name);
+            // R31: the logger is segment-local, counted from the slice's
+            // own lines through the passive gate.
+            assert_eq!(ls.logger(), seg.logger(), "R31 parity: {}", meta.name);
 
             for view in [
                 View::Damage,
@@ -1971,6 +1974,14 @@ mod tests {
             let h = [0x00, 0x80, 0xff, b'|', 0x7f, 0x80, 0x01, 0xfe, 0x80, b'|'];
             assert_eq!(memchr(n, &h), naive(n, &h), "needle {n:#04x}");
         }
+    }
+
+    /// The two Forever fixtures, whose logger only its unit flags name
+    /// (R31: a Forever log writes no COMBATANT_INFO).
+    #[test]
+    fn the_forever_fixtures_survive_index_then_lazy_parse() {
+        parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/forever.txt"));
+        parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/roles.txt"));
     }
 
     #[test]

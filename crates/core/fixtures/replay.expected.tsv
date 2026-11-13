@@ -63,6 +63,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_sum	428
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	power_max	150
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	role	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-W	logger	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	damage	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	overkill	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	petdamage	0
@@ -127,6 +128,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	power_sum	300
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	power_max	100
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	role	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-A	logger	1
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	damage	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	overkill	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	petdamage	0
@@ -191,6 +193,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	power_sum	148000
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	power_max	60000
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	role	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-B	logger	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	damage	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	overkill	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	petdamage	0
@@ -255,6 +258,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	power_sum	170
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	power_max	120
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	role	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-H	logger	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-S	damage	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-S	overkill	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-S	petdamage	0
@@ -319,6 +323,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-S	power_sum	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-S	power_max	0
 1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-S	role	0
+1	Encounter	Ula'tek	kill	30000	3000	16	Player-1-S	logger	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	damage	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	overkill	0
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	petdamage	0
@@ -383,6 +388,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	power_sum	50
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	power_max	100
 2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	role	0
+2	Encounter	Twin Venoms	wipe	20000	3001	16	Player-1-A	logger	1
 3	Trash	Trash		2000			Player-1-A	damage	5000
 3	Trash	Trash		2000			Player-1-A	overkill	0
 3	Trash	Trash		2000			Player-1-A	petdamage	0
@@ -447,6 +453,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		2000			Player-1-A	power_sum	100
 3	Trash	Trash		2000			Player-1-A	power_max	100
 3	Trash	Trash		2000			Player-1-A	role	0
+3	Trash	Trash		2000			Player-1-A	logger	1
 3	Trash	Trash		2000			Player-1-B	damage	0
 3	Trash	Trash		2000			Player-1-B	overkill	0
 3	Trash	Trash		2000			Player-1-B	petdamage	0
@@ -511,6 +518,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		2000			Player-1-B	power_sum	0
 3	Trash	Trash		2000			Player-1-B	power_max	0
 3	Trash	Trash		2000			Player-1-B	role	0
+3	Trash	Trash		2000			Player-1-B	logger	0
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	damage	10000
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	overkill	0
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	petdamage	0
@@ -575,6 +583,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	power_sum	100
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	power_max	100
 4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	role	0
+4	Encounter	Frost Warden	kill	31000	3010	8	Player-1-A	logger	1
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_units	9
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_posts	19
 1	Encounter	Ula'tek	kill	30000	3000	16	*	replay_absorb	1500

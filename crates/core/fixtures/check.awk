@@ -379,6 +379,44 @@ function shield_absorb(dst, spell, ag, owner, amt,   k) {
 # A *_MISSED line: count 1 on the friendly destination; BLOCK's amount and ABSORB's
 # amountMissed are PREVENTED damage. A miss with no open segment (cur == 0) is
 # dropped — R17: a miss never opens a segment.
+# ---- R31 the logger: per segment, the unit blocks that flag a `Player-` guid
+# MINE (0x1), player-controlled (0x100) and player (0x400) — the character
+# writing the log. The blocks are the parser's: a modelled two-unit line's
+# source and destination (RBOTH), an empower's source, a death's or a
+# destruction's destination. A line's blocks count once the line is read, for
+# the segment open then, through the passive gate (a closed segment, or a
+# trash fight past its gap, takes none). The logger is the guid flagged most,
+# a tie to the smaller.
+function is_logger(g, f,   v) {
+    if (g !~ /^Player-/ || f !~ /^0x/) return 0
+    v = strtonum(f)
+    return and(v, 0x501) == 0x501
+}
+function logger_note() {
+    npend = 0
+    if (ev ~ RBOTH) {
+        if (is_logger($2, $4)) pend[++npend] = $2
+        if (is_logger($6, $8)) pend[++npend] = $6
+    } else if (ev ~ /^SPELL_EMPOWER_(START|END|INTERRUPT)$/) {
+        if (is_logger($2, $4)) pend[++npend] = $2
+    } else if (ev == "UNIT_DIED" || ev == "UNIT_DESTROYED") {
+        if (is_logger($6, $8)) pend[++npend] = $6
+    }
+}
+function logger_flush(   p) {
+    if (npend && !passive_stale()) for (p = 1; p <= npend; p++) logN[cur SUBSEP pend[p]]++
+    npend = 0
+}
+function logger_of(s,   k, kk, best, bn) {
+    best = ""; bn = 0
+    for (k in logN) {
+        split(k, kk, SUBSEP)
+        if (kk[1] + 0 != s) continue
+        if (logN[k] > bn || (logN[k] == bn && kk[2] < best)) { best = kk[2]; bn = logN[k] }
+    }
+    return best
+}
+
 # R17 mirror of Meter::open_segment_for_passive: a *_MISSED line or a stagger
 # SPELL_ABSORBED writes only into an OPEN segment that is not past the trash gap
 # (it is not combat, so it never opens, extends or splits one — but it must not
@@ -913,6 +951,9 @@ BEGIN {
     # epoch is advanced by both passes; reset it when pass 2 begins or the two
     # passes disagree about which epoch a pet's owner was recorded in.
     if (FNR == 1 && NR != FNR) { epoch = 0; RZERO = 0 }
+    # R31: the previous line's logger blocks, now that every rule has read it
+    # (its segment opened, extended or closed): `now` is still its time.
+    logger_flush()
 
     i = index($0, "  ")
     if (i == 0) { blanks++; next }          # blank / no-timestamp line
@@ -921,6 +962,7 @@ BEGIN {
     $0 = rest
     ev = $1
     now = tsms(ts)
+    if (NR != FNR) logger_note()
 }
 
 # ---------------------------------------------------------------- pass 1: owners
@@ -1378,6 +1420,7 @@ ev == "UNIT_DIED" {
 }
 
 END {
+    logger_flush()   # R31: the last line's blocks
     print "segment", "kind", "name", "result", "dur_ms", "enc_id", "difficulty", "player", "metric", "value"
     # R18 read-time pass: a span still open closes at its segment's end
     # (min(end, now) − at; never negative), then the rollups: `am_uptime_ms` =
@@ -1448,6 +1491,7 @@ END {
         # R30: the roles, for a segment of an edition that infers them.
         delete rRole
         if (segInfer[s]) role_solve(s, n, comb)
+        lg = logger_of(s)   # R31
         for (x = 1; x <= n; x++) {
             g = plist[x]
             d = val[s SUBSEP g SUBSEP "damage"] + 0
@@ -1546,6 +1590,9 @@ END {
             # R30: the inferred role (0 none, 1 tank, 2 healer, 3 dps); 0 for
             # every player of an edition that infers none.
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\trole\t%d\n",                s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, rRole[g] + 0
+            # R31: the segment's logger (1), the character whose unit flags
+            # its lines mark as the one writing the log; 0 for everyone else.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tlogger\t%d\n",              s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, (g == lg)
         }
         delete plist
     }

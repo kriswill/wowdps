@@ -24,6 +24,11 @@ use wowdps_model::{GearItem, LoadoutAura, MissKind, TalentPick};
 const ADVANCED_LEN: usize = 19;
 
 const FLAG_TYPE_PLAYER: u32 = 0x0000_0400;
+/// R31: the affiliation nibble's MINE bit (the unit is the logging
+/// character's or one of its pets, guardians or vehicles) and the
+/// player-control bit beside it (FORMAT-NOTES, "Unit flags").
+const FLAG_AFFILIATION_MINE: u32 = 0x0000_0001;
+const FLAG_CONTROL_PLAYER: u32 = 0x0000_0100;
 // Only `is_pet_or_guardian` reads these, and that method is contract-mandated
 // public API rather than something this binary calls — see its comment below.
 #[allow(dead_code)]
@@ -175,6 +180,16 @@ impl Unit {
     #[allow(dead_code)]
     pub fn is_pet_or_guardian(&self) -> bool {
         !self.is_nil() && self.flags & (FLAG_TYPE_PET | FLAG_TYPE_GUARDIAN) != 0
+    }
+
+    /// R31: the character writing the log — a `Player-` guid whose flags say
+    /// MINE (0x1), player-controlled (0x100) and of the player type (0x400).
+    /// The bit names one character at a time: a unit of another player never
+    /// carries it, and the logger's own pets, guardians and vehicles carry it
+    /// with their own type, never a player's.
+    pub fn is_logger(&self) -> bool {
+        const LOGGER: u32 = FLAG_AFFILIATION_MINE | FLAG_CONTROL_PLAYER | FLAG_TYPE_PLAYER;
+        !self.is_nil() && self.guid.starts_with("Player-") && self.flags & LOGGER == LOGGER
     }
 }
 
@@ -569,6 +584,54 @@ pub enum Event {
     },
     /// Recognised as a log line but not modelled. Never an error.
     Other,
+}
+
+impl Event {
+    /// R31: the line's two unit blocks as the event holds them — the source
+    /// and the destination (a summon's owner and pet; a death's, a
+    /// destruction's or an unconscious unit's destination alone, its source
+    /// being nil; an empower's source alone). A `SPELL_ABSORBED`'s third
+    /// block, the absorber, is not one of them.
+    pub fn units(&self) -> [Option<&Unit>; 2] {
+        match self {
+            Event::Damage { src, dst, .. }
+            | Event::Missed { src, dst, .. }
+            | Event::Support { src, dst, .. }
+            | Event::Heal { src, dst, .. }
+            | Event::Absorbed { src, dst, .. }
+            | Event::Interrupt { src, dst, .. }
+            | Event::AuraApplied { src, dst, .. }
+            | Event::AuraRefresh { src, dst, .. }
+            | Event::AuraDose { src, dst, .. }
+            | Event::AuraRemoved { src, dst, .. }
+            | Event::Dispel { src, dst, .. }
+            | Event::Stolen { src, dst, .. }
+            | Event::Cast { src, dst, .. }
+            | Event::CastStart { src, dst, .. }
+            | Event::Energize { src, dst, .. }
+            | Event::Resurrect { src, dst, .. }
+            | Event::InstaKill { src, dst, .. }
+            | Event::CastFailed { src, dst, .. }
+            | Event::Create { src, dst, .. } => [Some(src), Some(dst)],
+            Event::Summon { owner, pet, .. } => [Some(owner), Some(pet)],
+            Event::Empower { src, .. } => [Some(src), None],
+            Event::Death { unit, .. }
+            | Event::Destroyed { unit, .. }
+            | Event::Unconscious { unit, .. } => [None, Some(unit)],
+            Event::Version { .. }
+            | Event::EncounterStart { .. }
+            | Event::EncounterEnd { .. }
+            | Event::CombatantInfo { .. }
+            | Event::ZoneChange { .. }
+            | Event::ArenaMatchStart { .. }
+            | Event::ArenaMatchEnd { .. }
+            | Event::ChallengeModeStart { .. }
+            | Event::ChallengeModeEnd { .. }
+            | Event::MarkerPlaced { .. }
+            | Event::MarkerRemoved { .. }
+            | Event::Other => [None, None],
+        }
+    }
 }
 
 const ZERO_GUID: &str = "0000000000000000";

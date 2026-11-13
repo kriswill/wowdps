@@ -108,6 +108,15 @@ fight (her first Lightning Bolt is cast before the fight's first hit and lands n
 two of them heals, both on herself. TANK = 0.4 (all the swings, no kit) and HEALER =
 0.35 × 2/3 = 0.233: a solo player heals nobody else, so is never a healer. **dps (3)**.
 
+## The logger (R31)
+
+Garrond Stonebrook (`…2E01`) is the one player flagged `0x511` (Mine,
+Friendly, player-controlled, a player): the logger of fights 1, 2 and 3,
+which they are in. Fights 4 and 5 hold none of their lines, so they name no
+logger: other groups' fights the log overheard. The TSV's `logger` row is 1
+on Garrond in the first three fights and 0 everywhere else; the visit's
+Overall sums its members' flagged blocks and names Garrond.
+
 ## The visit's Overall (`tests/roles.rs`)
 
 The five fights merged, on their summed clocks (combat 111 s; span 111 s): Garrond Stonebrook

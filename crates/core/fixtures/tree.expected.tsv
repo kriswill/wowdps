@@ -63,6 +63,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	power_sum	1350066
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	power_max	250050
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	role	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	logger	1
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	damage	112000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	overkill	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	petdamage	0
@@ -127,6 +128,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	power_sum	630000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	power_max	250000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	role	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C63	logger	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	damage	31000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overkill	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	petdamage	0
@@ -191,6 +193,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	power_sum	600000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	power_max	250000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	role	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	logger	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	damage	60000
 2	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
 2	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
@@ -255,6 +258,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		1500			Player-1168-0A1B2C61	power_sum	150022
 2	Trash	Trash		1500			Player-1168-0A1B2C61	power_max	250050
 2	Trash	Trash		1500			Player-1168-0A1B2C61	role	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	logger	1
 3	Trash	Trash		1500			Player-1168-0A1B2C61	damage	60000
 3	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
 3	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
@@ -319,6 +323,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		1500			Player-1168-0A1B2C61	power_sum	150000
 3	Trash	Trash		1500			Player-1168-0A1B2C61	power_max	250000
 3	Trash	Trash		1500			Player-1168-0A1B2C61	role	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	logger	1
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_units	6
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_posts	40
 1	Encounter	Tree Test Boss	kill	30000	3160	16	*	replay_absorb	0
