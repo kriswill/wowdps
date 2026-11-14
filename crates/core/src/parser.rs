@@ -223,7 +223,8 @@ pub enum Event {
         difficulty: u32,
         group_size: u32,
         /// The instance the pull is in: the map id ZONE_CHANGE logs for the
-        /// same place (R10: a pull the door left unannounced opens its visit).
+        /// same place (R10: a pull the door left unannounced resumes or opens
+        /// its visit).
         instance_id: u32,
     },
     EncounterEnd {

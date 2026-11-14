@@ -631,8 +631,8 @@ pub(crate) const KEY_COUNTDOWN_MS: i64 = 10_000;
 /// the run as a key.
 pub const KEYSTONE_DIFFICULTY: u32 = 8;
 
-/// R10: a pull at this difficulty is instanced content, so it may open its
-/// visit (`Meter::encounter_visit`). Difficulty.db2 gives three ids an
+/// R10: a pull at this difficulty is instanced content, so it may resume or
+/// open its visit (`Meter::encounter_visit`). Difficulty.db2 gives three ids an
 /// InstanceType of 0, the open world: 172 World Boss, 192 Challenge Level 1
 /// and 230 Heroic. A world boss's pull keeps its place outside any visit.
 pub(crate) fn instanced_difficulty(difficulty: u32) -> bool {
@@ -5448,7 +5448,8 @@ pub struct Meter {
     /// with difficulty 0, so the visit table never learns their names.
     last_zone: Option<String>,
     /// R10: that zone's map id. A pull opens a visit only on the map its
-    /// door named, so the visit wears the door's name.
+    /// door named, so the visit wears the door's name; it resumes one on
+    /// its own instance, whatever map this is.
     last_zone_map: Option<u32>,
     /// R13: an arena match's segment is open, so ARENA_MATCH_END has
     /// something to verdict. False outside one — a stray END closes nothing.
@@ -6043,21 +6044,26 @@ impl Meter {
     /// after its difficulty was switched outside, delves, Timewalking), and
     /// 0 reads as zoned out: the pulls landed outside any visit, and the
     /// visit they replaced stayed current, and live, to the end of the log.
-    /// So an ENCOUNTER_START while zoned out, at an instanced difficulty, on
-    /// the map the last door named (never an open-world map: a pull there
-    /// reads as a door would, `door_difficulty`), settles it as a CHALLENGE_MODE_START
-    /// settles a key: the current visit resumes when it is on that map at
-    /// that difficulty (a keyed one on the map alone, and a keystone pull
-    /// on an unkeyed one is a key the log joined mid-run, which its END
-    /// keys); otherwise a NEW visit opens under the door's name at the
-    /// pull's difficulty, closing whatever was current. Zoned in, the door
-    /// that put us there stands. The trash between such a door and its
-    /// first pull stays outside, as the stretch before a door-0 key's START
-    /// does. The scanner mirrors this and seeds every START that zones in.
+    /// So an ENCOUNTER_START while zoned out, at an instanced difficulty
+    /// (never on an open-world map: a pull there reads as a door would,
+    /// `door_difficulty`), settles it as a CHALLENGE_MODE_START settles a
+    /// key. The current visit resumes when it stands on the pull's instance
+    /// at the pull's difficulty (a keyed one on the map alone, and a
+    /// keystone pull on an unkeyed one is a key the log joined mid-run,
+    /// which its END keys), whatever map the last door named: the START's
+    /// instance is where the pull is, and the game can log the door back
+    /// into an instance onto another map (Forever has logged it onto the
+    /// open world's map, 0 or 1). Otherwise, on the map the last door
+    /// named, a NEW visit opens under that door's name at the pull's
+    /// difficulty, closing whatever was current; a pull on a map no door
+    /// named has no name to open a visit under and stays outside. Zoned
+    /// in, the door that put us there stands. The trash between such a
+    /// door and its first pull stays outside, as the stretch before a
+    /// door-0 key's START does. The scanner mirrors this and seeds every
+    /// START that zones in.
     fn encounter_visit(&mut self, ts: i64, instance_id: u32, difficulty: u32) {
         if self.zoned_in
             || !instanced_difficulty(door_difficulty(self.tables(), instance_id, difficulty))
-            || self.last_zone_map != Some(instance_id)
         {
             return;
         }
@@ -6066,6 +6072,9 @@ impl Meter {
             .and_then(|i| self.visits.get(i as usize))
             .is_some_and(|v| v.standing().resumed_by(instance_id, difficulty, true));
         if !resumes {
+            if self.last_zone_map != Some(instance_id) {
+                return;
+            }
             self.close_visit(ts);
             let name = self.last_zone.clone().unwrap_or_default();
             self.visits

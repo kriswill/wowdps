@@ -738,8 +738,25 @@ fn a_pull_behind_a_door_logged_at_zero_zones_in() {
         .expect("the Mythic visit is in progress");
     assert_eq!(open.visit, Some(1));
 
-    // Every slice rebuilds alone and in its own visit: a seeded START opens
-    // no segment and restores the visit it opened or resumed.
+    let live = agrees_everywhere(text, &meter);
+    assert_eq!(live.visits().len(), 2, "the seeds rebuilt both visits");
+    assert_eq!(live.segments().last().and_then(|s| s.visit), Some(1));
+}
+
+/// R10's agreement over one log: every slice rebuilds alone and in its own
+/// visit (a seeded START opens no segment and restores the visit it opened
+/// or resumed), every closed Σ loads lazily as the replay holds it, the
+/// visit in progress composes from its closed members' lazy prefix and the
+/// live meter (seeds, then everything from the open segment on) to the
+/// replay's Σ, as when the daemon attached mid-visit, and a checkpoint at
+/// any line resumes to the full scan. The live meter, for the caller's
+/// own checks.
+// Test code outside a `#[test]`, where clippy's test allowances do not
+// reach: a panic is how it fails.
+#[allow(clippy::expect_used, clippy::indexing_slicing)]
+fn agrees_everywhere(text: &str, meter: &Meter) -> Meter {
+    let bytes = text.as_bytes();
+    let idx = scan(&mut &bytes[..]);
     for meta in idx.segments.iter().chain(idx.open.iter()) {
         let lazy = lazy(bytes, meta);
         assert_eq!(lazy.segments().len(), 1, "one segment: {}", meta.name);
@@ -763,21 +780,36 @@ fn a_pull_behind_a_door_logged_at_zero_zones_in() {
         assert_eq!(amounts(&got, View::Damage), amounts(&want, View::Damage));
     }
 
-    // The daemon attached mid-night: the lazy prefix plus the live meter
-    // (seeds, then the open pull) compose to the replay's Mythic Σ.
     let live = live_meter(bytes, &idx);
-    assert_eq!(live.visits().len(), 2, "the seeds rebuilt both visits");
-    assert_eq!(live.segments().last().and_then(|s| s.visit), Some(1));
-    let mut combined = live.overall(1).expect("the open pull is a live member");
-    combined.absorb_prefix(&lazy(bytes, open).overall(1).expect("the closed members"));
-    let want = meter.overall(1).expect("the Mythic Σ");
-    assert_eq!(
-        amounts(&combined, View::Damage),
-        amounts(&want, View::Damage)
-    );
-    assert_eq!(combined.duration_ms(0), want.duration_ms(i64::MAX));
+    if let Some(open) = idx.open_visit.as_ref() {
+        let ord = open.visit.expect("the visit in progress names its ordinal");
+        let prefix = lazy(bytes, open).overall(ord).expect("the closed members");
+        // The open segment is the live tail's alone; a suspended visit has
+        // no member there.
+        let combined = match live.overall(ord) {
+            Some(mut live_part) => {
+                live_part.absorb_prefix(&prefix);
+                live_part
+            }
+            None => prefix,
+        };
+        let want = meter.overall(ord).expect("the replay holds the visit");
+        assert_eq!(
+            amounts(&combined, View::Damage),
+            amounts(&want, View::Damage)
+        );
+        // An unkeyed Σ's clock is its members' (the open one cut at its
+        // last combat), whatever now is; a key's runs on the wall clock
+        // until its END.
+        if meter.visits().get(ord as usize).is_some_and(|v| v.keyed) {
+            for now in [0, i64::MAX] {
+                assert_eq!(combined.duration_ms(now), want.duration_ms(now));
+            }
+        } else {
+            assert_eq!(combined.duration_ms(0), want.duration_ms(i64::MAX));
+        }
+    }
 
-    // A checkpoint anywhere resumes to the full scan.
     let full = scan(&mut &bytes[..]);
     let cuts = bytes
         .iter()
@@ -793,6 +825,7 @@ fn a_pull_behind_a_door_logged_at_zero_zones_in() {
         assert_eq!(resumed.open_visit, full.open_visit, "cut at {cut}");
         assert_eq!(resumed.open, full.open, "cut at {cut}");
     }
+    live
 }
 
 /// The amendment's edges. A delve's door logs 0 too, and its pull opens the
@@ -850,6 +883,201 @@ fn a_pull_zones_in_only_instanced_content_its_door_named() {
         "the door's difficulty stands"
     );
     assert_eq!(tags(door_stands), vec![(SegmentKind::Encounter, Some(0))]);
+}
+
+const REJOIN_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/rejoin.txt");
+
+/// The fixture's door back into the instance, onto the open world's map
+/// under the instance's name: every pull after it names map 2959.
+const DOOR_BACK: &str = "ZONE_CHANGE,0,\"City of Dalaran\",0";
+
+fn rejoin() -> String {
+    let text = std::fs::read_to_string(REJOIN_FIXTURE);
+    assert!(text.is_ok(), "{REJOIN_FIXTURE}: unreadable fixture");
+    text.unwrap_or_default()
+}
+
+/// The fixture with every line from its door back in on changed by `edit`.
+fn behind_the_door(text: &str, edit: impl Fn(&str) -> String) -> String {
+    let at = text.find(DOOR_BACK);
+    assert!(at.is_some(), "the fixture's door back in");
+    let (head, tail) = text.split_at(at.unwrap_or(text.len()));
+    format!("{head}{}", edit(tail))
+}
+
+/// The fixture's segments in file order: three kills inside the visit, a
+/// zone-out, and `after` for the five segments from the door back in on
+/// (the trash before the first pull there, a pull, trash, a pull, trash).
+fn rejoin_tags(after: [Option<u32>; 4]) -> Vec<(SegmentKind, Option<u32>)> {
+    let [shade, between, fel, tail] = after;
+    vec![
+        (SegmentKind::Trash, Some(0)),     // inside, before the first pull
+        (SegmentKind::Encounter, Some(0)), // Atrexis the Grave Knight
+        (SegmentKind::Encounter, Some(0)), // Arcane Anomaly
+        (SegmentKind::Encounter, Some(0)), // Mana Devourer
+        (SegmentKind::Trash, Some(0)),     // inside, before the zone-out
+        (SegmentKind::Trash, None),        // Hillsbrad Foothills: zoned out
+        (SegmentKind::Trash, None),        // behind the door back in, before a pull
+        (SegmentKind::Encounter, shade),   // Shade of the Archmage
+        (SegmentKind::Trash, between),
+        (SegmentKind::Encounter, fel), // Fel Ancient
+        (SegmentKind::Trash, tail),    // still open
+    ]
+}
+
+/// R10 amendment (2026-11-13): a pull rejoins its visit whatever door led
+/// back. Forever logs the door back into an instance onto the open world's
+/// map: on a real run the door back into a Normal dungeon visit on map 2959
+/// logged `ZONE_CHANGE,0,"City of Dalaran",0`, and the pulls after it,
+/// whose STARTs named 2959, joined no visit while the resume also had to
+/// stand on the last door's map. The Σ held three of five kills.
+/// `rejoin.txt` is that run's shape: five players, the two later pulls
+/// resume the visit, and the Σ holds every kill.
+#[test]
+fn a_pull_rejoins_its_visit_behind_a_door_onto_another_map() {
+    let text = rejoin();
+    let meter = meter_from_lines(text.lines());
+    let visits = meter.visits();
+    assert_eq!(visits.len(), 1, "one visit: {visits:?}");
+    let visit = &visits[0];
+    assert_eq!((visit.map_id, visit.difficulty), (2959, 1));
+    assert_eq!(visit.display_name(), "Dalaran");
+    assert_eq!(visit.end_ms, None, "suspended, never closed");
+    assert_eq!(
+        tags(&text),
+        rejoin_tags([Some(0), Some(0), Some(0), Some(0)])
+    );
+    let pulls: Vec<_> = meter
+        .segments()
+        .iter()
+        .filter(|s| s.kind == SegmentKind::Encounter)
+        .map(|s| (s.name.as_str(), s.success, s.visit))
+        .collect();
+    assert_eq!(
+        pulls,
+        vec![
+            ("Atrexis the Grave Knight", Some(true), Some(0)),
+            ("Arcane Anomaly", Some(true), Some(0)),
+            ("Mana Devourer", Some(true), Some(0)),
+            ("Shade of the Archmage", Some(true), Some(0)),
+            ("Fel Ancient", Some(true), Some(0)),
+        ],
+        "every pull is the visit's member"
+    );
+
+    // Pull k's hit for the p-th player is 100k + 10p: 1500 + 50p over the
+    // five pulls. With the trash inside the visit (Ana 7, Borin 9, Dessa
+    // 11, Eryk 13); never Ana's 1000 in Hillsbrad, nor Cael's 500 behind the
+    // door back in before its first pull, which stays outside.
+    let sigma = meter.overall(0).expect("the visit has members");
+    assert_eq!(
+        amounts(&sigma, View::Damage),
+        vec![
+            ("Eryk-Realm".to_string(), 1763),
+            ("Dessa-Realm".to_string(), 1711),
+            ("Cael-Realm".to_string(), 1650),
+            ("Borin-Realm".to_string(), 1609),
+            ("Ana-Realm".to_string(), 1557),
+        ]
+    );
+
+    // The pull that rejoined is a seed for every later slice, so a lazy
+    // load of the trash after it knows it is inside.
+    let bytes = text.as_bytes();
+    let idx = scan(&mut &bytes[..]);
+    assert!(idx.overalls.is_empty(), "the visit never closed");
+    assert_eq!(idx.open_visit.as_ref().and_then(|m| m.visit), Some(0));
+    let fel = idx
+        .segments
+        .iter()
+        .find(|m| m.name == "Fel Ancient")
+        .expect("the last pull is closed");
+    let seeded: Vec<_> = range_lines(bytes, &fel.seeds)
+        .into_iter()
+        .filter(|l| l.contains("ENCOUNTER_START"))
+        .collect();
+    assert_eq!(seeded.len(), 1, "one START moved the visit: {seeded:?}");
+    assert!(seeded[0].contains("\"Shade of the Archmage\""));
+
+    let live = agrees_everywhere(&text, &meter);
+    assert_eq!(live.visits().len(), 1, "the seeds rebuilt the visit");
+    assert_eq!(live.segments().last().and_then(|s| s.visit), Some(0));
+}
+
+/// The rejoin's edges, behind the same door. A pull at another difficulty,
+/// or on another instance, resumes nothing, and opens nothing either: no
+/// door named its map, so it has no name to open a visit under. The Σ
+/// keeps the three kills before the zone-out (600 + 30p each, with the
+/// trash inside).
+#[test]
+fn a_pull_rejoins_only_its_own_instance_at_its_own_difficulty() {
+    let text = rejoin();
+    // Each pull's START ends with its difficulty, size and instance.
+    for (what, pull) in [
+        ("another difficulty", ",2,5,2959"),
+        ("another instance", ",1,5,2960"),
+    ] {
+        let edited = behind_the_door(&text, |t| t.replace(",1,5,2959", pull));
+        assert_ne!(edited, text, "{what}: the edit took");
+        let meter = meter_from_lines(edited.lines());
+        assert_eq!(meter.visits().len(), 1, "{what}: no visit opened");
+        assert_eq!(
+            tags(&edited),
+            rejoin_tags([None, None, None, None]),
+            "{what}"
+        );
+        let sigma = meter.overall(0).expect("the visit has members");
+        assert_eq!(
+            amounts(&sigma, View::Damage),
+            vec![
+                ("Eryk-Realm".to_string(), 750),
+                ("Dessa-Realm".to_string(), 720),
+                ("Cael-Realm".to_string(), 690),
+                ("Borin-Realm".to_string(), 669),
+                ("Ana-Realm".to_string(), 637),
+            ],
+            "{what}"
+        );
+        agrees_everywhere(&edited, &meter);
+    }
+}
+
+/// A key's pull behind a door onto another map. A FINISHED key is never
+/// rejoined: its END was terminal, and no door named its map, so the pull
+/// opens nothing either. A key abandoned before its END is rejoined, on
+/// its map alone, as any door back onto that map would resume it.
+#[test]
+fn a_finished_key_is_never_rejoined_behind_another_door() {
+    let pull = "\
+8/1/2026 12:02:00.000-7  ZONE_CHANGE,0,\"Silvermoon City\",0
+8/1/2026 12:05:00.000-7  ENCOUNTER_START,2563,\"Overgrown Ancient\",8,5,2526
+8/1/2026 12:05:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-6,\"Overgrown Ancient\",0xa48,0x0,116,\"Frostbolt\",16,200,200,0,0,0,0,0,nil,nil
+8/1/2026 12:06:00.000-7  ENCOUNTER_END,2563,\"Overgrown Ancient\",8,5,1,60000
+";
+    let finished = format!("{KEY_HEAD}{KEY_END}{pull}");
+    let meter = meter_from_lines(finished.lines());
+    assert_eq!(meter.visits().len(), 2, "the door's visit, then the key");
+    assert!(meter.visits()[1].end_ms.is_some(), "the END closed the key");
+    assert_eq!(
+        tags(&finished),
+        vec![
+            (SegmentKind::Trash, Some(1)), // inside the key
+            (SegmentKind::Encounter, None),
+        ]
+    );
+    agrees_everywhere(&finished, &meter);
+
+    let abandoned = format!("{KEY_HEAD}{pull}");
+    let meter = meter_from_lines(abandoned.lines());
+    assert_eq!(meter.visits().len(), 2, "no visit opened");
+    assert_eq!(
+        tags(&abandoned),
+        vec![
+            (SegmentKind::Trash, Some(1)),
+            (SegmentKind::Encounter, Some(1)), // the key, rejoined
+        ]
+    );
+    agrees_everywhere(&abandoned, &meter);
 }
 
 /// R10 amendment: an open-world door is zoned out. The game stamps a door
