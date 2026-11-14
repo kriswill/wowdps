@@ -325,11 +325,15 @@ installation. They hold factual identifiers (spell, item and map ids, class and
 spec mappings, dungeon timers) and the names that go with some of them: the
 names of items (trinkets, `item_spells.rs`), of a few spells (`proc_spells.rs`
 and the placed tables), and of instances (party and raid maps,
-`instance_maps.rs`). Artwork is likewise extracted locally into
-per-machine caches and never committed or distributed. The screenshots above
-show the application rendering the author's own combat logs; the small game
-icons visible in them remain Blizzard's property and appear only to depict the
-software in use.
+`instance_maps.rs`). Names also stand as comments beside the ids in
+`open_world_maps.rs` (each map's) and `keystone_timers.rs` (each keystone
+dungeon's), and the review files committed beside the curated tables (the
+`*.expected.md` files in `crates/core/src`, `crates/core/src/forever` and
+`crates/proto/src/placed`) list their spells by name. Artwork is likewise
+extracted locally into per-machine caches and never committed or distributed.
+The screenshots above show the application rendering the author's own combat
+logs; the small game icons visible in them remain Blizzard's property and appear
+only to depict the software in use.
 
 ## License
 

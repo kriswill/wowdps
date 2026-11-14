@@ -25,8 +25,11 @@ what it does and how to run it.
   Forever's under `crates/core/src/forever/`) hold factual identifiers
   and the names that go with some of them, as README's Legal paragraph
   says: trinkets' (`item_spells.rs`), a few spells' (`proc_spells.rs`,
-  the placed tables) and party and raid maps' (`instance_maps.rs`). They
-  are regenerated once per game patch. A generator change reruns
+  the placed tables) and party and raid maps' (`instance_maps.rs`), with
+  names as comments beside the ids in `open_world_maps.rs` and
+  `keystone_timers.rs`, and the spells named in the `*.expected.md`
+  review files beside the curated tables. They are regenerated once per
+  game patch. A generator change reruns
   it and commits its output with it.
 - **Every generator sources `tools/lib.sh`:** it builds the extractor once
   (`build_extract`), fetches the schemas the command itself names (`$extract tables
