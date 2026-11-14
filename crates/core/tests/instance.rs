@@ -887,8 +887,8 @@ fn a_pull_zones_in_only_instanced_content_its_door_named() {
 
 const REJOIN_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/rejoin.txt");
 
-/// The fixture's door back into the instance, onto the open world's map
-/// under the instance's name: every pull after it names map 2959.
+/// The fixture's door back into the instance: a ZONE_CHANGE at difficulty
+/// 0 onto map 0, whatever its name. Every pull after it names map 2959.
 const DOOR_BACK: &str = "ZONE_CHANGE,0,\"City of Dalaran\",0";
 
 fn rejoin() -> String {
@@ -926,9 +926,10 @@ fn rejoin_tags(after: [Option<u32>; 4]) -> Vec<(SegmentKind, Option<u32>)> {
 }
 
 /// R10 amendment (2026-11-13): a pull rejoins its visit whatever door led
-/// back. Forever logs the door back into an instance onto the open world's
-/// map: on a real run the door back into a Normal dungeon visit on map 2959
-/// logged `ZONE_CHANGE,0,"City of Dalaran",0`, and the pulls after it,
+/// back. Forever can log a door into an instance as a ZONE_CHANGE at
+/// difficulty 0 onto another map id, whatever name it carries: on a real
+/// run the door back into a Normal dungeon visit on map 2959 logged
+/// `ZONE_CHANGE,0,"City of Dalaran",0`, and the pulls after it,
 /// whose STARTs named 2959, joined no visit while the resume also had to
 /// stand on the last door's map. The Σ held three of five kills.
 /// `rejoin.txt` is that run's shape: five players, the two later pulls
@@ -969,17 +970,15 @@ fn a_pull_rejoins_its_visit_behind_a_door_onto_another_map() {
     // five pulls. With the trash inside the visit (Ana 7, Borin 9, Dessa
     // 11, Eryk 13); never Ana's 1000 in Hillsbrad, nor Cael's 500 behind the
     // door back in before its first pull, which stays outside.
+    let whole = vec![
+        ("Eryk-Realm".to_string(), 1763),
+        ("Dessa-Realm".to_string(), 1711),
+        ("Cael-Realm".to_string(), 1650),
+        ("Borin-Realm".to_string(), 1609),
+        ("Ana-Realm".to_string(), 1557),
+    ];
     let sigma = meter.overall(0).expect("the visit has members");
-    assert_eq!(
-        amounts(&sigma, View::Damage),
-        vec![
-            ("Eryk-Realm".to_string(), 1763),
-            ("Dessa-Realm".to_string(), 1711),
-            ("Cael-Realm".to_string(), 1650),
-            ("Borin-Realm".to_string(), 1609),
-            ("Ana-Realm".to_string(), 1557),
-        ]
-    );
+    assert_eq!(amounts(&sigma, View::Damage), whole);
 
     // The pull that rejoined is a seed for every later slice, so a lazy
     // load of the trash after it knows it is inside.
@@ -1002,6 +1001,22 @@ fn a_pull_rejoins_its_visit_behind_a_door_onto_another_map() {
     let live = agrees_everywhere(&text, &meter);
     assert_eq!(live.visits().len(), 1, "the seeds rebuilt the visit");
     assert_eq!(live.segments().last().and_then(|s| s.visit), Some(0));
+
+    // A door into another instance closes the visit: its Σ is emitted as an
+    // Overall meta, and its lazy load holds every rejoined member.
+    let closed =
+        format!("{text}11/3/2026 19:20:00.000-8  ZONE_CHANGE,48,\"Blackfathom Deeps\",1\n");
+    let meter = meter_from_lines(closed.lines());
+    let places: Vec<_> = meter.visits().iter().map(|v| v.map_id).collect();
+    assert_eq!(places, vec![2959, 48]);
+    let idx = scan(&mut closed.as_bytes());
+    let sigmas: Vec<_> = idx.overalls.iter().map(|m| m.visit).collect();
+    assert_eq!(sigmas, vec![Some(0)], "the visit's Σ closed at the door");
+    let lazy_sigma = lazy(closed.as_bytes(), &idx.overalls[0])
+        .overall(0)
+        .expect("the Σ's slice holds the visit");
+    assert_eq!(amounts(&lazy_sigma, View::Damage), whole);
+    agrees_everywhere(&closed, &meter);
 }
 
 /// The rejoin's edges, behind the same door. A pull at another difficulty,
@@ -1044,17 +1059,23 @@ fn a_pull_rejoins_only_its_own_instance_at_its_own_difficulty() {
 
 /// A key's pull behind a door onto another map. A FINISHED key is never
 /// rejoined: its END was terminal, and no door named its map, so the pull
-/// opens nothing either. A key abandoned before its END is rejoined, on
-/// its map alone, as any door back onto that map would resume it.
+/// opens nothing either, even at the key's own difficulty (8). A key
+/// abandoned before its END is rejoined on its map alone, as any door back
+/// onto that map would resume it: here by a pull at 23, which is not the
+/// keyed visit's difficulty.
 #[test]
 fn a_finished_key_is_never_rejoined_behind_another_door() {
-    let pull = "\
+    let pull = |difficulty: u32| {
+        format!(
+            "\
 8/1/2026 12:02:00.000-7  ZONE_CHANGE,0,\"Silvermoon City\",0
-8/1/2026 12:05:00.000-7  ENCOUNTER_START,2563,\"Overgrown Ancient\",8,5,2526
+8/1/2026 12:05:00.000-7  ENCOUNTER_START,2563,\"Overgrown Ancient\",{difficulty},5,2526
 8/1/2026 12:05:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-6,\"Overgrown Ancient\",0xa48,0x0,116,\"Frostbolt\",16,200,200,0,0,0,0,0,nil,nil
-8/1/2026 12:06:00.000-7  ENCOUNTER_END,2563,\"Overgrown Ancient\",8,5,1,60000
-";
-    let finished = format!("{KEY_HEAD}{KEY_END}{pull}");
+8/1/2026 12:06:00.000-7  ENCOUNTER_END,2563,\"Overgrown Ancient\",{difficulty},5,1,60000
+"
+        )
+    };
+    let finished = format!("{KEY_HEAD}{KEY_END}{}", pull(8));
     let meter = meter_from_lines(finished.lines());
     assert_eq!(meter.visits().len(), 2, "the door's visit, then the key");
     assert!(meter.visits()[1].end_ms.is_some(), "the END closed the key");
@@ -1067,9 +1088,10 @@ fn a_finished_key_is_never_rejoined_behind_another_door() {
     );
     agrees_everywhere(&finished, &meter);
 
-    let abandoned = format!("{KEY_HEAD}{pull}");
+    let abandoned = format!("{KEY_HEAD}{}", pull(23));
     let meter = meter_from_lines(abandoned.lines());
     assert_eq!(meter.visits().len(), 2, "no visit opened");
+    assert_eq!(meter.visits()[1].difficulty, 8, "the key's, not the pull's");
     assert_eq!(
         tags(&abandoned),
         vec![

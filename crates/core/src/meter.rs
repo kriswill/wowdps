@@ -6051,9 +6051,10 @@ impl Meter {
     /// at the pull's difficulty (a keyed one on the map alone, and a
     /// keystone pull on an unkeyed one is a key the log joined mid-run,
     /// which its END keys), whatever map the last door named: the START's
-    /// instance is where the pull is, and the game can log the door back
-    /// into an instance onto another map (Forever has logged it onto the
-    /// open world's map, 0 or 1). Otherwise, on the map the last door
+    /// instance is where the pull is (the rule assumes it is the map the
+    /// logging player is on), and the game can log a door into an instance
+    /// at difficulty 0 onto another map id (Forever has, onto the open
+    /// world's map 0 or 1). Otherwise, on the map the last door
     /// named, a NEW visit opens under that door's name at the pull's
     /// difficulty, closing whatever was current; a pull on a map no door
     /// named has no name to open a visit under and stays outside. Zoned

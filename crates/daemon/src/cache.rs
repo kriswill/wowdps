@@ -59,8 +59,8 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // open-world and keystone tables, so its visits may differ. ScanState
 // gained `project_id`, stored as a u8 after `arena_over`.
 // \x15: R10's pull resumes the visit on its own instance whatever map the
-// last door named (Forever logs a door back into an instance onto the open
-// world's map) — a checkpoint scanned by the old rule holds those pulls
+// last door named (Forever can log a door into an instance at difficulty 0
+// onto another map id) — a checkpoint scanned by the old rule holds those pulls
 // outside the visit they rejoin.
 const MAGIC: &[u8; 8] = b"WDPSIDX\x15";
 
