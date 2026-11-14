@@ -21,9 +21,10 @@ what it does and how to run it.
   them.
 - **Generated files are never hand-edited.** The committed tables
   (`crates/core/src/*_spells.rs`, `keystone_timers.rs`,
-  `open_world_maps.rs`, `crates/proto/src/placed/placed_spells.rs`, and
+  `open_world_maps.rs`, `instance_maps.rs`, `crates/proto/src/placed/placed_spells.rs`, and
   Forever's under `crates/core/src/forever/`) hold factual identifiers
-  only and are regenerated once per game patch. A generator change reruns
+  only (and `instance_maps.rs` the game's own map names, which R10 opens
+  a visit under) and are regenerated once per game patch. A generator change reruns
   it and commits its output with it.
 - **Every generator sources `tools/lib.sh`:** it builds the extractor once
   (`build_extract`), fetches the schemas the command itself names (`$extract tables
@@ -39,7 +40,7 @@ what it does and how to run it.
   `.build.info`'s `wow` row unless `--product ROW` or `$WOWDPS_PRODUCT`
   names another (Forever's `wowf`). Each committed table and review twin
   is one edition's (`tablegen::committed`): Retail's beside the code,
-  Forever's class, item, keystone, open-world, absorb, role-span and
+  Forever's class, item, keystone, open-world, instanced-map, absorb, role-span and
   role-signal tables under `crates/core/src/forever/` and its placed table
   beside Retail's in proto (`forever_placed_spells.rs`) (the role signals are Forever's
   alone: a run of another product needs `-o`). A table script passes
@@ -114,6 +115,7 @@ what it does and how to run it.
 tools/gen-class-spells.sh      # class_spells.rs (R8)
 tools/gen-keystone-timers.sh   # keystone_timers.rs (R10)
 tools/gen-open-world-maps.sh   # open_world_maps.rs (R10)
+tools/gen-instance-maps.sh     # instance_maps.rs (R10: an instanced map's name, which a pull no door named opens its visit under)
 tools/gen-item-spells.sh       # item_spells.rs (R12; SpellEffect is big, be patient)
 tools/gen-class-spells.sh --product wowf   # and the other three: Forever's, crates/core/src/forever/
 tools/gen-role-spells.sh       # role_spells.rs (R18, curated; --product wowf: Forever's, by name)

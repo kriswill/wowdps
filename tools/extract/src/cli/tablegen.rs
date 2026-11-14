@@ -1,6 +1,6 @@
 //! The committed tables the meter reads, generated from the install:
-//! `gen-class-spells`, `gen-item-spells`, `gen-keystone-timers` and
-//! `gen-open-world-maps`, and the census-backed `gen-role-spells`,
+//! `gen-class-spells`, `gen-item-spells`, `gen-keystone-timers`,
+//! `gen-open-world-maps` and `gen-instance-maps`, and the census-backed `gen-role-spells`,
 //! `gen-absorb-spells` and `gen-proc-spells` with their review twins — each
 //! through one runner (`generate`) — and the proc pairs the proc census
 //! reads (`proc-pairs`). Each edition of the game has its own committed
@@ -49,6 +49,13 @@ pub const COMMANDS: &[Cmd] = &[
         open_world_maps,
     )
     .reads(&[OPEN_WORLD_MAPS.tables]),
+    cmd(
+        "gen-instance-maps",
+        "gen-instance-maps [wow-dir] --dbd-dir <dir>
+                       [--checkout DIR] [-o instance_maps.rs] [--keys tactkeys.txt] [--product wow]",
+        instance_maps,
+    )
+    .reads(&[INSTANCE_MAPS.tables]),
     cmd(
         "gen-item-spells",
         "gen-item-spells [wow-dir] --dbd-dir <dir>
@@ -200,6 +207,15 @@ const OPEN_WORLD_MAPS: Table = Table {
     census: &[],
 };
 
+const INSTANCE_MAPS: Table = Table {
+    command: "gen-instance-maps",
+    out: Some("crates/core/src/instance_maps.rs"),
+    editions: &[(Edition::Forever, "crates/core/src/forever/instance_maps.rs")],
+    tables: &[mapgen::TABLE],
+    reads: None,
+    census: &[],
+};
+
 const ROLE_SPELLS: Table = Table {
     command: "gen-role-spells",
     out: Some("crates/core/src/role_spells.rs"),
@@ -269,11 +285,12 @@ const ROLE_SIGNALS: Table = Table {
 };
 
 /// Every table generator.
-const TABLES: [&Table; 9] = [
+const TABLES: [&Table; 10] = [
     &CLASS_SPELLS,
     &ITEM_SPELLS,
     &KEYSTONE_TIMERS,
     &OPEN_WORLD_MAPS,
+    &INSTANCE_MAPS,
     &ROLE_SPELLS,
     &ABSORB_SPELLS,
     &PROC_SPELLS,
@@ -520,6 +537,19 @@ pub fn open_world_maps(a: Args) -> Result<(), String> {
     })
 }
 
+pub fn instance_maps(a: Args) -> Result<(), String> {
+    generate(a, INSTANCE_MAPS, |_, _| {
+        Ok(|tables: &Tables, build: &str| {
+            let g = mapgen::generate_instanced(tables.get(mapgen::TABLE)?, build)?;
+            Ok(Made {
+                summary: format!("{} instanced maps, build {build}", g.maps),
+                content: g.content,
+                expected: None,
+            })
+        })
+    })
+}
+
 pub fn role_spells(a: Args) -> Result<(), String> {
     generate(a, ROLE_SPELLS, |text, product| {
         let census = rolegen::Census::parse(text)?;
@@ -693,6 +723,7 @@ mod tests {
                 | "gen-item-spells"
                 | "gen-keystone-timers"
                 | "gen-open-world-maps"
+                | "gen-instance-maps"
                 | "gen-absorb-spells"
                 | "gen-role-spells" => {
                     let rel = out.replace("crates/core/src/", "crates/core/src/forever/");
@@ -743,8 +774,8 @@ mod tests {
             assert_eq!(twins.count(), 0, "{} twice", path.display());
         }
         let of = |e: Edition| committed.iter().filter(|(o, _)| *o == e).count();
-        assert_eq!((of(Edition::Retail), of(Edition::Forever)), (12, 12));
-        assert_eq!(committed.len(), 24);
+        assert_eq!((of(Edition::Retail), of(Edition::Forever)), (13, 13));
+        assert_eq!(committed.len(), 26);
     }
 
     /// Retail's class run reads the tables it always did, in their order;

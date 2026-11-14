@@ -161,9 +161,10 @@ pub struct ScanState {
     /// `Meter`'s — arena matches (difficulty-0 zones, no visit) are named
     /// from it, and it must survive a checkpoint resume.
     pub last_zone: Option<String>,
-    /// R10: that zone's map id, mirroring `Meter`'s — a pull opens a visit
-    /// only on the map its door named (it resumes one on its own instance,
-    /// whatever map this is).
+    /// R10: that zone's map id, mirroring `Meter`'s — a pull that opens a
+    /// visit on the map its door named wears the door's name (on another,
+    /// its table's; it resumes one on its own instance, whatever map this
+    /// is).
     pub last_zone_map: Option<u32>,
     /// R13: standing in a decided arena at `offset` (match ended, not yet
     /// teleported out) — trash opened here is noise and never counts.
@@ -439,7 +440,7 @@ struct Scanner {
     visit: Option<VisitScan>,
     /// R13: mirrors `Meter::last_zone` (arena segment names).
     last_zone: Option<String>,
-    /// R10: mirrors `Meter::last_zone_map` (where a pull may open a visit).
+    /// R10: mirrors `Meter::last_zone_map` (whose name a pull's visit takes).
     last_zone_map: Option<u32>,
     /// R13: mirrors `Meter::in_arena`/`arena_home`/`arena_factions`. All
     /// live only while a match's segment is open, so none of it needs to
@@ -919,9 +920,11 @@ impl Scanner {
 
     /// R10 mirror of `Meter::encounter_visit`: a pull while zoned out, at an
     /// instanced difficulty, resumes the visit suspended on its instance at
-    /// its difficulty, whatever map the last door named, or else, on the
-    /// map the last door named, opens a new one. True when it zoned in,
-    /// which makes the START a seed.
+    /// its difficulty, whatever map the last door named, or else opens a
+    /// new one under `meter::pull_visit_name`'s name (the last door's when
+    /// it named the map, else the edition's table's), and stays outside on
+    /// a map that table does not know. True when it zoned in, which makes
+    /// the START a seed.
     fn encounter_visit(&mut self, ts: i64, off: u64, instance_id: u32, difficulty: u32) -> bool {
         if self.visit.as_ref().is_some_and(|v| v.zoned_in)
             || !crate::meter::instanced_difficulty(crate::meter::door_difficulty(
@@ -940,12 +943,16 @@ impl Scanner {
             v.zoned_in = true;
             return true;
         }
-        if self.last_zone_map != Some(instance_id) {
+        let Some(name) = crate::meter::pull_visit_name(
+            self.tables(),
+            self.last_zone_map,
+            self.last_zone.as_deref(),
+            instance_id,
+        ) else {
             return false;
-        }
+        };
         let seed_n = self.seeds.len();
         self.close_visit(Some(ts), off);
-        let name = self.last_zone.clone().unwrap_or_default();
         self.open_visit_state(instance_id, difficulty, name, None, ts, off, seed_n);
         true
     }

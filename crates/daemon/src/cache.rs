@@ -62,7 +62,11 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // last door named (Forever can log a door into an instance at difficulty 0
 // onto another map id) — a checkpoint scanned by the old rule holds those pulls
 // outside the visit they rejoin.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x15";
+// \x16: R10's pull opens its visit under the edition's Map.db2 name when no
+// door named its map (Forever logs a walk-in door onto the open world's map
+// at difficulty 0) — a checkpoint scanned by the old rule holds such a run
+// outside any visit.
+const MAGIC: &[u8; 8] = b"WDPSIDX\x16";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -512,10 +516,10 @@ mod tests {
         assert_ne!(wrong, full);
     }
 
-    /// An entry written under the previous magic (`\x14`, scanned before a
-    /// pull rejoined its visit behind a door onto another map) is refused
-    /// whole, however well formed the rest of it is, and the log is scanned
-    /// again from its start.
+    /// An entry written under the previous magic (`\x15`, scanned before a
+    /// pull opened its visit behind a walk-in door onto the open world) is
+    /// refused whole, however well formed the rest of it is, and the log is
+    /// scanned again from its start.
     #[test]
     fn an_entry_of_the_previous_magic_is_refused_and_rescanned() {
         let tmp = Temp::new("oldmagic");
@@ -531,8 +535,8 @@ mod tests {
                 .is_some(),
             "the entry as written resumes"
         );
-        assert_eq!(bytes[7], 0x15);
-        bytes[7] = 0x14;
+        assert_eq!(bytes[7], 0x16);
+        bytes[7] = 0x15;
         std::fs::write(&entry, &bytes).unwrap();
         assert!(
             cache
@@ -545,7 +549,7 @@ mod tests {
         assert_eq!(rescanned, full);
         assert_eq!(
             std::fs::read(&entry).unwrap()[7],
-            0x15,
+            0x16,
             "rewritten under the new magic"
         );
     }

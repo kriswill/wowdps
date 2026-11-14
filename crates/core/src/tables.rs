@@ -53,6 +53,9 @@ pub(crate) struct Tables {
     keystones: Option<Keystones>,
     /// R10 (`open_world_maps`): whether a map is open world.
     open_world: Option<fn(u32) -> bool>,
+    /// R10 (`instance_maps`): an instanced map's name, which a pull no door
+    /// named opens its visit under.
+    instance_name: Option<fn(u32) -> Option<&'static str>>,
     /// R30 (`role_signals`): what a cast or a form says about a player's
     /// role. Only an edition whose log carries no spec has one: with it the
     /// meter keeps R30's ledger and infers each fight's roles; without it
@@ -94,13 +97,15 @@ static RETAIL: Tables = Tables {
         by_map: crate::keystone_timers::pars_for_map,
     }),
     open_world: Some(crate::open_world_maps::open_world),
+    instance_name: Some(crate::instance_maps::instance_name),
     signals: None,
     map_zero_is_a_place: false,
 };
 
 /// Forever's: its classes (by the client's class masks, no spec), its
 /// items, its keystones (none: it has no Mythic+), its open-world maps and
-/// its role signals (R30: its log carries no spec, so roles are inferred),
+/// its instanced maps' names, its role signals (R30: its log carries no
+/// spec, so roles are inferred),
 /// its shields (R20) and its role spans (R18). It has no proc table: its
 /// logs hold no talent proc R26 nests under a driver that deals damage
 /// under its own name (its procs are weapon enchants', seals' and items').
@@ -120,13 +125,15 @@ static FOREVER: Tables = Tables {
         by_map: crate::forever::keystone_timers::pars_for_map,
     }),
     open_world: Some(crate::forever::open_world_maps::open_world),
+    instance_name: Some(crate::forever::instance_maps::instance_name),
     signals: Some(crate::forever::role_signals::signal),
     map_zero_is_a_place: true,
 };
 
 /// An edition no table was generated for: a Classic client, or a game this
 /// build does not know. It reads Retail's open-world maps for now (the
-/// module's one exception) and nothing else, and its UiMap 0 is read as
+/// module's one exception) and nothing else (no instanced map's name, so a
+/// pull no door named opens no visit, R10), and its UiMap 0 is read as
 /// it always was, as no place: what such a log means by one is unmeasured.
 static NONE: Tables = Tables {
     class: None,
@@ -136,6 +143,7 @@ static NONE: Tables = Tables {
     procs: None,
     keystones: None,
     open_world: Some(crate::open_world_maps::open_world),
+    instance_name: None,
     signals: None,
     map_zero_is_a_place: false,
 };
@@ -212,6 +220,13 @@ impl Tables {
     /// R10: whether a map is open world.
     pub(crate) fn open_world(&self, map_id: u32) -> bool {
         self.open_world.is_some_and(|f| f(map_id))
+    }
+
+    /// R10: the name of an instanced map (Map.db2's, InstanceType not 0),
+    /// which a pull no door named opens its visit under; `None` for a map
+    /// the edition's table does not hold, or an edition with no table.
+    pub(crate) fn instance_name(&self, map_id: u32) -> Option<&'static str> {
+        self.instance_name.and_then(|f| f(map_id))
     }
 
     /// R29: whether the advanced block's UiMap 0 is a place — a post on the
@@ -444,6 +459,30 @@ mod tests {
         assert!(!Tables::of(Edition::Retail).open_world(2980));
     }
 
+    /// R10: an instanced map's name is its own edition's. City of Dalaran
+    /// (2959) is a Forever dungeon that Retail's table does not hold;
+    /// Blackfathom Deeps (48) is in both; a continent and an id no table
+    /// holds are in neither; an edition with no table names nothing.
+    #[test]
+    fn an_instanced_map_is_named_by_its_own_editions_table() {
+        let forever = Tables::of(Edition::Forever);
+        let retail = Tables::of(Edition::Retail);
+        assert_eq!(forever.instance_name(2959), Some("City of Dalaran"));
+        assert_eq!(retail.instance_name(2959), None);
+        assert_eq!(forever.instance_name(48), Some("Blackfathom Deeps"));
+        assert_eq!(retail.instance_name(48), Some("Blackfathom Deeps"));
+        assert_eq!(retail.instance_name(3004), Some("The Venomous Abyss"));
+        for e in every_edition() {
+            let t = Tables::of(e);
+            for id in STRANGERS.into_iter().chain([0, 1]) {
+                assert_eq!(t.instance_name(id), None, "{e:?} {id}");
+            }
+        }
+        for e in TABLELESS {
+            assert_eq!(Tables::of(e).instance_name(48), None, "{e:?}");
+        }
+    }
+
     /// The interim exception: an edition with no open-world table of its
     /// own reads Retail's, map for map, and has no other kind.
     #[test]
@@ -455,7 +494,7 @@ mod tests {
                 assert_eq!(t.open_world(map), retail.open_world(map), "{e:?} {map}");
             }
             assert!(t.class.is_none() && t.items.is_none() && t.absorb.is_none());
-            assert!(t.signals.is_none());
+            assert!(t.signals.is_none() && t.instance_name.is_none());
             assert!(t.role.is_none() && t.procs.is_none() && t.keystones.is_none());
         }
         assert!(Tables::of(Edition::Classic(2)).open_world(1));
@@ -493,6 +532,7 @@ mod tests {
             ("item_spells.rs", include_str!("item_spells.rs")),
             ("keystone_timers.rs", include_str!("keystone_timers.rs")),
             ("open_world_maps.rs", include_str!("open_world_maps.rs")),
+            ("instance_maps.rs", include_str!("instance_maps.rs")),
             ("role_spells.rs", include_str!("role_spells.rs")),
             ("absorb_spells.rs", include_str!("absorb_spells.rs")),
             ("proc_spells.rs", include_str!("proc_spells.rs")),
@@ -513,6 +553,10 @@ mod tests {
             (
                 "forever/open_world_maps.rs",
                 include_str!("forever/open_world_maps.rs"),
+            ),
+            (
+                "forever/instance_maps.rs",
+                include_str!("forever/instance_maps.rs"),
             ),
             (
                 "forever/role_signals.rs",

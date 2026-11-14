@@ -655,6 +655,27 @@ pub(crate) fn door_difficulty(tables: &Tables, map_id: u32, difficulty: u32) -> 
     }
 }
 
+/// R10: the name a visit a pull opens takes. The last door's name when that
+/// door named the pull's map (`last_zone_map`, the map its `last_zone` was
+/// logged on), as a door-opened visit would; else, when the edition's
+/// generated table calls the map instanced (Map.db2, InstanceType not 0),
+/// that map's name: Forever logs a walk-in door onto the open world's map
+/// at difficulty 0 (`ZONE_CHANGE,0,"City of Dalaran",0` into map 2959), so
+/// no door names the map the pulls are on. Never an outdoor door's name.
+/// `None` for a map that table does not know: such a pull opens nothing.
+/// `Meter` and the index scanner both name through here.
+pub(crate) fn pull_visit_name(
+    tables: &Tables,
+    last_zone_map: Option<u32>,
+    last_zone: Option<&str>,
+    instance_id: u32,
+) -> Option<String> {
+    if last_zone_map == Some(instance_id) {
+        return Some(last_zone.unwrap_or_default().to_string());
+    }
+    tables.instance_name(instance_id).map(str::to_string)
+}
+
 /// R10: where a visit stands, as every resume decision reads it. `Meter`
 /// and the index scanner both decide through [`Standing::resumed_by`], so
 /// the two cannot drift apart.
@@ -5447,9 +5468,9 @@ pub struct Meter {
     /// R13: name of the last zone entered, ANY difficulty — arenas zone in
     /// with difficulty 0, so the visit table never learns their names.
     last_zone: Option<String>,
-    /// R10: that zone's map id. A pull opens a visit only on the map its
-    /// door named, so the visit wears the door's name; it resumes one on
-    /// its own instance, whatever map this is.
+    /// R10: that zone's map id. A pull that opens a visit on the map its
+    /// door named wears the door's name (on another, its table's); it
+    /// resumes one on its own instance, whatever map this is.
     last_zone_map: Option<u32>,
     /// R13: an arena match's segment is open, so ARENA_MATCH_END has
     /// something to verdict. False outside one — a stray END closes nothing.
@@ -6054,14 +6075,15 @@ impl Meter {
     /// instance is where the pull is (the rule assumes it is the map the
     /// logging player is on), and the game can log a door into an instance
     /// at difficulty 0 onto another map id (Forever has, onto the open
-    /// world's map 0 or 1). Otherwise, on the map the last door
-    /// named, a NEW visit opens under that door's name at the pull's
-    /// difficulty, closing whatever was current; a pull on a map no door
-    /// named has no name to open a visit under and stays outside. Zoned
-    /// in, the door that put us there stands. The trash between such a
-    /// door and its first pull stays outside, as the stretch before a
-    /// door-0 key's START does. The scanner mirrors this and seeds every
-    /// START that zones in.
+    /// world's map 0 or 1). Otherwise a NEW visit opens on the pull's
+    /// instance at its difficulty, closing whatever was current, under
+    /// the name `pull_visit_name` gives: the last door's when that door
+    /// named the map, else the edition's table's for an instanced map. A
+    /// pull on a map that table does not know has no name to open a visit
+    /// under and stays outside. Zoned in, the door that put us there
+    /// stands. The trash between such a door and its first pull stays
+    /// outside, as the stretch before a door-0 key's START does. The
+    /// scanner mirrors this and seeds every START that zones in.
     fn encounter_visit(&mut self, ts: i64, instance_id: u32, difficulty: u32) {
         if self.zoned_in
             || !instanced_difficulty(door_difficulty(self.tables(), instance_id, difficulty))
@@ -6073,11 +6095,15 @@ impl Meter {
             .and_then(|i| self.visits.get(i as usize))
             .is_some_and(|v| v.standing().resumed_by(instance_id, difficulty, true));
         if !resumes {
-            if self.last_zone_map != Some(instance_id) {
+            let Some(name) = pull_visit_name(
+                self.tables(),
+                self.last_zone_map,
+                self.last_zone.as_deref(),
+                instance_id,
+            ) else {
                 return;
-            }
+            };
             self.close_visit(ts);
-            let name = self.last_zone.clone().unwrap_or_default();
             self.visits
                 .push(Visit::unkeyed(instance_id, difficulty, name, ts));
             self.current_visit = Some(self.visits.len() as u32 - 1);

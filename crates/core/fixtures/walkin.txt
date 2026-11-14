@@ -1,0 +1,23 @@
+11/4/2026 19:00:00.000-8  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18
+11/4/2026 19:00:00.100-8  ZONE_CHANGE,0,"Silverpine Forest",0
+11/4/2026 19:00:30.000-8  SPELL_DAMAGE,Player-1-A,"Ana-Realm",0x511,0x0,Creature-0-13,"Worg",0xa48,0x0,116,"Frostbolt",16,1000,1000,0,0,0,0,0,nil,nil
+11/4/2026 19:02:00.000-8  ZONE_CHANGE,0,"City of Dalaran",0
+11/4/2026 19:02:30.000-8  SPELL_DAMAGE,Player-1-C,"Cael-Realm",0x512,0x0,Creature-0-11,"Arcane Construct",0xa48,0x0,78,"Heroic Strike",1,500,500,0,0,0,0,0,nil,nil
+11/4/2026 19:04:00.000-8  ENCOUNTER_START,3311,"Atrexis the Grave Knight",1,5,2959
+11/4/2026 19:04:05.000-8  SPELL_DAMAGE,Player-1-A,"Ana-Realm",0x511,0x0,Creature-0-1,"Atrexis the Grave Knight",0xa48,0x0,116,"Frostbolt",16,110,110,0,0,0,0,0,nil,nil
+11/4/2026 19:04:06.000-8  SPELL_DAMAGE,Player-1-B,"Borin-Realm",0x512,0x0,Creature-0-1,"Atrexis the Grave Knight",0xa48,0x0,133,"Fireball",4,120,120,0,0,0,0,0,nil,nil
+11/4/2026 19:04:07.000-8  SPELL_DAMAGE,Player-1-C,"Cael-Realm",0x512,0x0,Creature-0-1,"Atrexis the Grave Knight",0xa48,0x0,78,"Heroic Strike",1,130,130,0,0,0,0,0,nil,nil
+11/4/2026 19:04:08.000-8  SPELL_DAMAGE,Player-1-D,"Dessa-Realm",0x512,0x0,Creature-0-1,"Atrexis the Grave Knight",0xa48,0x0,585,"Smite",2,140,140,0,0,0,0,0,nil,nil
+11/4/2026 19:04:09.000-8  SPELL_DAMAGE,Player-1-E,"Eryk-Realm",0x512,0x0,Creature-0-1,"Atrexis the Grave Knight",0xa48,0x0,1752,"Sinister Strike",1,150,150,0,0,0,0,0,nil,nil
+11/4/2026 19:05:00.000-8  ENCOUNTER_END,3311,"Atrexis the Grave Knight",1,5,1,60000
+11/4/2026 19:05:30.000-8  SPELL_DAMAGE,Player-1-B,"Borin-Realm",0x512,0x0,Creature-0-11,"Arcane Construct",0xa48,0x0,133,"Fireball",4,9,9,0,0,0,0,0,nil,nil
+11/4/2026 19:07:00.000-8  ENCOUNTER_START,3310,"Lyn the Ignored",1,5,2959
+11/4/2026 19:07:05.000-8  SPELL_DAMAGE,Player-1-A,"Ana-Realm",0x511,0x0,Creature-0-2,"Lyn the Ignored",0xa48,0x0,116,"Frostbolt",16,210,210,0,0,0,0,0,nil,nil
+11/4/2026 19:07:06.000-8  SPELL_DAMAGE,Player-1-B,"Borin-Realm",0x512,0x0,Creature-0-2,"Lyn the Ignored",0xa48,0x0,133,"Fireball",4,220,220,0,0,0,0,0,nil,nil
+11/4/2026 19:07:07.000-8  SPELL_DAMAGE,Player-1-C,"Cael-Realm",0x512,0x0,Creature-0-2,"Lyn the Ignored",0xa48,0x0,78,"Heroic Strike",1,230,230,0,0,0,0,0,nil,nil
+11/4/2026 19:07:08.000-8  SPELL_DAMAGE,Player-1-D,"Dessa-Realm",0x512,0x0,Creature-0-2,"Lyn the Ignored",0xa48,0x0,585,"Smite",2,240,240,0,0,0,0,0,nil,nil
+11/4/2026 19:07:09.000-8  SPELL_DAMAGE,Player-1-E,"Eryk-Realm",0x512,0x0,Creature-0-2,"Lyn the Ignored",0xa48,0x0,1752,"Sinister Strike",1,250,250,0,0,0,0,0,nil,nil
+11/4/2026 19:08:00.000-8  ENCOUNTER_END,3310,"Lyn the Ignored",1,5,1,60000
+11/4/2026 19:08:30.000-8  SPELL_DAMAGE,Player-1-D,"Dessa-Realm",0x512,0x0,Creature-0-11,"Arcane Construct",0xa48,0x0,585,"Smite",2,11,11,0,0,0,0,0,nil,nil
+11/4/2026 19:10:00.000-8  ZONE_CHANGE,0,"Hillsbrad Foothills",0
+11/4/2026 19:10:30.000-8  SPELL_DAMAGE,Player-1-E,"Eryk-Realm",0x512,0x0,Creature-0-14,"Mountain Lion",0xa48,0x0,1752,"Sinister Strike",1,13,13,0,0,0,0,0,nil,nil
