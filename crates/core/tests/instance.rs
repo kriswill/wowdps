@@ -836,7 +836,7 @@ fn agrees_everywhere(text: &str, meter: &Meter) -> Meter {
 /// does not know; and a door that zoned us in stands, even when its
 /// difficulty and the pull's disagree.
 #[test]
-fn a_pull_zones_in_only_instanced_content_its_door_named() {
+fn a_pull_zones_in_only_instanced_content_a_door_or_its_table_names() {
     let delve = "\
 8/29/2026 17:50:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1
 8/29/2026 17:50:54.000-7  ZONE_CHANGE,3077,\"The Ring of Glory\",0
@@ -1048,13 +1048,14 @@ fn a_pull_rejoins_its_visit_behind_a_door_onto_another_map() {
     agrees_everywhere(&closed, &meter);
 }
 
-/// The rejoin's edges, behind the same door. Neither pull rejoins the
-/// visit, whose Σ keeps the three kills before the zone-out (600 + 30p
-/// each, with the trash inside). A pull at another difficulty has nothing
-/// to resume, and its map is in Forever's table, so it opens a visit of
-/// its own under the table's name, closing the dungeon's, as the switch of
-/// a raid's difficulty does (R10, 2026-11-13). A pull on a map the table
-/// does not know (2960) has no name to open under and stays outside.
+/// The rejoin's edges, behind the same door. No pull rejoins the visit,
+/// whose Σ keeps the three kills before the zone-out (600 + 30p each, with
+/// the trash inside). A pull at another difficulty, or on another instance
+/// Forever's table knows (Blackfathom Deeps, 48), has nothing to resume, so
+/// it opens a visit of its own under the table's name, closing the
+/// dungeon's, as the switch of a raid's difficulty does (R10, 2026-11-13).
+/// A pull on a map the table does not know (2960) has no name to open under
+/// and stays outside.
 #[test]
 fn a_pull_rejoins_only_its_own_instance_at_its_own_difficulty() {
     let text = rejoin();
@@ -1066,44 +1067,60 @@ fn a_pull_rejoins_only_its_own_instance_at_its_own_difficulty() {
         ("Ana-Realm".to_string(), 637),
     ];
     // Each pull's START ends with its difficulty, size and instance.
-    let edited = behind_the_door(&text, |t| t.replace(",1,5,2959", ",2,5,2959"));
-    assert_ne!(edited, text, "the edit took");
-    let meter = meter_from_lines(edited.lines());
-    let places: Vec<_> = meter
-        .visits()
-        .iter()
-        .map(|v| (v.map_id, v.difficulty, v.display_name()))
-        .collect();
-    assert_eq!(
-        places,
-        vec![
-            (2959, 1, "Dalaran".to_string()),
-            (2959, 2, "City of Dalaran".to_string()),
-        ],
-        "the door's name, then the table's"
-    );
-    let shade = meter.segments()[7].start_ms;
-    assert_eq!(meter.visits()[0].end_ms, Some(shade), "closed by the pull");
-    assert_eq!(
-        tags(&edited),
-        rejoin_tags([Some(1), Some(1), Some(1), Some(1)])
-    );
-    let sigma = meter.overall(0).expect("the dungeon's visit has members");
-    assert_eq!(amounts(&sigma, View::Damage), before_the_zone_out);
-    // The new visit's: the two pulls (100k + 10p), then Dessa's 11 and
-    // Eryk's 13 inside it.
-    let sigma = meter.overall(1).expect("the new visit has members");
-    assert_eq!(
-        amounts(&sigma, View::Damage),
-        vec![
-            ("Eryk-Realm".to_string(), 1013),
-            ("Dessa-Realm".to_string(), 991),
-            ("Cael-Realm".to_string(), 960),
-            ("Borin-Realm".to_string(), 940),
-            ("Ana-Realm".to_string(), 920),
-        ]
-    );
-    agrees_everywhere(&edited, &meter);
+    for (pull, (map, difficulty, name)) in [
+        (",2,5,2959", (2959, 2, "City of Dalaran")),
+        (",1,5,48", (48, 1, "Blackfathom Deeps")),
+    ] {
+        let edited = behind_the_door(&text, |t| t.replace(",1,5,2959", pull));
+        assert_ne!(edited, text, "{pull}: the edit took");
+        let meter = meter_from_lines(edited.lines());
+        let places: Vec<_> = meter
+            .visits()
+            .iter()
+            .map(|v| (v.map_id, v.difficulty, v.display_name()))
+            .collect();
+        assert_eq!(
+            places,
+            vec![
+                (2959, 1, "Dalaran".to_string()),
+                (map, difficulty, name.to_string()),
+            ],
+            "{pull}: the door's name, then the table's"
+        );
+        let shade = meter.segments()[7].start_ms;
+        assert_eq!(
+            meter.visits()[0].end_ms,
+            Some(shade),
+            "{pull}: closed by the pull"
+        );
+        assert_eq!(
+            tags(&edited),
+            rejoin_tags([Some(1), Some(1), Some(1), Some(1)]),
+            "{pull}"
+        );
+        let idx = scan(&mut edited.as_bytes());
+        let closed: Vec<_> = idx.overalls.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(closed, vec!["Dalaran"], "{pull}: the scanner's names");
+        let open = idx.open_visit.as_ref().map(|m| m.name.as_str());
+        assert_eq!(open, Some(name), "{pull}: the scanner's names");
+        let sigma = meter.overall(0).expect("the dungeon's visit has members");
+        assert_eq!(amounts(&sigma, View::Damage), before_the_zone_out, "{pull}");
+        // The new visit's: the two pulls (100k + 10p), then Dessa's 11 and
+        // Eryk's 13 inside it.
+        let sigma = meter.overall(1).expect("the new visit has members");
+        assert_eq!(
+            amounts(&sigma, View::Damage),
+            vec![
+                ("Eryk-Realm".to_string(), 1013),
+                ("Dessa-Realm".to_string(), 991),
+                ("Cael-Realm".to_string(), 960),
+                ("Borin-Realm".to_string(), 940),
+                ("Ana-Realm".to_string(), 920),
+            ],
+            "{pull}"
+        );
+        agrees_everywhere(&edited, &meter);
+    }
 
     let edited = behind_the_door(&text, |t| t.replace(",1,5,2959", ",1,5,2960"));
     assert_ne!(edited, text, "the edit took");
@@ -1215,6 +1232,29 @@ fn a_pull_opens_its_visit_behind_a_walk_in_door_onto_the_open_world() {
         .map(|v| v.display_name())
         .collect();
     assert_eq!(named, vec!["City of Dalaran".to_string()]);
+    let open = idx.open_visit.as_ref().expect("the run is in progress");
+    assert_eq!(open.name, "City of Dalaran", "the scanner's name too");
+
+    // A door that named the map gives the visit its own name, not the
+    // table's, though it logged difficulty 0: the door's "Dalaran", where
+    // Map.db2 says "City of Dalaran".
+    let door = text.replace(WALK_IN, "ZONE_CHANGE,2959,\"Dalaran\",0");
+    let named: Vec<_> = meter_from_lines(door.lines())
+        .visits()
+        .iter()
+        .map(|v| (v.map_id, v.display_name()))
+        .collect();
+    assert_eq!(named, vec![(2959, "Dalaran".to_string())]);
+    let idx = scan(&mut door.as_bytes());
+    let open = idx.open_visit.as_ref().expect("the run is in progress");
+    assert_eq!(open.name, "Dalaran", "the scanner's name too");
+
+    // An edition with no table of instanced maps (a Classic client's) names
+    // no map, so the pull opens nothing, as before.
+    let classic = text.replace("PROJECT_ID,18", "PROJECT_ID,2");
+    assert_ne!(classic, text, "the edit took");
+    assert!(meter_from_lines(classic.lines()).visits().is_empty());
+    assert!(tags(&classic).iter().all(|(_, visit)| visit.is_none()));
 
     // A door into another instance closes the visit: its Σ is emitted as an
     // Overall meta and loads lazily as the replay holds it.
@@ -1224,12 +1264,21 @@ fn a_pull_opens_its_visit_behind_a_walk_in_door_onto_the_open_world() {
     let places: Vec<_> = meter.visits().iter().map(|v| v.map_id).collect();
     assert_eq!(places, vec![2959, 189]);
     let idx = scan(&mut closed.as_bytes());
-    let sigmas: Vec<_> = idx.overalls.iter().map(|m| m.visit).collect();
-    assert_eq!(sigmas, vec![Some(0)], "the run's Σ closed at the door");
+    let sigmas: Vec<_> = idx
+        .overalls
+        .iter()
+        .map(|m| (m.visit, m.name.as_str()))
+        .collect();
+    assert_eq!(
+        sigmas,
+        vec![(Some(0), "City of Dalaran")],
+        "the run's Σ closed at the door, under the table's name"
+    );
     let lazy_sigma = lazy(closed.as_bytes(), &idx.overalls[0])
         .overall(0)
         .expect("the Σ's slice holds the visit");
     assert_eq!(amounts(&lazy_sigma, View::Damage), whole);
+    assert_eq!(lazy_sigma.name, "City of Dalaran");
     agrees_everywhere(&closed, &meter);
 }
 

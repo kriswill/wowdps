@@ -7141,7 +7141,8 @@ impl Meter {
                 // R13: any teleport ends the dead-arena window.
                 self.arena_over = false;
                 // R13: remembered at every difficulty — arena zones log 0.
-                // R10: with its map, the place a pull may open a visit.
+                // R10: with its map: a pull opening a visit on that map takes
+                // this name.
                 if !name.is_empty() {
                     self.last_zone = Some(name.clone());
                     self.last_zone_map = Some(*map_id);
