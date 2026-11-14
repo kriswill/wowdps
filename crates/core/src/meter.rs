@@ -658,7 +658,8 @@ pub(crate) fn door_difficulty(tables: &Tables, map_id: u32, difficulty: u32) -> 
 /// R10: the name a visit a pull opens takes. The last door's name when that
 /// door named the pull's map (`last_zone_map`, the map its `last_zone` was
 /// logged on), as a door-opened visit would; else, when the edition's
-/// generated table calls the map instanced (Map.db2, InstanceType not 0),
+/// generated table names the map (a party or raid map with an encounter:
+/// Map.db2's InstanceType 1 or 2, DungeonEncounter.db2),
 /// that map's name: Forever logs a walk-in door onto the open world's map
 /// at difficulty 0 (`ZONE_CHANGE,0,"City of Dalaran",0` into map 2959), so
 /// no door names the map the pulls are on. Never an outdoor door's name.
@@ -6078,7 +6079,7 @@ impl Meter {
     /// world's map 0 or 1). Otherwise a NEW visit opens on the pull's
     /// instance at its difficulty, closing whatever was current, under
     /// the name `pull_visit_name` gives: the last door's when that door
-    /// named the map, else the edition's table's for an instanced map. A
+    /// named the map, else the edition's table's for a party or raid map. A
     /// pull on a map that table does not know has no name to open a visit
     /// under and stays outside. Zoned in, the door that put us there
     /// stands. The trash between such a door and its first pull stays

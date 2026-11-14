@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Regenerate crates/core/src/instance_maps.rs from the LOCAL game install.
 #
-# Map.db2 comes straight out of the install's own CASC storage via
-# `wowdps-extract gen-instance-maps` (emission rules in
-# tools/extract/src/mapgen.rs): every map whose InstanceType is not 0, with
-# its name, so R10 can open the visit of a pull on one that no door named
-# (Forever logs a walk-in door onto the open world's map at difficulty 0)
-# under the map's own name. The network is only used for the WoWDBDefs
-# schema and the wowdev TACTKeys list, fetched fresh each run — this runs
+# Map.db2 and DungeonEncounter.db2 come straight out of the install's own
+# CASC storage via `wowdps-extract gen-instance-maps` (emission rules in
+# tools/extract/src/mapgen.rs): every party and raid map (InstanceType 1 or
+# 2) with at least one encounter, with its name, but a map whose name has
+# the whole word "test" or "unused" or starts with "DEPRECATED", so R10 can
+# open the visit of a pull on one that no door named (Forever can log a
+# walk-in door onto the open world's map at difficulty 0) under the map's
+# own name. The network is only used for the WoWDBDefs schemas and the
+# wowdev TACTKeys list, fetched fresh each run — this runs
 # once per game patch (a new expansion brings its instances). Output is
 # deterministic: same build in, same bytes out.
 #

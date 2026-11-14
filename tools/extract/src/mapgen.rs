@@ -12,16 +12,27 @@
 //! from an instance; a map the table does not know (a newer patch) keeps the
 //! old reading, its difficulty.
 //!
-//! The instanced maps are every other map, with its name: a pull on one
-//! that no door named (Forever logs a walk-in door onto the open world's
-//! map at difficulty 0) opens its visit under the map's name (R10). A map
-//! that table does not know opens nothing.
+//! The instanced maps are the party and raid maps (InstanceType 1 or 2)
+//! on which DungeonEncounter.db2 holds an encounter, with their names: a
+//! pull on one that no door named (Forever can log a walk-in door onto the
+//! open world's map at difficulty 0) opens its visit under the map's name
+//! (R10). The rule fires only on an ENCOUNTER_START, so no other map needs
+//! a name. A map whose name marks it as no place a player plays is left
+//! out too ([`is_unplayed_name`]). A map that table does not hold opens
+//! nothing.
 
 use crate::table::{Csv, cell, num};
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 /// The source table (its FileDataID: `table::FILE_IDS`).
 pub const TABLE: &str = "Map";
+
+/// The party and raid maps' second table: an encounter, by its map.
+pub const ENCOUNTER_TABLE: &str = "DungeonEncounter";
+
+/// The tables `generate_instanced` reads.
+pub const INSTANCE_TABLES: [&str; 2] = [TABLE, ENCOUNTER_TABLE];
 
 #[derive(Debug)]
 pub struct Generated {
@@ -124,12 +135,43 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
     })
 }
 
-/// The `instance_maps.rs` generator: every map whose InstanceType is not 0,
-/// with its name, which R10 opens a visit under when no door named the map.
-pub fn generate_instanced(csv: &Csv, build: &str) -> Result<Generated, String> {
-    let entries = maps(csv, |kind| kind != 0)?;
+/// Whether a map's name marks it as no place a player plays: the whole
+/// word "test" or "unused" in any case ("Test Dungeon", "<unused>
+/// Monastery", "The Depths [UNUSED]"), or a "DEPRECATED" prefix in any
+/// case. Whole words only, so "Contest" is a name like any other.
+fn is_unplayed_name(name: &str) -> bool {
+    let word = |w: &str| {
+        name.split(|c: char| !c.is_alphanumeric())
+            .any(|x| x.eq_ignore_ascii_case(w))
+    };
+    word("test")
+        || word("unused")
+        || name
+            .get(.."deprecated".len())
+            .is_some_and(|p| p.eq_ignore_ascii_case("deprecated"))
+}
+
+/// The `instance_maps.rs` generator: every party and raid map (InstanceType
+/// 1 or 2) that `encounters` (DungeonEncounter.db2) holds an encounter on,
+/// with its name, which R10 opens a visit under when no door named the map;
+/// a map whose name [`is_unplayed_name`] is left out.
+pub fn generate_instanced(csv: &Csv, encounters: &Csv, build: &str) -> Result<Generated, String> {
+    let map_c = encounters.col("MapID")?;
+    let mut fought_on: BTreeSet<u32> = BTreeSet::new();
+    for r in &encounters.rows {
+        // An encounter on no map (-1) names none.
+        if let Ok(id) = u32::try_from(num::<i64>(r, map_c, "DungeonEncounter")?) {
+            fought_on.insert(id);
+        }
+    }
+    let entries: Vec<(u32, String)> = maps(csv, |kind| kind == 1 || kind == 2)?
+        .into_iter()
+        .filter(|(id, name)| fought_on.contains(id) && !is_unplayed_name(name))
+        .collect();
     if entries.is_empty() {
-        return Err("Map: no instanced rows — the table or its schema changed".into());
+        return Err(
+            "Map: no party or raid map with an encounter — a table or its schema changed".into(),
+        );
     }
 
     let mut o = String::new();
@@ -137,20 +179,22 @@ pub fn generate_instanced(csv: &Csv, build: &str) -> Result<Generated, String> {
     // No timestamp: same build in, same bytes out.
     writeln!(
         o,
-        "//! Source: local client Map.db2 via wowdps-extract, build {build}."
+        "//! Source: local client Map.db2 and DungeonEncounter.db2 via wowdps-extract, build {build}."
     )
     .map_err(|e| format!("emit: {e}"))?;
-    writeln!(o, "//! {} instanced maps.", entries.len()).map_err(|e| format!("emit: {e}"))?;
+    writeln!(o, "//! {} party and raid maps.", entries.len()).map_err(|e| format!("emit: {e}"))?;
     o.push_str(
         "//!\n\
-         //! Every map whose InstanceType is not 0 (CONTRACT.md R10), with its\n\
-         //! name: a pull on one, while zoned out with nothing to resume and no\n\
-         //! door naming the map, opens its visit under this name. A map this\n\
-         //! table does not know opens nothing.\n\
+         //! Every party and raid map (InstanceType 1 or 2) on which\n\
+         //! DungeonEncounter.db2 holds an encounter (CONTRACT.md R10), with its\n\
+         //! name, but a map whose name has the whole word \"test\" or \"unused\"\n\
+         //! (any case) or starts with \"DEPRECATED\": a pull on one, while zoned\n\
+         //! out with nothing to resume and no door naming the map, opens its\n\
+         //! visit under this name. A map this table does not hold opens nothing.\n\
          \n\
-         /// The name of the instanced map `map_id` (an ENCOUNTER_START's\n\
-         /// instance id): `None` for an open-world map or one this table does\n\
-         /// not know.\n\
+         /// The name of the party or raid map `map_id` (an ENCOUNTER_START's\n\
+         /// instance id): `None` for any other map, or one this table does not\n\
+         /// hold.\n\
          pub(crate) fn instance_name(map_id: u32) -> Option<&'static str> {\n\
          \x20   let i = TABLE.binary_search_by_key(&map_id, |e| e.0).ok()?;\n\
          \x20   TABLE.get(i).map(|e| e.1)\n\
@@ -224,25 +268,83 @@ mod tests {
         let csv = parse_csv(&format!("{HEADER}7,Broken,4096\n")).unwrap();
         let err = generate(&csv, "1.2.3.4").unwrap_err();
         assert!(err.contains("out of range"), "{err}");
-        let err = generate_instanced(&csv, "1.2.3.4").unwrap_err();
+        let err = generate_instanced(&csv, &encounters_on(&[7]), "1.2.3.4").unwrap_err();
         assert!(err.contains("out of range"), "{err}");
     }
 
+    /// A DungeonEncounter table with one encounter on each of `maps`.
+    fn encounters_on(maps: &[i64]) -> Csv {
+        let mut text = String::from("ID,Name_lang,MapID\n");
+        for (i, m) in maps.iter().enumerate() {
+            text.push_str(&format!("{},Boss {i},{m}\n", 3000 + i));
+        }
+        parse_csv(&text).unwrap()
+    }
+
+    /// Party and raid maps with an encounter, sorted, with their names: an
+    /// open-world map, a scenario and a PvP map are left out though each
+    /// has an encounter, and so is a party map with none.
     #[test]
-    fn emits_the_sorted_instanced_maps_with_their_names() {
+    fn emits_the_party_and_raid_maps_with_an_encounter() {
         let csv = parse_csv(&format!(
-            "{HEADER}3004,The Venomous Abyss,2\n0,Eastern Kingdoms,0\n2953,Parhelion Plaza,5\n48,Blackfathom Deeps,1\n"
+            "{HEADER}3004,The Venomous Abyss,2\n0,Eastern Kingdoms,0\n2953,Parhelion Plaza,5\n48,Blackfathom Deeps,1\n529,Classic Arathi Basin,3\n269,Caverns of Time,1\n"
         ))
         .unwrap();
-        let g = generate_instanced(&csv, "1.2.3.4").unwrap();
-        assert_eq!(g.maps, 3);
+        let g = generate_instanced(
+            &csv,
+            &encounters_on(&[3004, 0, 2953, 48, 48, 529, -1]),
+            "1.2.3.4",
+        )
+        .unwrap();
+        assert_eq!(g.maps, 2);
         assert!(g.content.contains("build 1.2.3.4"));
-        assert!(g.content.contains("//! 3 instanced maps."));
-        assert!(g.content.contains("static TABLE: [(u32, &str); 3] = [\n"));
-        assert!(g.content.contains(
-            "    (48, \"Blackfathom Deeps\"),\n    (2953, \"Parhelion Plaza\"),\n    (3004, \"The Venomous Abyss\"),\n"
-        ));
-        assert!(!g.content.contains("(0, \"Eastern Kingdoms\")"));
+        assert!(g.content.contains("//! 2 party and raid maps."));
+        assert!(g.content.contains("static TABLE: [(u32, &str); 2] = [\n"));
+        assert!(
+            g.content.contains(
+                "    (48, \"Blackfathom Deeps\"),\n    (3004, \"The Venomous Abyss\"),\n];"
+            )
+        );
+        for gone in ["Eastern Kingdoms\")", "Parhelion", "Arathi", "Caverns"] {
+            assert!(!g.content.contains(gone), "{gone}");
+        }
+    }
+
+    /// The name rule: the whole word "test" or "unused" in any case, or a
+    /// "DEPRECATED" prefix in any case, leaves a map out; letters inside a
+    /// word do not.
+    #[test]
+    fn an_unplayed_name_is_told_by_whole_words_and_a_prefix() {
+        for name in [
+            "Test Dungeon",
+            "Dungeon TEST",
+            "<unused> Monastery",
+            "The Depths [UNUSED]",
+            "10.1.5 Time Rifts - Argus Raid UNUSED",
+            "DEPRECATED Amirdrassil, the Dream's Hope (10.2 Raid - Dream) - Story Mode",
+            "deprecated Vault",
+        ] {
+            assert!(is_unplayed_name(name), "{name}");
+        }
+        for name in [
+            "Blackfathom Deeps",
+            "City of Dalaran",
+            "Contest Grounds",
+            "Testament of the Fallen",
+            "Unusedfold",
+            "The Deprecated Vault",
+            "Zul'Farrak",
+            "",
+        ] {
+            assert!(!is_unplayed_name(name), "{name}");
+        }
+        let csv = parse_csv(&format!(
+            "{HEADER}13,Test Dungeon,1\n33,Contest Grounds,1\n2972,DEPRECATED Old Raid,2\n44,<unused> Monastery,1\n"
+        ))
+        .unwrap();
+        let g = generate_instanced(&csv, &encounters_on(&[13, 33, 2972, 44]), "1.2.3.4").unwrap();
+        assert_eq!(g.maps, 1);
+        assert!(g.content.contains("    (33, \"Contest Grounds\"),\n];"));
     }
 
     /// A name is emitted as a Rust string literal, so a quote or a
@@ -250,7 +352,7 @@ mod tests {
     #[test]
     fn an_instanced_name_is_escaped() {
         let csv = parse_csv(&format!("{HEADER}77,\"The \"\"Old\"\" Vault\\\",1\n")).unwrap();
-        let g = generate_instanced(&csv, "1.2.3.4").unwrap();
+        let g = generate_instanced(&csv, &encounters_on(&[77]), "1.2.3.4").unwrap();
         assert!(
             g.content
                 .contains("    (77, \"The \\\"Old\\\" Vault\\\\\"),\n"),
@@ -260,9 +362,15 @@ mod tests {
     }
 
     #[test]
-    fn a_table_with_no_instanced_map_fails_loudly() {
-        let csv = parse_csv(&format!("{HEADER}0,Eastern Kingdoms,0\n")).unwrap();
-        let err = generate_instanced(&csv, "1.2.3.4").unwrap_err();
-        assert!(err.contains("no instanced rows"), "{err}");
+    fn a_table_with_no_party_or_raid_encounter_fails_loudly() {
+        let csv = parse_csv(&format!(
+            "{HEADER}0,Eastern Kingdoms,0\n48,Blackfathom Deeps,1\n"
+        ))
+        .unwrap();
+        let err = generate_instanced(&csv, &encounters_on(&[0]), "1.2.3.4").unwrap_err();
+        assert!(
+            err.contains("no party or raid map with an encounter"),
+            "{err}"
+        );
     }
 }

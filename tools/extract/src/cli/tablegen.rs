@@ -211,7 +211,7 @@ const INSTANCE_MAPS: Table = Table {
     command: "gen-instance-maps",
     out: Some("crates/core/src/instance_maps.rs"),
     editions: &[(Edition::Forever, "crates/core/src/forever/instance_maps.rs")],
-    tables: &[mapgen::TABLE],
+    tables: &mapgen::INSTANCE_TABLES,
     reads: None,
     census: &[],
 };
@@ -540,9 +540,13 @@ pub fn open_world_maps(a: Args) -> Result<(), String> {
 pub fn instance_maps(a: Args) -> Result<(), String> {
     generate(a, INSTANCE_MAPS, |_, _| {
         Ok(|tables: &Tables, build: &str| {
-            let g = mapgen::generate_instanced(tables.get(mapgen::TABLE)?, build)?;
+            let g = mapgen::generate_instanced(
+                tables.get(mapgen::TABLE)?,
+                tables.get(mapgen::ENCOUNTER_TABLE)?,
+                build,
+            )?;
             Ok(Made {
-                summary: format!("{} instanced maps, build {build}", g.maps),
+                summary: format!("{} party and raid maps, build {build}", g.maps),
                 content: g.content,
                 expected: None,
             })

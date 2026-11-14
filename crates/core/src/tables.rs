@@ -53,7 +53,7 @@ pub(crate) struct Tables {
     keystones: Option<Keystones>,
     /// R10 (`open_world_maps`): whether a map is open world.
     open_world: Option<fn(u32) -> bool>,
-    /// R10 (`instance_maps`): an instanced map's name, which a pull no door
+    /// R10 (`instance_maps`): a party or raid map's name, which a pull no door
     /// named opens its visit under.
     instance_name: Option<fn(u32) -> Option<&'static str>>,
     /// R30 (`role_signals`): what a cast or a form says about a player's
@@ -104,7 +104,7 @@ static RETAIL: Tables = Tables {
 
 /// Forever's: its classes (by the client's class masks, no spec), its
 /// items, its keystones (none: it has no Mythic+), its open-world maps and
-/// its instanced maps' names, its role signals (R30: its log carries no
+/// its party and raid maps' names, its role signals (R30: its log carries no
 /// spec, so roles are inferred),
 /// its shields (R20) and its role spans (R18). It has no proc table: its
 /// logs hold no talent proc R26 nests under a driver that deals damage
@@ -132,7 +132,7 @@ static FOREVER: Tables = Tables {
 
 /// An edition no table was generated for: a Classic client, or a game this
 /// build does not know. It reads Retail's open-world maps for now (the
-/// module's one exception) and nothing else (no instanced map's name, so a
+/// module's one exception) and nothing else (no party or raid map's name, so a
 /// pull no door named opens no visit, R10), and its UiMap 0 is read as
 /// it always was, as no place: what such a log means by one is unmeasured.
 static NONE: Tables = Tables {
@@ -222,7 +222,8 @@ impl Tables {
         self.open_world.is_some_and(|f| f(map_id))
     }
 
-    /// R10: the name of an instanced map (Map.db2's, InstanceType not 0),
+    /// R10: the name of a party or raid map with an encounter (Map.db2's
+    /// InstanceType 1 or 2, DungeonEncounter.db2; no test or unused map),
     /// which a pull no door named opens its visit under; `None` for a map
     /// the edition's table does not hold, or an edition with no table.
     pub(crate) fn instance_name(&self, map_id: u32) -> Option<&'static str> {
@@ -459,12 +460,17 @@ mod tests {
         assert!(!Tables::of(Edition::Retail).open_world(2980));
     }
 
-    /// R10: an instanced map's name is its own edition's. City of Dalaran
+    /// R10: a party or raid map's name is its own edition's. City of Dalaran
     /// (2959) is a Forever dungeon that Retail's table does not hold;
     /// Blackfathom Deeps (48) is in both; a continent and an id no table
-    /// holds are in neither; an edition with no table names nothing.
+    /// holds are in neither; an edition with no table names nothing. A
+    /// scenario (Proving Grounds, 1148) and a battleground (Classic Arathi
+    /// Basin, 529) have encounters but are no party or raid map; a party
+    /// map with no encounter (CashTest, 29) and the test, unused and
+    /// deprecated maps (Test Dungeon 13, <unused> Monastery 44, and a
+    /// DEPRECATED raid, 2972) are left out too.
     #[test]
-    fn an_instanced_map_is_named_by_its_own_editions_table() {
+    fn a_party_or_raid_map_is_named_by_its_own_editions_table() {
         let forever = Tables::of(Edition::Forever);
         let retail = Tables::of(Edition::Retail);
         assert_eq!(forever.instance_name(2959), Some("City of Dalaran"));
@@ -472,6 +478,12 @@ mod tests {
         assert_eq!(forever.instance_name(48), Some("Blackfathom Deeps"));
         assert_eq!(retail.instance_name(48), Some("Blackfathom Deeps"));
         assert_eq!(retail.instance_name(3004), Some("The Venomous Abyss"));
+        for id in [1148, 529, 2972] {
+            assert_eq!(retail.instance_name(id), None, "Retail {id}");
+        }
+        for id in [29, 13, 44] {
+            assert_eq!(forever.instance_name(id), None, "Forever {id}");
+        }
         for e in every_edition() {
             let t = Tables::of(e);
             for id in STRANGERS.into_iter().chain([0, 1]) {

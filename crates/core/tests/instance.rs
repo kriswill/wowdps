@@ -832,7 +832,7 @@ fn agrees_everywhere(text: &str, meter: &Meter) -> Meter {
 /// delve's visit; a world boss's pull (Difficulty.db2's World Boss, an
 /// InstanceType of 0) is open-world content and stays outside; a pull on a
 /// map no door named opens its visit under the edition's table's name when
-/// that table calls the map instanced, and stays outside on a map the table
+/// that table names the map (a party or raid map), and stays outside on a map the table
 /// does not know; and a door that zoned us in stands, even when its
 /// difficulty and the pull's disagree.
 #[test]
@@ -897,6 +897,29 @@ fn a_pull_zones_in_only_instanced_content_a_door_or_its_table_names() {
 ";
     assert!(meter_from_lines(unknown.lines()).visits().is_empty());
     assert_eq!(tags(unknown), vec![(SegmentKind::Encounter, None)]);
+
+    // The table names party and raid maps alone: a scenario's pull
+    // (Proving Grounds, 1148, InstanceType 5) and a battleground's (Classic
+    // Arathi Basin, 529, InstanceType 3), each with encounters in the
+    // client, stay outside behind a door that did not name them.
+    let neither = "\
+8/29/2026 17:50:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1
+8/29/2026 17:50:54.000-7  ZONE_CHANGE,2916,\"Vaults of Atal'Utek\",0
+8/29/2026 17:54:00.000-7  ENCOUNTER_START,3603,\"A Scenario Boss\",12,1,1148
+8/29/2026 17:54:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-3,\"A Scenario Boss\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+8/29/2026 17:55:00.000-7  ENCOUNTER_END,3603,\"A Scenario Boss\",12,1,1,60000
+8/29/2026 17:56:00.000-7  ENCOUNTER_START,3604,\"A Battleground Boss\",34,15,529
+8/29/2026 17:56:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-4,\"A Battleground Boss\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+8/29/2026 17:57:00.000-7  ENCOUNTER_END,3604,\"A Battleground Boss\",34,15,1,60000
+";
+    assert!(meter_from_lines(neither.lines()).visits().is_empty());
+    assert_eq!(
+        tags(neither),
+        vec![
+            (SegmentKind::Encounter, None),
+            (SegmentKind::Encounter, None)
+        ]
+    );
 
     let door_stands = "\
 8/29/2026 17:50:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1
@@ -1249,7 +1272,7 @@ fn a_pull_opens_its_visit_behind_a_walk_in_door_onto_the_open_world() {
     let open = idx.open_visit.as_ref().expect("the run is in progress");
     assert_eq!(open.name, "Dalaran", "the scanner's name too");
 
-    // An edition with no table of instanced maps (a Classic client's) names
+    // An edition with no table of party and raid maps (a Classic client's) names
     // no map, so the pull opens nothing, as before.
     let classic = text.replace("PROJECT_ID,18", "PROJECT_ID,2");
     assert_ne!(classic, text, "the edit took");
