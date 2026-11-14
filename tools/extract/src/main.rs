@@ -126,7 +126,7 @@ mod tests {
             .iter()
             .filter(|c| c.name.starts_with("gen-") && c.name != "gen-emblems")
             .collect();
-        assert_eq!(gens.len(), 14);
+        assert_eq!(gens.len(), 15);
         let others = [
             committed("crates/core/src/item_spells.rs"),
             committed("crates/core/src/proc_spells.expected.md"),
@@ -137,6 +137,7 @@ mod tests {
             "gen-item-spells",
             "gen-keystone-timers",
             "gen-open-world-maps",
+            "gen-instance-maps",
             "gen-absorb-spells",
             "gen-role-spells",
             "gen-placed-spells",

@@ -1568,9 +1568,11 @@ fn a_source_named_before_its_header_is_that_edition() {
 fn a_state_that_stops_being_served_is_emptied() {
     let tmp = Temp::new("unserved");
     let path = tmp.0.join("WoWCombatLog-072726_210000.txt");
+    // The pull is on a map no edition's table names (9999), so it opens no
+    // visit (R10): what this holds is the edition switch, over a pull alone.
     std::fs::write(
         &path,
-        "7/27/2026 21:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,2769\n\
+        "7/27/2026 21:00:10.000-4  ENCOUNTER_START,3130,\"Boss\",1,5,9999\n\
          7/27/2026 21:00:11.000-4  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n\
          7/27/2026 21:00:40.000-4  ENCOUNTER_END,3130,\"Boss\",1,5,1,30000\n",
     )

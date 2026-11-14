@@ -72,6 +72,9 @@ const DECIDING: &[&str] = &[
     "pub fn cut_and_meter<",
     // core: what the cut keeps of a block's place (R29: a UiMap 0, by edition).
     "fn stood(",
+    // core: whether a pull no door named opens a visit, and its Σ's name
+    // (R10: the door's, else the edition's Map.db2 table's).
+    "fn pull_visit_name(",
     // proto: the identities and the card schema.
     "pub fn log_id(",
     "pub fn fight_id(",

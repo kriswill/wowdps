@@ -48,12 +48,12 @@ rulings, §Fixtures). Read the ruling before changing what it governs.
   number and shares the meter's parse (`cut_and_meter`). Core cannot name
   proto's `placed` table; the daemon implements `PlacedTable` over it.
 - **Generated tables are never hand-edited.** `class_spells.rs`,
-  `item_spells.rs`, `keystone_timers.rs`, `open_world_maps.rs`,
+  `item_spells.rs`, `keystone_timers.rs`, `open_world_maps.rs`, `instance_maps.rs`,
   `role_spells.rs`, `absorb_spells.rs`, `proc_spells.rs` and Forever's
   `role_signals.rs` come from `tools/gen-*.sh` (read `tools/AGENTS.md`). `class_spells` wins over
   `item_spells`' generous trigger chase.
 - **Each table is one edition's.** Retail's sit in `src/`, Forever's in
-  `src/forever/` (class, item, keystone, open-world, absorb, role-span, and
+  `src/forever/` (class, item, keystone, open-world, party-and-raid-map, absorb, role-span, and
   the role signals Retail has none of). Code outside tests
   reads every table through `tables.rs` with the fight's edition
   (`Segment::project_id`): an edition with no table of a kind gets nothing

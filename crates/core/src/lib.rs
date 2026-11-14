@@ -7,6 +7,7 @@ pub(crate) mod absorb_spells;
 pub(crate) mod class_spells;
 pub mod cli;
 pub(crate) mod forever;
+pub(crate) mod instance_maps;
 pub(crate) mod item_spells;
 pub(crate) mod keystone_timers;
 pub(crate) mod open_world_maps;
